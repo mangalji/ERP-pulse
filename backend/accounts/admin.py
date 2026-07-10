@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
-from accounts.models import User
+from accounts.models import OTP, User
 
 
 @admin.register(User)
@@ -66,3 +66,27 @@ class UserAdmin(DjangoUserAdmin):
             },
         ),
     )
+
+
+@admin.register(OTP)
+class OTPAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for the OTP model.
+
+    Read-only by design: OTP rows must only ever be created by OTPService
+    (a later task), never manually through the admin, so add permission is
+    disabled entirely. `is_used` remains editable so support staff can
+    manually invalidate a live OTP (e.g. a user reports a suspected leak)
+    without being able to forge a valid hash, expiry, or purpose.
+    """
+
+    ordering = ('-created_at',)
+    list_display = ('user', 'purpose', 'is_used', 'expires_at', 'created_at')
+    list_filter = ('purpose', 'is_used')
+    search_fields = ('user__email',)
+    readonly_fields = (
+        'id', 'user', 'otp_hash', 'purpose', 'expires_at', 'created_at', 'updated_at',
+    )
+
+    def has_add_permission(self, request) -> bool:
+        return False
