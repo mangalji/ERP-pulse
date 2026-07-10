@@ -44,11 +44,13 @@ THIRD_PARTY_APPS = [
     'corsheaders',
 ]
 
-# Only 'common' is created on Day 1. Remaining apps (accounts, integrations,
-# customers, items, sales, analytics, ai, reports) are scheduled for Day 3
-# per CURRENT_SPRINT.md and must not be registered before they exist.
+# 'common' (Day 1) and 'accounts' (Sprint 2 Day 2) exist so far. Remaining
+# apps (integrations, customers, items, sales, analytics, ai, reports) are
+# scheduled for Day 3 per CURRENT_SPRINT.md and must not be registered
+# before they exist.
 LOCAL_APPS = [
     'common',
+    'accounts',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -88,14 +90,22 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database (PostgreSQL only — ADR-003, DATABASE_CONTEXT.md)
 # ---------------------------------------------------------------------------
 
-from pathlib import Path
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
     }
 }
+
+
+# ---------------------------------------------------------------------------
+# Custom User Model
+# ---------------------------------------------------------------------------
+# Required because email (not username) is the login identifier —
+# AUTHENTICATION_DESIGN.md, Section 3. Must be set before the first
+# migration touching auth is applied.
+
+AUTH_USER_MODEL = 'accounts.User'
 
 
 # ---------------------------------------------------------------------------
