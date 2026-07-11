@@ -48,7 +48,7 @@ class RegisterView(APIView):
     def post(self,request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = authentication_service().register(**serializer.validated_data)
+        user = authentication_service.register(**serializer.validated_data)
 
         return success_response(
             message='Registration successful. Please verify the OTP sent to your email.',
@@ -68,7 +68,7 @@ class VerifyRegistrationOTPView(APIView):
         serializer = VerifyRegistrationOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = authentication_service().verify_registration_otp(**serializer.validated_data)
+        user = authentication_service.verify_registration_otp(**serializer.validated_data)
 
         return success_response(
             message="Account verified successfully.",
@@ -90,7 +90,7 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
  
-        user = authentication_service().login(**serializer.validated_data)
+        user = authentication_service.login(**serializer.validated_data)
  
         return success_response(
             message='OTP sent to your registered email. Please verify to continue.',
@@ -115,7 +115,7 @@ class VerifyLoginOTPView(APIView):
         serializer = VerifyLoginOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
  
-        user = authentication_service().verify_login_otp(**serializer.validated_data)
+        user = authentication_service.verify_login_otp(**serializer.validated_data)
  
         refresh = RefreshToken.for_user(user)
  
