@@ -328,6 +328,9 @@ Before implementing any feature:
 6. Follow the tasks defined in this sprint.
 7. Do not implement features outside the current sprint unless explicitly requested.
 
+
+TODO:
+Add failed_attempts (or attempt_count) to the OTP model before implementing OTP verification logic.
 ---
 
 # End of CURRENT_SPRINT.md
