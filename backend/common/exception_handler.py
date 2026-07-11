@@ -16,7 +16,7 @@ from rest_framework.views import exception_handler as drf_exception_handler
 
 logger = logging.getLogger(__name__)
 
-def standard_exception_handler(exc,context):
+def standard_exception_handler(exc, context):
     """
     Convert any exception into the standard error envelope.
  
@@ -32,7 +32,7 @@ def standard_exception_handler(exc,context):
     3. Anything else is unexpected: log it and return a generic 500
        without leaking internal detail to the client.
     """
-    response = drf_exception_handler(exc,context)
+    response = drf_exception_handler(exc, context)
 
     if response is not None:
         if response.status_code== status.HTTP_400_BAD_REQUEST:
@@ -45,8 +45,8 @@ def standard_exception_handler(exc,context):
         else:
             response.data={
                 'success':False,
-                # 'message':_extract_message(response.data),
-                'message':'Validation failed.',
+                'message':_extract_message(response.data),
+                # 'message':'Validation failed.',
                 'data':{},
             }
         return response

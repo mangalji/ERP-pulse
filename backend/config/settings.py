@@ -174,7 +174,7 @@ SIMPLE_JWT = {
         days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)
     ),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,
+    'BLACKLIST_AFTER_ROTATION': True,
 }
 
 

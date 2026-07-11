@@ -2,6 +2,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.validators import RegexValidator
 from rest_framework import serializers
 from common import constants
+from accounts.models import User
 
 otp_code_validator = RegexValidator(
     regex = r'^\d+$',
@@ -62,3 +63,28 @@ class VerifyLoginOTPSerializer(serializers.Serializer):
         min_length=constants.OTP_LENGTH,
         validators=[otp_code_validator],
     )
+
+class UserSerializer(serializers.ModelSerializer):
+    """
+    Public-safe representation of a User.
+ 
+    Reused for both the "user" object embedded in the Verify Login OTP
+    response and GET /api/v1/auth/me/, so the shape only needs to be
+    defined once. Deliberately excludes password, is_staff, is_superuser,
+    and permission/group fields — a user should never see more about
+    their own account than this via the API.
+    """
+ 
+    class Meta:
+        model = User
+        fields = [
+            'id',
+            'email',
+            'first_name',
+            'last_name',
+            'mobile_number',
+            'is_active',
+            'is_email_verified',
+            'created_at',
+        ]
+        read_only_fields = fields
