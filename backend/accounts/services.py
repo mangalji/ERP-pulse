@@ -1,6 +1,6 @@
 import logging
 
-from django.conf import settings
+# from django.conf import settings
 
 from accounts.exceptions import OTPExpiredException, OTPMismatchException, OTPNotFoundException
 from accounts.models import OTP
@@ -56,7 +56,7 @@ class OTPService:
             subject='Your ERP Pulse verification code',
             message=(
                 f'Your verification code is {raw_code}. '
-                f'It expires in {settings.OTP_EXPIRY_MINUTES} minutes.'
+                f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
             ),
         )
 
