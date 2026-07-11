@@ -9,6 +9,7 @@ from common.services.email_service import send_email
 from common.utils.datetime import calculate_expiry, is_expired
 from common.utils.hash import hash_value, verify_value
 from common.utils.otp import generate_otp_code
+from common import constants
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,9 @@ class OTPService:
         """
         self.repository.invalidate_previous_otps(user=user, purpose=purpose)
 
-        raw_code = generate_otp_code(length=settings.OTP_LENGTH)
+        raw_code = generate_otp_code(length=constants.OTP_LENGTH)
         otp_hash = hash_value(raw_code)
-        expires_at = calculate_expiry(minutes=settings.OTP_EXPIRY_MINUTES)
+        expires_at = calculate_expiry(minutes=constants.OTP_EXPIRY_MINUTES)
 
         otp = self.repository.create_otp(
             user=user,
@@ -51,7 +52,7 @@ class OTPService:
         )
 
         send_email(
-            to_email=user.email,
+            recipient_list=[user.email],
             subject='Your ERP Pulse verification code',
             message=(
                 f'Your verification code is {raw_code}. '
