@@ -41,7 +41,7 @@ class UserRepository:
         """Case-insensitive lookup, matching the uniqueness check above."""
         return User.objects.filter(email__iexact=email).first()
     
-    def activate_and_verify(self,user:user)->User:
+    def activate_and_verify(self,user:User)->User:
         """Mark a user active and email-verified, together, and persist the change."""
         user.is_active = True
         user.is_email_verified = True

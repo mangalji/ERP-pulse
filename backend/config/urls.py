@@ -8,8 +8,9 @@ It will be added starting Day 2 as app-level urls.py files are created,
 e.g. path('api/v1/accounts/', include('accounts.urls')).
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/v1/auth/',include('accounts.urls')),
 ]

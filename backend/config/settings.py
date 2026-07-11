@@ -41,13 +41,10 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
+    "rest_framework_simplejwt.token_blacklist",
     'corsheaders',
 ]
 
-# 'common' (Day 1) and 'accounts' (Sprint 2 Day 2) exist so far. Remaining
-# apps (integrations, customers, items, sales, analytics, ai, reports) are
-# scheduled for Day 3 per CURRENT_SPRINT.md and must not be registered
-# before they exist.
 LOCAL_APPS = [
     'common',
     'accounts',
@@ -158,6 +155,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'EXCEPTION_HANDLER':'common.exception_handler.standard_exception_handler',
 }
 
 
