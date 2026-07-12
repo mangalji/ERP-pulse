@@ -48,6 +48,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     'common',
     'accounts',
+    'netsuite'
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -189,3 +190,29 @@ CORS_ALLOWED_ORIGINS = config(
     default='http://localhost:5173',
     cast=Csv(),
 )
+
+# ---------------------------------------------------------------------------
+# Frontend
+# ---------------------------------------------------------------------------
+# Used only to build redirect targets from server-side views that a human
+# browser lands on directly (e.g. the NetSuite OAuth callback) — not used
+# for CORS, which is governed by CORS_ALLOWED_ORIGINS above.
+
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
+
+
+# ---------------------------------------------------------------------------
+# NetSuite OAuth 2.0 (ADR-007 — dedicated netsuite module; NETSUITE_CONTEXT.md)
+# ---------------------------------------------------------------------------
+# Real credentials don't exist yet, so every value defaults to '' rather
+# than being required — this keeps `manage.py check`/`runserver` working
+# today. netsuite/oauth.py and netsuite/client.py each validate that these
+# are actually set before attempting to use them, and raise
+# NetSuiteConfigurationException (not a raw crash) if they aren't.
+# Never hardcode these values — NETSUITE_CONTEXT.md "Authentication"
+# section.
+
+NETSUITE_ACCOUNT_ID = config('NETSUITE_ACCOUNT_ID', default='')
+NETSUITE_CLIENT_ID = config('NETSUITE_CLIENT_ID', default='')
+NETSUITE_CLIENT_SECRET = config('NETSUITE_CLIENT_SECRET', default='')
+NETSUITE_REDIRECT_URI = config('NETSUITE_REDIRECT_URI', default='')

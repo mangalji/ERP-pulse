@@ -1,0 +1,78 @@
+"""
+NetSuite OAuth connect/callback views.
+
+View responsibilities only: authenticate (connect) or not (callback —
+see NetSuiteConnectionService.handle_callback docstring for why),
+validate request shape, call NetSuiteConnectionService, return a
+response. No NetSuite HTTP calls or token handling happen here.
+"""
+
+from django.conf import settings
+from django.shortcuts import redirect
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
+
+from common.utils.response import success_response
+from netsuite.exceptions import NetSuiteAuthorizationDeniedException
+from netsuite.serializers import NetSuiteCallbackSerializer
+from netsuite.services import NetSuiteConnectionService
+
+
+class NetSuiteConnectView(APIView):
+    """
+    GET /api/v1/netsuite/connect/
+
+    Returns the NetSuite OAuth authorization URL for the logged-in user.
+    The frontend redirects the browser to this URL itself; ERP Pulse
+    never initiates the redirect server-side, since the user must
+    interact with NetSuite's own login/consent screen.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        authorization_url = NetSuiteConnectionService().get_authorization_url(
+            user=request.user
+        )
+
+        return success_response(
+            message='NetSuite authorization URL generated.',
+            data={'authorization_url': authorization_url},
+        )
+
+
+class NetSuiteCallbackView(APIView):
+    """
+    GET /api/v1/netsuite/callback/
+
+    Receives NetSuite's redirect after the user approves or denies
+    access. This request comes directly from the user's browser being
+    redirected by NetSuite — it carries no JWT — so the user is
+    identified from the signed `state` parameter instead
+    (see netsuite/oauth.py:resolve_user_id_from_state). On success,
+    redirects the browser back to the frontend rather than returning
+    JSON, since a human — not an API client — lands on this URL.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        serializer = NetSuiteCallbackSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+
+        if params.get('error'):
+            raise NetSuiteAuthorizationDeniedException(
+                'NetSuite authorization was not granted.'
+            )
+
+        if not params.get('code'):
+            raise NetSuiteAuthorizationDeniedException(
+                'NetSuite did not return an authorization code.'
+            )
+
+        NetSuiteConnectionService().handle_callback(
+            code=params['code'], state=params['state']
+        )
+
+        return redirect(f'{settings.FRONTEND_URL}/settings/integrations?netsuite=connected')
