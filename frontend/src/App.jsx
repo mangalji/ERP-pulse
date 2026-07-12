@@ -1,14 +1,19 @@
+import { BrowserRouter } from 'react-router-dom'
+import { AuthProvider } from './contexts/AuthContext.jsx'
+import AppRoutes from './routes/AppRoutes.jsx'
+
 /**
- * Root application component.
- *
- * Day 1 placeholder only. Routing, layouts, and pages are added starting
- * Day 2 once authentication is implemented, per CURRENT_SPRINT.md.
+ * Root application component. Frontend UI only — no API integration yet.
+ * AuthProvider holds local, dummy auth state so routes can be gated
+ * during frontend development; it makes no backend calls.
  */
 function App() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50">
-      <p className="text-slate-600">ERP Pulse frontend initialized.</p>
-    </div>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
   )
 }
 

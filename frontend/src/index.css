@@ -1,1 +1,86 @@
 @import "tailwindcss";
+
+/*
+ * ERP Pulse design tokens.
+ *
+ * Palette logic: indigo is ERP Pulse's own color, used for every native
+ * action and surface. Amber is reserved exclusively for anything that
+ * touches NetSuite (the "Connect NetSuite" CTA, sync status, NetSuite
+ * badges) so the two systems stay visually distinguishable at a glance —
+ * the user should always be able to tell "is this ERP Pulse, or is this
+ * reaching into NetSuite" without reading a label.
+ */
+@theme {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --color-canvas: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-ink: #12131a;
+  --color-ink-soft: #4b4d5a;
+  --color-muted: #6b7280;
+  --color-border: #e5e7eb;
+
+  --color-primary: #4f46e5;
+  --color-primary-dark: #3730a3;
+  --color-primary-soft: #eef0ff;
+
+  --color-sidebar: #14123b;
+  --color-sidebar-soft: #211f52;
+  --color-sidebar-ink: #d9d8ee;
+
+  --color-netsuite: #f59e0b;
+  --color-netsuite-soft: #fef3e2;
+
+  --color-positive: #10b981;
+  --color-positive-soft: #e8faf3;
+  --color-negative: #ef4444;
+  --color-negative-soft: #fdecec;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+/* Signature element: the "pulse" indicator used in the top nav and, at
+   larger scale, on the Connect NetSuite page. A breathing ring around a
+   solid dot — calm by default, communicates "alive" without being loud.
+   Respects prefers-reduced-motion per the accessibility floor. */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  70% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.pulse-ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background-color: currentColor;
+  animation: pulse-ring 2.2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-ring::before {
+    animation: none;
+  }
+}
+
+/* Tabular figures everywhere numbers need to line up column-to-column. */
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
