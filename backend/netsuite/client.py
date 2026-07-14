@@ -28,6 +28,7 @@ import requests
 from django.conf import settings
 from django.utils import timezone
 
+from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import (
     NetSuiteConfigurationException, 
     NetSuiteTokenExchangeException, 
@@ -52,11 +53,12 @@ class NetSuiteTokenSet:
 class NetSuiteAuthClient:
     """Handles the token-endpoint calls of the OAuth 2.0 Authorization Code Grant."""
 
-    def __init__(self):
+    def __init__(self, access_token: str | None = None):
         self.account_id = settings.NETSUITE_ACCOUNT_ID
         self.client_id = settings.NETSUITE_CLIENT_ID
         self.client_secret = settings.NETSUITE_CLIENT_SECRET
         self.redirect_uri = settings.NETSUITE_REDIRECT_URI
+        self.access_token = access_token
 
         if not all([self.account_id, self.client_id, self.client_secret, self.redirect_uri]):
             raise NetSuiteConfigurationException(
@@ -87,29 +89,78 @@ class NetSuiteAuthClient:
             'refresh_token': refresh_token,
         })
 
-    def get_customers(self, *, access_token: str) -> dict:
+    def get_records(
+        self,
+        *,
+        record_type: str,
+        limit: int | None = None,
+        offset: int | None = None,
+        params: dict | None = None,
+        access_token: str | None = None,
+    ) -> dict:
         """
-        GET /record/v1/customer — NetSuite's REST Record collection
-        endpoint.
-
-        NOTE: NetSuite's collection endpoint only returns {id, links} per
-        item, not full field data — the `fields`/`expandSubResources`
-        parameters aren't supported on collection endpoints (Oracle's
-        "Listing All Record Instances" / "Record Collection Filtering"
-        docs). Getting company name/email per customer needs either a
-        follow-up GET per id or a SuiteQL query; deliberately not added
-        here since SuiteQL is out of scope for this task.
+        GET /record/v1/{record_type} — generic NetSuite REST Record
+        collection endpoint.
         """
-        return self._get(path='record/v1/customer', access_token=access_token)
+        if not NetSuiteRecordType.is_valid(record_type):
+            raise ValueError(f"Unsupported record type: {record_type}")
 
-    def _get(self, *, path: str, access_token: str) -> dict:
+        query_params = params.copy() if params else {}
+        if limit is not None:
+            query_params['limit'] = limit
+        if offset is not None:
+            query_params['offset'] = offset
+
+        return self._get(
+            path=f'record/v1/{record_type}',
+            access_token=access_token,
+            params=query_params,
+        )
+
+    def get_record(
+        self,
+        *,
+        record_type: str,
+        record_id: str,
+        params: dict | None = None,
+        access_token: str | None = None,
+    ) -> dict:
+        """
+        GET /record/v1/{record_type}/{id} — generic NetSuite REST Record
+        single-item endpoint.
+        """
+        if not NetSuiteRecordType.is_valid(record_type):
+            raise ValueError(f"Unsupported record type: {record_type}")
+
+        return self._get(
+            path=f'record/v1/{record_type}/{record_id}',
+            access_token=access_token,
+            params=params,
+        )
+
+    def get_customers(self, *, access_token: str | None = None) -> dict:
+        """
+        GET /record/v1/customer — NetSuite's REST Record collection endpoint.
+        Kept for 100% backward compatibility.
+        """
+        return self.get_records(
+            record_type=NetSuiteRecordType.CUSTOMER,
+            access_token=access_token,
+        )
+
+    def _get(self, *, path: str, access_token: str | None = None, params: dict | None = None) -> dict:
+        token = access_token or self.access_token
+        if not token:
+            raise ValueError("No access token provided or stored on client.")
+
         try:
             response = requests.get(
                 f'{self._rest_base_url}/{path}',
                 headers={
-                    'Authorization': f'Bearer {access_token}',
+                    'Authorization': f'Bearer {token}',
                     'Content-Type': 'application/json',
                 },
+                params=params,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except requests.RequestException as exc:
@@ -149,12 +200,13 @@ class NetSuiteAuthClient:
             raise NetSuiteTokenExchangeException(
                 'NetSuite rejected the authentication request. Please reconnect your account.'
             )
-
+        print(response.json())
         payload = response.json()
         expires_in = payload.get('expires_in', 3600)
 
         return NetSuiteTokenSet(
             access_token=payload['access_token'],
-            refresh_token=payload['refresh_token'],
+            # refresh_token=payload['refresh_token'],
+            refresh_token=payload.get('refresh_token',data.get('refresh_token')),
             access_token_expires_at=timezone.now() + timedelta(seconds=expires_in),
         )

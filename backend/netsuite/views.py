@@ -102,3 +102,54 @@ class NetSuiteCustomersView(APIView):
             message='NetSuite customers fetched successfully.',
             data=customers,
         )
+
+
+class NetSuiteEmployeesView(APIView):
+    """
+    GET /api/v1/netsuite/employees/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        employees = NetSuiteDataService().get_employees(user=request.user)
+        return success_response(
+            message='NetSuite employees fetched successfully.',
+            data=employees,
+        )
+
+
+class NetSuiteVendorsView(APIView):
+    """
+    GET /api/v1/netsuite/vendors/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        vendors = NetSuiteDataService().get_vendors(user=request.user)
+        return success_response(
+            message='NetSuite vendors fetched successfully.',
+            data=vendors,
+        )
+
+
+class NetSuiteItemsView(APIView):
+    """
+    GET /api/v1/netsuite/items/
+    Supports query parameter ?type= to specify the item subtype (e.g. inventoryItem).
+    Defaults to inventoryItem if not provided.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        item_type = request.query_params.get('type', 'inventoryItem')
+        
+        try:
+            items = NetSuiteDataService().get_items(user=request.user, item_type=item_type)
+        except ValueError as e:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(str(e))
+            
+        return success_response(
+            message=f'NetSuite items ({item_type}) fetched successfully.',
+            data=items,
+        )

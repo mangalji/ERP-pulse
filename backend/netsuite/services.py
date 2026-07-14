@@ -13,6 +13,7 @@ from datetime import timedelta
 from django.utils import timezone
 from accounts.models import User
 from netsuite.client import NetSuiteAuthClient
+from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteStateMismatchException, NetSuiteConnectionNotFoundException
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionRepository
@@ -100,10 +101,59 @@ class NetSuiteDataService:
         self.repository = repository or NetSuiteConnectionRepository()
         self._client = client
 
-    def get_customers(self, *, user: User) -> dict:
+    def _get_authenticated_client(self, user: User) -> NetSuiteAuthClient:
         connection = self._require_connection(user)
         access_token = self._ensure_valid_token(connection)
-        return self._get_client().get_customers(access_token=access_token)
+        
+        client = self._get_client()
+        client.access_token = access_token
+        return client
+
+    def get_records(
+        self,
+        *,
+        record_type: str,
+        user: User,
+        limit: int | None = None,
+        offset: int | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        client = self._get_authenticated_client(user)
+        return client.get_records(
+            record_type=record_type,
+            limit=limit,
+            offset=offset,
+            params=params,
+        )
+
+    def get_record(
+        self,
+        *,
+        record_type: str,
+        record_id: str,
+        user: User,
+        params: dict | None = None,
+    ) -> dict:
+        client = self._get_authenticated_client(user)
+        return client.get_record(
+            record_type=record_type,
+            record_id=record_id,
+            params=params,
+        )
+
+    def get_customers(self, *, user: User) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=user)
+
+    def get_employees(self, *, user: User) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.EMPLOYEE, user=user)
+
+    def get_vendors(self, *, user: User) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.VENDOR, user=user)
+
+    def get_items(self, *, user: User, item_type: str = NetSuiteRecordType.INVENTORY_ITEM) -> dict:
+        if not NetSuiteRecordType.is_valid(item_type):
+            raise ValueError(f"Invalid NetSuite item type: {item_type}")
+        return self.get_records(record_type=item_type, user=user)
 
     def _require_connection(self, user: User):
         connection = self.repository.get_by_user(user)
