@@ -1,17 +1,4 @@
 """
-NetSuite Auth Client — the only place in this module that speaks HTTP to
-NetSuite's OAuth 2.0 token endpoint.
-
-Per NETSUITE_CONTEXT.md ("Client Layer... should never contain business
-logic" / "No module may call requests.get() directly"), this class is
-authentication/HTTP only: build the request, send it, translate the
-response or a transport failure into typed data or a
-NetSuiteTokenExchangeException. Persisting or interpreting tokens is
-NetSuiteConnectionService's job (services.py).
-
-Data-fetching methods (SuiteQL, REST Record API) are intentionally not
-implemented yet — this class currently only completes the OAuth handshake.
-
 NetSuite Client — the only place in this module that speaks HTTP to
 NetSuite.
 
