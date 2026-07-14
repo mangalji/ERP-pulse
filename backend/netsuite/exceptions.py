@@ -45,3 +45,8 @@ class NetSuiteConnectionNotFoundException(Exception):
     """Raised when an operation requires an existing NetSuite connection that doesn't exist."""
 
     status_code = status.HTTP_404_NOT_FOUND
+
+class NetSuiteRecordFetchException(Exception):
+    """Raised when a NetSuite REST Record API call fails (network error or non-2xx response)."""
+
+    status_code = status.HTTP_502_BAD_GATEWAY

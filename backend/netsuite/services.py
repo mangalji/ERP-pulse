@@ -8,15 +8,20 @@ orchestrates UserRepository/OTPService for the accounts app.
 """
 
 import logging
+from datetime import timedelta
 
+from django.utils import timezone
 from accounts.models import User
 from netsuite.client import NetSuiteAuthClient
-from netsuite.exceptions import NetSuiteStateMismatchException
+from netsuite.exceptions import NetSuiteStateMismatchException, NetSuiteConnectionNotFoundException
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionRepository
 
 logger = logging.getLogger(__name__)
 
+# Refresh proactively slightly before actual expiry, so a request doesn't
+# lose a race against the token expiring mid-flight.
+TOKEN_EXPIRY_BUFFER = timedelta(seconds=60)
 
 class NetSuiteConnectionService:
     """
@@ -68,6 +73,59 @@ class NetSuiteConnectionService:
 
         logger.info('NetSuite connected for user %s.', user.id)
         return user
+
+    def _get_client(self) -> NetSuiteAuthClient:
+        if self._client is None:
+            self._client = NetSuiteAuthClient()
+        return self._client
+
+
+class NetSuiteDataService:
+    """
+    Fetches live NetSuite record data for an already-connected user.
+
+    Owns the one piece of business logic a plain pass-through read still
+    needs: making sure the access token is valid — refreshing it first
+    via the existing NetSuiteAuthClient.refresh_access_token() /
+    NetSuiteConnectionRepository.update_tokens() if it's expired or about
+    to be — before handing off to the Client. No NetSuite response
+    shaping happens here; the raw record data is returned as-is.
+    """
+
+    def __init__(
+        self,
+        repository: NetSuiteConnectionRepository | None = None,
+        client: NetSuiteAuthClient | None = None,
+    ):
+        self.repository = repository or NetSuiteConnectionRepository()
+        self._client = client
+
+    def get_customers(self, *, user: User) -> dict:
+        connection = self._require_connection(user)
+        access_token = self._ensure_valid_token(connection)
+        return self._get_client().get_customers(access_token=access_token)
+
+    def _require_connection(self, user: User):
+        connection = self.repository.get_by_user(user)
+        if connection is None or not connection.is_active:
+            raise NetSuiteConnectionNotFoundException(
+                'No active NetSuite connection found. Please connect your NetSuite account first.'
+            )
+        return connection
+
+    def _ensure_valid_token(self, connection) -> str:
+        if timezone.now() < connection.access_token_expires_at - TOKEN_EXPIRY_BUFFER:
+            return connection.access_token
+
+        logger.info('Refreshing expired NetSuite access token for user %s.', connection.user_id)
+        token_set = self._get_client().refresh_access_token(refresh_token=connection.refresh_token)
+        connection = self.repository.update_tokens(
+            connection,
+            access_token=token_set.access_token,
+            refresh_token=token_set.refresh_token,
+            access_token_expires_at=token_set.access_token_expires_at,
+        )
+        return connection.access_token
 
     def _get_client(self) -> NetSuiteAuthClient:
         if self._client is None:

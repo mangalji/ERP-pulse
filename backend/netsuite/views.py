@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from common.utils.response import success_response
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException
 from netsuite.serializers import NetSuiteCallbackSerializer
-from netsuite.services import NetSuiteConnectionService
+from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
 
 
 class NetSuiteConnectView(APIView):
@@ -76,3 +76,29 @@ class NetSuiteCallbackView(APIView):
         )
 
         return redirect(f'{settings.FRONTEND_URL}/settings/integrations?netsuite=connected')
+
+
+class NetSuiteCustomersView(APIView):
+    """
+    GET /api/v1/netsuite/customers/
+
+    First real (non-OAuth) NetSuite data endpoint: proves the stored
+    access token actually works by calling NetSuite's REST Record API
+    for the logged-in user's connected account and returning it as-is.
+    No request body to validate (parameterless GET), so there's no input
+    serializer step — NetSuite's own JSON is the response, unmodified,
+    per this task's "Return JSON. Nothing else."
+
+    No local storage/sync/mapping here — that's explicitly a later task
+    (NETSUITE_CONTEXT.md's Sync/Mapper/Repository layers).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        customers = NetSuiteDataService().get_customers(user=request.user)
+
+        return success_response(
+            message='NetSuite customers fetched successfully.',
+            data=customers,
+        )

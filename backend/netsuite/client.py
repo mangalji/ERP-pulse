@@ -11,6 +11,26 @@ NetSuiteConnectionService's job (services.py).
 
 Data-fetching methods (SuiteQL, REST Record API) are intentionally not
 implemented yet — this class currently only completes the OAuth handshake.
+
+NetSuite Client — the only place in this module that speaks HTTP to
+NetSuite.
+
+Per NETSUITE_CONTEXT.md ("Client Layer... should never contain business
+logic" / "No module may call requests.get() directly"), this class is
+authentication/HTTP only: build the request, send it, translate the
+response or a transport failure into typed data or an exception.
+Persisting or interpreting tokens/records is the Service layer's job
+(services.py).
+
+Handles both halves of NetSuite communication: the OAuth 2.0 token
+endpoint (exchange/refresh) and, as of this task, authenticated REST
+Record reads. Kept as one class per NETSUITE_CONTEXT.md's "Only the
+NetSuiteClient" rule, and to avoid an unnecessary second class for what
+is still a handful of methods; the name predates record support but
+renaming now would touch every existing import for no functional gain.
+
+SuiteQL is intentionally not implemented — plain REST Record endpoints
+are enough for this step.
 """
 
 import logging
@@ -21,7 +41,11 @@ import requests
 from django.conf import settings
 from django.utils import timezone
 
-from netsuite.exceptions import NetSuiteConfigurationException, NetSuiteTokenExchangeException
+from netsuite.exceptions import (
+    NetSuiteConfigurationException, 
+    NetSuiteTokenExchangeException, 
+    NetSuiteRecordFetchException,
+    )
 from netsuite.oauth import netsuite_account_domain
 
 logger = logging.getLogger(__name__)
@@ -54,9 +78,8 @@ class NetSuiteAuthClient:
             )
 
         domain = netsuite_account_domain(self.account_id)
-        self._token_url = (
-            f'https://{domain}.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token'
-        )
+        self._rest_base_url = f'https://{domain}.suitetalk.api.netsuite.com/services/rest'
+        self._token_url = f'{self._rest_base_url}/auth/oauth2/v1/token'
 
     def exchange_code_for_tokens(self, *, code: str) -> NetSuiteTokenSet:
         """Step 2 of the Authorization Code Grant: trade an auth code for tokens."""
@@ -76,6 +99,45 @@ class NetSuiteAuthClient:
             'grant_type': 'refresh_token',
             'refresh_token': refresh_token,
         })
+
+    def get_customers(self, *, access_token: str) -> dict:
+        """
+        GET /record/v1/customer — NetSuite's REST Record collection
+        endpoint.
+
+        NOTE: NetSuite's collection endpoint only returns {id, links} per
+        item, not full field data — the `fields`/`expandSubResources`
+        parameters aren't supported on collection endpoints (Oracle's
+        "Listing All Record Instances" / "Record Collection Filtering"
+        docs). Getting company name/email per customer needs either a
+        follow-up GET per id or a SuiteQL query; deliberately not added
+        here since SuiteQL is out of scope for this task.
+        """
+        return self._get(path='record/v1/customer', access_token=access_token)
+
+    def _get(self, *, path: str, access_token: str) -> dict:
+        try:
+            response = requests.get(
+                f'{self._rest_base_url}/{path}',
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Content-Type': 'application/json',
+                },
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            logger.exception('NetSuite record request failed (network error).')
+            raise NetSuiteRecordFetchException(
+                'Could not reach NetSuite to fetch records. Please try again.'
+            ) from exc
+
+        if not response.ok:
+            logger.error('NetSuite record endpoint returned %s for %s.', response.status_code, path)
+            raise NetSuiteRecordFetchException(
+                'NetSuite rejected the record request. Please reconnect your account.'
+            )
+
+        return response.json()
 
     def _post_token_request(self, data: dict) -> NetSuiteTokenSet:
         try:
