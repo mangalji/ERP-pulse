@@ -216,3 +216,16 @@ NETSUITE_ACCOUNT_ID = config('NETSUITE_ACCOUNT_ID', default='')
 NETSUITE_CLIENT_ID = config('NETSUITE_CLIENT_ID', default='')
 NETSUITE_CLIENT_SECRET = config('NETSUITE_CLIENT_SECRET', default='')
 NETSUITE_REDIRECT_URI = config('NETSUITE_REDIRECT_URI', default='')
+
+
+# ---------------------------------------------------------------------------
+# AI Provider (ADR-010 — provider abstraction; AI_CONTEXT.md)
+# ---------------------------------------------------------------------------
+# Same philosophy as the NetSuite section above: OPENAI_API_KEY defaults to
+# '' rather than being required, so `manage.py check`/`runserver` keep
+# working without it. ai/providers.py validates this is set before calling
+# OpenAI and raises AIProviderNotConfiguredException (not a raw crash) if
+# it isn't.
+
+OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o-mini')
