@@ -35,6 +35,9 @@ class ResendRegistrationOTPSerializer(serializers.Serializer):
     """Validates POST /api/v1/auth/register/resend-otp/ input."""
     email = serializers.EmailField()
 
+class ResendLoginOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
 class VerifyRegistrationOTPSerializer(serializers.Serializer):
     """
     Validates registration OTP verification input.

@@ -39,3 +39,4 @@ frontend/.env
 .DS_Store
 Thumbs.db
 extra_info.md
+claude.md

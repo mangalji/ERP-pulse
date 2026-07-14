@@ -31,6 +31,7 @@ from accounts.serializers import (
     UserSerializer,
     LoginSerializer,
     VerifyLoginOTPSerializer,
+    ResendLoginOTPSerializer
     )
 from common.utils.response import success_response
 
@@ -95,6 +96,7 @@ class VerifyRegistrationOTPView(APIView):
     permission_classes = [AllowAny]
     
     def post(self,request):
+        print("verify registration otp view called")
         serializer = VerifyRegistrationOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -183,6 +185,21 @@ class VerifyLoginOTPView(APIView):
             },
         )
  
+class ResendLoginOTPView(APIView):
+    """
+    POST /api/v1/auth/login/resend-otp/
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResendLoginOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = self.authentication_service.resend_login_otp(**serializer.validated_data)
+
+        return success_response(
+            message="A new login verification code has been sent to your email.",
+            data=result,
+        )
  
 class TokenRefreshView(BaseTokenRefreshView):
     """
