@@ -25,7 +25,9 @@ from rest_framework_simplejwt.views import TokenRefreshView as BaseTokenRefreshV
 from accounts.authentication_service import AuthenticationService
 from accounts.serializers import (
     RegisterSerializer, 
+    ResendRegistrationOTPSerializer,
     VerifyRegistrationOTPSerializer,
+    CompleteProfileSerializer,
     UserSerializer,
     LoginSerializer,
     VerifyLoginOTPSerializer,
@@ -36,11 +38,14 @@ authentication_service = AuthenticationService()
 
 class RegisterView(APIView):
     """
-    POST /api/v1/auth/register
- 
-    Registers a new user and triggers a REGISTRATION OTP email. The
-    account stays inactive/unverified until the OTP is confirmed via
-    VerifyRegistrationOTPView.
+    POST /api/v1/auth/register/
+
+    Step 1 of registration: validates email/password and triggers a
+    REGISTRATION OTP email. No User row is created here — the pending
+    registration (email + hashed password + OTP) lives in a cache-backed
+    store until Complete Profile succeeds (see
+    accounts/registration_cache.py and AuthenticationService's module
+    docstring for the full flow).
     """
 
     permission_classes = [AllowAny]
@@ -48,19 +53,44 @@ class RegisterView(APIView):
     def post(self,request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = authentication_service.register(**serializer.validated_data)
+        result = authentication_service.register(**serializer.validated_data)
 
         return success_response(
-            message='Registration successful. Please verify the OTP sent to your email.',
-            data={'email':user.email},
+            message='OTP sent to your email. Please verify to continue registration.',
+            data=result,
             status_code=status.HTTP_201_CREATED
+        )
+
+class ResendRegistrationOTPView(APIView):
+    """
+    POST /api/v1/auth/register/resend-otp/
+
+    Resends the REGISTRATION OTP for an in-flight registration.
+    AuthenticationService enforces the 60-second cooldown and invalidates
+    the previous code — this view only validates shape and calls it.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResendRegistrationOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = authentication_service.resend_registration_otp(**serializer.validated_data)
+
+        return success_response(
+            message='A new verification code has been sent to your email.',
+            data=result,
         )
 
 class VerifyRegistrationOTPView(APIView):
     """
-    POST /api/v1/register/verify-otp/
- 
-    Verifies the REGISTRATION OTP and activates the account on success.
+    POST /api/v1/auth/register/verify-otp/
+
+    Verifies the REGISTRATION OTP. Still does not create the User — on
+    success it returns a short-lived signed `registration_token` that
+    CompleteProfileView requires, proving this email passed OTP
+    verification. The frontend should navigate to the Complete Profile
+    page with this token after a successful response.
     """
     permission_classes = [AllowAny]
     
@@ -68,13 +98,38 @@ class VerifyRegistrationOTPView(APIView):
         serializer = VerifyRegistrationOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = authentication_service.verify_registration_otp(**serializer.validated_data)
+        result = authentication_service.verify_registration_otp(**serializer.validated_data)
 
         return success_response(
-            message="Account verified successfully.",
-            data={'email':user.email,'is_active':user.is_active},
+            message='Email verified. Please complete your profile to finish registration.',
+            data=result,
         ) 
-     
+
+class CompleteProfileView(APIView):
+    """
+    POST /api/v1/auth/register/complete-profile/
+
+    Final step of registration: validates the signed registration_token
+    and mobile-number uniqueness, then creates the User — active and
+    email-verified immediately, since OTP verification already proved the
+    email. Issues no JWT (matching the existing decision that registration
+    never auto-logs a user in — they complete the normal Login flow next).
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = CompleteProfileSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = authentication_service.complete_registration(**serializer.validated_data)
+
+        return success_response(
+            message='Registration completed successfully. Please log in to continue.',
+            data={'email': user.email},
+            status_code=status.HTTP_201_CREATED,
+        )
+    
 class LoginView(APIView):
     """
     POST /api/v1/auth/login/

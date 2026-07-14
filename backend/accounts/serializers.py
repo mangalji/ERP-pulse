@@ -11,26 +11,37 @@ otp_code_validator = RegexValidator(
 
 class RegisterSerializer(serializers.Serializer):
     """
-    Validates registration input.
- 
-    Field-level validation only (types, lengths, password strength via
-    Django's configured AUTH_PASSWORD_VALIDATORS). Uniqueness checks for
-    email/mobile_number are business rules and remain in
-    AuthenticationService.register(), which raises
-    UserAlreadyExistsException — not duplicated here.
+    Validates registration Step 1 input: email + password only.
+
+    Confirm-password matching is a pure input-shape check (does the
+    user's second entry match the first), so it belongs here rather than
+    in AuthenticationService — matching this project's existing
+    convention that shape validation lives in serializers while business
+    rules (uniqueness, etc.) live in the service. `confirm_password` is
+    popped out of validated_data once checked, so it is never passed on
+    to AuthenticationService.register(), which only accepts email/password.
     """
-    first_name = serializers.CharField(max_length=100)
-    last_name = serializers.CharField(max_length=100)
     email = serializers.EmailField()
-    mobile_number = serializers.CharField(max_length=15)
     password = serializers.CharField(write_only=True, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        confirm_password = attrs.pop('confirm_password')
+        if attrs['password'] != confirm_password:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs
+
+class ResendRegistrationOTPSerializer(serializers.Serializer):
+    """Validates POST /api/v1/auth/register/resend-otp/ input."""
+    email = serializers.EmailField()
 
 class VerifyRegistrationOTPSerializer(serializers.Serializer):
     """
     Validates registration OTP verification input.
  
     Whether the OTP actually matches, is expired, or exists at all is
-    decided by OTPService.verify_otp() — this only checks shape.
+    decided by AuthenticationService.verify_registration_otp() — this
+    only checks shape.
     """
     email = serializers.EmailField()
     otp_code = serializers.CharField(
@@ -38,6 +49,18 @@ class VerifyRegistrationOTPSerializer(serializers.Serializer):
         min_length=constants.OTP_LENGTH,
         validators = [otp_code_validator]
     )
+
+class CompleteProfileSerializer(serializers.Serializer):
+    """
+    Validates the final registration step: first/last name, mobile
+    number, and the signed token issued by VerifyRegistrationOTPView.
+    Mobile-number uniqueness is a business rule and stays in
+    AuthenticationService.complete_registration().
+    """
+    registration_token = serializers.CharField()
+    first_name = serializers.CharField(max_length=100)
+    last_name = serializers.CharField(max_length=100)
+    mobile_number = serializers.CharField(max_length=15)
 
 class LoginSerializer(serializers.Serializer):
     """

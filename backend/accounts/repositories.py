@@ -17,36 +17,39 @@ class UserRepository:
 
     def mobile_number_exists(self,mobile_number:str)->bool:
         return User.objects.filter(mobile_number=mobile_number).exists()
-    
-    def create_user(
-        self, *, 
-        email: str, 
-        password: str, 
-        first_name: str, 
-        last_name: str, 
-        mobile_number: str
-        ) -> User:
-        
-        """Create a new user via the model manager (inactive/unverified by its defaults)."""
 
-        return User.objects.create_user(
-            email=email,
-            password=password,
-            mobile_number=mobile_number,
+    def create_verified_user(
+        self, *,
+        email: str,
+        password_hash: str,
+        first_name: str,
+        last_name: str,
+        mobile_number: str,
+    ) -> User:
+        """
+        Create a User whose email has already been OTP-verified before
+        this call — used only by the Complete Profile step of
+        registration. `password_hash` was produced by common.utils.hash
+        at Register time and stored in the registration cache; it is
+        assigned directly here rather than passed through
+        set_password()/create_user(), which would hash it a second time
+        and make the account impossible to log into.
+        """
+        user = User(
+            email=User.objects.normalize_email(email),
             first_name=first_name,
             last_name=last_name,
+            mobile_number=mobile_number,
+            is_active=True,
+            is_email_verified=True,
         )
+        user.password = password_hash
+        user.save()
+        return user
     
     def get_by_email(self,email:str)-> User | None:
         """Case-insensitive lookup, matching the uniqueness check above."""
         return User.objects.filter(email__iexact=email).first()
-    
-    def activate_and_verify(self,user:User)->User:
-        """Mark a user active and email-verified, together, and persist the change."""
-        user.is_active = True
-        user.is_email_verified = True
-        user.save(update_fields=['is_active', 'is_email_verified', 'updated_at'])
-        return user
 
 
 
