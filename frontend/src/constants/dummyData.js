@@ -34,6 +34,14 @@ export const suggestedPrompts = [
   'Explain the drop in order volume last week',
 ]
 
+export const businessPrompts = [
+  'Summarize today\u2019s ERP status',
+  'Show overdue invoices',
+  'Which customers need follow-up?',
+  'Show recent business activity',
+  'Give me today\u2019s business insights',
+]
+
 export const chatHistoryPreview = [
   {
     id: 1,

@@ -1,8 +1,13 @@
-import { useState } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import Button from '../ui/Button.jsx'
 
-export default function ChatInput({ onSend, disabled }) {
+const ChatInput = forwardRef(function ChatInput({ onSend, disabled }, ref) {
   const [value, setValue] = useState('')
+  const textareaRef = useRef(null)
+
+  useImperativeHandle(ref, () => ({
+    focus: () => textareaRef.current?.focus(),
+  }))
 
   const handleSubmit = (event) => {
     event.preventDefault()
@@ -14,6 +19,7 @@ export default function ChatInput({ onSend, disabled }) {
   return (
     <form onSubmit={handleSubmit} className="flex items-end gap-2 border-t border-[var(--color-border)] p-4">
       <textarea
+        ref={textareaRef}
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
@@ -29,4 +35,6 @@ export default function ChatInput({ onSend, disabled }) {
       </Button>
     </form>
   )
-}
+})
+
+export default ChatInput
