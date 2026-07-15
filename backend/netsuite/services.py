@@ -141,6 +141,19 @@ class NetSuiteDataService:
             params=params,
         )
 
+    def execute_suiteql(self, *, query: str, user: User) -> dict:
+        """
+        Run a SuiteQL query for `user`'s connected NetSuite account.
+
+        Reuses _get_authenticated_client() — the same connection lookup
+        and token-refresh path get_records()/get_record() already use —
+        so authentication logic isn't duplicated for SuiteQL. The Client
+        (netsuite.client.NetSuiteAuthClient.execute_suiteql) is the only
+        thing that actually talks to NetSuite.
+        """
+        client = self._get_authenticated_client(user)
+        return client.execute_suiteql(query=query)
+
     def get_customers(self, *, user: User) -> dict:
         return self.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=user)
 

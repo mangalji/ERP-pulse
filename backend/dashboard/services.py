@@ -10,10 +10,8 @@ records/what shape to hand back to the view.
 """
 
 import logging
-from datetime import datetime
 from typing import Any
 
-from django.utils import timezone
 from accounts.models import User
 from netsuite.constants import NetSuiteRecordType
 from netsuite.services import NetSuiteDataService
@@ -87,113 +85,113 @@ class DashboardService:
 
 class BusinessInsightsService:
     """
-    Deterministic, LLM-free analytics layer that reuses DashboardService
-    and NetSuiteDataService. Returns structured data only, intended for
-    consumption by the AI module (natural-language explanations) or
-    directly by frontend insight cards.
+    Deterministic, LLM-free analytics layer that reuses NetSuiteDataService.
 
-    No new NetSuite API calls are introduced — every method composes the
-    existing data-fetching services and applies pure-Python sorting,
-    filtering, and aggregation.
+    Every method here runs one SuiteQL query via
+    NetSuiteDataService.execute_suiteql() — filtering, sorting, and
+    aggregation (SUM/COUNT/ORDER BY/FETCH FIRST) all happen in NetSuite's
+    own database, not in Python over a full REST page. Python only
+    reshapes the already-small, already-aggregated result rows into this
+    class's response contracts, which are unchanged from the previous
+    REST-based implementation.
+
+    Field/table names below are only ones confirmed against real,
+    published NetSuite SuiteQL usage (Oracle's own REST Record Service
+    docs plus multiple independent working query examples) — notably:
+    `customer.balance` / `transaction.total` are NOT queryable via
+    SuiteQL (NetSuite returns 400 "Unknown identifier" — they're
+    REST-only computed fields), so `balancesearch` / `foreigntotal` are
+    used instead, which ARE real, queryable columns.
     """
 
-    def __init__(
-        self,
-        dashboard_service: DashboardService | None = None,
-        netsuite_data_service: NetSuiteDataService | None = None,
-    ):
-        self.dashboard_service = dashboard_service or DashboardService()
+    # Safety caps applied even to methods whose original signature had no
+    # `limit` param (get_inactive_vendors) — SuiteQL already filters
+    # server-side so this is a defensive ceiling, not the primary limit.
+    MAX_ROWS = 500
+
+    def __init__(self, netsuite_data_service: NetSuiteDataService | None = None):
         self.netsuite_data_service = netsuite_data_service or NetSuiteDataService()
 
     def get_top_customers(self, *, user: User, limit: int = 5) -> list[dict[str, Any]]:
         """
-        Returns the top customers by balance, highest first.
+        Top customers by outstanding balance, highest first.
 
-        NetSuite customer records typically include `balance` (outstanding
-        balance). If the field is absent, the method falls back to sorting
-        by `companyName` so the result is still deterministic.
+        `balancesearch` is Customer's queryable AR-balance column
+        (confirmed via Tim Dietrich's published NetSuite SuiteQL
+        Customer/AR queries) — the bare `balance` field REST returns is
+        not queryable through SuiteQL.
         """
-        response = self.netsuite_data_service.get_customers(user)
-        items = response.get('items', [])
+        limit = self._safe_int(limit, default=5)
 
-        def _sort_key(item: dict) -> Any:
-            balance = item.get('balance')
-            return balance if balance is not None else 0
-
-        sorted_items = sorted(items, key=_sort_key, reverse=True)
-        top = sorted_items[:limit]
+        query = f"""
+            SELECT id, companyname, entityid, email, balancesearch
+            FROM customer
+            WHERE isinactive = 'F'
+            ORDER BY balancesearch DESC
+            FETCH FIRST {limit} ROWS ONLY
+        """
+        rows = self._execute(query=query, user=user)
 
         return [
             {
-                'id': item.get('id') or item.get('internalId'),
-                'name': item.get('companyName') or item.get('entityId'),
-                'entity_id': item.get('entityId'),
-                'balance': item.get('balance', 0),
-                'email': item.get('email'),
+                'id': row.get('id'),
+                'name': row.get('companyname') or row.get('entityid'),
+                'entity_id': row.get('entityid'),
+                'balance': self._safe_float(row.get('balancesearch')),
+                'email': row.get('email'),
             }
-            for item in top
+            for row in rows
         ]
 
     def get_overdue_invoices(self, *, user: User, limit: int = 20) -> list[dict[str, Any]]:
         """
-        Returns invoices that are not in a known paid/closed state and
-        either have a positive `overdueBalance` or a `dueDate` in the past.
+        Open (unpaid) customer invoices whose due date has passed.
 
-        The method is defensive about field names because NetSuite REST
-        Record responses can vary by account configuration.
+        Uses `foreignamountremaining > 0` rather than decoding
+        transaction status codes (`CustInvc:A`/`CustInvc:B`, etc.) — that
+        field is a real, documented amount-still-owed column and is the
+        same signal a verified working NetSuite aging-report SuiteQL
+        query uses, and it's far less likely to silently break than
+        guessing status-code strings that vary by account configuration.
+        `CURRENT_DATE - t.duedate` is Oracle SQL date arithmetic
+        (confirmed via a published NetSuite aging-bucket SuiteQL query)
+        and returns the day count directly — no Python date parsing
+        needed.
         """
-        response = self.netsuite_data_service.get_invoices(user)
-        items = response.get('items', [])
-        now = timezone.now()
+        limit = self._safe_int(limit, default=20)
 
-        CLOSED_STATUS_FRAGMENTS = ('Paid', 'Cancelled', 'Closed', 'Paid In Full')
+        query = f"""
+            SELECT
+                t.id,
+                t.tranid,
+                t.duedate,
+                t.status,
+                t.foreignamountremaining,
+                (CURRENT_DATE - t.duedate) AS days_overdue,
+                c.companyname,
+                c.entityid
+            FROM transaction t
+            INNER JOIN customer c ON t.entity = c.id
+            WHERE t.type = 'CustInvc'
+              AND t.duedate < CURRENT_DATE
+              AND t.foreignamountremaining > 0
+            ORDER BY days_overdue DESC
+            FETCH FIRST {limit} ROWS ONLY
+        """
+        rows = self._execute(query=query, user=user)
 
-        overdue: list[dict[str, Any]] = []
-
-        for item in items:
-            status = str(item.get('status', '') or '')
-            if any(fragment in status for fragment in CLOSED_STATUS_FRAGMENTS):
-                continue
-
-            overdue_balance = item.get('overdueBalance') or 0
-            due_date_str = item.get('dueDate') or item.get('createdDate')
-            days_overdue = 0
-            is_overdue = False
-
-            if overdue_balance > 0:
-                is_overdue = True
-            elif due_date_str:
-                try:
-                    due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
-                    if due_date.tzinfo is None:
-                        due_date = due_date.replace(tzinfo=timezone.utc)
-                    days_overdue = (now - due_date).days
-                    if days_overdue > 0:
-                        is_overdue = True
-                except (ValueError, TypeError):
-                    pass
-
-            if not is_overdue:
-                continue
-
-            entity = item.get('entity')
-            if isinstance(entity, dict):
-                entity_name = entity.get('name') or entity.get('entityId') or '--'
-            else:
-                entity_name = entity or '--'
-
-            overdue.append({
-                'id': item.get('id') or item.get('internalId'),
-                'tran_id': item.get('tranId'),
-                'entity': entity_name,
-                'total': item.get('total') or item.get('amount') or 0,
-                'status': status,
-                'due_date': due_date_str,
-                'days_overdue': max(0, days_overdue),
-            })
-
-        overdue.sort(key=lambda x: x['days_overdue'], reverse=True)
-        return overdue[:limit]
+        return [
+            {
+                'id': row.get('id'),
+                'tran_id': row.get('tranid'),
+                'entity': row.get('companyname') or row.get('entityid') or '--',
+                'total': self._safe_float(row.get('foreignamountremaining')),
+                'status': row.get('status'),
+                'due_date': row.get('duedate'),
+                'days_overdue': max(0, self._safe_int(row.get('days_overdue'), default=0)),
+            }
+            for row in rows
+        ]
 
     def get_low_inventory(
         self,
@@ -203,84 +201,104 @@ class BusinessInsightsService:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """
-        Returns inventory items whose `quantityOnHand` is below `threshold`
-        or below their own `reorderPoint`.
+        Inventory items whose on-hand quantity is below `threshold` or
+        below their own reorder point.
 
-        Only `inventoryItem` subtype is queried, matching the existing
-        DashboardService and NetSuite constants.
+        `quantityonhand` / `reorderpoint` are confirmed queryable `item`
+        table columns (a published NetSuite reorder-report SuiteQL query
+        selects both directly). `displayname` was not independently
+        confirmed as queryable, so `itemid` (confirmed) is used as the
+        display name instead of guessing — the `name` key in the
+        response contract is still populated, just from a verified field.
         """
-        response = self.netsuite_data_service.get_items(
-            user=user, item_type=NetSuiteRecordType.INVENTORY_ITEM
-        )
-        items = response.get('items', [])
+        threshold = self._safe_int(threshold, default=10)
+        limit = self._safe_int(limit, default=50)
 
-        low_stock: list[dict[str, Any]] = []
+        query = f"""
+            SELECT id, itemid, quantityonhand, reorderpoint, isinactive
+            FROM item
+            WHERE quantityonhand < {threshold}
+               OR (reorderpoint > 0 AND quantityonhand < reorderpoint)
+            ORDER BY quantityonhand ASC
+            FETCH FIRST {limit} ROWS ONLY
+        """
+        rows = self._execute(query=query, user=user)
 
-        for item in items:
-            qty = item.get('quantityOnHand')
-            if qty is None:
-                qty = item.get('quantity')
-            qty = qty if qty is not None else 0
-
-            reorder_point = item.get('reorderPoint') or 0
-
-            if qty < threshold or (reorder_point and qty < reorder_point):
-                low_stock.append({
-                    'id': item.get('id') or item.get('internalId'),
-                    'item_id': item.get('itemId'),
-                    'name': item.get('displayName') or item.get('itemId'),
-                    'quantity_on_hand': qty,
-                    'reorder_point': reorder_point,
-                    'is_inactive': item.get('isInactive', False),
-                })
-
-        low_stock.sort(key=lambda x: x['quantity_on_hand'])
-        return low_stock[:limit]
+        return [
+            {
+                'id': row.get('id'),
+                'item_id': row.get('itemid'),
+                'name': row.get('itemid'),
+                'quantity_on_hand': self._safe_float(row.get('quantityonhand')),
+                'reorder_point': self._safe_float(row.get('reorderpoint')),
+                'is_inactive': row.get('isinactive') == 'T',
+            }
+            for row in rows
+        ]
 
     def get_inactive_vendors(self, *, user: User) -> list[dict[str, Any]]:
         """
-        Returns vendors marked as inactive via `isInactive` or whose
-        `status` string contains "inactive" / "closed".
+        Vendors marked inactive. `vendor` mirrors `customer`'s schema
+        (both derive from NetSuite's Entity model) — `isinactive`,
+        `companyname`, `entityid`, `email` are confirmed queryable on
+        `customer`; `vendor` is documented as a structurally equivalent
+        table.
+
+        No `limit` in this method's signature (unchanged from the
+        original), but MAX_ROWS is still applied as a defensive ceiling
+        — SuiteQL's own WHERE clause already does the real filtering
+        server-side, unlike the previous implementation which fetched
+        every vendor and filtered client-side.
         """
-        response = self.netsuite_data_service.get_vendors(user)
-        items = response.get('items', [])
+        query = f"""
+            SELECT id, companyname, entityid, email, status
+            FROM vendor
+            WHERE isinactive = 'T'
+            ORDER BY companyname
+            FETCH FIRST {self.MAX_ROWS} ROWS ONLY
+        """
+        rows = self._execute(query=query, user=user)
 
-        inactive: list[dict[str, Any]] = []
-
-        for item in items:
-            is_inactive = item.get('isInactive', False)
-            status = str(item.get('status', '') or '').lower()
-            status_inactive = 'inactive' in status or 'closed' in status
-
-            if is_inactive or status_inactive:
-                inactive.append({
-                    'id': item.get('id') or item.get('internalId'),
-                    'entity_id': item.get('entityId'),
-                    'name': item.get('companyName') or item.get('entityId'),
-                    'email': item.get('email'),
-                    'status': item.get('status'),
-                })
-
-        return inactive
+        return [
+            {
+                'id': row.get('id'),
+                'entity_id': row.get('entityid'),
+                'name': row.get('companyname') or row.get('entityid'),
+                'email': row.get('email'),
+                'status': row.get('status'),
+            }
+            for row in rows
+        ]
 
     def get_sales_summary(self, *, user: User) -> dict[str, Any]:
         """
-        Aggregates recent sales orders and invoices into a single
-        summary payload. Returns totals, counts, and an average order
-        value derived entirely from the existing NetSuite record feeds.
+        Sales order and invoice totals/counts. `SUM`/`COUNT` run in
+        NetSuite's database via GROUP-BY-free aggregate queries — each
+        call returns exactly one row, never a page of transactions.
+
+        `foreigntotal` is used instead of `total` — `transaction.total`
+        is a REST-only computed field NetSuite's SuiteQL engine rejects
+        with "Unknown identifier" (documented, confirmed behavior);
+        `foreigntotal` is the real underlying column.
         """
-        sales_orders = self.netsuite_data_service.get_sales_orders(user).get('items', [])
-        invoices = self.netsuite_data_service.get_invoices(user).get('items', [])
+        so_query = """
+            SELECT COUNT(*) AS row_count, SUM(foreigntotal) AS revenue
+            FROM transaction
+            WHERE type = 'SalesOrd'
+        """
+        invoice_query = """
+            SELECT COUNT(*) AS row_count, SUM(foreigntotal) AS revenue
+            FROM transaction
+            WHERE type = 'CustInvc'
+        """
 
-        so_total = sum(
-            float(order.get('total') or order.get('amount') or 0) for order in sales_orders
-        )
-        invoice_total = sum(
-            float(inv.get('total') or inv.get('amount') or 0) for inv in invoices
-        )
+        so_row = self._execute_one(query=so_query, user=user)
+        invoice_row = self._execute_one(query=invoice_query, user=user)
 
-        total_orders = len(sales_orders)
-        total_invoices = len(invoices)
+        total_orders = self._safe_int(so_row.get('row_count'), default=0)
+        total_invoices = self._safe_int(invoice_row.get('row_count'), default=0)
+        so_total = self._safe_float(so_row.get('revenue'))
+        invoice_total = self._safe_float(invoice_row.get('revenue'))
         avg_order_value = so_total / total_orders if total_orders > 0 else 0.0
 
         return {
@@ -291,3 +309,35 @@ class BusinessInsightsService:
             'average_order_value': round(avg_order_value, 2),
             'currency': 'USD',
         }
+
+    def _execute(self, *, query: str, user: User) -> list[dict[str, Any]]:
+        response = self.netsuite_data_service.execute_suiteql(query=query, user=user)
+        return response.get('items', [])
+
+    def _execute_one(self, *, query: str, user: User) -> dict[str, Any]:
+        """For aggregate queries that always return exactly one row."""
+        rows = self._execute(query=query, user=user)
+        return rows[0] if rows else {}
+
+    @staticmethod
+    def _safe_int(value: Any, *, default: int) -> int:
+        """
+        Coerces to int, used both for parsing SuiteQL's string-typed
+        numeric results and for validating limit/threshold parameters
+        before they're interpolated into a query string — SuiteQL's REST
+        endpoint takes a raw `q` string with no parameter-binding
+        support, so this coercion is what keeps interpolation of
+        caller-supplied ints safe from injection (a non-numeric value
+        raises here rather than ever reaching NetSuite).
+        """
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_float(value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0

@@ -183,13 +183,13 @@ class NetSuiteAuthClient:
         return response.json()
 
     def _post(
-    self,
-    *,
-    path: str,
-    access_token: str | None = None,
-    data: dict | None = None,
-    headers: dict | None = None,
-) -> dict:
+        self,
+        *,
+        path: str,
+        access_token: str | None = None,
+        data: dict | None = None,
+        headers: dict | None = None,
+    ) -> dict:
         """
         Generic authenticated POST helper.
 
@@ -210,7 +210,7 @@ class NetSuiteAuthClient:
 
         try:
             response = requests.post(
-                f"{self._rest_base_url}\{path}",
+                f"{self._rest_base_url}/{path}",
                 headers=request_headers,
                 json=data,
                 timeout=REQUEST_TIMEOUT_SECONDS,
