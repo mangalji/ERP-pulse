@@ -50,6 +50,7 @@ LOCAL_APPS = [
     'accounts',
     'netsuite',
     'ai',
+    'dashboard',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
