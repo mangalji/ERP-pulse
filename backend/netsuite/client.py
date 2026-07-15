@@ -182,6 +182,73 @@ class NetSuiteAuthClient:
 
         return response.json()
 
+    def _post(
+    self,
+    *,
+    path: str,
+    access_token: str | None = None,
+    data: dict | None = None,
+    headers: dict | None = None,
+) -> dict:
+        """
+        Generic authenticated POST helper.
+
+        Used by SuiteQL and any future authenticated POST endpoints.
+        """
+        token = access_token or self.access_token
+
+        if not token:
+            raise ValueError("No access token provided or stored on client.")
+
+        request_headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        
+        if headers:
+            request_headers.update(headers)
+
+        try:
+            response = requests.post(
+                f"{self._rest_base_url}\{path}",
+                headers=request_headers,
+                json=data,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            logger.exception("NetSuite POST request failed (network error).")
+            raise NetSuiteRecordFetchException(
+                "Could not reach NetSuite to complete the POST request. Please try again."
+            ) from exc
+        
+        if response.status_code == 404:
+            logger.error("NetSuite POST endpoint returned 404 for %s.",path,)
+
+            raise NetSuiteRecordNotFoundException(
+            "The requested NetSuite endpoint was not found."
+            )
+        
+        if not response.ok:
+            logger.error(
+                "NetSuite POST endpoint returned %s for %s.",
+                response.status_code,path,
+            )
+
+            raise NetSuiteRecordFetchException(
+                    "NetSuite rejected the request."
+                )
+        
+        try:
+            return response.json()
+        
+        except ValueError as exc:
+
+            logger.exception("Invalid JSON returned by NetSuite.")
+            raise NetSuiteRecordFetchException(
+            "NetSuite returned an invalid response."
+        ) from exc
+    
+
     def _post_token_request(self, data: dict) -> NetSuiteTokenSet:
         try:
             response = requests.post(
@@ -213,4 +280,23 @@ class NetSuiteAuthClient:
             # refresh_token=payload['refresh_token'],
             refresh_token=payload.get('refresh_token',data.get('refresh_token')),
             access_token_expires_at=timezone.now() + timedelta(seconds=expires_in),
+        )
+        
+    def execute_suiteql(self, *, query: str, access_token: str | None = None,) -> dict:
+        """
+        Execute a SuiteQL query.
+        
+        Intended for analytics and reporting where REST Record endpoints
+        are insufficient because of pagination limitations.
+        """
+
+        return self._post(
+            path="query/v1/suiteql",
+            access_token=access_token,
+            data={
+                "q": query,
+            },
+            headers={
+                "Prefer": "transient",
+            },
         )

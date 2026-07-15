@@ -229,5 +229,6 @@ NETSUITE_REDIRECT_URI = config('NETSUITE_REDIRECT_URI', default='')
 # OpenAI and raises AIProviderNotConfiguredException (not a raw crash) if
 # it isn't.
 
-OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
-OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o-mini')
+AI_PROVIDER = config("AI_PROVIDER", default="gemini")
+GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
+GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-2.5-flash")

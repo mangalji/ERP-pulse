@@ -17,6 +17,8 @@ from ai.models import AIConversation, AIMessage
 from ai.prompts import build_system_prompt, build_user_prompt
 from ai.providers import AIProvider, OpenAIProvider
 from ai.repositories import ConversationRepository, MessageRepository
+# from ai.providers import get_ai_provider
+from ai.providers import AIProviderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,7 @@ class AIService:
     ):
         self.conversation_repository = conversation_repository or ConversationRepository()
         self.message_repository = message_repository or MessageRepository()
-        self.provider = provider or OpenAIProvider()
+        self.provider = provider or AIProviderFactory.create()
 
     def ask(self, *, user: User, message: str, conversation_id=None) -> dict:
         """
