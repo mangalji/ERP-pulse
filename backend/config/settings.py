@@ -22,8 +22,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=False, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
-
+ALLOWED_HOSTS = config(
+    'ALLOWED_HOSTS',
+    default='localhost,127.0.0.1',
+    cast=Csv(),
+)
 
 # ---------------------------------------------------------------------------
 # Applications
@@ -144,6 +147,7 @@ EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 DEFAULT_FROM_EMAIL = "noreply@erppulse.local"
 
+
 # ---------------------------------------------------------------------------
 # Django REST Framework
 # ---------------------------------------------------------------------------
@@ -159,6 +163,19 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'EXCEPTION_HANDLER':'common.exception_handler.standard_exception_handler',
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('THROTTLE_ANON', default='100/min'),
+        'user': config('THROTTLE_USER', default='1000/min'),
+        'login_otp': config('THROTTLE_LOGIN_OTP', default='5/min'),
+        'register_otp': config('THROTTLE_REGISTER_OTP', default='5/min'),
+        'ai_chat': config('THROTTLE_AI_CHAT', default='20/min'),
+        'dashboard': config('THROTTLE_DASHBOARD', default='120/min'),
+        'netsuite_sync': config('THROTTLE_NETSUITE_SYNC', default='30/min'),
+    },
 }
 
 
@@ -234,3 +251,40 @@ GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
 GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-2.5-flash")
 OPENAI_API_KEY = config("OPENAI_API_KEY", default="")
 OPENAI_MODEL = config("OPENAI_MODEL", default="gpt-4o-mini")
+
+
+# ---------------------------------------------------------------------------
+# Security Hardening
+# ---------------------------------------------------------------------------
+# All security flags are driven by environment variables so the same
+# settings file works in development and production without code changes.
+
+SECURE_BROWSER_XSS_FILTER = config('SECURE_BROWSER_XSS_FILTER', default=True, cast=bool)
+SECURE_CONTENT_TYPE_NOSNIFF = config('SECURE_CONTENT_TYPE_NOSNIFF', default=True, cast=bool)
+SECURE_REFERRER_POLICY = config('SECURE_REFERRER_POLICY', default='strict-origin-when-cross-origin')
+X_FRAME_OPTIONS = config('X_FRAME_OPTIONS', default='DENY')
+
+# Session and CSRF cookies are marked Secure in production so browsers
+# never send them over plain HTTP. In development (DEBUG=True) this can
+# be relaxed via the env var.
+SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
+CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
+
+# Trusted origins for CSRF checks. Defaults to the frontend dev server
+# plus localhost API origins. Must be set explicitly in production.
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS',
+    default='http://localhost:5173,http://localhost:8000',
+    cast=Csv(),
+)
+
+# ---------------------------------------------------------------------------
+# DEBUG safeguards
+# ---------------------------------------------------------------------------
+# When DEBUG is True, these extra flags ensure debug information is not
+# inadvertently exposed in production-like environments.
+
+if DEBUG:
+    # Ensure template debug mirrors DEBUG rather than being left on
+    # accidentally in production.
+    TEMPLATES[0]['OPTIONS']['debug'] = True

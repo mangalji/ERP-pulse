@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.utils.response import success_response
+from common.throttles import DashboardThrottle
 from dashboard.services import DashboardService
 
 dashboard_service = DashboardService()
@@ -21,6 +22,7 @@ class DashboardSummaryView(APIView):
     """GET /api/v1/dashboard/summary/"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [DashboardThrottle]
 
     def get(self, request):
         summary = dashboard_service.get_summary(user=request.user)
@@ -34,6 +36,7 @@ class RecentSalesOrdersView(APIView):
     """GET /api/v1/dashboard/recent-sales-orders/"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [DashboardThrottle]
 
     def get(self, request):
         sales_orders = dashboard_service.get_recent_sales_orders(user=request.user)
@@ -47,6 +50,7 @@ class RecentInvoicesView(APIView):
     """GET /api/v1/dashboard/recent-invoices/"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [DashboardThrottle]
 
     def get(self, request):
         invoices = dashboard_service.get_recent_invoices(user=request.user)
@@ -60,6 +64,7 @@ class RecentCustomersView(APIView):
     """GET /api/v1/dashboard/recent-customers/"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [DashboardThrottle]
 
     def get(self, request):
         customers = dashboard_service.get_recent_customers(user=request.user)

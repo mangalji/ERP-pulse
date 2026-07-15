@@ -181,7 +181,7 @@ class NetSuiteAuthClient:
             )
 
         return response.json()
-
+    
     def _post(
         self,
         *,
@@ -227,6 +227,8 @@ class NetSuiteAuthClient:
             raise NetSuiteRecordNotFoundException(
             "The requested NetSuite endpoint was not found."
             )
+        
+        logger.error("SuiteQL Response: %s", response.text)
         
         if not response.ok:
             logger.error(

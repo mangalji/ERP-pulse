@@ -14,6 +14,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
 from common.utils.response import success_response
+from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException
 from netsuite.serializers import NetSuiteCallbackSerializer
@@ -96,6 +97,7 @@ class NetSuiteCustomersView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request):
         customers = NetSuiteDataService().get_customers(user=request.user)
@@ -115,6 +117,7 @@ class NetSuiteCustomerDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
         customer = NetSuiteDataService().get_record(
@@ -131,6 +134,7 @@ class NetSuiteEmployeesView(APIView):
     GET /api/v1/netsuite/employees/
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request):
         employees = NetSuiteDataService().get_employees(user=request.user)
@@ -146,6 +150,7 @@ class NetSuiteEmployeeDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
         employee = NetSuiteDataService().get_record(
@@ -162,6 +167,7 @@ class NetSuiteVendorsView(APIView):
     GET /api/v1/netsuite/vendors/
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request):
         vendors = NetSuiteDataService().get_vendors(user=request.user)
@@ -177,6 +183,7 @@ class NetSuiteVendorDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
         vendor = NetSuiteDataService().get_record(
@@ -195,6 +202,7 @@ class NetSuiteItemsView(APIView):
     Defaults to inventoryItem if not provided.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request):
         item_type = request.query_params.get('type', 'inventoryItem')
@@ -218,6 +226,7 @@ class NetSuiteItemDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
         item_type = request.query_params.get('type', NetSuiteRecordType.INVENTORY_ITEM)
@@ -238,6 +247,7 @@ class NetSuiteSalesOrdersView(APIView):
     GET /api/v1/netsuite/sales-orders/
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request):
         sales_orders = NetSuiteDataService().get_sales_orders(user=request.user)
@@ -253,6 +263,7 @@ class NetSuiteSalesOrderDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
         sales_order = NetSuiteDataService().get_record(
@@ -269,6 +280,7 @@ class NetSuitePurchaseOrderView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self,request):
         purchase_orders = NetSuiteDataService().get_purchase_orders(user=request.user)
@@ -284,6 +296,7 @@ class NetSuitePurchaseOrderDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
         purchase_order = NetSuiteDataService().get_record(
@@ -300,6 +313,7 @@ class NetSuiteInvoicesView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self,request):
         invoices = NetSuiteDataService().get_invoices(user=request.user)
@@ -315,6 +329,7 @@ class NetSuiteInvoiceDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
         invoice = NetSuiteDataService().get_record(

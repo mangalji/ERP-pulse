@@ -34,6 +34,7 @@ from accounts.serializers import (
     ResendLoginOTPSerializer
     )
 from common.utils.response import success_response
+from common.throttles import LoginOTPThrottle, RegisterOTPThrottle
 
 authentication_service = AuthenticationService()
 
@@ -50,6 +51,7 @@ class RegisterView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterOTPThrottle]
 
     def post(self,request):
         serializer = RegisterSerializer(data=request.data)
@@ -72,6 +74,7 @@ class ResendRegistrationOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterOTPThrottle]
 
     def post(self, request):
         serializer = ResendRegistrationOTPSerializer(data=request.data)
@@ -94,9 +97,9 @@ class VerifyRegistrationOTPView(APIView):
     page with this token after a successful response.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterOTPThrottle]
     
     def post(self,request):
-        print("verify registration otp view called")
         serializer = VerifyRegistrationOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -119,6 +122,7 @@ class CompleteProfileView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterOTPThrottle]
 
     def post(self, request):
         serializer = CompleteProfileSerializer(data=request.data)
@@ -142,6 +146,7 @@ class LoginView(APIView):
     """
  
     permission_classes = [AllowAny]
+    throttle_classes = [LoginOTPThrottle]
  
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -165,9 +170,10 @@ class VerifyLoginOTPView(APIView):
     delivery-mechanism concern, not a business rule — the service still
     owns all OTP/credential decisions and simply returns the User.
     """
- 
+  
     permission_classes = [AllowAny]
- 
+    throttle_classes = [LoginOTPThrottle]
+  
     def post(self, request):
         serializer = VerifyLoginOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -190,6 +196,7 @@ class ResendLoginOTPView(APIView):
     POST /api/v1/auth/login/resend-otp/
     """
     permission_classes = [AllowAny]
+    throttle_classes = [LoginOTPThrottle]
 
     def post(self, request):
         serializer = ResendLoginOTPSerializer(data=request.data)

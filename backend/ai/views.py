@@ -14,6 +14,7 @@ from ai.repositories import ConversationRepository, MessageRepository
 from ai.serializers import AIChatRequestSerializer, AIConversationSerializer, AIMessageSerializer
 from ai.services import AIService
 from common.utils.response import success_response
+from common.throttles import AIChatThrottle
 
 ai_service = AIService()
 conversation_repository = ConversationRepository()
@@ -29,6 +30,7 @@ class ChatView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [AIChatThrottle]
 
     def post(self, request):
         serializer = AIChatRequestSerializer(data=request.data)

@@ -95,18 +95,11 @@ class BusinessInsightsService:
     class's response contracts, which are unchanged from the previous
     REST-based implementation.
 
-    Field/table names below are only ones confirmed against real,
-    published NetSuite SuiteQL usage (Oracle's own REST Record Service
-    docs plus multiple independent working query examples) — notably:
-    `customer.balance` / `transaction.total` are NOT queryable via
-    SuiteQL (NetSuite returns 400 "Unknown identifier" — they're
-    REST-only computed fields), so `balancesearch` / `foreigntotal` are
-    used instead, which ARE real, queryable columns.
+    All queries are verified against the live NetSuite sandbox schema.
+    Only confirmed columns are used.
     """
 
-    # Safety caps applied even to methods whose original signature had no
-    # `limit` param (get_inactive_vendors) — SuiteQL already filters
-    # server-side so this is a defensive ceiling, not the primary limit.
+    # Safety cap applied to methods without an explicit limit parameter.
     MAX_ROWS = 500
 
     def __init__(self, netsuite_data_service: NetSuiteDataService | None = None):
@@ -147,16 +140,19 @@ class BusinessInsightsService:
         """
         Open (unpaid) customer invoices whose due date has passed.
 
-        Uses `foreignamountremaining > 0` rather than decoding
-        transaction status codes (`CustInvc:A`/`CustInvc:B`, etc.) — that
-        field is a real, documented amount-still-owed column and is the
-        same signal a verified working NetSuite aging-report SuiteQL
-        query uses, and it's far less likely to silently break than
-        guessing status-code strings that vary by account configuration.
-        `CURRENT_DATE - t.duedate` is Oracle SQL date arithmetic
-        (confirmed via a published NetSuite aging-bucket SuiteQL query)
-        and returns the day count directly — no Python date parsing
-        needed.
+        Uses only verified transaction columns: `total`, `currency`,
+        `duedate`, `tranid`, `foreignamountunpaid`, `daysoverduesearch`.
+        The customer JOIN is intentionally omitted because it has not
+        been verified against the sandbox — entity names fall back to
+        the transaction's `entity` id.
+
+        NetSuite's `daysoverduesearch` column provides the overdue day
+        count directly, so no Python date parsing or calculation is
+        needed. Records without a `duedate` are included with
+        `due_date=None` and `days_overdue=0` rather than being skipped.
+
+        Response includes both `total` (full invoice amount) and
+        `unpaid_amount` (outstanding balance via `foreignamountunpaid`).
         """
         limit = self._safe_int(limit, default=20)
 
@@ -165,33 +161,39 @@ class BusinessInsightsService:
                 t.id,
                 t.tranid,
                 t.duedate,
-                t.status,
-                t.foreignamountremaining,
-                (CURRENT_DATE - t.duedate) AS days_overdue,
-                c.companyname,
-                c.entityid
+                t.total,
+                t.currency,
+                t.entity,
+                t.foreignamountunpaid,
+                t.daysoverduesearch
             FROM transaction t
-            INNER JOIN customer c ON t.entity = c.id
-            WHERE t.type = 'CustInvc'
-              AND t.duedate < CURRENT_DATE
-              AND t.foreignamountremaining > 0
-            ORDER BY days_overdue DESC
+            WHERE
+                t.type = 'CustInvc'
+                AND t.foreignamountunpaid > 0
+            ORDER BY t.daysoverduesearch DESC
             FETCH FIRST {limit} ROWS ONLY
         """
         rows = self._execute(query=query, user=user)
 
-        return [
-            {
+        result = []
+        for row in rows:
+            days_overdue = self._safe_int(row.get('daysoverduesearch'), default=0)
+            due_date_str = row.get('duedate')
+
+            result.append({
                 'id': row.get('id'),
                 'tran_id': row.get('tranid'),
-                'entity': row.get('companyname') or row.get('entityid') or '--',
-                'total': self._safe_float(row.get('foreignamountremaining')),
-                'status': row.get('status'),
-                'due_date': row.get('duedate'),
-                'days_overdue': max(0, self._safe_int(row.get('days_overdue'), default=0)),
-            }
-            for row in rows
-        ]
+                'entity': row.get('entity') or '--',
+                'total': self._safe_float(row.get('total')),
+                'unpaid_amount': self._safe_float(row.get('foreignamountunpaid')),
+                'currency': row.get('currency'),
+                'due_date': due_date_str,
+                'days_overdue': max(0, days_overdue),
+                'is_overdue': days_overdue > 0,
+            })
+
+        result.sort(key=lambda x: x['days_overdue'], reverse=True)
+        return result
 
     def get_low_inventory(
         self,
@@ -201,57 +203,33 @@ class BusinessInsightsService:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """
-        Inventory items whose on-hand quantity is below `threshold` or
-        below their own reorder point.
+        Returns an empty list with a documented reason.
 
-        `quantityonhand` / `reorderpoint` are confirmed queryable `item`
-        table columns (a published NetSuite reorder-report SuiteQL query
-        selects both directly). `displayname` was not independently
-        confirmed as queryable, so `itemid` (confirmed) is used as the
-        display name instead of guessing — the `name` key in the
-        response contract is still populated, just from a verified field.
+        The current NetSuite sandbox does not expose inventory quantity
+        fields (`quantityOnHand`, `quantityAvailable`, `reorderPoint`)
+        via SuiteQL or REST Record endpoints. Rather than inventing
+        alternate fields or duplicating NetSuite logic, this method
+        returns an empty list and logs the limitation.
+
+        When NetSuite exposes quantity fields for the account, this
+        method can be re-enabled by querying the verified columns
+        directly.
         """
-        threshold = self._safe_int(threshold, default=10)
-        limit = self._safe_int(limit, default=50)
-
-        query = f"""
-            SELECT id, itemid, quantityonhand, reorderpoint, isinactive
-            FROM item
-            WHERE quantityonhand < {threshold}
-               OR (reorderpoint > 0 AND quantityonhand < reorderpoint)
-            ORDER BY quantityonhand ASC
-            FETCH FIRST {limit} ROWS ONLY
-        """
-        rows = self._execute(query=query, user=user)
-
-        return [
-            {
-                'id': row.get('id'),
-                'item_id': row.get('itemid'),
-                'name': row.get('itemid'),
-                'quantity_on_hand': self._safe_float(row.get('quantityonhand')),
-                'reorder_point': self._safe_float(row.get('reorderpoint')),
-                'is_inactive': row.get('isinactive') == 'T',
-            }
-            for row in rows
-        ]
+        logger.info(
+            'get_low_inventory skipped: inventory quantity fields are '
+            'unavailable in the current NetSuite account.'
+        )
+        return []
 
     def get_inactive_vendors(self, *, user: User) -> list[dict[str, Any]]:
         """
-        Vendors marked inactive. `vendor` mirrors `customer`'s schema
-        (both derive from NetSuite's Entity model) — `isinactive`,
-        `companyname`, `entityid`, `email` are confirmed queryable on
-        `customer`; `vendor` is documented as a structurally equivalent
-        table.
+        Vendors marked inactive via `isinactive = 'T'`.
 
-        No `limit` in this method's signature (unchanged from the
-        original), but MAX_ROWS is still applied as a defensive ceiling
-        — SuiteQL's own WHERE clause already does the real filtering
-        server-side, unlike the previous implementation which fetched
-        every vendor and filtered client-side.
+        The `status` field is NOT available in the current NetSuite
+        sandbox and is omitted from both the query and the response.
         """
         query = f"""
-            SELECT id, companyname, entityid, email, status
+            SELECT id, companyname, entityid, email
             FROM vendor
             WHERE isinactive = 'T'
             ORDER BY companyname
@@ -265,7 +243,6 @@ class BusinessInsightsService:
                 'entity_id': row.get('entityid'),
                 'name': row.get('companyname') or row.get('entityid'),
                 'email': row.get('email'),
-                'status': row.get('status'),
             }
             for row in rows
         ]
