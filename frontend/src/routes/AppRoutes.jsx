@@ -12,6 +12,9 @@ import CustomersPage from '../pages/CustomersPage.jsx'
 import EmployeesPage from '../pages/EmployeesPage.jsx'
 import VendorsPage from '../pages/VendorsPage.jsx'
 import InventoryPage from '../pages/InventoryPage.jsx'
+import SalesOrdersPage from '../pages/SalesOrdersPage.jsx'
+import PurchaseOrdersPage from '../pages/PurchaseOrdersPage.jsx'
+import InvoicesPage from '../pages/InvoicesPage.jsx'
 import ReportsPage from '../pages/ReportsPage.jsx'
 import HistoryPage from '../pages/HistoryPage.jsx'
 import SettingsPage from '../pages/SettingsPage.jsx'
@@ -78,6 +81,30 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <InventoryPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/sales-orders"
+        element={
+          <ProtectedRoute>
+            <SalesOrdersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/purchase-orders"
+        element={
+          <ProtectedRoute>
+            <PurchaseOrdersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/invoices"
+        element={
+          <ProtectedRoute>
+            <InvoicesPage />
           </ProtectedRoute>
         }
       />

@@ -9,6 +9,9 @@ const NAV_ITEMS = [
   { to: '/employees', label: 'Employees', icon: EmployeesIcon },
   { to: '/vendors', label: 'Vendors', icon: VendorsIcon },
   { to: '/inventory', label: 'Inventory', icon: InventoryIcon },
+  { to: '/sales-orders', label: 'Sales Orders', icon: SalesOrdersIcon },
+  { to: '/purchase-orders', label: 'Purchase Orders', icon: PurchaseOrdersIcon },
+  { to: '/invoices', label: 'Invoices', icon: InvoicesIcon },
   { to: '/reports', label: 'Reports', icon: ReportIcon },
   { to: '/history', label: 'History', icon: ClockIcon },
   { to: '/settings', label: 'Settings', icon: GearIcon },
@@ -123,6 +126,33 @@ function InventoryIcon(props) {
       <path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v7a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 15z" />
       <path d="M3.5 8.5 12 13l8.5-4.5" />
       <path d="M12 13V21" />
+    </svg>
+  )
+}
+function SalesOrdersIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M16 13H8M16 17H8M10 9H8" />
+    </svg>
+  )
+}
+function PurchaseOrdersIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <circle cx="9" cy="21" r="1" />
+      <circle cx="20" cy="21" r="1" />
+      <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+    </svg>
+  )
+}
+function InvoicesIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M12 18v-6M9 15l3 3 3-3" />
     </svg>
   )
 }
