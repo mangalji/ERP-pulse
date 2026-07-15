@@ -50,3 +50,8 @@ class NetSuiteRecordFetchException(Exception):
     """Raised when a NetSuite REST Record API call fails (network error or non-2xx response)."""
 
     status_code = status.HTTP_502_BAD_GATEWAY
+
+class NetSuiteRecordNotFoundException(Exception):
+    """Raised when NetSuite returns 404 for a specific record id (e.g. detail lookups)."""
+
+    status_code = status.HTTP_404_NOT_FOUND

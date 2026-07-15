@@ -33,6 +33,7 @@ from netsuite.exceptions import (
     NetSuiteConfigurationException, 
     NetSuiteTokenExchangeException, 
     NetSuiteRecordFetchException,
+    NetSuiteRecordNotFoundException,
     )
 from netsuite.oauth import netsuite_account_domain
 
@@ -168,6 +169,10 @@ class NetSuiteAuthClient:
             raise NetSuiteRecordFetchException(
                 'Could not reach NetSuite to fetch records. Please try again.'
             ) from exc
+        
+        if response.status_code == 404:
+            logger.error('NetSuite record endpoint returned 404 for %s.',path)
+            raise NetSuiteRecordNotFoundException('The requested NetSuite record was not found.')
 
         if not response.ok:
             logger.error('NetSuite record endpoint returned %s for %s.', response.status_code, path)
@@ -200,7 +205,6 @@ class NetSuiteAuthClient:
             raise NetSuiteTokenExchangeException(
                 'NetSuite rejected the authentication request. Please reconnect your account.'
             )
-        print(response.json())
         payload = response.json()
         expires_in = payload.get('expires_in', 3600)
 

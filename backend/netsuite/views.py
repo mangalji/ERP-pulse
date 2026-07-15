@@ -9,10 +9,12 @@ response. No NetSuite HTTP calls or token handling happen here.
 
 from django.conf import settings
 from django.shortcuts import redirect
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
 from common.utils.response import success_response
+from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException
 from netsuite.serializers import NetSuiteCallbackSerializer
 from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
@@ -104,6 +106,26 @@ class NetSuiteCustomersView(APIView):
         )
 
 
+class NetSuiteCustomerDetailView(APIView):
+    """
+    GET /api/v1/netsuite/customers/<record_id>/
+
+    Reuses the generic NetSuiteDataService.get_record() — no per-resource
+    service method needed for a straight pass-through single-record read.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, record_id):
+        customer = NetSuiteDataService().get_record(
+            record_type=NetSuiteRecordType.CUSTOMER, record_id=record_id, user=request.user,
+        )
+        return success_response(
+            message='NetSuite customer fetched successfully.',
+            data=customer,
+        )
+
+
 class NetSuiteEmployeesView(APIView):
     """
     GET /api/v1/netsuite/employees/
@@ -115,6 +137,23 @@ class NetSuiteEmployeesView(APIView):
         return success_response(
             message='NetSuite employees fetched successfully.',
             data=employees,
+        )
+
+
+class NetSuiteEmployeeDetailView(APIView):
+    """
+    GET /api/v1/netsuite/employees/<record_id>/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, record_id):
+        employee = NetSuiteDataService().get_record(
+            record_type=NetSuiteRecordType.EMPLOYEE, record_id=record_id, user=request.user,
+        )
+        return success_response(
+            message='NetSuite employee fetched successfully.',
+            data=employee,
         )
 
 
@@ -132,6 +171,23 @@ class NetSuiteVendorsView(APIView):
         )
 
 
+class NetSuiteVendorDetailView(APIView):
+    """
+    GET /api/v1/netsuite/vendors/<record_id>/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, record_id):
+        vendor = NetSuiteDataService().get_record(
+            record_type=NetSuiteRecordType.VENDOR, record_id=record_id, user=request.user,
+        )
+        return success_response(
+            message='NetSuite vendor fetched successfully.',
+            data=vendor,
+        )
+
+
 class NetSuiteItemsView(APIView):
     """
     GET /api/v1/netsuite/items/
@@ -146,12 +202,35 @@ class NetSuiteItemsView(APIView):
         try:
             items = NetSuiteDataService().get_items(user=request.user, item_type=item_type)
         except ValueError as e:
-            from rest_framework.exceptions import ValidationError
             raise ValidationError(str(e))
             
         return success_response(
             message=f'NetSuite items ({item_type}) fetched successfully.',
             data=items,
+        )
+
+
+class NetSuiteItemDetailView(APIView):
+    """
+    GET /api/v1/netsuite/items/<record_id>/
+    Same ?type= convention as NetSuiteItemsView, since NetSuite requires
+    the specific item subtype in the path — defaults to inventoryItem.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, record_id):
+        item_type = request.query_params.get('type', NetSuiteRecordType.INVENTORY_ITEM)
+
+        if not NetSuiteRecordType.is_valid(item_type):
+            raise ValidationError(f'Invalid NetSuite item type: {item_type}')
+
+        item = NetSuiteDataService().get_record(
+            record_type=item_type, record_id=record_id, user=request.user,
+        )
+        return success_response(
+            message=f'NetSuite item ({item_type}) fetched successfully.',
+            data=item,
         )
 
 class NetSuiteSalesOrdersView(APIView):
@@ -167,6 +246,23 @@ class NetSuiteSalesOrdersView(APIView):
             data=sales_orders,
         )
 
+
+class NetSuiteSalesOrderDetailView(APIView):
+    """
+    GET /api/v1/netsuite/sales-orders/<record_id>/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, record_id):
+        sales_order = NetSuiteDataService().get_record(
+            record_type=NetSuiteRecordType.SALES_ORDER, record_id=record_id, user=request.user,
+        )
+        return success_response(
+            message='NetSuite sales order fetched successfully.',
+            data=sales_order,
+        )
+
 class NetSuitePurchaseOrderView(APIView):
     """
     GET /api/v1/netsuite/purchase-orders/
@@ -179,6 +275,23 @@ class NetSuitePurchaseOrderView(APIView):
         return success_response(
             message='NetSuite Purchase orders fetched successfully.',
             data=purchase_orders,
+        )
+
+
+class NetSuitePurchaseOrderDetailView(APIView):
+    """
+    GET /api/v1/netsuite/purchase-orders/<record_id>/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, record_id):
+        purchase_order = NetSuiteDataService().get_record(
+            record_type=NetSuiteRecordType.PURCHASE_ORDER, record_id=record_id, user=request.user,
+        )
+        return success_response(
+            message='NetSuite purchase order fetched successfully.',
+            data=purchase_order,
         )
     
 class NetSuiteInvoicesView(APIView):
@@ -193,4 +306,21 @@ class NetSuiteInvoicesView(APIView):
         return success_response(
             message='NetSuite Invoices fetched successfully.',
             data=invoices,
+        )
+
+
+class NetSuiteInvoiceDetailView(APIView):
+    """
+    GET /api/v1/netsuite/invoices/<record_id>/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, record_id):
+        invoice = NetSuiteDataService().get_record(
+            record_type=NetSuiteRecordType.INVOICE, record_id=record_id, user=request.user,
+        )
+        return success_response(
+            message='NetSuite invoice fetched successfully.',
+            data=invoice,
         )
