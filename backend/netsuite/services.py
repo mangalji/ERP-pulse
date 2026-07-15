@@ -149,6 +149,15 @@ class NetSuiteDataService:
 
     def get_vendors(self, *, user: User) -> dict:
         return self.get_records(record_type=NetSuiteRecordType.VENDOR, user=user)
+    
+    def get_sales_orders(self, *, user: User) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.SALES_ORDER, user=user)
+    
+    def get_purchase_orders(self,*,user: User) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.PURCHASE_ORDER,user=user)
+    
+    def get_invoices(self,*,user: User) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.INVOICE,user=user)
 
     def get_items(self, *, user: User, item_type: str = NetSuiteRecordType.INVENTORY_ITEM) -> dict:
         if not NetSuiteRecordType.is_valid(item_type):

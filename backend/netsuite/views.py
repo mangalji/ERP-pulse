@@ -153,3 +153,44 @@ class NetSuiteItemsView(APIView):
             message=f'NetSuite items ({item_type}) fetched successfully.',
             data=items,
         )
+
+class NetSuiteSalesOrdersView(APIView):
+    """
+    GET /api/v1/netsuite/sales-orders/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        sales_orders = NetSuiteDataService().get_sales_orders(user=request.user)
+        return success_response(
+            message='NetSuite sales orders fetched successfully.',
+            data=sales_orders,
+        )
+
+class NetSuitePurchaseOrderView(APIView):
+    """
+    GET /api/v1/netsuite/purchase-orders/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self,request):
+        purchase_orders = NetSuiteDataService().get_purchase_orders(user=request.user)
+        return success_response(
+            message='NetSuite Purchase orders fetched successfully.',
+            data=purchase_orders,
+        )
+    
+class NetSuiteInvoicesView(APIView):
+    """
+    GET /api/v1/netsuite/invoices/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self,request):
+        invoices = NetSuiteDataService().get_invoices(user=request.user)
+        return success_response(
+            message='NetSuite Invoices fetched successfully.',
+            data=invoices,
+        )

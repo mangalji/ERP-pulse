@@ -2,6 +2,11 @@ class NetSuiteRecordType:
     CUSTOMER = 'customer'
     EMPLOYEE = 'employee'
     VENDOR = 'vendor'
+
+    # NetSuite Transactions
+    SALES_ORDER = 'salesOrder'
+    PURCHASE_ORDER = 'purchaseOrder'
+    INVOICE = 'invoice'
     
     # NetSuite Item Subtypes
     INVENTORY_ITEM = 'inventoryItem'
@@ -26,6 +31,9 @@ class NetSuiteRecordType:
             cls.CUSTOMER,
             cls.EMPLOYEE,
             cls.VENDOR,
+            cls.SALES_ORDER,
+            cls.PURCHASE_ORDER,
+            cls.INVOICE,
             cls.INVENTORY_ITEM,
             cls.NON_INVENTORY_SALE_ITEM,
             cls.NON_INVENTORY_RESALE_ITEM,

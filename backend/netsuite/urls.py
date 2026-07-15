@@ -7,6 +7,9 @@ from netsuite.views import (
     NetSuiteEmployeesView,
     NetSuiteItemsView,
     NetSuiteVendorsView,
+    NetSuiteInvoicesView,
+    NetSuitePurchaseOrderView,
+    NetSuiteSalesOrdersView,
 )
 
 urlpatterns = [
@@ -16,4 +19,7 @@ urlpatterns = [
     path('employees/', NetSuiteEmployeesView.as_view(), name='netsuite-employees'),
     path('vendors/', NetSuiteVendorsView.as_view(), name='netsuite-vendors'),
     path('items/', NetSuiteItemsView.as_view(), name='netsuite-items'),
+    path('sales-orders/', NetSuiteSalesOrdersView.as_view(), name='netsuite-sales-orders'),
+    path('purchase-orders/', NetSuitePurchaseOrderView.as_view(), name='netsuite-purchase-orders'),
+    path('invoices/', NetSuiteInvoicesView.as_view(), name='netsuite-invoices'),
 ]
