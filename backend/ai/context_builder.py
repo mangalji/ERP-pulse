@@ -14,6 +14,7 @@ explicitly out of scope today.
 """
 
 from accounts.models import User
+from dashboard.services import DashboardService
 from netsuite.repositories import NetSuiteConnectionRepository
 
 _connection_repository = NetSuiteConnectionRepository()
@@ -23,7 +24,17 @@ def build_context(user: User) -> dict:
     connection = _connection_repository.get_by_user(user)
     netsuite_connected = bool(connection and connection.is_active)
 
+    business_context = None
+    if netsuite_connected:
+        dashboard_service = DashboardService()
+        business_context = {
+            'summary': dashboard_service.get_summary(user=user),
+            'recent_customers': dashboard_service.get_recent_customers(user=user),
+            'recent_invoices': dashboard_service.get_recent_invoices(user=user),
+            'recent_sales_orders': dashboard_service.get_recent_sales_orders(user=user),
+        }
+
     return {
         'netsuite_connected': netsuite_connected,
-        'business_context': None,
+        'business_context': business_context,
     }

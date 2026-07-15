@@ -3,13 +3,17 @@ import PulseIndicator from '../ui/PulseIndicator.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 
 export default function TopNav({ title, onMenuClick }) {
-  const { netSuiteConnected, logout } = useAuth()
+  const { user, netSuiteConnected, logout } = useAuth()
   const navigate = useNavigate()
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
+  const handleLogout = async () => {
+    await logout()
+    navigate('/login', { replace: true })
   }
+
+  const initials = user
+    ? `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`.toUpperCase() || 'U'
+    : 'U'
 
   return (
     <header className="flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
@@ -38,7 +42,7 @@ export default function TopNav({ title, onMenuClick }) {
           className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-soft)] text-sm font-semibold text-[var(--color-primary-dark)]"
           title="Log out"
         >
-          U
+          {initials}
         </button>
       </div>
     </header>

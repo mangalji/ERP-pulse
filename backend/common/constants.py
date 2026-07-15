@@ -22,3 +22,10 @@ REGISTRATION_TOKEN_MAX_AGE_SECONDS = REGISTRATION_SESSION_TTL_MINUTES * 60
 
 EMAIL_SUBJECT_REGISTER = "Verify your ERP Pulse account"
 EMAIL_SUBJECT_LOGIN = "Your ERP Pulse login OTP"
+
+# How many prior messages (not the whole conversation) get sent to the AI
+# provider as context on each turn. Kept deliberately small — unlimited
+# history would grow both token cost and latency unboundedly as a
+# conversation gets longer. The full conversation remains readable via
+# GET /api/v1/ai/conversations/<id>/messages/ regardless of this limit.
+AI_CONVERSATION_HISTORY_LIMIT = 10

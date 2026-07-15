@@ -24,8 +24,12 @@ class AIProvider(ABC):
     """Interface every AI provider must implement."""
 
     @abstractmethod
-    def generate_response(self, *, system_prompt: str, user_prompt: str) -> str:
-        """Return the assistant's reply as plain text."""
+    def generate_response(self, *, system_prompt: str, user_prompt: str, history: list[dict] | None = None) -> str:
+        """Return the assistant's reply as plain text.`history`, if given, is prior conversation turns as
+        {'role': 'user'|'assistant', 'content': str} dicts, oldest first
+        — the caller (AIService) is responsible for bounding how many are
+        passed in; providers must not apply their own truncation.
+        """
         raise NotImplementedError
 
 
@@ -43,12 +47,16 @@ class OpenAIProvider(AIProvider):
         self.api_key = settings.OPENAI_API_KEY
         self.model = settings.OPENAI_MODEL
 
-    def generate_response(self, *, system_prompt: str, user_prompt: str) -> str:
+    def generate_response(self, *, system_prompt: str, user_prompt: str, history: list[dict] | None = None) -> str:
         if not self.api_key:
             raise AIProviderNotConfiguredException(
                 'OPENAI_API_KEY is not configured. Set it in the environment to enable '
                 'AI responses.'
             )
+        messages = [{'role': 'system', 'content': system_prompt}]
+        if history:
+            messages.extend(history)
+        messages.append({'role': 'user', 'content': user_prompt})
 
         try:
             response = requests.post(
@@ -59,10 +67,7 @@ class OpenAIProvider(AIProvider):
                 },
                 json={
                     'model': self.model,
-                    'messages': [
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': user_prompt},
-                    ],
+                    'messages': messages,
                 },
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )

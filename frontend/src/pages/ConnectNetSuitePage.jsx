@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import DashboardLayout from '../components/layout/DashboardLayout.jsx'
 import Card from '../components/ui/Card.jsx'
 import Button from '../components/ui/Button.jsx'
 import PulseIndicator from '../components/ui/PulseIndicator.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import { netsuiteApi } from '../services/netsuite.js'
 
 const BENEFITS = [
   {
@@ -20,15 +22,26 @@ const BENEFITS = [
 ]
 
 export default function ConnectNetSuitePage() {
-  const { netSuiteConnected, connectNetSuite } = useAuth()
+  const { netSuiteConnected } = useAuth()
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleConnect = async () => {
+    setError('')
+    setIsConnecting(true)
+    try {
+      const { authorization_url } = await netsuiteApi.getConnectUrl()
+      window.location.href = authorization_url
+    } catch (err) {
+      setError(err.payload?.message || err.message || 'Failed to start NetSuite connection')
+      setIsConnecting(false)
+    }
+  }
 
   return (
     <DashboardLayout title="Connect NetSuite">
       <div className="mx-auto flex max-w-3xl flex-col items-center gap-8 py-8 text-center">
-        <span className="relative inline-flex h-10 w-10 text-[var(--color-netsuite)]">
-          <span className="pulse-ring absolute inset-0" />
-          <span className="relative inline-flex h-full w-full rounded-full bg-current" />
-        </span>
+        <PulseIndicator state="disconnected" size="lg" />
 
         <div>
           <h2 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)] sm:text-3xl">
@@ -40,13 +53,15 @@ export default function ConnectNetSuitePage() {
           </p>
         </div>
 
+        {error && <p className="text-sm text-[var(--color-negative)]">{error}</p>}
+
         {netSuiteConnected ? (
           <Card className="flex items-center gap-3 px-6 py-4">
             <PulseIndicator state="connected" label="Your NetSuite account is connected" />
           </Card>
         ) : (
-          <Button intent="netsuite" size="lg" onClick={connectNetSuite}>
-            Connect NetSuite
+          <Button intent="netsuite" size="lg" onClick={handleConnect} isLoading={isConnecting}>
+            {isConnecting ? 'Redirecting...' : 'Connect NetSuite'}
           </Button>
         )}
 

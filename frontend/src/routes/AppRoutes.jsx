@@ -4,9 +4,14 @@ import ProtectedRoute from './ProtectedRoute.jsx'
 import LoginPage from '../pages/auth/LoginPage.jsx'
 import RegisterPage from '../pages/auth/RegisterPage.jsx'
 import OtpVerificationPage from '../pages/auth/OtpVerificationPage.jsx'
+import CompleteProfilePage from '../pages/auth/CompleteProfilePage.jsx'
 import DashboardPage from '../pages/DashboardPage.jsx'
 import ConnectNetSuitePage from '../pages/ConnectNetSuitePage.jsx'
 import AiAssistantPage from '../pages/AiAssistantPage.jsx'
+import CustomersPage from '../pages/CustomersPage.jsx'
+import EmployeesPage from '../pages/EmployeesPage.jsx'
+import VendorsPage from '../pages/VendorsPage.jsx'
+import InventoryPage from '../pages/InventoryPage.jsx'
 import ReportsPage from '../pages/ReportsPage.jsx'
 import HistoryPage from '../pages/HistoryPage.jsx'
 import SettingsPage from '../pages/SettingsPage.jsx'
@@ -18,6 +23,7 @@ export default function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/otp-verification" element={<OtpVerificationPage />} />
+      <Route path="/complete-profile" element={<CompleteProfilePage />} />
 
       <Route
         path="/dashboard"
@@ -40,6 +46,38 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <AiAssistantPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/customers"
+        element={
+          <ProtectedRoute>
+            <CustomersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/employees"
+        element={
+          <ProtectedRoute>
+            <EmployeesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vendors"
+        element={
+          <ProtectedRoute>
+            <VendorsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/inventory"
+        element={
+          <ProtectedRoute>
+            <InventoryPage />
           </ProtectedRoute>
         }
       />

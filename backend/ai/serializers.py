@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from ai.models import AIConversation
+from ai.models import AIConversation, AIMessage
 
 
 class AIChatRequestSerializer(serializers.Serializer):
@@ -26,4 +26,13 @@ class AIConversationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AIConversation
         fields = ['id', 'title', 'created_at', 'updated_at']
+        read_only_fields = fields
+
+
+class AIMessageSerializer(serializers.ModelSerializer):
+    """Used by GET /api/v1/ai/history/<conversation_id>/messages/."""
+
+    class Meta:
+        model = AIMessage
+        fields = ['id', 'role', 'content', 'created_at']
         read_only_fields = fields

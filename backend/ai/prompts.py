@@ -5,8 +5,13 @@ Kept deterministic and reusable per AI_CONTEXT.md's "Prompt Philosophy"
 (deterministic, structured, short, reusable — avoid conversational
 prompts). The system prompt defines ERP Pulse's behaviour and never
 changes per-request; the user prompt carries the per-request context and
-question.
+question. Conversation history is NOT built here — it's threaded directly
+into the provider's messages array (see AIProvider.generate_response),
+since that's the shape providers actually expect for multi-turn context,
+rather than flattened into this single string.
 """
+
+import json
 
 SYSTEM_PROMPT = (
     'You are ERP Pulse\'s Business Intelligence Assistant.\n\n'
@@ -28,7 +33,7 @@ def build_system_prompt() -> str:
 def build_user_prompt(*, context: dict, message: str) -> str:
     """Combine business context and the user's question into one message for the provider."""
     if context.get('netsuite_connected'):
-        context_block = f'Business context: {context.get("business_context")}'
+        context_block = f'Business context: {json.dumps(context.get("business_context"), indent=2)}'
     else:
         context_block = (
             'Business context: NetSuite is not connected for this account yet. '

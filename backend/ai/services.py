@@ -57,8 +57,21 @@ class AIService:
             conversation=conversation, role=AIMessage.Role.USER, content=message
         )
 
+        from common.constants import AI_CONVERSATION_HISTORY_LIMIT
+        # Fetch +1 to account for the message we just saved, which we will exclude from history
+        recent_messages = self.message_repository.get_recent_history(
+            conversation=conversation, limit=AI_CONVERSATION_HISTORY_LIMIT + 1
+        )
+        
+        # Skip the message we just saved (index 0) and reverse the rest for chronological order
+        past_messages = recent_messages[1:]
+        history = [
+            {'role': msg.role.lower(), 'content': msg.content}
+            for msg in reversed(past_messages)
+        ]
+
         context = build_context(user)
-        answer = self._generate_answer(context=context, message=message)
+        answer = self._generate_answer(context=context, message=message, history=history)
 
         self.message_repository.save(
             conversation=conversation, role=AIMessage.Role.ASSISTANT, content=answer
@@ -92,7 +105,7 @@ class AIService:
             return stripped
         return f'{stripped[:TITLE_MAX_LENGTH]}\u2026'
 
-    def _generate_answer(self, *, context: dict, message: str) -> str:
+    def _generate_answer(self, *, context: dict, message: str, history: list[dict] | None = None) -> str:
         if not context.get('netsuite_connected'):
             return NETSUITE_NOT_CONNECTED_ANSWER
 
@@ -102,4 +115,6 @@ class AIService:
         # problem, not something to silently mask as a successful reply.
         system_prompt = build_system_prompt()
         user_prompt = build_user_prompt(context=context, message=message)
-        return self.provider.generate_response(system_prompt=system_prompt, user_prompt=user_prompt)
+        return self.provider.generate_response(
+            system_prompt=system_prompt, user_prompt=user_prompt, history=history
+        )

@@ -1,9 +1,14 @@
 import { NavLink } from 'react-router-dom'
+import PulseIndicator from '../ui/PulseIndicator.jsx'
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
   { to: '/connect-netsuite', label: 'Connect NetSuite', icon: PlugIcon },
   { to: '/ai-assistant', label: 'AI Assistant', icon: SparkleIcon },
+  { to: '/customers', label: 'Customers', icon: CustomersIcon },
+  { to: '/employees', label: 'Employees', icon: EmployeesIcon },
+  { to: '/vendors', label: 'Vendors', icon: VendorsIcon },
+  { to: '/inventory', label: 'Inventory', icon: InventoryIcon },
   { to: '/reports', label: 'Reports', icon: ReportIcon },
   { to: '/history', label: 'History', icon: ClockIcon },
   { to: '/settings', label: 'Settings', icon: GearIcon },
@@ -25,10 +30,7 @@ export default function Sidebar({ open, onClose }) {
           ${open ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="mb-8 flex items-center gap-2 px-2">
-          <span className="relative inline-flex h-2.5 w-2.5 text-[var(--color-positive)]">
-            <span className="pulse-ring absolute inset-0" />
-            <span className="relative inline-flex h-full w-full rounded-full bg-current" />
-          </span>
+          <PulseIndicator state="connected" size="lg" />
           <span className="font-[var(--font-display)] text-lg font-semibold text-white">ERP Pulse</span>
         </div>
 
@@ -86,6 +88,44 @@ function SparkleIcon(props) {
     </svg>
   )
 }
+function CustomersIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <circle cx="9" cy="6" r="2.5" />
+      <circle cx="17" cy="6" r="2.5" />
+      <path d="M2 18c0-3.3 3.6-6 7-6s7 2.7 7 6" />
+      <path d="M15 18c0-3.3 3.6-6 7-6s1.5 2.7 1.5 6" />
+    </svg>
+  )
+}
+function EmployeesIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <rect x="4" y="3" width="16" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
+  )
+}
+function VendorsIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M3 21h18" />
+      <path d="M5 21V7l7-4 7 4v14" />
+      <path d="M9 21v-6h6v6" />
+      <path d="M9 9h.01M15 9h.01M9 13h.01M15 13h.01" />
+    </svg>
+  )
+}
+function InventoryIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v7a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 15z" />
+      <path d="M3.5 8.5 12 13l8.5-4.5" />
+      <path d="M12 13V21" />
+    </svg>
+  )
+}
 function ReportIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
@@ -106,7 +146,7 @@ function GearIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
     </svg>
   )
 }

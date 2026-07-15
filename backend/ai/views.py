@@ -9,13 +9,15 @@ accounts/views.py's established pattern exactly.
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from ai.repositories import ConversationRepository
-from ai.serializers import AIChatRequestSerializer, AIConversationSerializer
+from ai.exceptions import AIConversationNotFoundException
+from ai.repositories import ConversationRepository, MessageRepository
+from ai.serializers import AIChatRequestSerializer, AIConversationSerializer, AIMessageSerializer
 from ai.services import AIService
 from common.utils.response import success_response
 
 ai_service = AIService()
 conversation_repository = ConversationRepository()
+message_repository = MessageRepository()
 
 
 class ChatView(APIView):
@@ -56,4 +58,28 @@ class ConversationHistoryView(APIView):
         return success_response(
             message='Conversation history fetched successfully.',
             data=AIConversationSerializer(conversations, many=True).data,
+        )
+
+
+class ConversationMessagesView(APIView):
+    """
+    GET /api/v1/ai/history/<conversation_id>/messages/
+
+    Returns all messages for a specific AI conversation.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, conversation_id):
+        conversation = conversation_repository.get_by_id_for_user(
+            conversation_id=conversation_id, user=request.user
+        )
+        if not conversation:
+            raise AIConversationNotFoundException('Conversation not found.')
+
+        messages = message_repository.get_history(conversation=conversation)
+
+        return success_response(
+            message='Conversation messages fetched successfully.',
+            data=AIMessageSerializer(messages, many=True).data,
         )
