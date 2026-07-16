@@ -18,7 +18,7 @@ export default function LoginPage() {
     setLocalError('')
     setIsSubmitting(true)
     try {
-      const result = await login(email)
+      const result = await login(email, password)
       navigate('/otp-verification', { state: { purpose: 'login', email: result.email } })
     } catch (err) {
       setLocalError(err.payload?.message || err.message || 'Failed to send OTP')

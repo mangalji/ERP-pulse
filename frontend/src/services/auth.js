@@ -2,8 +2,11 @@ import apiClient, { unwrap } from './apiClient.js'
 import { AUTH_ENDPOINTS } from '../utils/constants.js'
 
 export const authApi = {
-  requestLoginOtp: (email) =>
-    apiClient.post(AUTH_ENDPOINTS.login, { email }).then(unwrap),
+  requestLoginOtp: (email, password) =>
+  apiClient.post(AUTH_ENDPOINTS.login, {
+    email,
+    password,
+  }).then(unwrap),
 
   verifyLoginOtp: (email, otpCode) =>
     apiClient.post(AUTH_ENDPOINTS.verifyLoginOtp, { email, otp_code: otpCode }).then(unwrap),

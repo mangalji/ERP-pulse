@@ -31,11 +31,11 @@ export function AuthProvider({ children }) {
     bootstrap()
   }, [])
 
-  const login = async (email) => {
-    setError(null)
-    const res = await authApi.requestLoginOtp(email)
-    return { email: res.email }
-  }
+  const login = async (email, password) => {
+  setError(null)
+  const res = await authApi.requestLoginOtp(email, password)
+  return { email: res.email }
+}
 
   const verifyLogin = async (email, otpCode) => {
     setError(null)
