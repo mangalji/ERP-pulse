@@ -105,7 +105,7 @@ class AIService:
             return 'New conversation'
         if len(stripped) <= TITLE_MAX_LENGTH:
             return stripped
-        return f'{stripped[:TITLE_MAX_LENGTH]}\u2026'
+        return f'{stripped[:TITLE_MAX_LENGTH - 1]}\u2026'
 
     def _generate_answer(self, *, context: dict, message: str, history: list[dict] | None = None) -> str:
         if not context.get('netsuite_connected'):

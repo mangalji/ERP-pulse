@@ -15,10 +15,12 @@ All external HTTP calls are mocked. No real NetSuite API calls.
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings, RequestFactory
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 
@@ -256,7 +258,7 @@ class NetSuiteConnectionRepositoryTests(TestCase):
             netsuite_account_id='1234567_SB1',
             access_token='access-1',
             refresh_token='refresh-1',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         self.assertEqual(connection.user, self.user)
         self.assertEqual(connection.access_token, 'access-1')
@@ -268,14 +270,14 @@ class NetSuiteConnectionRepositoryTests(TestCase):
             netsuite_account_id='1234567_SB1',
             access_token='access-1',
             refresh_token='refresh-1',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         connection = self.repo.upsert(
             user=self.user,
             netsuite_account_id='1234567_SB1',
             access_token='access-2',
             refresh_token='refresh-2',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         self.assertEqual(connection.access_token, 'access-2')
         self.assertEqual(NetSuiteConnection.objects.filter(user=self.user).count(), 1)
@@ -286,13 +288,13 @@ class NetSuiteConnectionRepositoryTests(TestCase):
             netsuite_account_id='1234567_SB1',
             access_token='access-1',
             refresh_token='refresh-1',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         updated = self.repo.update_tokens(
             connection,
             access_token='new-access',
             refresh_token='new-refresh',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         self.assertEqual(updated.access_token, 'new-access')
 
@@ -302,7 +304,7 @@ class NetSuiteConnectionRepositoryTests(TestCase):
             netsuite_account_id='1234567_SB1',
             access_token='access-1',
             refresh_token='refresh-1',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         self.repo.deactivate(connection)
         connection.refresh_from_db()
@@ -332,7 +334,7 @@ class NetSuiteConnectionServiceTests(TestCase):
         mock_client.exchange_code_for_tokens.return_value = NetSuiteTokenSet(
             access_token='access-1',
             refresh_token='refresh-1',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         mock_client.account_id = '1234567_SB1'
 
@@ -352,7 +354,7 @@ class NetSuiteDataServiceTests(TestCase):
         self.mock_repo.get_by_user.return_value = MagicMock(
             is_active=True,
             access_token='valid-token',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         self.mock_client.get_records.return_value = {'items': [], 'totalResults': 0}
 
@@ -369,7 +371,7 @@ class NetSuiteDataServiceTests(TestCase):
         self.mock_repo.get_by_user.return_value = MagicMock(
             is_active=True,
             access_token='valid-token',
-            access_token_expires_at=datetime.now() + timedelta(hours=1),
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
         self.mock_client.execute_suiteql.return_value = {'items': [{'id': 1}]}
 
@@ -383,6 +385,7 @@ class NetSuiteDataServiceTests(TestCase):
 
 class NetSuiteViewTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = _make_user()
         self.client = APIClient()
 

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings, RequestFactory
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
@@ -132,10 +133,10 @@ class BusinessInsightsServiceTests(TestCase):
 
     # -- get_top_customers ---------------------------------------------
     def test_get_top_customers(self):
-        self.mock_ns.get_customers.return_value = {
+        self.mock_ns.execute_suiteql.return_value = {
             'items': [
-                {'id': 1, 'companyname': 'Acme', 'entityid': 'ACME', 'email': 'acme@test.com', 'balancesearch': 5000},
-                {'id': 2, 'companyname': 'Beta', 'entityid': 'BETA', 'email': 'beta@test.com', 'balancesearch': 3000},
+                {'id': 1, 'companyname': 'Acme', 'entityid': 'ACME', 'email': 'acme@test.com', 'balancesearch': '5000'},
+                {'id': 2, 'companyname': 'Beta', 'entityid': 'BETA', 'email': 'beta@test.com', 'balancesearch': '3000'},
             ]
         }
 
@@ -147,7 +148,7 @@ class BusinessInsightsServiceTests(TestCase):
         self.assertEqual(result[1]['balance'], 3000)
 
     def test_get_top_customers_empty(self):
-        self.mock_ns.get_customers.return_value = {'items': []}
+        self.mock_ns.execute_suiteql.return_value = {'items': []}
 
         result = self.service.get_top_customers(user=self.user)
         self.assertEqual(result, [])
@@ -275,6 +276,7 @@ class BusinessInsightsServiceTests(TestCase):
 
 class DashboardViewTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = _make_user()
         self.client = APIClient()
 
@@ -310,6 +312,7 @@ class DashboardViewTests(APITestCase):
 
 class DashboardThrottleTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = _make_user()
         self.client = APIClient()
 

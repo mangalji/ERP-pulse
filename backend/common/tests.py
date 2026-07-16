@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
 from rest_framework import status
-from rest_framework.test import APICestCase, APIClient
+from rest_framework.test import APITestCase, APIClient
 
 from common.exception_handler import standard_exception_handler, _extract_message
 from common.services.email_service import send_email
@@ -27,7 +27,6 @@ from common.throttles import (
     LoginOTPThrottle,
     NetSuiteSyncThrottle,
     RegisterOTPThrottle,
-    _SettingsRateThrottleMixin,
 )
 from common.utils.datetime import calculate_expiry, is_expired
 from common.utils.hash import hash_value, verify_value
@@ -131,36 +130,56 @@ class EmailServiceTests(TestCase):
 # ===================================================================
 
 class ThrottleTests(TestCase):
-    def test_settings_rate_throttle_mixin_default(self):
-        throttle = _SettingsRateThrottleMixin()
-        throttle.setting_name = None
-        # Should fall back to parent rate
+    """
+    Rates are driven by REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] per scope
+    (each entry itself sourced from settings.py via python-decouple config()
+    calls), which is DRF's own supported mechanism for exactly this. Each
+    throttle class just needs the correct `scope` wired up.
+    """
+
+    def test_login_otp_throttle_scope(self):
+        throttle = LoginOTPThrottle()
+        self.assertEqual(throttle.scope, 'login_otp')
         self.assertIsNotNone(throttle.rate)
 
-    @override_settings(THROTTLE_LOGIN_OTP='10/min')
-    def test_login_otp_throttle_rate(self):
-        throttle = LoginOTPThrottle()
-        self.assertEqual(throttle.rate, '10/min')
-
-    @override_settings(THROTTLE_REGISTER_OTP='5/min')
-    def test_register_otp_throttle_rate(self):
+    def test_register_otp_throttle_scope(self):
         throttle = RegisterOTPThrottle()
-        self.assertEqual(throttle.rate, '5/min')
+        self.assertEqual(throttle.scope, 'register_otp')
+        self.assertIsNotNone(throttle.rate)
 
-    @override_settings(THROTTLE_AI_CHAT='20/min')
-    def test_ai_chat_throttle_rate(self):
+    def test_ai_chat_throttle_scope(self):
         throttle = AIChatThrottle()
-        self.assertEqual(throttle.rate, '20/min')
+        self.assertEqual(throttle.scope, 'ai_chat')
+        self.assertIsNotNone(throttle.rate)
 
-    @override_settings(THROTTLE_DASHBOARD='120/min')
-    def test_dashboard_throttle_rate(self):
+    def test_dashboard_throttle_scope(self):
         throttle = DashboardThrottle()
-        self.assertEqual(throttle.rate, '120/min')
+        self.assertEqual(throttle.scope, 'dashboard')
+        self.assertIsNotNone(throttle.rate)
 
-    @override_settings(THROTTLE_NETSUITE_SYNC='30/min')
-    def test_netsuite_sync_throttle_rate(self):
+    def test_netsuite_sync_throttle_scope(self):
         throttle = NetSuiteSyncThrottle()
-        self.assertEqual(throttle.rate, '30/min')
+        self.assertEqual(throttle.scope, 'netsuite_sync')
+        self.assertIsNotNone(throttle.rate)
+
+    def test_login_otp_throttle_rate_configurable(self):
+        # NOTE: DRF binds `SimpleRateThrottle.THROTTLE_RATES` to
+        # api_settings.DEFAULT_THROTTLE_RATES as a class attribute at import
+        # time (see rest_framework/throttling.py), so override_settings on
+        # REST_FRAMEWORK alone does not refresh it for already-imported
+        # throttle classes. Patch the class attribute directly to prove the
+        # scope-based lookup honors whatever settings.py provides.
+        from rest_framework.throttling import SimpleRateThrottle
+
+        original_rates = SimpleRateThrottle.THROTTLE_RATES
+        patched_rates = dict(original_rates)
+        patched_rates['login_otp'] = '10/min'
+        SimpleRateThrottle.THROTTLE_RATES = patched_rates
+        try:
+            throttle = LoginOTPThrottle()
+            self.assertEqual(throttle.rate, '10/min')
+        finally:
+            SimpleRateThrottle.THROTTLE_RATES = original_rates
 
 
 # ===================================================================

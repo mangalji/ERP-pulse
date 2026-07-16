@@ -17,11 +17,9 @@ from accounts.models import User
 from dashboard.services import DashboardService
 from netsuite.repositories import NetSuiteConnectionRepository
 
-_connection_repository = NetSuiteConnectionRepository()
-
-
 def build_context(user: User) -> dict:
-    connection = _connection_repository.get_by_user(user)
+    connection_repository = NetSuiteConnectionRepository()
+    connection = connection_repository.get_by_user(user)
     netsuite_connected = bool(connection and connection.is_active)
 
     business_context = None

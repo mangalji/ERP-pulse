@@ -20,12 +20,13 @@ All external dependencies are mocked:
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 
@@ -316,6 +317,12 @@ class AuthenticationServiceTests(TestCase):
     @patch('accounts.authentication_service.send_email')
     def test_resend_registration_otp_success(self, mock_send_email):
         self.service.register(email='resend@example.com', password='StrongPass1!')
+        # Backdate last_sent_at past the 60s cooldown so this resend is allowed —
+        # resending immediately after register() is expected to hit the cooldown
+        # (see test_resend_registration_otp_cooldown below).
+        pending = registration_cache.get('resend@example.com')
+        pending['last_sent_at'] = timezone.now() - timedelta(seconds=61)
+        registration_cache.save(email='resend@example.com', data=pending, timeout_seconds=1200)
         result = self.service.resend_registration_otp(email='resend@example.com')
         self.assertEqual(result, {'email': 'resend@example.com'})
 
@@ -339,9 +346,9 @@ class AuthenticationServiceTests(TestCase):
                 'email': 'verify@example.com',
                 'password_hash': hash_value('StrongPass1!'),
                 'otp_hash': hash_value(raw_code),
-                'otp_expires_at': datetime.now() + timedelta(minutes=5),
+                'otp_expires_at': timezone.now() + timedelta(minutes=5),
                 'attempt_count': 0,
-                'last_sent_at': datetime.now(),
+                'last_sent_at': timezone.now(),
             },
             timeout_seconds=1200,
         )
@@ -363,9 +370,9 @@ class AuthenticationServiceTests(TestCase):
                 'email': 'max-attempts@example.com',
                 'password_hash': hash_value('StrongPass1!'),
                 'otp_hash': hash_value(raw_code),
-                'otp_expires_at': datetime.now() + timedelta(minutes=5),
+                'otp_expires_at': timezone.now() + timedelta(minutes=5),
                 'attempt_count': 3,
-                'last_sent_at': datetime.now(),
+                'last_sent_at': timezone.now(),
             },
             timeout_seconds=1200,
         )
@@ -382,9 +389,9 @@ class AuthenticationServiceTests(TestCase):
                 'email': 'complete@example.com',
                 'password_hash': hash_value('StrongPass1!'),
                 'otp_hash': hash_value(raw_code),
-                'otp_expires_at': datetime.now() + timedelta(minutes=5),
+                'otp_expires_at': timezone.now() + timedelta(minutes=5),
                 'attempt_count': 0,
-                'last_sent_at': datetime.now(),
+                'last_sent_at': timezone.now(),
             },
             timeout_seconds=1200,
         )
@@ -503,10 +510,11 @@ class UserSerializerTests(TestCase):
 
 class AuthViewTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
 
     # -- Register ------------------------------------------------------
-    @patch('accounts.views.send_email')
+    @patch('accounts.authentication_service.send_email')
     def test_register_success(self, mock_send_email):
         response = self.client.post('/api/v1/auth/register/', {
             'email': 'new@example.com',
@@ -545,7 +553,7 @@ class AuthViewTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     # -- Verify Login OTP ----------------------------------------------
-    @patch('accounts.views.send_email')
+    @patch('accounts.authentication_service.send_email')
     def test_verify_login_otp_success(self, mock_send_email):
         user = _make_user(email='verify-login@example.com')
         self.client.post('/api/v1/auth/login/', {
@@ -643,6 +651,7 @@ class SignedTokenUtilsTests(TestCase):
 
 class ThrottleTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
 
     def test_login_otp_throttle(self):

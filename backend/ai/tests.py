@@ -24,6 +24,7 @@ All external dependencies are mocked:
 import json
 from unittest.mock import MagicMock, patch
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings, RequestFactory
 from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
@@ -39,12 +40,17 @@ from ai.services import AIService, NETSUITE_NOT_CONNECTED_ANSWER
 from ai.views import ChatView, ConversationHistoryView, ConversationMessagesView
 
 
+_user_counter = 0
+
+
 def _make_user(**overrides):
+    global _user_counter
+    _user_counter += 1
     defaults = {
         'email': 'test@example.com',
         'first_name': 'Test',
         'last_name': 'User',
-        'mobile_number': '+1234567890',
+        'mobile_number': f'+1234{_user_counter:06d}',
         'is_active': True,
         'is_email_verified': True,
     }
@@ -187,9 +193,11 @@ class OpenAIProviderTests(TestCase):
     @patch('ai.providers.settings')
     def test_init_no_api_key(self, mock_settings):
         mock_settings.OPENAI_API_KEY = ''
+        mock_settings.OPENAI_MODEL = 'gpt-4o-mini'
         from ai.providers import OpenAIProvider
+        provider = OpenAIProvider()
         with self.assertRaises(AIProviderNotConfiguredException):
-            OpenAIProvider()
+            provider.generate_response(system_prompt='You are helpful.', user_prompt='Hi')
 
     @patch('ai.providers.requests.post')
     @patch('ai.providers.settings')
@@ -216,9 +224,11 @@ class GeminiProviderTests(TestCase):
     @patch('ai.providers.settings')
     def test_init_no_api_key(self, mock_settings):
         mock_settings.GEMINI_API_KEY = ''
+        mock_settings.GEMINI_MODEL = 'gemini-1.5-flash'
         from ai.providers import GeminiProvider
+        provider = GeminiProvider()
         with self.assertRaises(AIProviderNotConfiguredException):
-            GeminiProvider()
+            provider.generate_response(system_prompt='You are helpful.', user_prompt='Hi')
 
     @patch('ai.providers.requests.post')
     @patch('ai.providers.settings')
@@ -311,18 +321,21 @@ class AIProviderFactoryTests(TestCase):
 class AIServiceTests(TestCase):
     def setUp(self):
         self.user = _make_user()
-        self.service = AIService()
+        # AIService resolves its provider once in __init__ (`provider or
+        # AIProviderFactory.create()`). Patching AIProviderFactory.create via
+        # a per-test decorator has no effect on a service already built in
+        # setUp, since setUp runs before the patch context is active. Inject
+        # a mock provider directly instead — AIService already supports this.
+        self.mock_provider = MagicMock()
+        self.service = AIService(provider=self.mock_provider)
 
-    @patch('ai.services.AIProviderFactory.create')
     @patch('ai.services.build_context')
-    def test_ask_returns_answer(self, mock_build_context, mock_factory):
+    def test_ask_returns_answer(self, mock_build_context):
         mock_build_context.return_value = {
             'netsuite_connected': True,
             'business_context': {},
         }
-        mock_provider = MagicMock()
-        mock_provider.generate_response.return_value = 'Test answer'
-        mock_factory.return_value = mock_provider
+        self.mock_provider.generate_response.return_value = 'Test answer'
 
         result = self.service.ask(user=self.user, message='Hello')
         self.assertEqual(result['answer'], 'Test answer')
@@ -338,16 +351,13 @@ class AIServiceTests(TestCase):
         result = self.service.ask(user=self.user, message='Hello')
         self.assertEqual(result['answer'], NETSUITE_NOT_CONNECTED_ANSWER)
 
-    @patch('ai.services.AIProviderFactory.create')
     @patch('ai.services.build_context')
-    def test_ask_with_existing_conversation(self, mock_build_context, mock_factory):
+    def test_ask_with_existing_conversation(self, mock_build_context):
         mock_build_context.return_value = {
             'netsuite_connected': True,
             'business_context': {},
         }
-        mock_provider = MagicMock()
-        mock_provider.generate_response.return_value = 'Follow-up answer'
-        mock_factory.return_value = mock_provider
+        self.mock_provider.generate_response.return_value = 'Follow-up answer'
 
         conversation = AIConversation.objects.create(user=self.user, title='Existing')
         result = self.service.ask(user=self.user, message='Follow-up', conversation_id=str(conversation.id))
@@ -357,16 +367,13 @@ class AIServiceTests(TestCase):
         with self.assertRaises(AIConversationNotFoundException):
             self.service.ask(user=self.user, message='Hello', conversation_id='00000000-0000-0000-0000-000000000000')
 
-    @patch('ai.services.AIProviderFactory.create')
     @patch('ai.services.build_context')
-    def test_ask_saves_messages(self, mock_build_context, mock_factory):
+    def test_ask_saves_messages(self, mock_build_context):
         mock_build_context.return_value = {
             'netsuite_connected': True,
             'business_context': {},
         }
-        mock_provider = MagicMock()
-        mock_provider.generate_response.return_value = 'Answer'
-        mock_factory.return_value = mock_provider
+        self.mock_provider.generate_response.return_value = 'Answer'
 
         result = self.service.ask(user=self.user, message='Hello')
         conversation_id = result['conversation_id']
@@ -426,6 +433,7 @@ class AISerializerTests(TestCase):
 
 class AIViewTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = _make_user()
         self.client = APIClient()
 
@@ -481,6 +489,7 @@ class AIViewTests(APITestCase):
 
 class AIThrottleTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = _make_user()
         self.client = APIClient()
 
