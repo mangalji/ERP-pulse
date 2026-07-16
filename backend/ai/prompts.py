@@ -33,7 +33,19 @@ def build_system_prompt() -> str:
 def build_user_prompt(*, context: dict, message: str) -> str:
     """Combine business context and the user's question into one message for the provider."""
     if context.get('netsuite_connected'):
-        context_block = f'Business context: {json.dumps(context.get("business_context"), indent=2)}'
+        field_notes = (
+            'Field notes on the JSON below: `top_customers` ranks customers by '
+            'outstanding AR balance (money owed to you), NOT revenue generated — '
+            'use `top_customers_by_revenue` for revenue ranking instead. '
+            '`revenue_this_month` covers the current calendar month. '
+            '`revenue_this_fiscal_year` assumes an April-to-March fiscal year; '
+            'if asked and you are not sure this matches the business\'s actual '
+            'fiscal year configuration, say so rather than presenting it as certain.'
+        )
+        context_block = (
+            f'{field_notes}\n\n'
+            f'Business context: {json.dumps(context.get("business_context"), indent=2)}'
+        )
     else:
         context_block = (
             'Business context: NetSuite is not connected for this account yet. '

@@ -60,6 +60,9 @@ class DashboardService:
 
     def get_recent_customers(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
         return self._get_items(record_type=NetSuiteRecordType.CUSTOMER, user=user, limit=limit)
+    
+    def get_recent_employees(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
+        return self._get_items(record_type=NetSuiteRecordType.EMPLOYEE, user=user, limit=limit)
 
     def _get_total(self, *, record_type: str, user: User) -> int:
         response = self.netsuite_data_service.get_records(
@@ -277,6 +280,7 @@ class BusinessInsightsService:
         so_total = self._safe_float(so_row.get('revenue'))
         invoice_total = self._safe_float(invoice_row.get('revenue'))
         avg_order_value = so_total / total_orders if total_orders > 0 else 0.0
+        avg_invoice_value = invoice_total / total_invoices if total_invoices > 0 else 0.0
 
         return {
             'total_sales_orders': total_orders,
@@ -284,6 +288,162 @@ class BusinessInsightsService:
             'total_sales_revenue': round(so_total, 2),
             'total_invoice_revenue': round(invoice_total, 2),
             'average_order_value': round(avg_order_value, 2),
+            'average_invoice_value':round(avg_invoice_value,2),
+            'currency': 'USD',
+        }
+
+    def get_revenue_by_customer(
+        self, *, user: User, limit: int = 10, transaction_type: str = 'CustInvc'
+    ) -> list[dict[str, Any]]:
+        """
+        Revenue grouped by customer, highest first. "Revenue" here means
+        invoiced amount (`type = 'CustInvc'`) by default — pass
+        transaction_type='SalesOrd' for booked-order value instead.
+
+        Deliberately avoids a `transaction JOIN customer` in one SuiteQL
+        query — same reasoning as `get_overdue_invoices`'s docstring:
+        that join has not been confirmed against this account's schema.
+        Instead this runs two separately-verified-shape queries:
+        1. An aggregate GROUP BY on `transaction.entity` — `entity` and
+           `foreigntotal` are already used and verified elsewhere in
+           this file (`get_overdue_invoices`, `get_sales_summary`), only
+           the GROUP BY itself is new here.
+        2. A lookup of just those customer ids against `customer`,
+           reusing the exact SELECT shape already verified in
+           `get_top_customers`, just with `WHERE id IN (...)` added.
+
+        The `IN (...)` filter is the only genuinely new SQL construct
+        introduced by this method — please confirm it behaves as
+        expected against your NetSuite sandbox before relying on this
+        in production.
+        """
+        limit = self._safe_int(limit, default=10)
+
+        revenue_query = f"""
+            SELECT entity, SUM(foreigntotal) AS revenue
+            FROM transaction
+            WHERE type = '{transaction_type}'
+            GROUP BY entity
+            ORDER BY SUM(foreigntotal) DESC
+            FETCH FIRST {limit} ROWS ONLY
+        """
+        revenue_rows = self._execute(query=revenue_query, user=user)
+
+        entity_ids = [
+            self._safe_int(row.get('entity'), default=0)
+            for row in revenue_rows
+            if row.get('entity') is not None
+        ]
+        entity_ids = [eid for eid in entity_ids if eid]
+        if not entity_ids:
+            return []
+
+        id_list = ','.join(str(eid) for eid in entity_ids)
+        customer_query = f"""
+            SELECT id, companyname, entityid
+            FROM customer
+            WHERE id IN ({id_list})
+        """
+        customer_rows = self._execute(query=customer_query, user=user)
+        customer_by_id = {str(row.get('id')): row for row in customer_rows}
+
+        result = []
+        for row in revenue_rows:
+            entity_id = row.get('entity')
+            if entity_id is None:
+                continue
+            customer = customer_by_id.get(str(self._safe_int(entity_id, default=0)), {})
+            result.append({
+                'id': entity_id,
+                'name': customer.get('companyname') or customer.get('entityid') or f'Customer {entity_id}',
+                'revenue': round(self._safe_float(row.get('revenue')), 2),
+            })
+        return result
+
+    def get_revenue_for_period(
+        self,
+        *,
+        user: User,
+        start_date: str,
+        end_date: str,
+        transaction_type: str = 'CustInvc',
+    ) -> dict[str, Any]:
+        """
+        Revenue for the half-open date range [start_date, end_date) —
+        start_date inclusive, end_date exclusive. Dates are 'YYYY-MM-DD'
+        strings.
+
+        UNVERIFIED: introduces `transaction.trandate`, NetSuite's
+        standard transaction-date column. Unlike every other field used
+        in this file, `trandate` has not been used or confirmed anywhere
+        else in this codebase (AI_HANDOFF.md requires only confirmed
+        SuiteQL fields). Please test this against your sandbox before
+        trusting the numbers — if `trandate` isn't queryable via SuiteQL
+        on this account, `createddate` is a likely fallback to try.
+        """
+        query = f"""
+            SELECT SUM(foreigntotal) AS revenue, COUNT(*) AS row_count
+            FROM transaction
+            WHERE type = '{transaction_type}'
+            AND trandate >= TO_DATE('{start_date}', 'YYYY-MM-DD')
+            AND trandate < TO_DATE('{end_date}', 'YYYY-MM-DD')
+        """
+        row = self._execute_one(query=query, user=user)
+
+        return {
+            'revenue': round(self._safe_float(row.get('revenue')), 2),
+            'transaction_count': self._safe_int(row.get('row_count'), default=0),
+            'start_date': start_date,
+            'end_date': end_date,
+            'currency': 'USD',
+        }
+    
+    def get_total_receivables(self, *, user: User) -> dict[str, Any]:
+        """
+        Total outstanding AR across all active customers — "how much do
+        my customers owe me in total?"
+ 
+        Safe: `balancesearch` and `isinactive` on `customer` are already
+        verified elsewhere in this file (`get_top_customers`); this is
+        just a SUM instead of a ranked list.
+        """
+        query = """
+            SELECT SUM(balancesearch) AS total_receivable, COUNT(*) AS customer_count
+            FROM customer
+            WHERE isinactive = 'F' AND balancesearch > 0
+        """
+        row = self._execute_one(query=query, user=user)
+ 
+        return {
+            'total_receivable': round(self._safe_float(row.get('total_receivable')), 2),
+            'customers_with_balance': self._safe_int(row.get('customer_count'), default=0),
+            'currency': 'USD',
+        }
+    
+    def get_overdue_invoices_summary(self, *, user: User) -> dict[str, Any]:
+        """
+        Count and total amount of overdue invoices — "how many invoices
+        are overdue and what's the total?" — without handing the model a
+        full row list to sum itself (LLMs are unreliable at arithmetic
+        over a JSON blob).
+ 
+        Safe: `foreignamountunpaid` and `daysoverduesearch` on
+        `transaction` are already verified elsewhere in this file
+        (`get_overdue_invoices`); this is just an aggregate over the
+        same WHERE condition instead of a ranked row list.
+        """
+        query = """
+            SELECT COUNT(*) AS invoice_count, SUM(foreignamountunpaid) AS total_overdue
+            FROM transaction
+            WHERE type = 'CustInvc'
+            AND foreignamountunpaid > 0
+            AND daysoverduesearch > 0
+        """
+        row = self._execute_one(query=query, user=user)
+ 
+        return {
+            'overdue_invoice_count': self._safe_int(row.get('invoice_count'), default=0),
+            'total_overdue_amount': round(self._safe_float(row.get('total_overdue')), 2),
             'currency': 'USD',
         }
 

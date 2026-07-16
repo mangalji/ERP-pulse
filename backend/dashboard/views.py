@@ -15,7 +15,7 @@ from common.utils.response import success_response
 from common.throttles import DashboardThrottle
 from dashboard.services import DashboardService
 
-dashboard_service = DashboardService()
+# dashboard_service = DashboardService()
 
 
 class DashboardSummaryView(APIView):
@@ -25,7 +25,8 @@ class DashboardSummaryView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        summary = dashboard_service.get_summary(user=request.user)
+        # summary = dashboard_service.get_summary(user=request.user)
+        summary = DashboardService().get_summary(user=request.user)
         return success_response(
             message='Dashboard summary fetched successfully.',
             data=summary,
@@ -39,7 +40,7 @@ class RecentSalesOrdersView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        sales_orders = dashboard_service.get_recent_sales_orders(user=request.user)
+        sales_orders = DashboardService().get_recent_sales_orders(user=request.user)
         return success_response(
             message='Recent sales orders fetched successfully.',
             data={'items': sales_orders},
@@ -53,7 +54,7 @@ class RecentInvoicesView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        invoices = dashboard_service.get_recent_invoices(user=request.user)
+        invoices = DashboardService().get_recent_invoices(user=request.user)
         return success_response(
             message='Recent invoices fetched successfully.',
             data={'items': invoices},
@@ -67,7 +68,7 @@ class RecentCustomersView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        customers = dashboard_service.get_recent_customers(user=request.user)
+        customers = DashboardService().get_recent_customers(user=request.user)
         return success_response(
             message='Recent customers fetched successfully.',
             data={'items': customers},

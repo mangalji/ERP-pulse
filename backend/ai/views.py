@@ -16,7 +16,7 @@ from ai.services import AIService
 from common.utils.response import success_response
 from common.throttles import AIChatThrottle
 
-ai_service = AIService()
+# ai_service = AIService()
 conversation_repository = ConversationRepository()
 message_repository = MessageRepository()
 
@@ -36,7 +36,8 @@ class ChatView(APIView):
         serializer = AIChatRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        result = ai_service.ask(user=request.user, **serializer.validated_data)
+        # result = ai_service.ask(user=request.user, **serializer.validated_data)
+        result = AIService().ask(user=request.user, **serializer.validated_data)
 
         return success_response(
             message='Response generated successfully.',

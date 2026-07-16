@@ -120,6 +120,15 @@ class DashboardServiceTests(TestCase):
         result = self.service.get_recent_customers(user=self.user, limit=5)
         self.assertEqual(len(result), 1)
 
+    def test_get_recent_employees(self):
+        self.mock_ns.get_records.return_value = {
+            'items': [{'id': 7, 'entityId': 'EMP-001'}],
+            'totalResults': 1,
+        }
+
+        result = self.service.get_recent_employees(user=self.user, limit=5)
+        self.assertEqual(len(result), 1)
+
 
 # ===================================================================
 # BusinessInsightsService Tests
@@ -268,6 +277,112 @@ class BusinessInsightsServiceTests(TestCase):
         self.assertEqual(result['total_sales_orders'], 0)
         self.assertEqual(result['total_invoices'], 0)
         self.assertEqual(result['average_order_value'], 0.0)
+
+    def test_get_revenue_by_customer(self):
+        self.mock_ns.execute_suiteql.side_effect = [
+            {'items': [
+                {'entity': 101, 'revenue': '9000'},
+                {'entity': 102, 'revenue': '4000'},
+            ]},
+            {'items': [
+                {'id': 101, 'companyname': 'Acme', 'entityid': 'ACME'},
+                {'id': 102, 'companyname': 'Beta', 'entityid': 'BETA'},
+            ]},
+        ]
+
+        result = self.service.get_revenue_by_customer(user=self.user, limit=2)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]['name'], 'Acme')
+        self.assertEqual(result[0]['revenue'], 9000.0)
+        self.assertEqual(result[1]['name'], 'Beta')
+        self.assertEqual(result[1]['revenue'], 4000.0)
+
+    def test_get_revenue_by_customer_missing_customer_record(self):
+        """A revenue row whose customer lookup returns nothing should still be included."""
+        self.mock_ns.execute_suiteql.side_effect = [
+            {'items': [{'entity': 999, 'revenue': '1000'}]},
+            {'items': []},
+        ]
+
+        result = self.service.get_revenue_by_customer(user=self.user)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['name'], 'Customer 999')
+        self.assertEqual(result[0]['revenue'], 1000.0)
+
+    def test_get_revenue_by_customer_empty(self):
+        self.mock_ns.execute_suiteql.return_value = {'items': []}
+
+        result = self.service.get_revenue_by_customer(user=self.user)
+        self.assertEqual(result, [])
+
+    def test_get_revenue_for_period(self):
+        self.mock_ns.execute_suiteql.return_value = {
+            'items': [{'revenue': '15000', 'row_count': '7'}]
+        }
+
+        result = self.service.get_revenue_for_period(
+            user=self.user, start_date='2025-04-01', end_date='2026-04-01'
+        )
+        self.assertEqual(result['revenue'], 15000.0)
+        self.assertEqual(result['transaction_count'], 7)
+        self.assertEqual(result['start_date'], '2025-04-01')
+        self.assertEqual(result['end_date'], '2026-04-01')
+
+    def test_get_revenue_for_period_empty(self):
+        self.mock_ns.execute_suiteql.return_value = {'items': []}
+
+        result = self.service.get_revenue_for_period(
+            user=self.user, start_date='2025-04-01', end_date='2026-04-01'
+        )
+        self.assertEqual(result['revenue'], 0.0)
+        self.assertEqual(result['transaction_count'], 0)
+
+    def test_get_sales_summary_includes_average_invoice_value(self):
+        self.mock_ns.execute_suiteql.side_effect = [
+            {'items': [{'row_count': '10', 'revenue': '50000'}]},
+            {'items': [{'row_count': '5', 'revenue': '25000'}]},
+        ]
+
+        result = self.service.get_sales_summary(user=self.user)
+        self.assertEqual(result['average_invoice_value'], 5000.0)
+
+    def test_get_sales_summary_empty_average_invoice_value(self):
+        self.mock_ns.execute_suiteql.return_value = {'items': []}
+
+        result = self.service.get_sales_summary(user=self.user)
+        self.assertEqual(result['average_invoice_value'], 0.0)
+
+    def test_get_total_receivables(self):
+        self.mock_ns.execute_suiteql.return_value = {
+            'items': [{'total_receivable': '125000', 'customer_count': '42'}]
+        }
+
+        result = self.service.get_total_receivables(user=self.user)
+        self.assertEqual(result['total_receivable'], 125000.0)
+        self.assertEqual(result['customers_with_balance'], 42)
+
+    def test_get_total_receivables_empty(self):
+        self.mock_ns.execute_suiteql.return_value = {'items': []}
+
+        result = self.service.get_total_receivables(user=self.user)
+        self.assertEqual(result['total_receivable'], 0.0)
+        self.assertEqual(result['customers_with_balance'], 0)
+
+    def test_get_overdue_invoices_summary(self):
+        self.mock_ns.execute_suiteql.return_value = {
+            'items': [{'invoice_count': '8', 'total_overdue': '32000'}]
+        }
+
+        result = self.service.get_overdue_invoices_summary(user=self.user)
+        self.assertEqual(result['overdue_invoice_count'], 8)
+        self.assertEqual(result['total_overdue_amount'], 32000.0)
+
+    def test_get_overdue_invoices_summary_empty(self):
+        self.mock_ns.execute_suiteql.return_value = {'items': []}
+
+        result = self.service.get_overdue_invoices_summary(user=self.user)
+        self.assertEqual(result['overdue_invoice_count'], 0)
+        self.assertEqual(result['total_overdue_amount'], 0.0)
 
 
 # ===================================================================

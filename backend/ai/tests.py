@@ -30,7 +30,12 @@ from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 
 from accounts.models import User
-from ai.context_builder import build_context
+from ai.context_builder import (
+    build_context,
+    _current_fiscal_year_range,
+    _current_month_range,
+    _previous_month_range,
+)
 from ai.exceptions import AIConversationNotFoundException, AIProviderNotConfiguredException, AIProviderRequestException
 from ai.models import AIConversation, AIMessage
 from ai.prompts import build_system_prompt, build_user_prompt
@@ -113,13 +118,22 @@ class ContextBuilderTests(TestCase):
         mock_dashboard.get_recent_customers.return_value = []
         mock_dashboard.get_recent_invoices.return_value = []
         mock_dashboard.get_recent_sales_orders.return_value = []
+        mock_dashboard.get_recent_employees.return_value = []
 
         mock_insights = MockInsightsService.return_value
         mock_insights.get_sales_summary.return_value = {'total_sales_orders': 3}
         mock_insights.get_top_customers.return_value = [{'name': 'Acme'}]
         mock_insights.get_overdue_invoices.return_value = []
+        mock_insights.get_overdue_invoices_summary.return_value = {
+            'overdue_invoice_count': 2, 'total_overdue_amount': 4000.0,
+        }
         mock_insights.get_inactive_vendors.return_value = []
         mock_insights.get_low_inventory.return_value = []
+        mock_insights.get_total_receivables.return_value = {
+            'total_receivable': 20000.0, 'customers_with_balance': 15,
+        }
+        mock_insights.get_revenue_by_customer.return_value = [{'name': 'Acme', 'revenue': 9000.0}]
+        mock_insights.get_revenue_for_period.return_value = {'revenue': 5000.0, 'transaction_count': 2}
 
         context = build_context(self.user)
         self.assertTrue(context['netsuite_connected'])
@@ -130,6 +144,7 @@ class ContextBuilderTests(TestCase):
         self.assertEqual(context['business_context']['recent_customers'], [])
         self.assertEqual(context['business_context']['recent_invoices'], [])
         self.assertEqual(context['business_context']['recent_sales_orders'], [])
+        self.assertEqual(context['business_context']['recent_employees'], [])
 
         # New Business Insights keys — additive.
         self.assertEqual(
@@ -137,8 +152,33 @@ class ContextBuilderTests(TestCase):
         )
         self.assertEqual(context['business_context']['top_customers'], [{'name': 'Acme'}])
         self.assertEqual(context['business_context']['overdue_invoices'], [])
+        self.assertEqual(
+            context['business_context']['overdue_invoices_summary']['overdue_invoice_count'], 2
+        )
         self.assertEqual(context['business_context']['inactive_vendors'], [])
         self.assertEqual(context['business_context']['low_inventory'], [])
+        self.assertEqual(
+            context['business_context']['total_receivables']['total_receivable'], 20000.0
+        )
+
+        # New revenue keys — additive.
+        self.assertEqual(
+            context['business_context']['top_customers_by_revenue'],
+            [{'name': 'Acme', 'revenue': 9000.0}],
+        )
+        self.assertEqual(context['business_context']['revenue_this_month']['revenue'], 5000.0)
+        self.assertEqual(context['business_context']['revenue_last_month']['revenue'], 5000.0)
+        self.assertEqual(
+            context['business_context']['revenue_this_fiscal_year']['revenue'], 5000.0
+        )
+        # get_revenue_for_period is called three times (this month, last
+        # month, this fiscal year) with distinct, non-overlapping ranges.
+        call_ranges = [
+            (c.kwargs['start_date'], c.kwargs['end_date'])
+            for c in mock_insights.get_revenue_for_period.call_args_list
+        ]
+        self.assertEqual(len(call_ranges), 3)
+        self.assertEqual(len(set(call_ranges)), 3)
 
     @patch('ai.context_builder.NetSuiteConnectionRepository')
     def test_build_context_not_connected(self, MockRepo):
@@ -191,6 +231,70 @@ class ContextBuilderTests(TestCase):
             context['business_context']['sales_summary']['total_sales_orders'], 3
         )
         self.assertEqual(context['business_context']['overdue_invoices'], [])
+
+
+class DateRangeHelperTests(TestCase):
+    """
+    `_current_month_range` and `_current_fiscal_year_range` are plain date
+    math (no NetSuite call), so these are tested directly against fixed,
+    mocked "now" values rather than through build_context().
+    """
+
+    @patch('ai.context_builder.timezone')
+    def test_current_month_range(self, mock_timezone):
+        import datetime
+        mock_timezone.now.return_value.date.return_value = datetime.date(2026, 7, 16)
+
+        start, end = _current_month_range()
+        self.assertEqual(start, '2026-07-01')
+        self.assertEqual(end, '2026-08-01')
+
+    @patch('ai.context_builder.timezone')
+    def test_current_month_range_december(self, mock_timezone):
+        import datetime
+        mock_timezone.now.return_value.date.return_value = datetime.date(2026, 12, 25)
+
+        start, end = _current_month_range()
+        self.assertEqual(start, '2026-12-01')
+        self.assertEqual(end, '2027-01-01')
+
+    @patch('ai.context_builder.timezone')
+    def test_previous_month_range(self, mock_timezone):
+        import datetime
+        mock_timezone.now.return_value.date.return_value = datetime.date(2026, 7, 16)
+
+        start, end = _previous_month_range()
+        self.assertEqual(start, '2026-06-01')
+        self.assertEqual(end, '2026-07-01')
+
+    @patch('ai.context_builder.timezone')
+    def test_previous_month_range_january_rollover(self, mock_timezone):
+        import datetime
+        mock_timezone.now.return_value.date.return_value = datetime.date(2026, 1, 15)
+
+        start, end = _previous_month_range()
+        self.assertEqual(start, '2025-12-01')
+        self.assertEqual(end, '2026-01-01')
+
+    @patch('ai.context_builder.timezone')
+    def test_current_fiscal_year_range_after_april(self, mock_timezone):
+        import datetime
+        # July 2026 falls in FY 2026-2027 (Apr 2026 - Mar 2027).
+        mock_timezone.now.return_value.date.return_value = datetime.date(2026, 7, 16)
+
+        start, end = _current_fiscal_year_range()
+        self.assertEqual(start, '2026-04-01')
+        self.assertEqual(end, '2027-04-01')
+
+    @patch('ai.context_builder.timezone')
+    def test_current_fiscal_year_range_before_april(self, mock_timezone):
+        import datetime
+        # January 2026 falls in FY 2025-2026 (Apr 2025 - Mar 2026).
+        mock_timezone.now.return_value.date.return_value = datetime.date(2026, 1, 15)
+
+        start, end = _current_fiscal_year_range()
+        self.assertEqual(start, '2025-04-01')
+        self.assertEqual(end, '2026-04-01')
 
 
 # ===================================================================
