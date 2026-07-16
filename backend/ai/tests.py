@@ -101,9 +101,10 @@ class ContextBuilderTests(TestCase):
     def setUp(self):
         self.user = _make_user()
 
+    @patch('ai.context_builder.BusinessInsightsService')
     @patch('ai.context_builder.DashboardService')
     @patch('ai.context_builder.NetSuiteConnectionRepository')
-    def test_build_context_connected(self, MockRepo, MockDashboardService):
+    def test_build_context_connected(self, MockRepo, MockDashboardService, MockInsightsService):
         mock_repo = MockRepo.return_value
         mock_repo.get_by_user.return_value = MagicMock(is_active=True)
 
@@ -113,10 +114,31 @@ class ContextBuilderTests(TestCase):
         mock_dashboard.get_recent_invoices.return_value = []
         mock_dashboard.get_recent_sales_orders.return_value = []
 
+        mock_insights = MockInsightsService.return_value
+        mock_insights.get_sales_summary.return_value = {'total_sales_orders': 3}
+        mock_insights.get_top_customers.return_value = [{'name': 'Acme'}]
+        mock_insights.get_overdue_invoices.return_value = []
+        mock_insights.get_inactive_vendors.return_value = []
+        mock_insights.get_low_inventory.return_value = []
+
         context = build_context(self.user)
         self.assertTrue(context['netsuite_connected'])
         self.assertIsNotNone(context['business_context'])
+
+        # Pre-existing Dashboard keys — unchanged, still present.
         self.assertEqual(context['business_context']['summary']['total_customers'], 10)
+        self.assertEqual(context['business_context']['recent_customers'], [])
+        self.assertEqual(context['business_context']['recent_invoices'], [])
+        self.assertEqual(context['business_context']['recent_sales_orders'], [])
+
+        # New Business Insights keys — additive.
+        self.assertEqual(
+            context['business_context']['sales_summary']['total_sales_orders'], 3
+        )
+        self.assertEqual(context['business_context']['top_customers'], [{'name': 'Acme'}])
+        self.assertEqual(context['business_context']['overdue_invoices'], [])
+        self.assertEqual(context['business_context']['inactive_vendors'], [])
+        self.assertEqual(context['business_context']['low_inventory'], [])
 
     @patch('ai.context_builder.NetSuiteConnectionRepository')
     def test_build_context_not_connected(self, MockRepo):
@@ -126,6 +148,49 @@ class ContextBuilderTests(TestCase):
         context = build_context(self.user)
         self.assertFalse(context['netsuite_connected'])
         self.assertIsNone(context['business_context'])
+
+    @patch('ai.context_builder.BusinessInsightsService')
+    @patch('ai.context_builder.DashboardService')
+    @patch('ai.context_builder.NetSuiteConnectionRepository')
+    def test_build_context_degrades_gracefully_on_partial_failure(
+        self, MockRepo, MockDashboardService, MockInsightsService
+    ):
+        """
+        One failing insight (top_customers) must not prevent the rest of
+        business_context from being built, and must not raise out of
+        build_context() at all.
+        """
+        mock_repo = MockRepo.return_value
+        mock_repo.get_by_user.return_value = MagicMock(is_active=True)
+
+        mock_dashboard = MockDashboardService.return_value
+        mock_dashboard.get_summary.return_value = {'total_customers': 10}
+        mock_dashboard.get_recent_customers.return_value = []
+        mock_dashboard.get_recent_invoices.return_value = []
+        mock_dashboard.get_recent_sales_orders.return_value = []
+
+        mock_insights = MockInsightsService.return_value
+        mock_insights.get_sales_summary.return_value = {'total_sales_orders': 3}
+        mock_insights.get_top_customers.side_effect = Exception('SuiteQL timeout')
+        mock_insights.get_overdue_invoices.return_value = []
+        mock_insights.get_inactive_vendors.return_value = []
+        mock_insights.get_low_inventory.return_value = []
+
+        context = build_context(self.user)
+
+        # The whole request survives — no exception propagated.
+        self.assertTrue(context['netsuite_connected'])
+        self.assertIsNotNone(context['business_context'])
+
+        # The failing insight is omitted (None), not fabricated.
+        self.assertIsNone(context['business_context']['top_customers'])
+
+        # Every other insight still built normally.
+        self.assertEqual(context['business_context']['summary']['total_customers'], 10)
+        self.assertEqual(
+            context['business_context']['sales_summary']['total_sales_orders'], 3
+        )
+        self.assertEqual(context['business_context']['overdue_invoices'], [])
 
 
 # ===================================================================
