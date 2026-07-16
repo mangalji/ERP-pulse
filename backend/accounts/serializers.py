@@ -100,6 +100,7 @@ class UserSerializer(serializers.ModelSerializer):
     and permission/group fields — a user should never see more about
     their own account than this via the API.
     """
+    netsuite_connected = serializers.SerializerMethodField()
  
     class Meta:
         model = User
@@ -112,5 +113,10 @@ class UserSerializer(serializers.ModelSerializer):
             'is_active',
             'is_email_verified',
             'created_at',
+            'netsuite_connected'
         ]
         read_only_fields = fields
+
+    def get_netsuite_connected(self,obj):
+        return hasattr(obj, "netsuite_connection") and obj.netsuite_connection.is_active
+    

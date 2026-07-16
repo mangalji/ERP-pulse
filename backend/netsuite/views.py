@@ -78,7 +78,9 @@ class NetSuiteCallbackView(APIView):
             code=params['code'], state=params['state']
         )
 
-        return redirect(f'{settings.FRONTEND_URL}/settings/integrations?netsuite=connected')
+        return redirect(
+    f'{settings.FRONTEND_URL}/settings?netsuite=connected'
+)
 
 
 class NetSuiteCustomersView(APIView):
