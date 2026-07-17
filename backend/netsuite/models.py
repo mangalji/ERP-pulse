@@ -5,6 +5,20 @@ from django.db import models
 
 
 class NetSuiteConnection(models.Model):
+
+    ENVIRONMENT_CHOICES = [
+        ("sandbox", "Sandbox"),
+        ("production", "Production"),
+    ]
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("connected", "Connected"),
+        ("disconnected", "Disconnected"),
+        ("error", "Error"),
+    ]
+
+
     """
     One row per ERP Pulse user's connected NetSuite account.
 
@@ -25,24 +39,42 @@ class NetSuiteConnection(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='netsuite_connection',
-    )
+    # user = models.OneToOneField(
+    #     settings.AUTH_USER_MODEL,
+    #     on_delete=models.CASCADE,
+    #     related_name='netsuite_connection',
+    # )
 
+    user = models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="netsuite_connections")
+
+    client_name = models.CharField(max_length=255,null=True,blank=True)
     # Confirmed at connect time and stored per-connection rather than
     # assumed from NETSUITE_ACCOUNT_ID in settings, since that global
     # config could change independently of an already-connected user.
+
+    environment = models.CharField(
+        max_length=20,
+        choices=ENVIRONMENT_CHOICES,
+        null=True,
+        blank=True,
+    )
+    client_id = models.CharField(max_length=255,null=True,blank=True)
+
+    client_secret = models.TextField(null=True,blank=True)
     netsuite_account_id = models.CharField(max_length=50)
 
-    access_token = models.TextField()
-    refresh_token = models.TextField()
+    access_token = models.TextField(null=True,blank=True)
+    refresh_token = models.TextField(null=True,blank=True)
 
-    access_token_expires_at = models.DateTimeField()
+    access_token_expires_at = models.DateTimeField(null=True,blank=True)
     refresh_token_expires_at = models.DateTimeField(null=True, blank=True)
-
-    is_active = models.BooleanField(default=True)
+    
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="pending",
+    )
+    is_active = models.BooleanField(default=False)
 
     connected_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -50,5 +82,13 @@ class NetSuiteConnection(models.Model):
     class Meta:
         db_table = 'netsuite_connection'
 
-    def __str__(self) -> str:
-        return f'NetSuite connection for {self.user.email}'
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "netsuite_account_id"],
+                name="unique_user_netsuite_account",
+            )
+        ]
+
+
+    def __str__(self):
+        return f"{self.client_name} ({self.user.email})"

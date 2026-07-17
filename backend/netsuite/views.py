@@ -17,31 +17,36 @@ from common.utils.response import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException
-from netsuite.serializers import NetSuiteCallbackSerializer
+from netsuite.serializers import (
+    NetSuiteCallbackSerializer, 
+    NetSuiteConnectionCreateSerializer,
+    NetSuiteConnectionListSerializer,
+    NetSuiteConnectionRenameSerializer,
+    NetSuiteConnectionSwitchSerializer)
 from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
 
 
-class NetSuiteConnectView(APIView):
-    """
-    GET /api/v1/netsuite/connect/
+# class NetSuiteConnectView(APIView):
+#     """
+#     GET /api/v1/netsuite/connect/
 
-    Returns the NetSuite OAuth authorization URL for the logged-in user.
-    The frontend redirects the browser to this URL itself; ERP Pulse
-    never initiates the redirect server-side, since the user must
-    interact with NetSuite's own login/consent screen.
-    """
+#     Returns the NetSuite OAuth authorization URL for the logged-in user.
+#     The frontend redirects the browser to this URL itself; ERP Pulse
+#     never initiates the redirect server-side, since the user must
+#     interact with NetSuite's own login/consent screen.
+#     """
 
-    permission_classes = [IsAuthenticated]
+#     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        authorization_url = NetSuiteConnectionService().get_authorization_url(
-            user=request.user
-        )
+#     def get(self, request):
+#         authorization_url = NetSuiteConnectionService().get_authorization_url(
+#             user=request.user
+#         )
 
-        return success_response(
-            message='NetSuite authorization URL generated.',
-            data={'authorization_url': authorization_url},
-        )
+#         return success_response(
+#             message='NetSuite authorization URL generated.',
+#             data={'authorization_url': authorization_url},
+#         )
 
 
 class NetSuiteCallbackView(APIView):
@@ -340,4 +345,75 @@ class NetSuiteInvoiceDetailView(APIView):
         return success_response(
             message='NetSuite invoice fetched successfully.',
             data=invoice,
+        )
+    
+class NetSuiteConnectionListCreateView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self,request):
+        service = NetSuiteConnectionService()
+        connections = service.list_connections(user=request.user,)
+        serializer = NetSuiteConnectionListSerializer(
+            connections,many=True
+        )
+
+        return success_response(
+            message="NetSuite connections fetched successfully.",
+            data=serializer.data,
+        )
+
+    def post(self,request):
+        serializer = NetSuiteConnectionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = NetSuiteConnectionService().create_connection(
+            user=request.user,**serializer.validated_data,
+        )
+        return success_response(
+            message="Connection created successfully.",
+            data={
+                "connection":NetSuiteConnectionListSerializer(result["connection"]).data,
+                "authorization_url":result["authorization_url"],
+            },
+        )
+
+class NetSuiteConnectionDetailView(APIView):
+    
+    permission_classes = [IsAuthenticated]
+    
+    def patch(self,request,connection_id):
+        serializer = NetSuiteConnectionRenameSerializer(
+            data=request.data
+        )    
+        serializer.is_valid(raise_exception=True)
+        connection = NetSuiteConnectionService().rename_connection(
+            user=request.user,connection_id=connection_id,
+            client_name=serializer.validated_data["client_name"],
+        )
+        return success_response(
+            message="connections renamed successfully.",
+            data=NetSuiteConnectionListSerializer(
+                connection
+            ).data,
+        )
+
+    def delete(self,request,connection_id):
+        NetSuiteConnectionService.delete_connection(user=request.user,
+                                                    connection_id=connection_id,)
+        return success_response(message="Connection deleted successfully.")
+
+class NetSuiteConnectionSwitchView(APIView):
+    
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request,connection_id):   
+        connection = NetSuiteConnectionService().switch_connection(
+            user=request.user,
+            connection_id=connection_id,
+        )
+        return success_response(
+            message="Active connection switched successfully.",
+            data=NetSuiteConnectionListSerializer(
+                connection
+            ).data,
         )

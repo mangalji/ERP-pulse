@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from netsuite.models import NetSuiteConnection
 
 
 class NetSuiteCallbackSerializer(serializers.Serializer):
@@ -14,3 +15,31 @@ class NetSuiteCallbackSerializer(serializers.Serializer):
     state = serializers.CharField()
     code = serializers.CharField(required=False)
     error = serializers.CharField(required=False)
+
+class NetSuiteConnectionCreateSerializer(serializers.Serializer):
+    client_name= serializers.CharField(max_length=255)
+    environment = serializers.ChoiceField(
+        choices=["sandbox","production"]
+    )
+    client_id = serializers.CharField()
+    client_secret = serializers.CharField()
+    netsuite_account_id = serializers.CharField()
+
+class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NetSuiteConnection
+        fields = (
+            "id",
+            "client_name",
+            "environment",
+            "netsuite_account_id",
+            "status",
+            "is_active",
+            "connected_at",
+        )
+
+class NetSuiteConnectionRenameSerializer(serializers.Serializer):
+    client_name = serializers.CharField(max_length=255)
+
+class NetSuiteConnectionSwitchSerializer(serializers.Serializer):
+    pass

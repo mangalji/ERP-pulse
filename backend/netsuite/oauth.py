@@ -39,7 +39,7 @@ def netsuite_account_domain(account_id: str) -> str:
     return account_id.lower().replace('_', '-')
 
 
-def build_authorization_url(*, user_id: str) -> str:
+def build_authorization_url(*, user_id: str, connection_id: str, account_id: str, client_id: str) -> str:
     """
     Build the NetSuite OAuth 2.0 authorize URL for a given ERP Pulse user.
 
@@ -51,17 +51,15 @@ def build_authorization_url(*, user_id: str) -> str:
     cryptographically guaranteeing the value wasn't tampered with or
     replayed after STATE_MAX_AGE_SECONDS.
     """
-    account_id = settings.NETSUITE_ACCOUNT_ID
-    client_id = settings.NETSUITE_CLIENT_ID
+
     redirect_uri = settings.NETSUITE_REDIRECT_URI
 
-    if not all([account_id, client_id, redirect_uri]):
+    if not redirect_uri:
         raise NetSuiteConfigurationException(
-            'NetSuite OAuth is not configured. Set NETSUITE_ACCOUNT_ID, '
-            'NETSUITE_CLIENT_ID, and NETSUITE_REDIRECT_URI.'
+            "NETSUITE_REDIRECT_URI is not configured."
         )
-
-    state = _state_signer.sign(str(user_id))
+    payload = f"{user_id}:{connection_id}"
+    state = _state_signer.sign(payload)
 
     query = urlencode({
         'response_type': 'code',
@@ -75,7 +73,7 @@ def build_authorization_url(*, user_id: str) -> str:
     return f'https://{domain}.app.netsuite.com/app/login/oauth2/authorize.nl?{query}'
 
 
-def resolve_user_id_from_state(state: str) -> str:
+def resolve_user_id_from_state(state: str) -> tuple[str,str]:
     """
     Verify a `state` value's signature and age, and return the user_id it
     encodes. Raises NetSuiteStateMismatchException if the value is
@@ -84,11 +82,33 @@ def resolve_user_id_from_state(state: str) -> str:
     if not state:
         raise NetSuiteStateMismatchException('Missing OAuth state parameter.')
 
-    try:
-        return _state_signer.unsign(state, max_age=STATE_MAX_AGE_SECONDS)
+    # try:
+    #     return _state_signer.unsign(state, max_age=STATE_MAX_AGE_SECONDS)
+    # except signing.SignatureExpired as exc:
+    #     raise NetSuiteStateMismatchException(
+    #         'OAuth state has expired. Please try connecting again.'
+    #     ) from exc
+    # except signing.BadSignature as exc:
+    #     raise NetSuiteStateMismatchException('Invalid OAuth state parameter.') from exc
+    try: 
+        payload = _state_signer.unsign(
+            state,
+            max_age=STATE_MAX_AGE_SECONDS,
+        )
+
+        user_id, connection_id = payload.split(":", 1)
+
+        return user_id, connection_id
+    
     except signing.SignatureExpired as exc:
+
         raise NetSuiteStateMismatchException(
-            'OAuth state has expired. Please try connecting again.'
+            "OAuth state has expired. Please try connecting again."
         ) from exc
-    except signing.BadSignature as exc:
-        raise NetSuiteStateMismatchException('Invalid OAuth state parameter.') from exc
+    
+    except(
+        signing.BadSignature,ValueError
+    ) as exc:
+        raise NetSuiteStateMismatchException(
+            "Invalid OAuth state parameter."
+        ) from exc

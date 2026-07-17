@@ -117,6 +117,8 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_netsuite_connected(self,obj):
-        return hasattr(obj, "netsuite_connection") and obj.netsuite_connection.is_active
+    def get_netsuite_connected(self, obj):
+        return obj.netsuite_connections.filter(
+        is_active=True,
+        ).exists()
     

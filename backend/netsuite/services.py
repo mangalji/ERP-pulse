@@ -39,11 +39,11 @@ class NetSuiteConnectionService:
         client: NetSuiteAuthClient | None = None,
     ):
         self.repository = repository or NetSuiteConnectionRepository()
-        self._client = client
 
-    def get_authorization_url(self, *, user: User) -> str:
+    def get_authorization_url(self, *, user: User, connection) -> str:
         """Step 1: build the URL the frontend should redirect the browser to."""
-        return build_authorization_url(user_id=str(user.id))
+        return build_authorization_url(user_id=str(user.id),connection_id=str(connection.id),account_id=connection.netsuite_account_id,
+        client_id=connection.client_id,)
 
     def handle_callback(self, *, code: str, state: str) -> User:
         """
@@ -51,7 +51,7 @@ class NetSuiteConnectionService:
         the connection. Returns the User the connection belongs to (the
         view uses this to decide where to redirect the browser next).
         """
-        user_id = resolve_user_id_from_state(state)
+        user_id, connection_id = resolve_user_id_from_state(state)
 
         try:
             user = User.objects.get(id=user_id)
@@ -61,12 +61,23 @@ class NetSuiteConnectionService:
             # proved the state wasn't tampered with.
             raise NetSuiteStateMismatchException('Invalid OAuth state parameter.') from exc
 
-        client = self._get_client()
+        connection = self.repository.get_by_id(
+            user=user,
+            connection_id=connection_id,
+        )
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException("connection not found.")
+
+        # client = self._get_client()
+        client = NetSuiteAuthClient(
+        account_id=connection.netsuite_account_id,
+        client_id=connection.client_id,
+        client_secret=connection.client_secret,
+    )
         token_set = client.exchange_code_for_tokens(code=code)
 
-        self.repository.upsert(
-            user=user,
-            netsuite_account_id=client.account_id,
+        self.repository.complete_OAuth(
+            connection,
             access_token=token_set.access_token,
             refresh_token=token_set.refresh_token,
             access_token_expires_at=token_set.access_token_expires_at,
@@ -75,11 +86,87 @@ class NetSuiteConnectionService:
         logger.info('NetSuite connected for user %s.', user.id)
         return user
 
-    def _get_client(self) -> NetSuiteAuthClient:
-        if self._client is None:
-            self._client = NetSuiteAuthClient()
-        return self._client
+    # def _get_client(self) -> NetSuiteAuthClient:
+    #     if self._client is None:
+    #         self._client = NetSuiteAuthClient()
+    #     return self._client
 
+    def list_connections(self,*,user:User):
+        return self.repository.list_by_user(user)
+    
+    def create_connection(
+            self,*,
+            user:User,
+            client_name:str,
+            environment:str,
+            client_id:str,
+            client_secret:str,
+            netsuite_account_id:str):
+        
+        connection = self.repository.create(
+            user=user,
+            client_name=client_name,
+            client_id=client_id,
+            environment=environment,
+            client_secret=client_secret,
+            netsuite_account_id=netsuite_account_id,
+        )
+
+        authorization_url = self.get_authorization_url(user=user,connection=connection)
+
+        # return self.repository.create(
+        #     user=user,
+        #     client_name=client_name,
+        #     client_id=client_id,
+        #     client_secret=client_secret,
+        #     environment=environment,
+        #     netsuite_account_id=netsuite_account_id,
+        # )
+        return {
+            "connection":connection,
+            "authorization_url":authorization_url,
+        }
+    
+    def rename_connection(
+            self,*,
+            user:User,
+            connection_id,
+            client_name:str,
+            ):
+        connection = self.repository.get_by_id(user,connection_id)
+
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException("connection not found.")
+        
+        return self.repository.rename(
+            connection,client_name
+        )
+    
+    def delete_connection(
+            self,*,
+            user:User,
+            connection_id,
+    ):
+        connection = self.repository.get_by_id(user,connection_id)
+
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException("connection not found.")
+        
+        self.repository.delete(connection)
+        # return "connection removed succefully."
+    
+    def switch_connection(
+            self,*,
+            user:User,
+            connection_id,
+    ):
+        connection = self.repository.get_by_id(user,connection_id)
+
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException("connection not found.")
+        
+        return self.repository.switch_active_connection(user,connection,)
+    
 
 class NetSuiteDataService:
     """
@@ -96,17 +183,23 @@ class NetSuiteDataService:
     def __init__(
         self,
         repository: NetSuiteConnectionRepository | None = None,
-        client: NetSuiteAuthClient | None = None,
     ):
         self.repository = repository or NetSuiteConnectionRepository()
-        self._client = client
 
     def _get_authenticated_client(self, user: User) -> NetSuiteAuthClient:
         connection = self._require_connection(user)
         access_token = self._ensure_valid_token(connection)
         
-        client = self._get_client()
-        client.access_token = access_token
+        # client = self._get_client()
+        # client.access_token = access_token
+        # return client
+        client = NetSuiteAuthClient(
+        account_id=connection.netsuite_account_id,
+        client_id=connection.client_id,
+        client_secret=connection.client_secret,
+        access_token=access_token,
+        )
+
         return client
 
     def get_records(
@@ -190,7 +283,15 @@ class NetSuiteDataService:
             return connection.access_token
 
         logger.info('Refreshing expired NetSuite access token for user %s.', connection.user_id)
-        token_set = self._get_client().refresh_access_token(refresh_token=connection.refresh_token)
+        client = NetSuiteAuthClient(
+        account_id=connection.netsuite_account_id,
+        client_id=connection.client_id,
+        client_secret=connection.client_secret,
+        )
+
+        token_set = client.refresh_access_token(
+        refresh_token=connection.refresh_token,
+        )
         connection = self.repository.update_tokens(
             connection,
             access_token=token_set.access_token,
@@ -198,8 +299,3 @@ class NetSuiteDataService:
             access_token_expires_at=token_set.access_token_expires_at,
         )
         return connection.access_token
-
-    def _get_client(self) -> NetSuiteAuthClient:
-        if self._client is None:
-            self._client = NetSuiteAuthClient()
-        return self._client

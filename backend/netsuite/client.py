@@ -54,17 +54,21 @@ class NetSuiteTokenSet:
 class NetSuiteAuthClient:
     """Handles the token-endpoint calls of the OAuth 2.0 Authorization Code Grant."""
 
-    def __init__(self, access_token: str | None = None):
-        self.account_id = settings.NETSUITE_ACCOUNT_ID
-        self.client_id = settings.NETSUITE_CLIENT_ID
-        self.client_secret = settings.NETSUITE_CLIENT_SECRET
+    def __init__(self, 
+                *,
+                account_id:str,
+                client_id:str,
+                client_secret:str,
+                access_token: str | None = None):
+        self.account_id = account_id
+        self.client_id = client_id
+        self.client_secret = client_secret
         self.redirect_uri = settings.NETSUITE_REDIRECT_URI
         self.access_token = access_token
 
         if not all([self.account_id, self.client_id, self.client_secret, self.redirect_uri]):
             raise NetSuiteConfigurationException(
-                'NetSuite OAuth is not configured. Set NETSUITE_ACCOUNT_ID, '
-                'NETSUITE_CLIENT_ID, NETSUITE_CLIENT_SECRET, and NETSUITE_REDIRECT_URI.'
+                'NetSuite OAuth is not configured.'
             )
 
         domain = netsuite_account_domain(self.account_id)

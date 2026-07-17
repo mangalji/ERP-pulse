@@ -17,10 +17,13 @@ from netsuite.views import (
     NetSuiteVendorDetailView,
     NetSuiteEmployeeDetailView,
     NetSuiteCustomerDetailView,
+    NetSuiteConnectionListCreateView,
+    NetSuiteConnectionDetailView,
+    NetSuiteConnectionSwitchView,
 )
 
 urlpatterns = [
-    path('connect/', NetSuiteConnectView.as_view(), name='netsuite-connect'),
+    # path('connect/', NetSuiteConnectView.as_view(), name='netsuite-connect'),
     path('callback/', NetSuiteCallbackView.as_view(), name='netsuite-callback'),
     path('customers/', NetSuiteCustomersView.as_view(), name='netsuite-customers'),
     path('customers/<str:record_id>/', NetSuiteCustomerDetailView.as_view(), name='netsuite-customer-detail'),
@@ -36,4 +39,7 @@ urlpatterns = [
     path('purchase-orders/<str:record_id>/', NetSuitePurchaseOrderDetailView.as_view(), name='netsuite-purchase-order-detail'),
     path('invoices/', NetSuiteInvoicesView.as_view(), name='netsuite-invoices'),
     path('invoices/<str:record_id>/', NetSuiteInvoiceDetailView.as_view(), name='netsuite-invoice-detail'),
+    path("connections/",NetSuiteConnectionListCreateView.as_view(),name="netsuite_connection_list_create_view"),
+    path("connections/<uuid:connection_id>/", NetSuiteConnectionDetailView.as_view(),name="netsuite_connection_detail_view"),
+    path("connections/<uuid:connection_id>/switch/", NetSuiteConnectionSwitchView.as_view(),name="netsuite_connection_switch_view"),
 ]
