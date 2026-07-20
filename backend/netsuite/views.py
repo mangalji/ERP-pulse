@@ -26,29 +26,6 @@ from netsuite.serializers import (
 from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
 
 
-# class NetSuiteConnectView(APIView):
-#     """
-#     GET /api/v1/netsuite/connect/
-
-#     Returns the NetSuite OAuth authorization URL for the logged-in user.
-#     The frontend redirects the browser to this URL itself; ERP Pulse
-#     never initiates the redirect server-side, since the user must
-#     interact with NetSuite's own login/consent screen.
-#     """
-
-#     permission_classes = [IsAuthenticated]
-
-#     def get(self, request):
-#         authorization_url = NetSuiteConnectionService().get_authorization_url(
-#             user=request.user
-#         )
-
-#         return success_response(
-#             message='NetSuite authorization URL generated.',
-#             data={'authorization_url': authorization_url},
-#         )
-
-
 class NetSuiteCallbackView(APIView):
     """
     GET /api/v1/netsuite/callback/
@@ -398,8 +375,10 @@ class NetSuiteConnectionDetailView(APIView):
         )
 
     def delete(self,request,connection_id):
-        NetSuiteConnectionService.delete_connection(user=request.user,
-                                                    connection_id=connection_id,)
+        NetSuiteConnectionService().delete_connection(
+            user=request.user,
+            connection_id=connection_id,
+            )
         return success_response(message="Connection deleted successfully.")
 
 class NetSuiteConnectionSwitchView(APIView):
