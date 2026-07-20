@@ -95,8 +95,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": config("DATABASE_NAME"),
+        "USER": config("DATABASE_USER"),
+        "PASSWORD": config("DATABASE_PASSWORD"),
+        "HOST": config("DATABASE_HOST", default="localhost"),
+        "PORT": config("DATABASE_PORT", default="5432"),
     }
 }
 
@@ -235,6 +239,22 @@ NETSUITE_ACCOUNT_ID = config('NETSUITE_ACCOUNT_ID', default='')
 NETSUITE_CLIENT_ID = config('NETSUITE_CLIENT_ID', default='')
 NETSUITE_CLIENT_SECRET = config('NETSUITE_CLIENT_SECRET', default='')
 NETSUITE_REDIRECT_URI = config('NETSUITE_REDIRECT_URI', default='')
+
+# ---------------------------------------------------------------------------
+# Field-level encryption (common/utils/crypto.py — EncryptedTextField)
+# ---------------------------------------------------------------------------
+# Encrypts NetSuiteConnection.client_secret/access_token/refresh_token at
+# rest. Defaults to '' like the NETSUITE_* block above (keeps `manage.py
+# check`/`runserver` working without it) — EncryptedTextField itself raises
+# a clear error if a value is actually read/written while unset, rather
+# than silently storing plaintext. MUST be set to a real Fernet key
+# (`Fernet.generate_key()`) before any real NetSuite credentials are
+# stored, and must stay stable across deploys — rotating it makes
+# previously-encrypted rows unreadable.
+
+FIELD_ENCRYPTION_KEY = config('FIELD_ENCRYPTION_KEY', default='')
+
+
 
 
 # ---------------------------------------------------------------------------

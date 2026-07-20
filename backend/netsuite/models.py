@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from common.utils.crypto import EncryptedTextField
 
 
 class NetSuiteConnection(models.Model):
@@ -29,12 +30,10 @@ class NetSuiteConnection(models.Model):
     (see services.py) and refreshed by NetSuiteAuthClient when the
     access token expires.
 
-    SECURITY NOTE: access_token/refresh_token are stored as plaintext
-    TextField for this scaffolding step. Encrypting these at rest (e.g.
-    via a Fernet-backed field) is recommended before real credentials
-    flow through this table in production — intentionally not added here
-    to avoid pulling in a new dependency ahead of an actual data-fetching
-    task; flagged for follow-up.
+    SECURITY NOTE: client_secret/access_token/refresh_token are encrypted
+    at rest via EncryptedTextField (Fernet). FIELD_ENCRYPTION_KEY must be
+    set in the environment before any connection is created — see
+    common/utils/crypto.py.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -60,11 +59,12 @@ class NetSuiteConnection(models.Model):
     )
     client_id = models.CharField(max_length=255,null=True,blank=True)
 
-    client_secret = models.TextField(null=True,blank=True)
+    # client_secret = models.TextField(null=True,blank=True)
+    client_secret = EncryptedTextField(null=True,blank=True)
     netsuite_account_id = models.CharField(max_length=50)
 
-    access_token = models.TextField(null=True,blank=True)
-    refresh_token = models.TextField(null=True,blank=True)
+    access_token = EncryptedTextField(null=True,blank=True)
+    refresh_token = EncryptedTextField(null=True,blank=True)
 
     access_token_expires_at = models.DateTimeField(null=True,blank=True)
     refresh_token_expires_at = models.DateTimeField(null=True, blank=True)
