@@ -2,7 +2,7 @@ from django.urls import path
 
 from netsuite.views import (
     NetSuiteCallbackView,
-    NetSuiteConnectView,
+    # NetSuiteConnectView,
     NetSuiteCustomersView,
     NetSuiteEmployeesView,
     NetSuiteItemsView,
