@@ -37,7 +37,8 @@ export const DASHBOARD_ENDPOINTS = {
 }
 
 export const NETSUITE_ENDPOINTS = {
-  connect: '/netsuite/connect/',
+  // connect: '/netsuite/connect/',
+  connections: '/netsuite/connections/',
   callback: '/netsuite/callback/',
   customers: '/netsuite/customers/',
   employees: '/netsuite/employees/',

@@ -2,7 +2,15 @@ import apiClient, { unwrap } from './apiClient.js'
 import { NETSUITE_ENDPOINTS } from '../utils/constants.js'
 
 export const netsuiteApi = {
-  getConnectUrl: () => apiClient.get(NETSUITE_ENDPOINTS.connect).then(unwrap),
+  // getConnectUrl: () => apiClient.get(NETSUITE_ENDPOINTS.connect).then(unwrap),
+  // Connection management — a user can hold several NetSuite connections
+  // (one per account), with exactly one marked active at a time.
+  listConnections: () => apiClient.get(NETSUITE_ENDPOINTS.connections).then(unwrap),
+  createConnection: (payload) => apiClient.post(NETSUITE_ENDPOINTS.connections, payload).then(unwrap),
+  renameConnection: (id, clientName) =>
+    apiClient.patch(`${NETSUITE_ENDPOINTS.connections}${id}/`, { client_name: clientName }).then(unwrap),
+  deleteConnection: (id) => apiClient.delete(`${NETSUITE_ENDPOINTS.connections}${id}/`).then(unwrap),
+  switchConnection: (id) => apiClient.post(`${NETSUITE_ENDPOINTS.connections}${id}/switch/`).then(unwrap),
   getCustomers: (params) => apiClient.get(NETSUITE_ENDPOINTS.customers, { params }).then(unwrap),
   getCustomer: (id) => apiClient.get(`${NETSUITE_ENDPOINTS.customers}${id}/`).then(unwrap),
   getEmployees: (params) => apiClient.get(NETSUITE_ENDPOINTS.employees, { params }).then(unwrap),
