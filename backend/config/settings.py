@@ -10,6 +10,8 @@ NETSUITE_CONTEXT.md security rules.
 
 from datetime import timedelta
 from pathlib import Path
+import dj_database_url
+import os
 
 from decouple import Csv, config
 
@@ -60,6 +62,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',  # must sit above CommonMiddleware
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -94,16 +97,10 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # ---------------------------------------------------------------------------
 
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": config("DATABASE_NAME"),
-        "USER": config("DATABASE_USER"),
-        "PASSWORD": config("DATABASE_PASSWORD"),
-        "HOST": config("DATABASE_HOST", default="localhost"),
-        "PORT": config("DATABASE_PORT", default="5432"),
-    }
+    "default": dj_database_url.config(
+        default=config("DATABASE_URL")
+    )
 }
-
 
 # ---------------------------------------------------------------------------
 # Custom User Model
@@ -142,6 +139,11 @@ USE_TZ = True
 # ---------------------------------------------------------------------------
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+STATICFILES_STORAGE = (
+    "whitenoise.storage.CompressedManifestStaticFilesStorage"
+)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
