@@ -10,6 +10,7 @@ from accounts.views import (
     ResendRegistrationOTPView,
     CompleteProfileView,
     ResendLoginOTPView,
+    health
 )
 urlpatterns = [
     path('register/',RegisterView.as_view(),name='register'),
@@ -22,4 +23,5 @@ urlpatterns = [
     path("register/resend-otp/", ResendRegistrationOTPView.as_view(), name="resend-registration-otp"),
     path("register/complete-profile/", CompleteProfileView.as_view(), name="complete-profile"),
     path("login/resend-otp/",ResendLoginOTPView.as_view(),name="resend-login-otp"),
+    path("health/",health,name="health"),
 ]

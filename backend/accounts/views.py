@@ -276,3 +276,11 @@ class MeView(APIView):
             message='User fetched successfully.',
             data=UserSerializer(request.user).data,
         )
+    
+from django.http import JsonResponse
+
+def health(request):
+    return JsonResponse({
+        "status": "ok",
+        "service": "ERP Pulse Backend"
+    })

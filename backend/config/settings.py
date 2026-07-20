@@ -237,10 +237,10 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
 # Never hardcode these values — NETSUITE_CONTEXT.md "Authentication"
 # section.
 
-NETSUITE_ACCOUNT_ID = config('NETSUITE_ACCOUNT_ID', default='')
-NETSUITE_CLIENT_ID = config('NETSUITE_CLIENT_ID', default='')
-NETSUITE_CLIENT_SECRET = config('NETSUITE_CLIENT_SECRET', default='')
-NETSUITE_REDIRECT_URI = config('NETSUITE_REDIRECT_URI', default='')
+# NETSUITE_ACCOUNT_ID = config('NETSUITE_ACCOUNT_ID', default='')
+# NETSUITE_CLIENT_ID = config('NETSUITE_CLIENT_ID', default='')
+# NETSUITE_CLIENT_SECRET = config('NETSUITE_CLIENT_SECRET', default='')
+# NETSUITE_REDIRECT_URI = config('NETSUITE_REDIRECT_URI', default='')
 
 # ---------------------------------------------------------------------------
 # Field-level encryption (common/utils/crypto.py — EncryptedTextField)
