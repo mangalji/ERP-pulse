@@ -53,6 +53,8 @@ def standard_exception_handler(exc, context):
     
     status_code = getattr(exc,'status_code',None)
     if status_code is not None:
+        if status_code >= 500:
+            _log_error(exc, context, status_code, level='error')
         return Response(
             {'success':False,
              'message':str(exc),
@@ -61,11 +63,42 @@ def standard_exception_handler(exc, context):
         )
     
     logger.exception('Unhandled exception is %s', context.get('view'))
+    _log_error(exc, context, status.HTTP_500_INTERNAL_SERVER_ERROR, level='error')
     return Response(
         {'success':False,
          'message':'An unexpected error occurred.', 'data': {}},
          status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
+
+
+def _log_error(exc, context, status_code, level='error'):
+    """
+    Persist an unhandled/server exception to monitoring.ErrorLog.
+
+    Imported lazily (not at module top) so `common` — loaded very early
+    in the app registry — never has a hard import-time dependency on the
+    `monitoring` app. Failures here are swallowed: a broken monitoring
+    write must never mask the original error response.
+    """
+    try:
+        import traceback as tb_module
+        from monitoring.models import ErrorLog
+
+        request = context.get('request')
+        user = getattr(request, 'user', None)
+
+        ErrorLog.objects.create(
+            level=level,
+            message=str(exc),
+            exception_type=type(exc).__name__,
+            traceback=''.join(tb_module.format_exception(type(exc), exc, exc.__traceback__))[:10000],
+            method=getattr(request, 'method', ''),
+            path=getattr(request, 'path', ''),
+            status_code=status_code,
+            user=user if user and getattr(user, 'is_authenticated', False) else None,
+        )
+    except Exception:
+        logger.exception('Failed to write ErrorLog entry.')
 
 def _extract_message(error_data)->str:
     """

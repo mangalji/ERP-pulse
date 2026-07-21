@@ -18,6 +18,7 @@ import InvoicesPage from '../pages/InvoicesPage.jsx'
 import ReportsPage from '../pages/ReportsPage.jsx'
 import HistoryPage from '../pages/HistoryPage.jsx'
 import SettingsPage from '../pages/SettingsPage.jsx'
+import SystemHealthPage from '../pages/SystemHealthPage.jsx'
 
 export default function AppRoutes() {
   return (
@@ -129,6 +130,14 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <SettingsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/system-health"
+        element={
+          <ProtectedRoute>
+            <SystemHealthPage />
           </ProtectedRoute>
         }
       />

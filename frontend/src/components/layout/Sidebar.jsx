@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { to: '/invoices', label: 'Invoices', icon: InvoicesIcon },
   { to: '/reports', label: 'Reports', icon: ReportIcon },
   { to: '/history', label: 'History', icon: ClockIcon },
+  { to: '/system-health', label: 'System Health', icon: HeartPulseIcon },
   { to: '/settings', label: 'Settings', icon: GearIcon },
 ]
 
@@ -169,6 +170,14 @@ function ClockIcon(props) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 2" />
+    </svg>
+  )
+}
+function HeartPulseIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M20.8 8.5a4.9 4.9 0 0 0-8.3-3.5l-.5.5-.5-.5A4.9 4.9 0 0 0 3.2 8.5c0 1.4.5 2.6 1.4 3.6L12 20l7.4-7.9c.9-1 1.4-2.2 1.4-3.6Z" />
+      <path d="M6 12h2.5l1.5-3 2 6 1.5-3H16" />
     </svg>
   )
 }

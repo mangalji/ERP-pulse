@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from netsuite.models import NetSuiteConnection
-
+from django.utils import timezone
 
 class NetSuiteCallbackSerializer(serializers.Serializer):
     """
@@ -26,6 +26,8 @@ class NetSuiteConnectionCreateSerializer(serializers.Serializer):
     netsuite_account_id = serializers.CharField()
 
 class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
+    token_expires_in_seconds = serializers.SerializerMethodField()
+
     class Meta:
         model = NetSuiteConnection
         fields = (
@@ -36,7 +38,18 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
             "status",
             "is_active",
             "connected_at",
+            "last_synced_at",
+            "last_error",
+            "consecutive_failures",
+            "token_expires_in_seconds",
         )
+
+    def get_token_expires_in_seconds(self, obj):
+        if not obj.access_token_expires_at:
+            return None
+
+        remaining = (obj.access_token_expires_at - timezone.now()).total_seconds()
+        return max(int(remaining), 0)
 
 class NetSuiteConnectionRenameSerializer(serializers.Serializer):
     client_name = serializers.CharField(max_length=255)

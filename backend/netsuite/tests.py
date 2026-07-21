@@ -110,7 +110,7 @@ def _make_connection(user,**overrides):
         'status':'connected',
         'is_active':True,
         'access_token':'access-token',
-        'refresh-token':'refresh-token',
+        'refresh_token':'refresh-token',
         'access_token_expires_at': timezone.now() + timedelta(hours=1),
     }
     defaults.update(overrides)

@@ -200,7 +200,7 @@ class NetSuiteDataService:
         access_token=access_token,
         )
 
-        return client
+        return client, connection
 
     def get_records(
         self,
@@ -211,8 +211,10 @@ class NetSuiteDataService:
         offset: int | None = None,
         params: dict | None = None,
     ) -> dict:
-        client = self._get_authenticated_client(user)
-        return client.get_records(
+        client, connection = self._get_authenticated_client(user)
+        return self._call_and_track_health(
+            connection,
+            client.get_records,
             record_type=record_type,
             limit=limit,
             offset=offset,
@@ -227,8 +229,10 @@ class NetSuiteDataService:
         user: User,
         params: dict | None = None,
     ) -> dict:
-        client = self._get_authenticated_client(user)
-        return client.get_record(
+        client, connection = self._get_authenticated_client(user)
+        return self._call_and_track_health(
+            connection,
+            client.get_record,
             record_type=record_type,
             record_id=record_id,
             params=params,
@@ -244,8 +248,23 @@ class NetSuiteDataService:
         (netsuite.client.NetSuiteAuthClient.execute_suiteql) is the only
         thing that actually talks to NetSuite.
         """
-        client = self._get_authenticated_client(user)
-        return client.execute_suiteql(query=query)
+        client, connection = self._get_authenticated_client(user)
+        return self._call_and_track_health(connection, client.execute_suiteql, query=query)
+
+    def _call_and_track_health(self, connection, client_method, **kwargs) -> dict:
+        """
+        Runs a NetSuite client call and records the outcome on the
+        connection — last_synced_at/last_error/consecutive_failures —
+        so connection health is visible without a separate sync/health
+        job. Re-raises whatever the client raises; this only observes.
+        """
+        try:
+            result = client_method(**kwargs)
+        except Exception as exc:
+            self.repository.record_sync_failure(connection, error_message=str(exc))
+            raise
+        self.repository.record_sync_success(connection)
+        return result
 
     def get_customers(self, *, user: User) -> dict:
         return self.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=user)
@@ -289,9 +308,14 @@ class NetSuiteDataService:
         client_secret=connection.client_secret,
         )
 
-        token_set = client.refresh_access_token(
-        refresh_token=connection.refresh_token,
-        )
+        try:
+            token_set = client.refresh_access_token(
+            refresh_token=connection.refresh_token,
+            )
+        except Exception as exc:
+            self.repository.record_sync_failure(connection, error_message=f'Token refresh failed: {exc}')
+            raise
+
         connection = self.repository.update_tokens(
             connection,
             access_token=token_set.access_token,

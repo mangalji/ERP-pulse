@@ -117,6 +117,32 @@ class NetSuiteConnectionRepository:
                     next_connection.is_active = True
                     next_connection.save(update_fields=["is_active", "updated_at"])
 
+    def record_sync_success(self, connection: NetSuiteConnection) -> NetSuiteConnection:
+        """Called after a successful NetSuite data fetch or token refresh."""
+        from django.utils import timezone
+
+        connection.last_synced_at = timezone.now()
+        connection.last_error = None
+        connection.consecutive_failures = 0
+        connection.save(
+            update_fields=['last_synced_at', 'last_error', 'consecutive_failures', 'updated_at']
+        )
+        return connection
+
+    def record_sync_failure(self, connection: NetSuiteConnection, *, error_message: str) -> NetSuiteConnection:
+        """Called when a NetSuite data fetch or token refresh fails."""
+        connection.last_error = error_message[:2000]
+        connection.consecutive_failures += 1
+        update_fields = ['last_error', 'consecutive_failures', 'updated_at']
+        # Three or more failures in a row means this connection needs
+        # attention — surface it in the connection list rather than
+        # continuing to show a stale "connected" status.
+        if connection.consecutive_failures >= 3 and connection.status == 'connected':
+            connection.status = 'error'
+            update_fields.append('status')
+        connection.save(update_fields=update_fields)
+        return connection
+
     def complete_OAuth(self,
                        connection:NetSuiteConnection,
                        *,

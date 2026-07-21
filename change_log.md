@@ -10,39 +10,61 @@ This project follows a milestone-based changelog instead of release versioning d
 
 ## Added
 
+### Monitoring
+
+- New `monitoring` app covering all four operational areas:
+  - **NetSuite connection health** — `NetSuiteConnection` now tracks `last_synced_at`, `last_error`,
+    and `consecutive_failures`, updated automatically on every data fetch and token refresh. A
+    connection auto-flips to `error` status after 3 consecutive failures. Surfaced on the Connect
+    NetSuite page (last synced time, failure count, token-expiry warning).
+  - **Application error monitoring** — unhandled/server exceptions are persisted to a new `ErrorLog`
+    model via the central DRF exception handler, plus a console `LOGGING` config as a second view
+    onto the same errors.
+  - **System uptime / health check** — `GET /api/v1/monitoring/health/` (public, for Render/uptime
+    pingers) checks database connectivity, SMTP configuration, and the field-encryption key.
+  - **API usage & rate limit monitoring** — `RequestMonitoringMiddleware` logs every `/api/v1/*`
+    request to a new `RequestLog` model; `GET /api/v1/monitoring/api-usage/` (staff-only) aggregates
+    request volume, error rate, throttling, and latency by endpoint.
+- New frontend `/system-health` page showing health check status, API usage stats, and recent errors
+  (admin-only sections degrade gracefully to "Admin access required" for non-staff users).
+- 9 new tests covering health check, permissions, and middleware behavior (251/251 passing project-wide).
+
+### Frontend
+
+- Added persistent `Footer` component shown on every page (dashboard and auth layouts), linking to
+  the developer's portfolio.
+- Connect NetSuite page: added **Rename Connection** (inline edit), completing frontend connection
+  management (List, Add, Rename, Delete, Switch Active, OAuth Redirect Handling).
+
 ### Documentation
 
 - Added `Live Demo` section to README linking the deployed Vercel frontend.
 - Added `Deployment` section to README with the Render backend API link, labeled for developers.
-
-### Frontend
-
-- Added persistent `Footer` component shown on every page (dashboard and auth layouts).
-- Footer links to the developer's portfolio, opened in a new tab.
 
 ### Backend
 
 - Configured SMTP email backend for OTP delivery via Gmail (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`).
 - Fixed a typo in `EMAIL_BACKEND` (`smt` → `smtp`) that would have broken OTP email delivery in production.
 
+## Fixed
+
+- Fixed a pre-existing typo in a `netsuite` test helper (`refresh-token` → `refresh_token`) that was
+  causing 16 tests to fail.
+
 ## Planned
 
 ### Backend
 
-- Complete Connection CRUD Views
-- Remove obsolete `/connect` endpoint
-- Integration Testing
-- Unit Testing
-- Encrypt OAuth Tokens
+- Remove obsolete `/connect` endpoint (leftover commented-out route/import cleanup)
+- Integration Testing (end-to-end OAuth against a live NetSuite sandbox)
 - Background Sync
 - Sync History
+- Missing migration for `accounts.LoginActivity` — model exists in code but has no migration yet;
+  needs a decision from the team before generating one (see Notes below).
 
 ### Frontend
 
-- Connection Management UI
-- OAuth Redirect Handling
-- Dashboard
-- Settings Page
+- Settings Page (beyond current auth read-only view — connection defaults, notification prefs, etc.)
 
 ---
 

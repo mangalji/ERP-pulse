@@ -56,6 +56,7 @@ LOCAL_APPS = [
     'netsuite',
     'ai',
     'dashboard',
+    'monitoring'
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -70,6 +71,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'monitoring.middleware.RequestMonitoringMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -318,3 +320,41 @@ if DEBUG:
     # Ensure template debug mirrors DEBUG rather than being left on
     # accidentally in production.
     TEMPLATES[0]['OPTIONS']['debug'] = True
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# Console-only: Render captures stdout as the platform's own log stream.
+# This is a second, independent view onto the same errors monitoring.ErrorLog
+# persists to the database — useful if the database itself is the thing
+# that's down.
+ 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': config('LOG_LEVEL', default='INFO'),
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
+ 

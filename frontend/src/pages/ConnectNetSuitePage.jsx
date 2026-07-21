@@ -26,6 +26,18 @@ const STATUS_TONE = {
   error: 'negative',
 }
 
+function formatLastSynced(lastSyncedAt) {
+  if (!lastSyncedAt) return 'Not synced yet'
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(lastSyncedAt).getTime()) / 1000))
+  if (seconds < 60) return 'Synced just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `Synced ${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `Synced ${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `Synced ${days}d ago`
+}
+
 export default function ConnectNetSuitePage() {
   const { connectNetSuite, disconnectNetSuite } = useAuth()
   const { toasts, addToast, removeToast } = useToast()
@@ -223,7 +235,26 @@ export default function ConnectNetSuitePage() {
                   )}
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
                     Account {connection.netsuite_account_id} · {connection.environment}
+                    {connection.status === 'connected' && (
+                      <> · {formatLastSynced(connection.last_synced_at)}</>
+                    )}
                   </p>
+                  {connection.status === 'connected' &&
+                    connection.token_expires_in_seconds !== null &&
+                    connection.token_expires_in_seconds < 300 && (
+                      <p className="mt-1 text-xs text-[var(--color-negative)]">
+                        Access token expires very soon — it should refresh automatically on next use.
+                      </p>
+                    )}
+                  {connection.consecutive_failures > 0 && (
+                    <p className="mt-1 flex items-start gap-1 text-xs text-[var(--color-negative)]">
+                      <span>
+                        {connection.consecutive_failures} failed sync
+                        {connection.consecutive_failures === 1 ? '' : 's'} in a row
+                        {connection.last_error ? `: ${connection.last_error}` : '.'}
+                      </span>
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {!connection.is_active && connection.status === 'connected' && (

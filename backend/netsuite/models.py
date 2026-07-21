@@ -37,20 +37,8 @@ class NetSuiteConnection(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    # user = models.OneToOneField(
-    #     settings.AUTH_USER_MODEL,
-    #     on_delete=models.CASCADE,
-    #     related_name='netsuite_connection',
-    # )
-
     user = models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="netsuite_connections")
-
     client_name = models.CharField(max_length=255,null=True,blank=True)
-    # Confirmed at connect time and stored per-connection rather than
-    # assumed from NETSUITE_ACCOUNT_ID in settings, since that global
-    # config could change independently of an already-connected user.
-
     environment = models.CharField(
         max_length=20,
         choices=ENVIRONMENT_CHOICES,
@@ -58,14 +46,10 @@ class NetSuiteConnection(models.Model):
         blank=True,
     )
     client_id = models.CharField(max_length=255,null=True,blank=True)
-
-    # client_secret = models.TextField(null=True,blank=True)
     client_secret = EncryptedTextField(null=True,blank=True)
     netsuite_account_id = models.CharField(max_length=50)
-
     access_token = EncryptedTextField(null=True,blank=True)
     refresh_token = EncryptedTextField(null=True,blank=True)
-
     access_token_expires_at = models.DateTimeField(null=True,blank=True)
     refresh_token_expires_at = models.DateTimeField(null=True, blank=True)
     
@@ -75,7 +59,9 @@ class NetSuiteConnection(models.Model):
         default="pending",
     )
     is_active = models.BooleanField(default=False)
-
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(null=True, blank=True)
+    consecutive_failures = models.PositiveIntegerField(default=0)
     connected_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
