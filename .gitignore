@@ -43,3 +43,4 @@ claude.md
 implementation_plan.md
 backend/scripts/
 .ai/*
+backend/staticfiles/
