@@ -102,3 +102,37 @@ class OTP(models.Model):
 
     def __str__(self) -> str:
         return f'{self.get_purpose_display()} OTP for {self.user.email}'
+
+class LoginActivity(models.Model):
+    """
+    One row per successful login (registration/profile events aren't
+    logged here — this is specifically "when did this user sign in and
+    from where", per the History page's login/activity scope).
+ 
+    Written by AuthenticationService.record_login_activity(), called from
+    VerifyLoginOTPView right after a JWT pair is issued — ip_address/
+    user_agent are request-transport details, not stored on OTP/User
+    itself, matching how JWT issuance already lives in the view layer
+    rather than the service (see VerifyLoginOTPView's own docstring).
+    """
+
+    id = models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='login_activities',
+    )
+    ip_address=models.GenericIPAddressField(null=True,blank=True)
+    user_agent=models.CharField(max_length=512,null=True,blank=True)
+    created_at=models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table='login_activity'
+        ordering=['-created_at']
+        indexes=[
+            models.Index(fields=['user','-created_at'],name='login_activity_user_recent_idx'),
+        ]
+        verbose_name_plural='login activities'
+
+    def __str__(self)->str:
+        return f'Login by {self.user.email} at {self.created_at:%Y-%m-%d %H:%M}'

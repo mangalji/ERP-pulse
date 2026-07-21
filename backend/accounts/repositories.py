@@ -1,4 +1,4 @@
-from accounts.models import OTP, User
+from accounts.models import OTP, User, LoginActivity
 
 
 class UserRepository:
@@ -92,3 +92,21 @@ class OTPRepository:
         otp.is_used = True
         otp.save(update_fields=['is_used', 'updated_at'])
         return otp
+    
+class LoginActivityRepository:
+    """
+    Persistence-only operations for LoginActivity.
+ 
+    Contains no business rules — deciding *when* a login counts as
+    "completed" belongs to AuthenticationService. This class only reads
+    from and writes to the database.
+    """
+    def create(self,*,user:User,ip_address:str|None,user_agent:str|None)->LoginActivity:
+        return LoginActivity.objects.create(
+            user=user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+    def list_by_user(self,user:User,*,limit:int=50):
+        """Most recent first (Meta.ordering already does this), capped at `limit`."""
+        return LoginActivity.objects.filter(user=user)[:limit]

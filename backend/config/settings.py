@@ -148,10 +148,18 @@ STATICFILES_STORAGE = (
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # for Email Services
-# EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+if config('EMAIL_HOST',default=''):
+    EMAIL_BACKEND = 'django.core.mail.backends.smt.EmailBackend'
+    EMAIL_HOST = config('EMAIL_HOST')
+    EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+    EMAIL_HOST_USER = config('EMAIL_HOST_USER')
+    EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
+    EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-DEFAULT_FROM_EMAIL = "noreply@erppulse.local"
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@erppulse.local')
 
 
 # ---------------------------------------------------------------------------
