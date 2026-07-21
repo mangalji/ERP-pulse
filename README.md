@@ -14,6 +14,12 @@ Currently, Oracle NetSuite integration is under active development.
 
 ---
 
+# Live Demo
+
+[https://erp-pulse-gamma.vercel.app/](https://erp-pulse-gamma.vercel.app/)
+
+---
+
 # Features
 
 ## Current Features
@@ -241,6 +247,13 @@ Upcoming Features
 - Tally
 - QuickBooks
 - Microsoft Dynamics
+
+---
+
+# Deployment
+
+- Frontend: Vercel
+- Backend API (for developers): [https://erp-pulse-backend.onrender.com](https://erp-pulse-backend.onrender.com)
 
 ---
 
