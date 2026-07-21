@@ -8,6 +8,23 @@ This project follows a milestone-based changelog instead of release versioning d
 
 # [Unreleased]
 
+## Added
+
+### Documentation
+
+- Added `Live Demo` section to README linking the deployed Vercel frontend.
+- Added `Deployment` section to README with the Render backend API link, labeled for developers.
+
+### Frontend
+
+- Added persistent `Footer` component shown on every page (dashboard and auth layouts).
+- Footer links to the developer's portfolio, opened in a new tab.
+
+### Backend
+
+- Configured SMTP email backend for OTP delivery via Gmail (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`).
+- Fixed a typo in `EMAIL_BACKEND` (`smt` → `smtp`) that would have broken OTP email delivery in production.
+
 ## Planned
 
 ### Backend

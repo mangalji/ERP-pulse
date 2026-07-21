@@ -41,6 +41,10 @@ export default function ConnectNetSuitePage() {
 
   const [pendingActionId, setPendingActionId] = useState(null)
 
+  const [editingId, setEditingId] = useState(null)
+  const [editName, setEditName] = useState('')
+  const [isRenaming, setIsRenaming] = useState(false)
+
   const loadConnections = async () => {
     setIsLoading(true)
     setLoadError('')
@@ -90,6 +94,35 @@ export default function ConnectNetSuitePage() {
       addToast(err.payload?.message || err.message || 'Failed to switch connection', 'error')
     } finally {
       setPendingActionId(null)
+    }
+  }
+
+  const startRename = (connection) => {
+    setEditingId(connection.id)
+    setEditName(connection.client_name)
+  }
+
+  const cancelRename = () => {
+    setEditingId(null)
+    setEditName('')
+  }
+
+  const handleRename = async (connection) => {
+    const trimmed = editName.trim()
+    if (!trimmed || trimmed === connection.client_name) {
+      cancelRename()
+      return
+    }
+    setIsRenaming(true)
+    try {
+      await netsuiteApi.renameConnection(connection.id, trimmed)
+      addToast('Connection renamed', 'success')
+      cancelRename()
+      await loadConnections()
+    } catch (err) {
+      addToast(err.payload?.message || err.message || 'Failed to rename connection', 'error')
+    } finally {
+      setIsRenaming(false)
     }
   }
 
@@ -146,14 +179,48 @@ export default function ConnectNetSuitePage() {
           <div className="flex flex-col gap-3">
             {connections.map((connection) => (
               <Card key={connection.id} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-[var(--font-display)] text-sm font-semibold text-[var(--color-ink)]">
-                      {connection.client_name}
-                    </h3>
-                    {connection.is_active && <Badge tone="primary">Active</Badge>}
-                    <Badge tone={STATUS_TONE[connection.status] || 'neutral'}>{connection.status}</Badge>
-                  </div>
+                <div className="min-w-0 flex-1">
+                  {editingId === connection.id ? (
+                    <form
+                      className="flex items-center gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        handleRename(connection)
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        disabled={isRenaming}
+                        className="w-full max-w-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                      />
+                      <Button type="submit" size="sm" isLoading={isRenaming}>
+                        Save
+                      </Button>
+                      <Button intent="ghost" size="sm" type="button" disabled={isRenaming} onClick={cancelRename}>
+                        Cancel
+                      </Button>
+                    </form>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-[var(--font-display)] text-sm font-semibold text-[var(--color-ink)]">
+                        {connection.client_name}
+                      </h3>
+                      {connection.is_active && <Badge tone="primary">Active</Badge>}
+                      <Badge tone={STATUS_TONE[connection.status] || 'neutral'}>{connection.status}</Badge>
+                      <button
+                        onClick={() => startRename(connection)}
+                        aria-label={`Rename ${connection.client_name}`}
+                        title="Rename"
+                        className="rounded p-1 text-[var(--color-muted)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5">
+                          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
                     Account {connection.netsuite_account_id} · {connection.environment}
                   </p>
