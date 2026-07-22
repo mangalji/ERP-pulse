@@ -8,21 +8,15 @@ orchestrates UserRepository/OTPService for the accounts app.
 """
 
 import logging
-from datetime import timedelta
-
-from django.utils import timezone
 from accounts.models import User
 from netsuite.client import NetSuiteAuthClient
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteStateMismatchException, NetSuiteConnectionNotFoundException
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionRepository
+from netsuite.token_manager import NetSuiteTokenManager
 
 logger = logging.getLogger(__name__)
-
-# Refresh proactively slightly before actual expiry, so a request doesn't
-# lose a race against the token expiring mid-flight.
-TOKEN_EXPIRY_BUFFER = timedelta(seconds=60)
 
 class NetSuiteConnectionService:
     """
@@ -68,7 +62,6 @@ class NetSuiteConnectionService:
         if connection is None:
             raise NetSuiteConnectionNotFoundException("connection not found.")
 
-        # client = self._get_client()
         client = NetSuiteAuthClient(
         account_id=connection.netsuite_account_id,
         client_id=connection.client_id,
@@ -85,11 +78,6 @@ class NetSuiteConnectionService:
 
         logger.info('NetSuite connected for user %s.', user.id)
         return user
-
-    # def _get_client(self) -> NetSuiteAuthClient:
-    #     if self._client is None:
-    #         self._client = NetSuiteAuthClient()
-    #     return self._client
 
     def list_connections(self,*,user:User):
         return self.repository.list_by_user(user)
@@ -114,14 +102,6 @@ class NetSuiteConnectionService:
 
         authorization_url = self.get_authorization_url(user=user,connection=connection)
 
-        # return self.repository.create(
-        #     user=user,
-        #     client_name=client_name,
-        #     client_id=client_id,
-        #     client_secret=client_secret,
-        #     environment=environment,
-        #     netsuite_account_id=netsuite_account_id,
-        # )
         return {
             "connection":connection,
             "authorization_url":authorization_url,
@@ -183,16 +163,15 @@ class NetSuiteDataService:
     def __init__(
         self,
         repository: NetSuiteConnectionRepository | None = None,
+        token_manager: NetSuiteTokenManager | None = None,
     ):
         self.repository = repository or NetSuiteConnectionRepository()
+        self.token_manager = token_manager or NetSuiteTokenManager(repository=self.repository)
 
     def _get_authenticated_client(self, user: User) -> NetSuiteAuthClient:
         connection = self._require_connection(user)
-        access_token = self._ensure_valid_token(connection)
-        
-        # client = self._get_client()
-        # client.access_token = access_token
-        # return client
+        access_token = self.token_manager.get_valid_access_token(connection)
+
         client = NetSuiteAuthClient(
         account_id=connection.netsuite_account_id,
         client_id=connection.client_id,
@@ -296,30 +275,3 @@ class NetSuiteDataService:
                 'No active NetSuite connection found. Please connect your NetSuite account first.'
             )
         return connection
-
-    def _ensure_valid_token(self, connection) -> str:
-        if timezone.now() < connection.access_token_expires_at - TOKEN_EXPIRY_BUFFER:
-            return connection.access_token
-
-        logger.info('Refreshing expired NetSuite access token for user %s.', connection.user_id)
-        client = NetSuiteAuthClient(
-        account_id=connection.netsuite_account_id,
-        client_id=connection.client_id,
-        client_secret=connection.client_secret,
-        )
-
-        try:
-            token_set = client.refresh_access_token(
-            refresh_token=connection.refresh_token,
-            )
-        except Exception as exc:
-            self.repository.record_sync_failure(connection, error_message=f'Token refresh failed: {exc}')
-            raise
-
-        connection = self.repository.update_tokens(
-            connection,
-            access_token=token_set.access_token,
-            refresh_token=token_set.refresh_token,
-            access_token_expires_at=token_set.access_token_expires_at,
-        )
-        return connection.access_token

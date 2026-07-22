@@ -182,6 +182,67 @@ class ThrottleTests(TestCase):
             SimpleRateThrottle.THROTTLE_RATES = original_rates
 
 
+class ThrottleBehaviorTests(APITestCase):
+    """
+    Drives real requests through a live, throttled endpoint end-to-end
+    (URL -> View -> throttle check) instead of only inspecting throttle
+    class attributes, to prove throttling actually engages and returns
+    the standard error envelope — not just that the scope/rate are wired.
+    """
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def tearDown(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def _patch_rate(self, scope: str, rate: str):
+        from rest_framework.throttling import SimpleRateThrottle
+
+        original_rates = SimpleRateThrottle.THROTTLE_RATES
+        patched_rates = dict(original_rates)
+        patched_rates[scope] = rate
+        SimpleRateThrottle.THROTTLE_RATES = patched_rates
+        self.addCleanup(setattr, SimpleRateThrottle, 'THROTTLE_RATES', original_rates)
+
+    def test_register_endpoint_returns_429_once_limit_exceeded(self):
+        from django.urls import reverse
+
+        self._patch_rate('register_otp', '2/min')
+        url = reverse('register')
+        payload = {
+            'email': 'throttle-test@example.com',
+            'password': 'StrongPass123!',
+            'confirm_password': 'StrongPass123!',
+        }
+
+        # Throttling is checked before the view body runs, so the first two
+        # requests count toward the limit regardless of what they return.
+        self.client.post(url, payload)
+        self.client.post(url, payload)
+        response = self.client.post(url, payload)
+
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertFalse(response.data['success'])
+        self.assertIn('message', response.data)
+
+    def test_register_endpoint_allows_requests_within_limit(self):
+        from django.urls import reverse
+
+        self._patch_rate('register_otp', '5/min')
+        url = reverse('register')
+        payload = {
+            'email': 'within-limit@example.com',
+            'password': 'StrongPass123!',
+            'confirm_password': 'StrongPass123!',
+        }
+
+        response = self.client.post(url, payload)
+        self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
 # ===================================================================
 # Hash Utils Tests
 # ===================================================================

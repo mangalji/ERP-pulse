@@ -1,7 +1,5 @@
 import logging
-
-# from django.conf import settings
-
+from django.db import transaction
 from accounts.exceptions import OTPExpiredException, OTPMismatchException, OTPNotFoundException
 from accounts.models import OTP
 from accounts.repositories import OTPRepository
@@ -38,30 +36,31 @@ class OTPService:
         callers that need to confirm delivery only need to know an OTP was
         issued, not what it was).
         """
-        self.repository.invalidate_previous_otps(user=user, purpose=purpose)
+        with transaction.atomic():
+            self.repository.invalidate_previous_otps(user=user, purpose=purpose)
 
-        raw_code = generate_otp_code(length=constants.OTP_LENGTH)
-        otp_hash = hash_value(raw_code)
-        expires_at = calculate_expiry(minutes=constants.OTP_EXPIRY_MINUTES)
+            raw_code = generate_otp_code(length=constants.OTP_LENGTH)
+            otp_hash = hash_value(raw_code)
+            expires_at = calculate_expiry(minutes=constants.OTP_EXPIRY_MINUTES)
 
-        otp = self.repository.create_otp(
-            user=user,
-            otp_hash=otp_hash,
-            purpose=purpose,
-            expires_at=expires_at,
-        )
+            otp = self.repository.create_otp(
+                user=user,
+                otp_hash=otp_hash,
+                purpose=purpose,
+                expires_at=expires_at,
+            )
 
-        send_email(
-            recipient_list=[user.email],
-            subject='Your ERP Pulse verification code',
-            message=(
-                f'Your verification code is {raw_code}. '
-                f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
-            ),
-        )
+            send_email(
+                recipient_list=[user.email],
+                subject='Your ERP Pulse verification code',
+                message=(
+                    f'Your verification code is {raw_code}. '
+                    f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
+                ),
+            )
 
-        logger.info('OTP issued for user %s (purpose=%s).', user.id, purpose)
-        return otp
+            logger.info('OTP issued for user %s (purpose=%s).', user.id, purpose)
+            return otp
 
     def verify_otp(self, user, purpose: str, submitted_code: str) -> OTP:
         """

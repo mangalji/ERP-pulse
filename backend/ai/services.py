@@ -9,7 +9,7 @@ requires changing this class.
 """
 
 import logging
-
+from django.db import transaction
 from accounts.models import User
 from ai.context_builder import build_context
 from ai.exceptions import AIConversationNotFoundException
@@ -19,6 +19,7 @@ from ai.providers import AIProvider, OpenAIProvider
 from ai.repositories import ConversationRepository, MessageRepository
 # from ai.providers import get_ai_provider
 from ai.providers import AIProviderFactory
+from common.constants import AI_CONVERSATION_HISTORY_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,11 @@ TITLE_MAX_LENGTH = 60
 # the task spec). There is provably no business data to reason over yet,
 # so the answer is deterministic rather than an LLM guess, and no provider
 # cost is spent on a guaranteed non-informative reply.
+
 NETSUITE_NOT_CONNECTED_ANSWER = (
     'Your NetSuite account is not connected yet. '
     'Please connect NetSuite to receive business insights.'
 )
-
 
 class AIService:
     def __init__(
@@ -51,15 +52,22 @@ class AIService:
         Receive a user question, persist it, generate a reply, persist
         that too, and return both the conversation id and the answer.
         """
-        conversation = self._get_or_create_conversation(
-            user=user, conversation_id=conversation_id, message=message
-        )
+        # _get_or_create_conversation() may create a new AIConversation
+        # row, and the user's message is saved as an AIMessage row right
+        # after — two different models that should either both succeed
+        # or both roll back together, or a failed message-save would
+        # leave an empty orphan conversation behind. The AI provider call
+        # below is deliberately outside this block: it's an external HTTP
+        # call and must never hold a DB transaction open while it runs.
+        with transaction.atomic():
+            conversation = self._get_or_create_conversation(
+                user=user, conversation_id=conversation_id, message=message
+            )
 
-        self.message_repository.save(
-            conversation=conversation, role=AIMessage.Role.USER, content=message
-        )
+            self.message_repository.save(
+                conversation=conversation, role=AIMessage.Role.USER, content=message
+            )
 
-        from common.constants import AI_CONVERSATION_HISTORY_LIMIT
         # Fetch +1 to account for the message we just saved, which we will exclude from history
         recent_messages = self.message_repository.get_recent_history(
             conversation=conversation, limit=AI_CONVERSATION_HISTORY_LIMIT + 1

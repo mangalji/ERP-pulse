@@ -54,6 +54,21 @@ class NetSuiteConnectionRepository:
             id=connection_id,
         ).first()
     
+    def get_locked(self, connection_id) -> NetSuiteConnection:
+        """
+        Re-fetch a connection with a Postgres row-level lock (SELECT ...
+        FOR UPDATE). Must be called inside `transaction.atomic()`.
+
+        Used by NetSuiteTokenManager to serialize concurrent token
+        refreshes for the same connection — without this, two requests
+        arriving while the token is expired could both call NetSuite's
+        refresh endpoint at once, and since NetSuite rotates refresh
+        tokens on use, the second call can fail or the two DB writes can
+        race. The lock makes the second caller wait for the first to
+        finish and commit before it re-checks expiry.
+        """
+        return NetSuiteConnection.objects.select_for_update().get(id=connection_id)
+
     def switch_active_connection(self, user: User, connection: NetSuiteConnection):
         with transaction.atomic():
             NetSuiteConnection.objects.filter(

@@ -597,21 +597,29 @@ class NetSuiteDataServiceTests(TestCase):
         self.assertEqual(result, {'items': [{'id': 1}]})
  
     @patch('netsuite.services.NetSuiteAuthClient')
-    def test_expired_token_triggers_refresh(self, MockClient):
+    @patch('netsuite.token_manager.NetSuiteAuthClient')
+    def test_expired_token_triggers_refresh(self, MockTokenManagerClient, MockServicesClient):
         connection = self._active_connection(
             access_token_expires_at=timezone.now() - timedelta(minutes=1),
         )
         self.mock_repo.get_by_user.return_value = connection
+        # NetSuiteTokenManager re-fetches the connection under a row lock
+        # before refreshing — for this mocked repository, hand back the
+        # same (still-expired) connection so the refresh path is taken.
+        self.mock_repo.get_locked.return_value = connection
         refreshed_connection = self._active_connection(access_token='refreshed-token')
         self.mock_repo.update_tokens.return_value = refreshed_connection
- 
-        refresh_client = MockClient.return_value
+
+        refresh_client = MockTokenManagerClient.return_value
         refresh_client.refresh_access_token.return_value = NetSuiteTokenSet(
             access_token='refreshed-token',
             refresh_token='refreshed-refresh',
             access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
- 
+
+        data_client = MockServicesClient.return_value
+        data_client.get_records.return_value = {'items': [], 'totalResults': 0}
+
         self.service.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=self.user)
         self.mock_repo.update_tokens.assert_called_once()
 
@@ -779,3 +787,211 @@ class NetSuiteExceptionTests(TestCase):
         self.assertEqual(NetSuiteConnectionNotFoundException.status_code, 404)
         self.assertEqual(NetSuiteRecordFetchException.status_code, 502)
         self.assertEqual(NetSuiteRecordNotFoundException.status_code, 404)
+
+
+# ===================================================================
+# OAuth Integration Tests
+#
+# Unlike the unit tests above (which mock the Service or the Client),
+# these drive a real request through URL -> View -> Serializer ->
+# Service -> Repository -> DB, with only the outermost HTTP boundary
+# (requests.post, inside client.py) mocked. This is what actually proves
+# the callback endpoint works end-to-end, not just that each layer's
+# unit behaves correctly in isolation.
+# ===================================================================
+
+@override_settings(NETSUITE_REDIRECT_URI='https://example.com/callback')
+class NetSuiteOAuthIntegrationTests(APITestCase):
+    def setUp(self):
+        from netsuite.oauth import _state_signer
+
+        self.user = _make_user()
+        self.connection = NetSuiteConnection.objects.create(
+            user=self.user,
+            client_name='Acme Corp',
+            environment='sandbox',
+            client_id='client-id',
+            client_secret='client-secret',
+            netsuite_account_id='ACCT1',
+            status='pending',
+            is_active=False,
+        )
+        self.state = _state_signer.sign(f'{self.user.id}:{self.connection.id}')
+
+    def _mock_token_response(self, **overrides):
+        payload = {
+            'access_token': 'exchanged-access-token',
+            'refresh_token': 'exchanged-refresh-token',
+            'expires_in': 3600,
+        }
+        payload.update(overrides)
+        response = MagicMock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = payload
+        return response
+
+    @patch('netsuite.client.requests.post')
+    def test_callback_persists_connection_end_to_end(self, mock_post):
+        mock_post.return_value = self._mock_token_response()
+
+        response = self.client.get(
+            '/api/v1/netsuite/callback/',
+            {'code': 'auth-code-123', 'state': self.state},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
+        self.assertIn('/settings?netsuite=connected', response['Location'])
+
+        self.connection.refresh_from_db()
+        self.assertEqual(self.connection.status, 'connected')
+        self.assertTrue(self.connection.is_active)
+        self.assertEqual(self.connection.access_token, 'exchanged-access-token')
+        self.assertEqual(self.connection.refresh_token, 'exchanged-refresh-token')
+        self.assertIsNotNone(self.connection.access_token_expires_at)
+
+    @patch('netsuite.client.requests.post')
+    def test_callback_deactivates_other_connections_end_to_end(self, mock_post):
+        other_connection = _make_connection(self.user, is_active=True, status='connected')
+        mock_post.return_value = self._mock_token_response()
+
+        self.client.get(
+            '/api/v1/netsuite/callback/',
+            {'code': 'auth-code-123', 'state': self.state},
+        )
+
+        self.connection.refresh_from_db()
+        other_connection.refresh_from_db()
+        self.assertTrue(self.connection.is_active)
+        self.assertFalse(other_connection.is_active)
+
+    def test_callback_invalid_state_does_not_touch_db(self):
+        response = self.client.get(
+            '/api/v1/netsuite/callback/',
+            {'code': 'auth-code-123', 'state': 'tampered-state-value'},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.data['success'])
+        self.connection.refresh_from_db()
+        self.assertEqual(self.connection.status, 'pending')
+
+    def test_callback_denied_authorization_returns_400(self):
+        response = self.client.get(
+            '/api/v1/netsuite/callback/',
+            {'error': 'access_denied', 'state': self.state},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.connection.refresh_from_db()
+        self.assertEqual(self.connection.status, 'pending')
+
+    @patch('netsuite.client.requests.post')
+    def test_callback_netsuite_rejection_returns_502(self, mock_post):
+        rejected_response = MagicMock()
+        rejected_response.ok = False
+        rejected_response.status_code = 400
+        mock_post.return_value = rejected_response
+
+        response = self.client.get(
+            '/api/v1/netsuite/callback/',
+            {'code': 'auth-code-123', 'state': self.state},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.connection.refresh_from_db()
+        self.assertEqual(self.connection.status, 'pending')
+
+
+# ===================================================================
+# NetSuiteTokenManager Tests
+# ===================================================================
+
+class NetSuiteTokenManagerTests(TestCase):
+    def setUp(self):
+        from netsuite.token_manager import NetSuiteTokenManager
+
+        self.user = _make_user()
+        self.mock_repo = MagicMock()
+        self.manager = NetSuiteTokenManager(repository=self.mock_repo)
+
+    def _connection(self, **overrides):
+        connection = MagicMock(
+            id=1,
+            user_id=self.user.id,
+            access_token='current-token',
+            refresh_token='current-refresh',
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
+            netsuite_account_id='ACCT1',
+            client_id='client-id',
+            client_secret='client-secret',
+        )
+        for key, value in overrides.items():
+            setattr(connection, key, value)
+        return connection
+
+    def test_returns_existing_token_without_refresh_when_valid(self):
+        connection = self._connection()
+        token = self.manager.get_valid_access_token(connection)
+
+        self.assertEqual(token, 'current-token')
+        self.mock_repo.get_locked.assert_not_called()
+
+    @patch('netsuite.token_manager.NetSuiteAuthClient')
+    def test_refreshes_when_expired(self, MockClient):
+        connection = self._connection(
+            access_token_expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        self.mock_repo.get_locked.return_value = connection
+        self.mock_repo.update_tokens.return_value = self._connection(access_token='new-token')
+
+        mock_client = MockClient.return_value
+        mock_client.refresh_access_token.return_value = NetSuiteTokenSet(
+            access_token='new-token',
+            refresh_token='new-refresh',
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        token = self.manager.get_valid_access_token(connection)
+
+        self.assertEqual(token, 'new-token')
+        mock_client.refresh_access_token.assert_called_once_with(refresh_token='current-refresh')
+        self.mock_repo.update_tokens.assert_called_once()
+
+    @patch('netsuite.token_manager.NetSuiteAuthClient')
+    def test_does_not_refresh_if_already_refreshed_under_lock(self, MockClient):
+        """
+        Simulates the concurrency case the lock exists for: by the time
+        this caller acquires the row lock, another request already
+        refreshed the token — get_locked() returns a connection whose
+        token is valid again, so no second NetSuite call should happen.
+        """
+        connection = self._connection(
+            access_token_expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        already_refreshed = self._connection(
+            access_token='refreshed-by-another-request',
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
+        )
+        self.mock_repo.get_locked.return_value = already_refreshed
+
+        token = self.manager.get_valid_access_token(connection)
+
+        self.assertEqual(token, 'refreshed-by-another-request')
+        MockClient.return_value.refresh_access_token.assert_not_called()
+        self.mock_repo.update_tokens.assert_not_called()
+
+    @patch('netsuite.token_manager.NetSuiteAuthClient')
+    def test_refresh_failure_records_sync_failure_and_reraises(self, MockClient):
+        connection = self._connection(
+            access_token_expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        self.mock_repo.get_locked.return_value = connection
+        MockClient.return_value.refresh_access_token.side_effect = NetSuiteTokenExchangeException(
+            'refresh failed'
+        )
+
+        with self.assertRaises(NetSuiteTokenExchangeException):
+            self.manager.get_valid_access_token(connection)
+
+        self.mock_repo.record_sync_failure.assert_called_once()
