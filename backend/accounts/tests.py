@@ -453,6 +453,34 @@ class AuthenticationServiceTests(TestCase):
         with self.assertRaises(InvalidCredentialsException):
             self.service.verify_login_otp(email='no-user@example.com', otp_code='123456')
 
+    def test_resend_login_otp_success(self):
+        _make_user(email='resend-login@example.com')
+        self.service.login(email='resend-login@example.com', password='testpass123')
+        # Backdate past the 60s cooldown, same as the registration resend tests above.
+        otp = OTP.objects.filter(
+            user__email='resend-login@example.com', purpose=OTP.Purpose.LOGIN, is_used=False,
+        ).first()
+        otp.created_at = timezone.now() - timedelta(seconds=61)
+        otp.save(update_fields=['created_at'])
+
+        result = self.service.resend_login_otp(email='resend-login@example.com')
+        self.assertEqual(result, {'email': 'resend-login@example.com'})
+
+    def test_resend_login_otp_user_not_found(self):
+        with self.assertRaises(InvalidCredentialsException):
+            self.service.resend_login_otp(email='no-user@example.com')
+
+    def test_resend_login_otp_no_active_otp(self):
+        _make_user(email='no-otp@example.com')
+        with self.assertRaises(OTPNotFoundException):
+            self.service.resend_login_otp(email='no-otp@example.com')
+
+    def test_resend_login_otp_cooldown(self):
+        _make_user(email='login-cooldown@example.com')
+        self.service.login(email='login-cooldown@example.com', password='testpass123')
+        with self.assertRaises(ResendCooldownException):
+            self.service.resend_login_otp(email='login-cooldown@example.com')
+
 
 # ===================================================================
 # Serializer Tests
@@ -569,6 +597,31 @@ class AuthViewTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('access', response.data['data'])
         self.assertIn('refresh', response.data['data'])
+
+    # -- Resend Login OTP ------------------------------------------------
+    def test_resend_login_otp_success(self):
+        user = _make_user(email='resend-login-view@example.com')
+        self.client.post('/api/v1/auth/login/', {
+            'email': 'resend-login-view@example.com',
+            'password': 'testpass123',
+        })
+        otp = OTP.objects.filter(user=user, purpose=OTP.Purpose.LOGIN, is_used=False).first()
+        otp.created_at = timezone.now() - timedelta(seconds=61)
+        otp.save(update_fields=['created_at'])
+
+        response = self.client.post('/api/v1/auth/login/resend-otp/', {
+            'email': 'resend-login-view@example.com',
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['data']['email'], 'resend-login-view@example.com')
+
+    def test_resend_login_otp_no_active_session(self):
+        _make_user(email='resend-login-none@example.com')
+        response = self.client.post('/api/v1/auth/login/resend-otp/', {
+            'email': 'resend-login-none@example.com',
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     # -- Me ------------------------------------------------------------
     def test_me_authenticated(self):

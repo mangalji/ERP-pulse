@@ -201,7 +201,8 @@ class ResendLoginOTPView(APIView):
     def post(self, request):
         serializer = ResendLoginOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        result = self.authentication_service.resend_login_otp(**serializer.validated_data)
+        # result = self.authentication_service.resend_login_otp(**serializer.validated_data)
+        result = authentication_service.resend_login_otp(**serializer.validated_data)
 
         return success_response(
             message="A new login verification code has been sent to your email.",

@@ -247,56 +247,56 @@ class AuthenticationService:
 
         logger.info('Login completed for user %s.', user.id)
         return user
-    
-def resend_login_otp(self, *, email: str) -> dict:
-    """
-    Resend LOGIN OTP for an active login flow.
-    Enforces the same 60-second cooldown as registration.
-    """
 
-    user = self.user_repository.get_by_email(email)
+    def resend_login_otp(self, *, email: str) -> dict:
+        """
+        Resend LOGIN OTP for an active login flow.
+        Enforces the same 60-second cooldown as registration.
+        """
 
-    if user is None:
-        raise InvalidCredentialsException(
-            "Invalid email."
+        user = self.user_repository.get_by_email(email)
+
+        if user is None:
+            raise InvalidCredentialsException(
+                "Invalid email."
+            )
+
+        otp = self.otp_service.repository.get_latest_active_otp(
+            user=user,
+            purpose=OTP.Purpose.LOGIN,
         )
 
-    otp = self.otp_repository.get_latest_active_otp(
-        user=user,
-        purpose=OTP.Purpose.LOGIN,
-    )
+        if otp is None:
+            raise OTPNotFoundException(
+                "No login request in progress. Please login again."
+            )
 
-    if otp is None:
-        raise OTPNotFoundException(
-            "No login request in progress. Please login again."
+        seconds_since_last_send = (
+            timezone.now() - otp.created_at
+        ).total_seconds()
+
+        if seconds_since_last_send < constants.OTP_RESEND_COOLDOWN_SECONDS:
+            wait_seconds = int(
+                constants.OTP_RESEND_COOLDOWN_SECONDS
+                - seconds_since_last_send
+            )
+
+            raise ResendCooldownException(
+                f"Please wait {wait_seconds} more second(s) before requesting a new code."
+            )
+
+        # Invalidate previous OTP
+        otp.is_used = True
+        otp.save(update_fields=["is_used"])
+
+        # Reuse existing login OTP generation
+        self.otp_service.generate_and_send_otp(
+            user=user,
+            purpose=OTP.Purpose.LOGIN,
         )
 
-    seconds_since_last_send = (
-        timezone.now() - otp.created_at
-    ).total_seconds()
+        logger.info("Login OTP resent for user %s.", user.id)
 
-    if seconds_since_last_send < constants.OTP_RESEND_COOLDOWN_SECONDS:
-        wait_seconds = int(
-            constants.OTP_RESEND_COOLDOWN_SECONDS
-            - seconds_since_last_send
-        )
-
-        raise ResendCooldownException(
-            f"Please wait {wait_seconds} more second(s) before requesting a new code."
-        )
-
-    # Invalidate previous OTP
-    otp.is_used = True
-    otp.save(update_fields=["is_used"])
-
-    # Reuse existing login OTP generation
-    self.otp_service.generate_and_send_otp(
-        user=user,
-        purpose=OTP.Purpose.LOGIN,
-    )
-
-    logger.info("Login OTP resent for user %s.", user.id)
-
-    return {
-        "email": email,
-    }   
+        return {
+            "email": email,
+        }
