@@ -27,6 +27,7 @@ export const AUTH_ENDPOINTS = {
   refresh: '/auth/token/refresh/',
   logout: '/auth/logout/',
   me: '/auth/me/',
+  loginHistory: '/auth/login-history/',
 }
 
 export const DASHBOARD_ENDPOINTS = {
@@ -34,6 +35,10 @@ export const DASHBOARD_ENDPOINTS = {
   recentCustomers: '/dashboard/recent-customers/',
   recentSalesOrders: '/dashboard/recent-sales-orders/',
   recentInvoices: '/dashboard/recent-invoices/',
+}
+
+export const REPORTS_ENDPOINTS = {
+  salesTrend: '/reports/sales-trend/',
 }
 
 export const NETSUITE_ENDPOINTS = {
