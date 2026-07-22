@@ -1,7 +1,7 @@
 # ERP Pulse
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
-![Django](https://img.shields.io/badge/Django-5.x-green)
+![Django](https://img.shields.io/badge/Django-6.x-green)
 ![DRF](https://img.shields.io/badge/DRF-REST-red)
 ![Status](https://img.shields.io/badge/Status-Under%20Development-orange)
 ![License](https://img.shields.io/badge/License-Private-lightgrey)
@@ -16,7 +16,8 @@ Currently, Oracle NetSuite integration is under active development.
 
 # Live Demo
 
-[https://erp-pulse-gamma.vercel.app/](https://erp-pulse-gamma.vercel.app/)
+- Frontend: [https://erp-pulse-gamma.vercel.app/](https://erp-pulse-gamma.vercel.app/)
+- Backend API: [https://erp-pulse-backend.onrender.com](https://erp-pulse-backend.onrender.com)
 
 ---
 
@@ -24,15 +25,20 @@ Currently, Oracle NetSuite integration is under active development.
 
 ## Current Features
 
-- OAuth 2.0 Authentication with Oracle NetSuite
-- Multiple NetSuite Account Support
+- OAuth 2.0 Authorization Code Grant with Oracle NetSuite
+- Multiple NetSuite Account Support (connect, rename, switch active, delete)
 - Automatic Access Token Refresh
+- NetSuite Credentials Encrypted at Rest (client secret, access token, refresh token)
+- Connection Health Tracking (consecutive failure count, computed health status)
+- Connection Audit Trail (created / renamed / switched / deleted / OAuth completed)
+- Manual Sync Manager — orchestrated, per-entity-stage sync runs with independent retry of failed stages
 - REST Record API Integration
 - SuiteQL Query Support
-- Connection Management
-- Layered Architecture
-- Repository Pattern
-- Service-Oriented Design
+- Sales & Revenue Trend Reporting (SuiteQL-aggregated, month-over-month)
+- User Login/Activity History
+- JWT Authentication with Email OTP (registration + login)
+- Operational Monitoring (request/error logging)
+- Layered Architecture — Repository Pattern, Service-Oriented Design
 
 Supported NetSuite Records:
 
@@ -65,6 +71,7 @@ The backend follows a layered architecture.
                    │
 
            NetSuite Client Layer
+              (HTTP + Errors + Pagination)
                    │
                    ▼
              Oracle NetSuite APIs
@@ -91,6 +98,7 @@ Examples:
 - OAuth Flow
 - Token Refresh
 - Connection Management
+- Sync Orchestration (Sync Manager)
 - Business Rules
 
 ---
@@ -113,18 +121,18 @@ No HTTP communication.
 
 Responsible only for communication with NetSuite.
 
-Examples:
+Split into three focused pieces:
 
-- OAuth Token Exchange
-- Token Refresh
-- REST API Requests
-- SuiteQL Requests
+- `client.py` — builds and issues NetSuite requests (OAuth token exchange/refresh, REST Record reads, SuiteQL)
+- `http.py` — generic HTTP sending: timeout, correlation ID, retry/backoff on idempotent calls
+- `errors.py` — maps NetSuite HTTP responses to typed exceptions
+- `pagination.py` — walks NetSuite REST collection responses across all pages
 
 ---
 
 # Current Architecture
 
-Each ERP Pulse user can connect multiple NetSuite accounts.
+Each ERP Pulse user can connect multiple NetSuite accounts. The same NetSuite account may also be connected independently by different ERP Pulse users.
 
 ```
 User
@@ -144,9 +152,37 @@ Each connection stores:
 - Environment
 - Account ID
 - Client ID
-- Client Secret
-- OAuth Tokens
+- Client Secret (encrypted at rest)
+- OAuth Tokens (encrypted at rest)
 - Connection Status
+- Health (computed from status + consecutive failure count)
+- Last Used / Last Synced timestamps
+
+Every lifecycle event on a connection (created, renamed, switched active, deleted, OAuth completed) is recorded in a connection audit log.
+
+---
+
+# Sync Manager
+
+A manual, on-demand sync orchestration layer sits above the NetSuite Client and Data Service.
+
+```
+SyncRun (one per sync execution)
+   │
+   ├── SyncStage: customer
+   ├── SyncStage: employee
+   ├── SyncStage: vendor
+   ├── SyncStage: salesOrder
+   ├── SyncStage: purchaseOrder
+   └── SyncStage: invoice
+```
+
+- A run's overall status rolls up from its stages (`success` / `partial_failure` / `failed`)
+- A failed stage can be retried on its own, without re-running stages that already succeeded
+- Only one sync can run at a time per connection
+- Incremental sync uses the connection's last successful sync as a watermark
+
+**Scheduled/background sync is not yet implemented** — it requires a task queue (Celery + Redis), which isn't part of the stack yet. Currently sync is triggered on demand via the API.
 
 ---
 
@@ -160,17 +196,24 @@ Backend
 
 Database
 
-- PostgreSQL (planned / configurable)
+- PostgreSQL (via [Neon](https://neon.tech))
 
 Authentication
 
 - JWT
 - OAuth 2.0 Authorization Code Flow
+- Email OTP (registration and login)
 
 External APIs
 
 - Oracle NetSuite REST API
 - NetSuite SuiteQL
+
+Hosting
+
+- Backend: [Render](https://render.com)
+- Frontend: [Vercel](https://vercel.com)
+- Database: [Neon](https://neon.tech)
 
 ---
 
@@ -182,12 +225,17 @@ Current backend includes:
 accounts/
 common/
 netsuite/
+ai/
+dashboard/
+reports/
+monitoring/
+sync/
 ```
 
 The NetSuite module contains:
 
 - OAuth
-- Client
+- Client (+ http / errors / pagination)
 - Services
 - Repository
 - Models
@@ -200,23 +248,18 @@ The NetSuite module contains:
 
 Backend
 
-- Models
-- Repository
-- OAuth
-- Client
-- Services
-
-Mostly completed.
+- Models, Repository, OAuth, Client — Complete
+- Multi-connection CRUD, Connection Health, Audit Trail — Complete
+- Token Encryption at Rest — Complete
+- Services (NetSuite data, Reports, Sync Manager) — Complete
+- Login/Activity History — Complete
+- Monitoring (error/request logging) — Complete
 
 Current focus:
 
-- Connection CRUD APIs
-- Integration Testing
-- Frontend Integration
-
-Overall backend completion:
-
-Approximately **98%**
+- Test suite coverage for recently split/added modules (NetSuite HTTP client, Sync Manager, Connection Audit Trail)
+- Scheduled/background sync (requires Celery + Redis)
+- Frontend surfacing for connection health, audit trail, and sync runs
 
 ---
 
@@ -226,18 +269,14 @@ Upcoming Features
 
 ## Backend
 
-- Background Sync
-- Celery
-- Redis
-- Scheduled Jobs
-- Audit Logs
-- Token Encryption
+- Scheduled Background Sync (Celery + Redis)
+- Rate-limit-aware retry tuned against a live NetSuite sandbox
+- Expanded automated test coverage
 
 ## Frontend
 
-- Connection Manager
-- Dashboard
-- Reports
+- Sync run history / trigger UI
+- Connection health & audit trail UI
 - ERP Explorer
 
 ## Future ERP Integrations
@@ -252,8 +291,9 @@ Upcoming Features
 
 # Deployment
 
-- Frontend: Vercel
-- Backend API (for developers): [https://erp-pulse-backend.onrender.com](https://erp-pulse-backend.onrender.com)
+- Frontend: Vercel — [https://erp-pulse-gamma.vercel.app/](https://erp-pulse-gamma.vercel.app/)
+- Backend API: [https://erp-pulse-backend.onrender.com](https://erp-pulse-backend.onrender.com)
+- Database: Neon (managed PostgreSQL)
 
 ---
 
@@ -272,7 +312,7 @@ Additional project documentation is available.
 
 Current milestone:
 
-**Multi-Account NetSuite Integration**
+**NetSuite Connection Health, Audit Trail & Sync Manager**
 
 Status:
 
@@ -280,9 +320,9 @@ Status:
 
 Remaining work:
 
-- Complete Connection CRUD APIs
-- End-to-End Testing
-- Frontend Integration
+- Automated test coverage for the modules above
+- Frontend surfacing of health/audit/sync data
+- Scheduled sync (Celery + Redis)
 
 ---
 
@@ -295,6 +335,8 @@ The project follows these principles:
 - Repository Pattern
 - Separation of Concerns
 - Connection-based OAuth
+- Encrypted Credentials at Rest
+- Auditable Connection Lifecycle
 - Scalable Multi-ERP Design
 
 ---
