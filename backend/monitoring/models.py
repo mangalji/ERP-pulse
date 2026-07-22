@@ -15,7 +15,7 @@ class ErrorLog(models.Model):
     level = models.CharField(max_length=10,choices=LEVEL_CHOICES,default='error')
     message = models.TextField()
     exception_type = models.CharField(max_length=255,blank=True)
-    traceback = models.CharField(blank=True)
+    traceback = models.CharField(max_length=255,blank=True)
     method = models.CharField(max_length=10,blank=True)
     path = models.CharField(max_length=500,blank=True)
     status_code = models.PositiveSmallIntegerField(null=True,blank=True)
@@ -29,13 +29,13 @@ class ErrorLog(models.Model):
 
     class Meta:
         db_table = "monitoring_logs_table"
-        ordering = {"-created_at"}
+        ordering = ["-created_at"]
         indexes=[
             models.Index(fields=["-created_at"]),
         ]
 
-        def __str__(self):
-            return f"[{self.level}] {self.method} {self.path} ({self.status_code})."
+    def __str__(self):
+        return f"[{self.level}] {self.method} {self.path} ({self.status_code})."
         
 class RequestLog(models.Model):
     """
@@ -55,7 +55,7 @@ class RequestLog(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        related_name='request logs',
+        related_name='request_logs',
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -67,5 +67,5 @@ class RequestLog(models.Model):
             models.Index(fields=["path"]),
         ]
         
-        def __str__(self):
-            return f"{self.method} {self.path} -> {self.status_code} ({self.response_time_ms}ms)"
+    def __str__(self):
+        return f"{self.method} {self.path} -> {self.status_code} ({self.response_time_ms}ms)"
