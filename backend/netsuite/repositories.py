@@ -1,5 +1,5 @@
 from accounts.models import User
-from netsuite.models import NetSuiteConnection
+from netsuite.models import NetSuiteConnection, NetSuiteConnectionAuditLog
 from django.db import transaction
 
 
@@ -152,10 +152,22 @@ class NetSuiteConnectionRepository:
         # Three or more failures in a row means this connection needs
         # attention — surface it in the connection list rather than
         # continuing to show a stale "connected" status.
-        if connection.consecutive_failures >= 3 and connection.status == 'connected':
+        if connection.consecutive_failures >= NetSuiteConnection.UNHEALTHY_FAILURE_THRESHOLD and connection.status == 'connected':
             connection.status = 'error'
             update_fields.append('status')
         connection.save(update_fields=update_fields)
+        return connection
+
+    def touch_last_used(self, connection: NetSuiteConnection) -> NetSuiteConnection:
+        """
+        Called after any successful live NetSuite API call through this
+        connection (record fetch, SuiteQL, token refresh) — broader than
+        record_sync_success, which is reserved for actual sync-job runs.
+        """
+        from django.utils import timezone
+
+        connection.last_used_at = timezone.now()
+        connection.save(update_fields=['last_used_at', 'updated_at'])
         return connection
 
     def complete_OAuth(self,
@@ -190,3 +202,34 @@ class NetSuiteConnectionRepository:
             )
 
             return connection
+
+class NetSuiteConnectionAuditLogRepository:
+    """
+    Persistence-only operations for NetSuiteConnectionAuditLog.
+
+    Deliberately minimal — a single log() method, since every write is
+    the same shape (action + who + which connection + optional detail).
+    No update/delete methods: audit rows are append-only by design.
+    """
+
+    def log(
+        self,
+        *,
+        action: str,
+        connection: NetSuiteConnection | None = None,
+        user: User | None = None,
+        netsuite_account_id: str | None = None,
+        client_name: str | None = None,
+        detail: str | None = None,
+    ) -> NetSuiteConnectionAuditLog:
+        return NetSuiteConnectionAuditLog.objects.create(
+            action=action,
+            connection=connection,
+            user=user or (connection.user if connection else None),
+            netsuite_account_id=netsuite_account_id or (connection.netsuite_account_id if connection else None),
+            client_name=client_name if client_name is not None else (connection.client_name if connection else None),
+            detail=detail,
+        )
+
+    def list_by_user(self, user: User, *, limit: int = 100):
+        return NetSuiteConnectionAuditLog.objects.filter(user=user)[:limit]

@@ -13,7 +13,7 @@ from netsuite.client import NetSuiteAuthClient
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteStateMismatchException, NetSuiteConnectionNotFoundException
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
-from netsuite.repositories import NetSuiteConnectionRepository
+from netsuite.repositories import NetSuiteConnectionAuditLogRepository, NetSuiteConnectionRepository
 from netsuite.token_manager import NetSuiteTokenManager
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,10 @@ class NetSuiteConnectionService:
         self,
         repository: NetSuiteConnectionRepository | None = None,
         client: NetSuiteAuthClient | None = None,
+        audit_log_repository: NetSuiteConnectionAuditLogRepository | None = None,
     ):
         self.repository = repository or NetSuiteConnectionRepository()
+        self.audit_log_repository = audit_log_repository or NetSuiteConnectionAuditLogRepository()
 
     def get_authorization_url(self, *, user: User, connection) -> str:
         """Step 1: build the URL the frontend should redirect the browser to."""
@@ -75,6 +77,7 @@ class NetSuiteConnectionService:
             refresh_token=token_set.refresh_token,
             access_token_expires_at=token_set.access_token_expires_at,
         )
+        self.audit_log_repository.log(action='oauth_completed', connection=connection)
 
         logger.info('NetSuite connected for user %s.', user.id)
         return user
@@ -99,6 +102,7 @@ class NetSuiteConnectionService:
             client_secret=client_secret,
             netsuite_account_id=netsuite_account_id,
         )
+        self.audit_log_repository.log(action='created', connection=connection)
 
         authorization_url = self.get_authorization_url(user=user,connection=connection)
 
@@ -117,10 +121,16 @@ class NetSuiteConnectionService:
 
         if connection is None:
             raise NetSuiteConnectionNotFoundException("connection not found.")
-        
-        return self.repository.rename(
+
+        old_name = connection.client_name
+        renamed = self.repository.rename(
             connection,client_name
         )
+        self.audit_log_repository.log(
+            action='renamed', connection=renamed,
+            detail=f'"{old_name}" -> "{client_name}"',
+        )
+        return renamed
     
     def delete_connection(
             self,*,
@@ -131,7 +141,8 @@ class NetSuiteConnectionService:
 
         if connection is None:
             raise NetSuiteConnectionNotFoundException("connection not found.")
-        
+
+        self.audit_log_repository.log(action='deleted', connection=connection)
         self.repository.delete(connection)
         # return "connection removed succefully."
     
@@ -144,8 +155,10 @@ class NetSuiteConnectionService:
 
         if connection is None:
             raise NetSuiteConnectionNotFoundException("connection not found.")
-        
-        return self.repository.switch_active_connection(user,connection,)
+
+        switched = self.repository.switch_active_connection(user,connection,)
+        self.audit_log_repository.log(action='switched_active', connection=switched)
+        return switched
     
 
 class NetSuiteDataService:
@@ -243,6 +256,7 @@ class NetSuiteDataService:
             self.repository.record_sync_failure(connection, error_message=str(exc))
             raise
         self.repository.record_sync_success(connection)
+        self.repository.touch_last_used(connection)
         return result
 
     def get_customers(self, *, user: User) -> dict:

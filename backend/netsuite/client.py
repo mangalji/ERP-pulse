@@ -4,42 +4,47 @@ NetSuite.
 
 Per NETSUITE_CONTEXT.md ("Client Layer... should never contain business
 logic" / "No module may call requests.get() directly"), this class is
-authentication/HTTP only: build the request, send it, translate the
-response or a transport failure into typed data or an exception.
-Persisting or interpreting tokens/records is the Service layer's job
-(services.py).
+authentication/HTTP only: build the request, send it via netsuite/http.py,
+translate the response (via netsuite/errors.py) or a transport failure
+into typed data or an exception. Persisting or interpreting tokens/records
+is the Service layer's job (services.py).
 
 Handles both halves of NetSuite communication: the OAuth 2.0 token
-endpoint (exchange/refresh) and, as of this task, authenticated REST
-Record reads. Kept as one class per NETSUITE_CONTEXT.md's "Only the
+endpoint (exchange/refresh) and authenticated REST Record reads plus
+SuiteQL. Kept as one class per NETSUITE_CONTEXT.md's "Only the
 NetSuiteClient" rule, and to avoid an unnecessary second class for what
-is still a handful of methods; the name predates record support but
-renaming now would touch every existing import for no functional gain.
+is still a handful of methods; the name predates record/SuiteQL support
+but renaming now would touch every existing import for no functional
+gain.
 
-SuiteQL is intentionally not implemented — plain REST Record endpoints
-are enough for this step.
+HTTP sending (timeout, correlation ID, retry/backoff) lives in
+netsuite/http.py. Response-to-exception mapping lives in
+netsuite/errors.py. This split (P1) keeps this file focused on "what
+NetSuite endpoints exist and how to call them" — public method
+signatures are unchanged from before the split.
 """
 
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-import requests
+# import requests
 from django.conf import settings
 from django.utils import timezone
 
+from netsuite import errors, http
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import (
     NetSuiteConfigurationException, 
     NetSuiteTokenExchangeException, 
     NetSuiteRecordFetchException,
-    NetSuiteRecordNotFoundException,
+    # NetSuiteRecordNotFoundException,
     )
 from netsuite.oauth import netsuite_account_domain
 
 logger = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT_SECONDS = 15
+# REQUEST_TIMEOUT_SECONDS = 15
 
 
 @dataclass(frozen=True)
@@ -76,7 +81,13 @@ class NetSuiteAuthClient:
         self._token_url = f'{self._rest_base_url}/auth/oauth2/v1/token'
 
     def exchange_code_for_tokens(self, *, code: str) -> NetSuiteTokenSet:
-        """Step 2 of the Authorization Code Grant: trade an auth code for tokens."""
+        """
+        Step 2 of the Authorization Code Grant: trade an auth code for tokens.
+
+        Never retried — an authorization code is single-use, so retrying
+        this call after a transient failure would send an
+        already-consumed code.
+        """
         return self._post_token_request({
             'grant_type': 'authorization_code',
             'code': code,
@@ -88,6 +99,10 @@ class NetSuiteAuthClient:
         Exchange a refresh token for a new access token. NetSuite issues a
         new refresh token on every refresh, so the caller must persist
         both returned values, not just the access token.
+
+        Not retried, for the same reason as exchange_code_for_tokens —
+        NetSuite may rotate the refresh token on each use, so a retried
+        call could present an already-superseded token.
         """
         return self._post_token_request({
             'grant_type': 'refresh_token',
@@ -157,34 +172,40 @@ class NetSuiteAuthClient:
         token = access_token or self.access_token
         if not token:
             raise ValueError("No access token provided or stored on client.")
-
+        
+        correlation_id = http.new_correlation_id()
         try:
-            response = requests.get(
+            response = http.send('GET',
                 f'{self._rest_base_url}/{path}',
                 headers={
                     'Authorization': f'Bearer {token}',
                     'Content-Type': 'application/json',
                 },
                 params=params,
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                retryable=True,  # GET is idempotent — safe to retry on 429/5xx
+                # timeout=REQUEST_TIMEOUT_SECONDS,
+                correlation_id = correlation_id
             )
-        except requests.RequestException as exc:
-            logger.exception('NetSuite record request failed (network error).')
+        except Exception as exc:
+            logger.exception('NetSuite record request failed (network error). correlation_id=%s', correlation_id,)
             raise NetSuiteRecordFetchException(
                 'Could not reach NetSuite to fetch records. Please try again.'
             ) from exc
         
-        if response.status_code == 404:
-            logger.error('NetSuite record endpoint returned 404 for %s.',path)
-            raise NetSuiteRecordNotFoundException('The requested NetSuite record was not found.')
-
-        if not response.ok:
-            logger.error('NetSuite record endpoint returned %s for %s.', response.status_code, path)
-            raise NetSuiteRecordFetchException(
-                'NetSuite rejected the record request. Please reconnect your account.'
-            )
-
+        errors.raise_for_record_response(response, path=path)
         return response.json()
+        
+        # if response.status_code == 404:
+        #     logger.error('NetSuite record endpoint returned 404 for %s.',path)
+        #     raise NetSuiteRecordNotFoundException('The requested NetSuite record was not found.')
+
+        # if not response.ok:
+        #     logger.error('NetSuite record endpoint returned %s for %s.', response.status_code, path)
+        #     raise NetSuiteRecordFetchException(
+        #         'NetSuite rejected the record request. Please reconnect your account.'
+        #     )
+
+        # return response.json()
     
     def _post(
         self,
@@ -197,7 +218,11 @@ class NetSuiteAuthClient:
         """
         Generic authenticated POST helper.
 
-        Used by SuiteQL and any future authenticated POST endpoints.
+        Used by SuiteQL (read-only queries) and any future authenticated
+        POST endpoints. retryable=True here assumes the call is
+        idempotent/read-only, which holds for SuiteQL — if this helper is
+        ever used for a mutating POST, that call site should pass its own
+        non-retrying path instead of reusing this one as-is.
         """
         token = access_token or self.access_token
 
@@ -212,60 +237,85 @@ class NetSuiteAuthClient:
         if headers:
             request_headers.update(headers)
 
+        correlation_id = http.new_correlation_id()
         try:
-            response = requests.post(
+            response = http.send(
+                'POST',
                 f"{self._rest_base_url}/{path}",
                 headers=request_headers,
                 json=data,
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                retryable=True,
+                correlation_id=correlation_id,
             )
-        except requests.RequestException as exc:
-            logger.exception("NetSuite POST request failed (network error).")
+        except Exception as exc:
+            logger.exception(
+                "NetSuite POST request failed (network error). correlation_id=%s", correlation_id,
+            )
             raise NetSuiteRecordFetchException(
                 "Could not reach NetSuite to complete the POST request. Please try again."
             ) from exc
-        
-        if response.status_code == 404:
-            logger.error("NetSuite POST endpoint returned 404 for %s.",path,)
 
-            raise NetSuiteRecordNotFoundException(
-            "The requested NetSuite endpoint was not found."
-            )
+        errors.raise_for_record_response(response, path=path)
         
-        logger.error("SuiteQL Response: %s", response.text)
-        
-        if not response.ok:
-            logger.error(
-                "NetSuite POST endpoint returned %s for %s.",
-                response.status_code,path,
-            )
+        # if response.status_code == 404:
+        #     logger.error("NetSuite POST endpoint returned 404 for %s.",path,)
 
-            raise NetSuiteRecordFetchException(
-                    "NetSuite rejected the request."
-                )
+        #     raise NetSuiteRecordNotFoundException(
+        #     "The requested NetSuite endpoint was not found."
+        #     )
+        
+        # logger.error("SuiteQL Response: %s", response.text)
+        
+        # if not response.ok:
+        #     logger.error(
+        #         "NetSuite POST endpoint returned %s for %s.",
+        #         response.status_code,path,
+        #     )
+
+        #     raise NetSuiteRecordFetchException(
+        #             "NetSuite rejected the request."
+        #         )
         
         try:
             return response.json()
         
         except ValueError as exc:
 
-            logger.exception("Invalid JSON returned by NetSuite.")
+            logger.exception("Invalid JSON returned by NetSuite. correlation_id=%s", correlation_id)
             raise NetSuiteRecordFetchException(
             "NetSuite returned an invalid response."
         ) from exc
     
 
     def _post_token_request(self, data: dict) -> NetSuiteTokenSet:
+        # try:
+        #     response = requests.post(
+        #         self._token_url,
+        #         data=data,
+        #         auth=(self.client_id, self.client_secret),
+        #         headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        #         timeout=REQUEST_TIMEOUT_SECONDS,
+        #     )
+        # except requests.RequestException as exc:
+        #     logger.exception('NetSuite token request failed (network error).')
+        #     raise NetSuiteTokenExchangeException(
+        #         'Could not reach NetSuite to complete authentication. Please try again.'
+        #     ) from exc
+        correlation_id = http.new_correlation_id()
         try:
-            response = requests.post(
+            response = http.send(
+                'POST',
                 self._token_url,
                 data=data,
                 auth=(self.client_id, self.client_secret),
                 headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                retryable=False,  # never retry — see method docstrings above
+                correlation_id=correlation_id,
             )
-        except requests.RequestException as exc:
-            logger.exception('NetSuite token request failed (network error).')
+        except Exception as exc:
+            logger.exception(
+                'NetSuite token request failed (network error). correlation_id=%s', correlation_id,
+            )
             raise NetSuiteTokenExchangeException(
                 'Could not reach NetSuite to complete authentication. Please try again.'
             ) from exc
@@ -274,17 +324,17 @@ class NetSuiteAuthClient:
             # Never log the request body (contains the auth code/refresh
             # token) or raw response body — NETSUITE_CONTEXT.md
             # "Never log credentials."
-            logger.error('NetSuite token endpoint returned %s.', response.status_code)
-            raise NetSuiteTokenExchangeException(
-                'NetSuite rejected the authentication request. Please reconnect your account.'
+            logger.error(
+                'NetSuite token endpoint returned %s. correlation_id=%s',
+                response.status_code, correlation_id,
             )
+        errors.raise_for_token_response(response)
         payload = response.json()
         expires_in = payload.get('expires_in', 3600)
 
         return NetSuiteTokenSet(
             access_token=payload['access_token'],
-            # refresh_token=payload['refresh_token'],
-            refresh_token=payload.get('refresh_token',data.get('refresh_token')),
+            refresh_token=payload.get('refresh_token', data.get('refresh_token')),
             access_token_expires_at=timezone.now() + timedelta(seconds=expires_in),
         )
         

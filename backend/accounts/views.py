@@ -23,6 +23,7 @@ from rest_framework_simplejwt.views import TokenBlacklistView as BaseTokenBlackl
 from rest_framework_simplejwt.views import TokenRefreshView as BaseTokenRefreshView
 
 from accounts.authentication_service import AuthenticationService
+from accounts.repositories import LoginActivityRepository
 from accounts.serializers import (
     RegisterSerializer, 
     ResendRegistrationOTPSerializer,
@@ -31,12 +32,26 @@ from accounts.serializers import (
     UserSerializer,
     LoginSerializer,
     VerifyLoginOTPSerializer,
-    ResendLoginOTPSerializer
+    ResendLoginOTPSerializer,
+    LoginActivitySerializer,
     )
 from common.utils.response import success_response
 from common.throttles import LoginOTPThrottle, RegisterOTPThrottle
 
 authentication_service = AuthenticationService()
+login_activity_repository = LoginActivityRepository()
+
+def _get_client_ip(request) -> str | None:
+    """
+    Prefers X-Forwarded-For's first hop (the original client) over
+    REMOTE_ADDR, since Render/most PaaS deployments sit behind a proxy
+    that would otherwise make every login appear to come from the same
+    internal proxy IP.
+    """
+    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded_for:
+        return forwarded_for().split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
 
 class RegisterView(APIView):
     """
@@ -276,6 +291,23 @@ class MeView(APIView):
         return success_response(
             message='User fetched successfully.',
             data=UserSerializer(request.user).data,
+        )
+
+class LoginHistoryView(APIView):
+    """
+    GET /api/v1/auth/login-history/
+
+    Most recent logins first (LoginActivity.Meta.ordering), capped at 50
+    by LoginActivityRepository.list_by_user()'s default limit.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self,request):
+        activities = login_activity_repository.list_by_user(request.user)
+        return success_response(
+            message="login history fetched successfully.",
+            date=LoginActivitySerializer(activities,many=True).data,
         )
     
 from django.http import JsonResponse

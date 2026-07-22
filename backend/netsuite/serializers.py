@@ -27,6 +27,7 @@ class NetSuiteConnectionCreateSerializer(serializers.Serializer):
 
 class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
     token_expires_in_seconds = serializers.SerializerMethodField()
+    health = serializers.ReadOnlyField()
 
     class Meta:
         model = NetSuiteConnection
@@ -37,8 +38,10 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
             "netsuite_account_id",
             "status",
             "is_active",
+            "health",
             "connected_at",
             "last_synced_at",
+            "last_used_at",
             "last_error",
             "consecutive_failures",
             "token_expires_in_seconds",

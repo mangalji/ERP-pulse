@@ -2,7 +2,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.validators import RegexValidator
 from rest_framework import serializers
 from common import constants
-from accounts.models import User
+from accounts.models import User, LoginActivity
 
 otp_code_validator = RegexValidator(
     regex = r'^\d+$',
@@ -122,3 +122,10 @@ class UserSerializer(serializers.ModelSerializer):
         is_active=True,
         ).exists()
     
+class LoginActivitySerializer(serializers.ModelSerializer):
+    """Read-only — for the History page's login/activity list."""
+
+    class Meta:
+        model = LoginActivity
+        fields = ['id','ip_address','user_agent','created_at']
+        read_only_fields = fields
