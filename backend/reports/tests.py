@@ -112,4 +112,4 @@ class SalesTrendViewTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['success'])
-        mock_service.get_sales_trend.assert_called_once_with(user=self.user, months='3')
+        mock_service.get_sales_trend.assert_called_once_with(user=self.user, months=3)

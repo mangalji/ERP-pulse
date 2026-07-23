@@ -201,9 +201,9 @@ class NetSuiteAuthClientTests(TestCase):
         with self.assertRaises(NetSuiteTokenExchangeException):
             client.exchange_code_for_tokens(code="bad-code")
 
-    @patch('netsuite.client.requests.get')
-    def test_get_records_success(self,mock_get):
-        mock_get.return_value = MagicMock(
+    @patch('netsuite.http.send')
+    def test_get_records_success(self, mock_send):
+        mock_send.return_value = MagicMock(
             ok=True,
             status_code=200,
             json=MagicMock(return_value={'items':[],'totalResults':0}),
@@ -217,16 +217,16 @@ class NetSuiteAuthClientTests(TestCase):
         with self.assertRaises(ValueError):
             client.get_records(record_type='invalidType')
 
-    @patch('netsuite.client.requests.get')
-    def test_got_records_network_error(self,mock_get):
-        mock_get.side_effect = requests.RequestException('NetWork error')
+    @patch('netsuite.http.send')
+    def test_got_records_network_error(self, mock_send):
+        mock_send.side_effect = requests.RequestException('Network error')
         client = self._client(access_token='test-token')
         with self.assertRaises(NetSuiteRecordFetchException):
             client.get_records(record_type=NetSuiteRecordType.CUSTOMER)
 
-    @patch('netsuite.client.requests.get')
-    def test_get_records_404(self, mock_get):
-        mock_get.return_value = MagicMock(ok=False,status_code=404)
+    @patch('netsuite.http.send')
+    def test_get_records_404(self, mock_send):
+        mock_send.return_value = MagicMock(ok=False,status_code=404)
         client = self._client(access_token='test-token')
         with self.assertRaises(NetSuiteRecordNotFoundException):
             client.get_records(record_type=NetSuiteRecordType.CUSTOMER)

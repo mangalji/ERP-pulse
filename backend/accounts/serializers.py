@@ -102,7 +102,7 @@ class LoginSerializer(serializers.Serializer):
     AuthenticationService.login(), not here.
     """
     email = serializers.EmailField(max_length=100)
-    password = serializers.CharField(write_only=True, max_length=128, validators=[validate_password])
+    password = serializers.CharField(write_only=True, max_length=128)
 
 class VerifyLoginOTPSerializer(serializers.Serializer):
     """
