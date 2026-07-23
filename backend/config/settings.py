@@ -299,6 +299,31 @@ SECURE_CONTENT_TYPE_NOSNIFF = config('SECURE_CONTENT_TYPE_NOSNIFF', default=True
 SECURE_REFERRER_POLICY = config('SECURE_REFERRER_POLICY', default='strict-origin-when-cross-origin')
 X_FRAME_OPTIONS = config('X_FRAME_OPTIONS', default='DENY')
 
+# Render (and most PaaS hosts) terminate TLS at their own proxy and
+# forward plain HTTP internally, tagging the original scheme in
+# X-Forwarded-Proto. Without this, request.is_secure() is always False
+# behind that proxy — silently breaking SESSION_COOKIE_SECURE/
+# CSRF_COOKIE_SECURE enforcement and any future SECURE_SSL_REDIRECT,
+# since Django would think every request (even a real HTTPS one from
+# the browser's perspective) arrived over plain HTTP.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# HSTS: tells browsers to only ever connect over HTTPS for this domain
+# going forward, closing the window for a downgrade/SSL-stripping
+# attack on a later visit. Defaults to 0 (disabled) so local HTTP
+# development isn't affected — set a real value (e.g. 31536000 = 1 year)
+# via env var once HTTPS is confirmed working end-to-end in production.
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0, cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=True, cast=bool)
+SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=True, cast=bool)
+
+# Explicit caps on request body size/field count — Django's own
+# defaults (2.5MB / 1000 fields) are reasonable, but stated explicitly
+# here rather than left implicit, so a future change to Django's
+# defaults doesn't silently change this project's behavior.
+DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', default=2621440, cast=int)  # 2.5 MB
+DATA_UPLOAD_MAX_NUMBER_FIELDS = config('DATA_UPLOAD_MAX_NUMBER_FIELDS', default=1000, cast=int)
+
 # Session and CSRF cookies are marked Secure in production so browsers
 # never send them over plain HTTP. In development (DEBUG=True) this can
 # be relaxed via the env var.

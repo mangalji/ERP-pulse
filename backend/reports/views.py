@@ -8,11 +8,21 @@ dashboard/views.py's layering.
 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from rest_framework import serializers
 
 from common.throttles import NetSuiteSyncThrottle
 from common.utils.response import success_response
-from reports.services import DEFAULT_MONTHS, ReportsService
+from reports.services import DEFAULT_MONTHS, ReportsService, MAX_MONTHS
 
+class SalesTrendySerializer(serializers.Serializer):
+    """
+    Rejects invalid `months` values with a clean 400 instead of letting
+    them fall through to AnalyticsService.get_sales_trend_by_month()'s
+    internal clamping — that clamping stays in place as defense in
+    depth, but a caller sending `months=-99` or `months=abc` should get
+    a real validation error back, not a silently-defaulted response.
+    """
+    months = serializers.IntegerField(required=False,min_value=1,max_value=MAX_MONTHS,default=DEFAULT_MONTHS)
 
 class SalesTrendView(APIView):
     """

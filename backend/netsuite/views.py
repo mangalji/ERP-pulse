@@ -25,6 +25,17 @@ from netsuite.serializers import (
     NetSuiteConnectionSwitchSerializer)
 from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
 
+def _validate_record_id(record_id: str) -> None:
+    """
+    NetSuite internal record IDs (REST Record API) are always numeric
+    strings. record_id comes straight from the URL path (<str:record_id>,
+    which accepts any non-slash string) with nothing else validating its
+    shape before this — reject non-numeric values here with a clean 400
+    instead of forwarding arbitrary path segments into a live NetSuite
+    API call.
+    """
+    if not record_id.isdigit():
+        raise ValidationError({'record_id': 'record_id must be numeric.'})
 
 class NetSuiteCallbackView(APIView):
     """
@@ -137,6 +148,7 @@ class NetSuiteEmployeeDetailView(APIView):
     throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
+        _validate_record_id(record_id)
         employee = NetSuiteDataService().get_record(
             record_type=NetSuiteRecordType.EMPLOYEE, record_id=record_id, user=request.user,
         )
@@ -170,6 +182,7 @@ class NetSuiteVendorDetailView(APIView):
     throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
+        _validate_record_id(record_id)
         vendor = NetSuiteDataService().get_record(
             record_type=NetSuiteRecordType.VENDOR, record_id=record_id, user=request.user,
         )
@@ -213,6 +226,7 @@ class NetSuiteItemDetailView(APIView):
     throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
+        _validate_record_id(record_id)
         item_type = request.query_params.get('type', NetSuiteRecordType.INVENTORY_ITEM)
 
         if not NetSuiteRecordType.is_valid(item_type):
@@ -250,6 +264,7 @@ class NetSuiteSalesOrderDetailView(APIView):
     throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
+        _validate_record_id(record_id)
         sales_order = NetSuiteDataService().get_record(
             record_type=NetSuiteRecordType.SALES_ORDER, record_id=record_id, user=request.user,
         )
@@ -283,6 +298,7 @@ class NetSuitePurchaseOrderDetailView(APIView):
     throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
+        _validate_record_id(record_id)
         purchase_order = NetSuiteDataService().get_record(
             record_type=NetSuiteRecordType.PURCHASE_ORDER, record_id=record_id, user=request.user,
         )
@@ -316,6 +332,7 @@ class NetSuiteInvoiceDetailView(APIView):
     throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
+        _validate_record_id(record_id)
         invoice = NetSuiteDataService().get_record(
             record_type=NetSuiteRecordType.INVOICE, record_id=record_id, user=request.user,
         )

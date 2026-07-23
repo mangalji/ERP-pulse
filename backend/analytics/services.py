@@ -19,6 +19,7 @@ response contracts.
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from accounts.models import User
@@ -37,6 +38,17 @@ class AnalyticsService:
 
     # Safety cap applied to methods without an explicit limit parameter.
     MAX_ROWS = 500
+
+    # Every method that interpolates a transaction_type into a raw
+    # SuiteQL string (get_revenue_by_customer, _monthly_query) validates
+    # against this whitelist first — defense in depth: no current caller
+    # passes user-supplied values here (this file receives them from
+    # ai/context_builder.py's hardcoded calls or reports/services.py's
+    # hardcoded calls), but SuiteQL's REST endpoint has no
+    # parameter-binding support, so any future caller that *does* forget
+    # to validate a user-supplied value before passing it here is
+    # protected regardless.
+    VALID_TRANSACTION_TYPES = {'SalesOrd', 'CustInvc'}
 
     def __init__(self, netsuite_data_service: NetSuiteDataService | None = None):
         self.netsuite_data_service = netsuite_data_service or NetSuiteDataService()
@@ -312,7 +324,19 @@ class AnalyticsService:
         else in this codebase. Please test this against your sandbox
         before trusting the numbers — if `trandate` isn't queryable via
         SuiteQL on this account, `createddate` is a likely fallback to try.
+
+        Raises ValueError if start_date/end_date aren't valid
+        'YYYY-MM-DD' dates, or if transaction_type isn't in
+        VALID_TRANSACTION_TYPES — both values are interpolated directly
+        into the SuiteQL string below (NetSuite's SuiteQL REST endpoint
+        has no parameter-binding support), so this validation is what
+        keeps that interpolation safe rather than an injection surface.
         """
+        
+        transaction_type = self._require_valid_transaction_type(transaction_type)
+        start_date = self._require_valid_date(start_date,field_name='start_date')
+        end_date = self._require_valid_date(end_date,field_name='end_date')
+
         query = f"""
             SELECT SUM(foreigntotal) AS revenue, COUNT(*) AS row_count
             FROM transaction
@@ -452,6 +476,28 @@ class AnalyticsService:
         rows = self._execute(query=query, user=user)
         return rows[0] if rows else {}
 
+    def _require_valid_transaction_type(self, transaction_type: str) -> str:
+        if transaction_type not in self.VALID_TRANSACTION_TYPES:
+            raise ValueError(
+                f'Invalid transaction type: {transaction_type}.'
+                f'must be one of {sorted(self.VALID_TRANSACTION_TYPES)}.'
+            )
+            return transaction_type
+    @staticmethod
+    def _require_valid_date(value: str, *, field_name: str) -> str:
+        """
+        Confirms `value` is a real calendar date in 'YYYY-MM-DD' form
+        before it's interpolated into a SuiteQL string — rejects not
+        just malformed strings but also SQL-metacharacter payloads
+        disguised as a date (e.g. "2026-01-01' OR '1'='1"), since any of
+        that fails strptime's exact format match.
+        """
+        try:
+            datetime.strptime(value, '%Y-%m-%d')
+        except (TypeError,ValueError):
+            raise ValueError(f"{field_name} must be a valid date in 'YYYY-MM-DD' format, got: {value!r}")
+        return value
+    
     @staticmethod
     def _safe_int(value: Any, *, default: int) -> int:
         """

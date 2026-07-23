@@ -1,6 +1,17 @@
 from rest_framework import serializers
 from netsuite.models import NetSuiteConnection
 from django.utils import timezone
+from django.core.validators import RegexValidator
+
+# NetSuite account IDs are alphanumeric plus underscore (e.g. "1234567",
+# "1234567_SB1", "TD1234567") — see netsuite/oauth.py's
+# netsuite_account_domain() for the exact transformation applied to this
+# value. Anything outside that character set can never be a real
+# NetSuite account id.
+netsuite_account_id_validator = RegexValidator(
+    regex=r'^[A-Za-z0-9_]+$',
+    message='NetSuite Account ID may only contain letters, numbers, and underscores.',
+)
 
 class NetSuiteCallbackSerializer(serializers.Serializer):
     """
@@ -12,18 +23,20 @@ class NetSuiteCallbackSerializer(serializers.Serializer):
     case it is and raises the appropriate domain exception.
     """
 
-    state = serializers.CharField()
-    code = serializers.CharField(required=False)
-    error = serializers.CharField(required=False)
+    state = serializers.CharField(max_length=2048)
+    code = serializers.CharField(required=False, max_length=1024)
+    error = serializers.CharField(required=False,max_length=512)
 
 class NetSuiteConnectionCreateSerializer(serializers.Serializer):
     client_name= serializers.CharField(max_length=255)
     environment = serializers.ChoiceField(
         choices=["sandbox","production"]
     )
-    client_id = serializers.CharField()
-    client_secret = serializers.CharField()
-    netsuite_account_id = serializers.CharField()
+    client_id = serializers.CharField(min_length=1, max_length=500)
+    client_secret = serializers.CharField(min_length=1, max_length=500)
+    netsuite_account_id = serializers.CharField(
+        min_length=1, max_length=20, validators=[netsuite_account_id_validator],
+    )
 
 class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
     token_expires_in_seconds = serializers.SerializerMethodField()

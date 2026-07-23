@@ -96,9 +96,10 @@ class ErrorLogListView(APIView):
 
     def get(self, request):
         try:
-            limit = min(int(request.query_params.get("limit", 50)), 200)
+            limit = int(request.query_params.get("limit", 50))
         except ValueError:
             limit = 50
+        limit = max(1,min(limit,200))
 
         errors = ErrorLog.objects.all()[:limit]
         return success_response(
@@ -119,9 +120,10 @@ class ApiUsageView(APIView):
 
     def get(self, request):
         try:
-            hours = min(int(request.query_params.get("hours", 24)), 24 * 30)
+            hours = int(request.query_params.get("hours", 24))
         except ValueError:
             hours = 24
+        hours = max(1,min(hours,24 * 30))
 
         since = timezone.now() - timedelta(hours=hours)
         queryset = RequestLog.objects.filter(created_at__gte=since)

@@ -9,6 +9,35 @@ otp_code_validator = RegexValidator(
     message = 'OTP code must be digits only'
 )
 
+# International E.164-style: optional leading +, first digit 1-9 (no
+# leading 0), 7-14 more digits (8-15 digits total, matching the ITU
+# E.164 max length). Rejects letters, symbols, and obvious garbage
+# ("not-a-phone!!", "1234", "00000000000000000000") while still
+# allowing real international numbers without a country-specific format.
+mobile_number_validator = RegexValidator(
+    regex=r'^\+?[1-9]\d{7,14}$',
+    message='Enter a valid mobile number (digits only, optionally starting with +).',
+)
+
+# Rejects digits and HTML/script-relevant characters in a human name
+# field — not a strict Latin-only whitelist (that would reject many
+# real international names), just a denylist of characters a real name
+# never legitimately contains. Unicode letters (including Devanagari,
+# accented Latin, etc.) are allowed.
+name_validator = RegexValidator(
+    regex=r'^[^\d<>{}\[\]\\\/`~^*_=|]+$',
+    message="Name can't contain digits or special characters like < > { } [ ].",
+)
+
+def human_name_field(*,max_length: int = 100) -> serializers.CharField:
+    """Shared field definition for first_name/last_name — DRY per this task."""
+    return serializers.CharField(
+        max_length=max_length,
+        min_length=1,
+        trim_whitespace=True,
+        validators=[name_validator],
+    )
+
 class RegisterSerializer(serializers.Serializer):
     """
     Validates registration Step 1 input: email + password only.
@@ -21,9 +50,9 @@ class RegisterSerializer(serializers.Serializer):
     popped out of validated_data once checked, so it is never passed on
     to AuthenticationService.register(), which only accepts email/password.
     """
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, validators=[validate_password])
-    confirm_password = serializers.CharField(write_only=True)
+    email = serializers.EmailField(max_length=100)
+    password = serializers.CharField(write_only=True, max_length=20, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True, max_length=20, validators=[validate_password])
 
     def validate(self, attrs):
         confirm_password = attrs.pop('confirm_password')
@@ -33,10 +62,10 @@ class RegisterSerializer(serializers.Serializer):
 
 class ResendRegistrationOTPSerializer(serializers.Serializer):
     """Validates POST /api/v1/auth/register/resend-otp/ input."""
-    email = serializers.EmailField()
+    email = serializers.EmailField(max_length=100)
 
 class ResendLoginOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    email = serializers.EmailField(max_length=100)
 
 class VerifyRegistrationOTPSerializer(serializers.Serializer):
     """
@@ -46,7 +75,7 @@ class VerifyRegistrationOTPSerializer(serializers.Serializer):
     decided by AuthenticationService.verify_registration_otp() — this
     only checks shape.
     """
-    email = serializers.EmailField()
+    email = serializers.EmailField(max_length=100)
     otp_code = serializers.CharField(
         max_length=constants.OTP_LENGTH,
         min_length=constants.OTP_LENGTH,
@@ -60,10 +89,10 @@ class CompleteProfileSerializer(serializers.Serializer):
     Mobile-number uniqueness is a business rule and stays in
     AuthenticationService.complete_registration().
     """
-    registration_token = serializers.CharField()
-    first_name = serializers.CharField(max_length=100)
-    last_name = serializers.CharField(max_length=100)
-    mobile_number = serializers.CharField(max_length=15)
+    registration_token = serializers.CharField(max_length=2048)
+    first_name = human_name_field()
+    last_name = human_name_field()
+    mobile_number = serializers.CharField(max_length=16, validators=[mobile_number_validator])
 
 class LoginSerializer(serializers.Serializer):
     """
@@ -72,8 +101,8 @@ class LoginSerializer(serializers.Serializer):
     Credential correctness and account verification state are checked by
     AuthenticationService.login(), not here.
     """
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
+    email = serializers.EmailField(max_length=100)
+    password = serializers.CharField(write_only=True, max_length=20, validators=[validate_password])
 
 class VerifyLoginOTPSerializer(serializers.Serializer):
     """
@@ -83,7 +112,7 @@ class VerifyLoginOTPSerializer(serializers.Serializer):
     correctness is decided by OTPService.verify_otp().
     """
  
-    email = serializers.EmailField()
+    email = serializers.EmailField(max_length=100)
     otp_code = serializers.CharField(
         max_length=constants.OTP_LENGTH,
         min_length=constants.OTP_LENGTH,
