@@ -34,7 +34,9 @@ Currently, Oracle NetSuite integration is under active development.
 - Manual Sync Manager — orchestrated, per-entity-stage sync runs with independent retry of failed stages
 - REST Record API Integration
 - SuiteQL Query Support
+- Centralized Analytics Service — single source of truth for KPI/business calculations, shared by Dashboard, Reports, and AI
 - Sales & Revenue Trend Reporting (SuiteQL-aggregated, month-over-month)
+- AI Business Intelligence Assistant — pluggable providers (OpenAI, Gemini), typed business context objects, prompt versioning, per-call audit logging, short-TTL context caching
 - User Login/Activity History
 - JWT Authentication with Email OTP (registration + login)
 - Operational Monitoring (request/error logging)
@@ -99,6 +101,7 @@ Examples:
 - Token Refresh
 - Connection Management
 - Sync Orchestration (Sync Manager)
+- KPI/Business Calculations (Analytics Service)
 - Business Rules
 
 ---
@@ -121,7 +124,7 @@ No HTTP communication.
 
 Responsible only for communication with NetSuite.
 
-Split into three focused pieces:
+Split into focused pieces:
 
 - `client.py` — builds and issues NetSuite requests (OAuth token exchange/refresh, REST Record reads, SuiteQL)
 - `http.py` — generic HTTP sending: timeout, correlation ID, retry/backoff on idempotent calls
@@ -159,6 +162,29 @@ Each connection stores:
 - Last Used / Last Synced timestamps
 
 Every lifecycle event on a connection (created, renamed, switched active, deleted, OAuth completed) is recorded in a connection audit log.
+
+---
+
+# Analytics & AI Architecture
+
+## Analytics
+
+`AnalyticsService` is the single source of truth for KPI/business calculations (top customers, overdue invoices, sales summary, revenue by period/customer, sales trend by month). Dashboard, Reports, and AI all consume it — no module runs its own duplicate NetSuite aggregation query.
+
+```
+Dashboard ──┐
+Reports   ──┼──▶  AnalyticsService  ──▶  NetSuite (SuiteQL)
+AI        ──┘
+```
+
+## AI
+
+- AI never communicates with NetSuite directly — only with `AnalyticsService`/`DashboardService` via a dedicated Context Builder.
+- Business context passed to the AI is a typed object (`BusinessContext`/`AIRequestContext`), not a bare dict.
+- Prompt construction is separated into its own module, with a version tag (`PROMPT_VERSION`) tracked per request.
+- Every AI provider call is recorded in an `AIAuditLog` (provider, model, prompt version, latency, success/failure) — distinct from the user-facing conversation transcript.
+- The assembled business context (not the AI's answer) is cached for a short TTL per user, avoiding redundant SuiteQL calls on rapid follow-up questions without risking a stale or mismatched answer.
+- AI providers are pluggable (OpenAI, Gemini) behind a common interface.
 
 ---
 
@@ -209,6 +235,11 @@ External APIs
 - Oracle NetSuite REST API
 - NetSuite SuiteQL
 
+AI Providers
+
+- OpenAI
+- Google Gemini
+
 Hosting
 
 - Backend: [Render](https://render.com)
@@ -227,6 +258,7 @@ common/
 netsuite/
 ai/
 dashboard/
+analytics/
 reports/
 monitoring/
 sync/
@@ -251,15 +283,18 @@ Backend
 - Models, Repository, OAuth, Client — Complete
 - Multi-connection CRUD, Connection Health, Audit Trail — Complete
 - Token Encryption at Rest — Complete
-- Services (NetSuite data, Reports, Sync Manager) — Complete
+- Centralized Analytics Service (Dashboard + Reports + AI share one source of truth) — Complete
+- AI: typed business context, prompt versioning, audit logs, context caching, pluggable providers — Complete
+- Sync Manager (manual/on-demand) — Complete
 - Login/Activity History — Complete
 - Monitoring (error/request logging) — Complete
 
 Current focus:
 
-- Test suite coverage for recently split/added modules (NetSuite HTTP client, Sync Manager, Connection Audit Trail)
+- Test suite cleanup — several tests still target pre-refactor code shape (old NetSuite client mocks, old dict-based AI context, the pre-move Analytics service location) and need updating; not a functional regression, but real coverage gaps until addressed
+- Verifying a handful of SuiteQL/REST field assumptions against a live NetSuite sandbox (flagged inline in code docstrings where relevant)
 - Scheduled/background sync (requires Celery + Redis)
-- Frontend surfacing for connection health, audit trail, and sync runs
+- Frontend surfacing for connection health, audit trail, and Sync Manager
 
 ---
 
@@ -269,9 +304,10 @@ Upcoming Features
 
 ## Backend
 
+- Test suite cleanup and expanded coverage for recently added/moved modules
+- Sandbox verification of flagged SuiteQL/REST assumptions
 - Scheduled Background Sync (Celery + Redis)
 - Rate-limit-aware retry tuned against a live NetSuite sandbox
-- Expanded automated test coverage
 
 ## Frontend
 
@@ -312,16 +348,17 @@ Additional project documentation is available.
 
 Current milestone:
 
-**NetSuite Connection Health, Audit Trail & Sync Manager**
+**Analytics & AI Architecture**
 
 Status:
 
-🟡 In Progress
+🟡 In Progress (backend complete, test coverage and sandbox verification pending)
 
 Remaining work:
 
-- Automated test coverage for the modules above
-- Frontend surfacing of health/audit/sync data
+- Test suite cleanup (see Current Progress above)
+- Sandbox verification of flagged SuiteQL/REST assumptions
+- Frontend surfacing of health/audit/sync/analytics data
 - Scheduled sync (Celery + Redis)
 
 ---
@@ -337,6 +374,7 @@ The project follows these principles:
 - Connection-based OAuth
 - Encrypted Credentials at Rest
 - Auditable Connection Lifecycle
+- Single Source of Truth for Business Calculations
 - Scalable Multi-ERP Design
 
 ---
