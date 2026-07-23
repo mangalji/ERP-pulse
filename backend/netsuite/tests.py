@@ -162,7 +162,7 @@ class NetSuiteAuthClientTests(TestCase):
             with self.assertRaises(NetSuiteConfigurationException):
                 self._client()
 
-    @patch('netsuite.client.requests.post')
+    @patch('netsuite.http.send')
     def test_exchange_code_for_tokens(self, mock_post):
         mock_post.return_value = MagicMock(
             ok=True,
@@ -178,7 +178,7 @@ class NetSuiteAuthClientTests(TestCase):
         self.assertEqual(token_set.access_token, 'new-access')
         self.assertEqual(token_set.refresh_token, 'new-refresh')
 
-    @patch('netsuite.client.requests.post')
+    @patch('netsuite.http.send')
     def test_refresh_access_token(self, mock_post):
         mock_post.return_value = MagicMock(
             ok=True,
@@ -194,7 +194,7 @@ class NetSuiteAuthClientTests(TestCase):
         self.assertEqual(token_set.access_token, 'refreshed-access')
         self.assertEqual(token_set.refresh_token, 'refreshed-refresh')
 
-    @patch('netsuite.client.requests.post')
+    @patch('netsuite.http.send')
     def test_token_request_rejected(self,mock_post):
         mock_post.return_value = MagicMock(ok=False,status_code=400)
         client = self._client()
@@ -231,7 +231,7 @@ class NetSuiteAuthClientTests(TestCase):
         with self.assertRaises(NetSuiteRecordNotFoundException):
             client.get_records(record_type=NetSuiteRecordType.CUSTOMER)
 
-    @patch('netsuite.client.requests.post')
+    @patch('netsuite.http.send')
     def test_execute_suiteql(self, mock_post):
         mock_post.return_value = MagicMock(
             ok=True,
@@ -831,7 +831,7 @@ class NetSuiteOAuthIntegrationTests(APITestCase):
         response.json.return_value = payload
         return response
 
-    @patch('netsuite.client.requests.post')
+    @patch('netsuite.http.send')
     def test_callback_persists_connection_end_to_end(self, mock_post):
         mock_post.return_value = self._mock_token_response()
 
@@ -850,7 +850,7 @@ class NetSuiteOAuthIntegrationTests(APITestCase):
         self.assertEqual(self.connection.refresh_token, 'exchanged-refresh-token')
         self.assertIsNotNone(self.connection.access_token_expires_at)
 
-    @patch('netsuite.client.requests.post')
+    @patch('netsuite.http.send')
     def test_callback_deactivates_other_connections_end_to_end(self, mock_post):
         other_connection = _make_connection(self.user, is_active=True, status='connected')
         mock_post.return_value = self._mock_token_response()
@@ -886,7 +886,7 @@ class NetSuiteOAuthIntegrationTests(APITestCase):
         self.connection.refresh_from_db()
         self.assertEqual(self.connection.status, 'pending')
 
-    @patch('netsuite.client.requests.post')
+    @patch('netsuite.http.send')
     def test_callback_netsuite_rejection_returns_502(self, mock_post):
         rejected_response = MagicMock()
         rejected_response.ok = False

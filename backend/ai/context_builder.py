@@ -206,4 +206,4 @@ def _build_context_uncached(user:User) -> AIRequestContext:
             ),
         }
 
-    return AIRequestContext(netsuite_connected=True, business_context=business_context)
+    return AIRequestContext(netsuite_connected=True, business_context=BusinessContext(**business_context))

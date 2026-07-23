@@ -23,7 +23,7 @@ All external dependencies are mocked:
 
 import json
 from unittest.mock import MagicMock, patch
-
+from ai.business_context import AIRequestContext, BusinessContext
 from django.core.cache import cache
 from django.test import TestCase, override_settings, RequestFactory
 from rest_framework import status
@@ -37,8 +37,8 @@ from ai.context_builder import (
     _previous_month_range,
 )
 from ai.exceptions import AIConversationNotFoundException, AIProviderNotConfiguredException, AIProviderRequestException
-from ai.models import AIConversation, AIMessage
-from ai.prompts import build_system_prompt, build_user_prompt
+from ai.models import AIConversation, AIMessage, AIAuditLog
+from ai.prompts import build_system_prompt, build_user_prompt, PROMPT_VERSION
 from ai.repositories import ConversationRepository, MessageRepository
 from ai.serializers import AIChatRequestSerializer, AIConversationSerializer, AIMessageSerializer
 from ai.services import AIService, NETSUITE_NOT_CONNECTED_ANSWER
@@ -50,12 +50,12 @@ _user_counter = 0
 
 def _make_user(**overrides):
     global _user_counter
-    _user_counter += 1
+    _user_counter = 1
     defaults = {
         'email': 'test@example.com',
         'first_name': 'Test',
         'last_name': 'User',
-        'mobile_number': f'+1234{_user_counter:06d}',
+        'mobile_number': f'1234{_user_counter:06d}',
         'is_active': True,
         'is_email_verified': True,
     }
@@ -83,16 +83,16 @@ class PromptTests(TestCase):
         self.assertIn('Business Intelligence Assistant', prompt)
 
     def test_build_user_prompt_with_context(self):
-        context = {
-            'netsuite_connected': True,
-            'business_context': {'summary': {'total_customers': 10}},
-        }
+        context = AIRequestContext(
+            netsuite_connected=True,
+            business_context=BusinessContext(summary={'total_customers':10}),
+        )
         prompt = build_user_prompt(context=context, message='How many customers?')
         self.assertIn('How many customers?', prompt)
         self.assertIn('Business context:', prompt)
 
     def test_build_user_prompt_without_context(self):
-        context = {'netsuite_connected': False, 'business_context': None}
+        context = AIRequestContext(netsuite_connected=False, business_context=None)
         prompt = build_user_prompt(context=context, message='How many customers?')
         self.assertIn('How many customers?', prompt)
         self.assertIn('NetSuite is not connected', prompt)
@@ -105,11 +105,15 @@ class PromptTests(TestCase):
 class ContextBuilderTests(TestCase):
     def setUp(self):
         self.user = _make_user()
+        cache.clear()
 
-    @patch('ai.context_builder.BusinessInsightsService')
+    def tearDown(self):
+        cache.clear()
+
+    @patch('ai.context_builder.AnalyticsService')
     @patch('ai.context_builder.DashboardService')
     @patch('ai.context_builder.NetSuiteConnectionRepository')
-    def test_build_context_connected(self, MockRepo, MockDashboardService, MockInsightsService):
+    def test_build_context_connected(self, MockRepo, MockDashboardService, MockAnalyticsService):
         mock_repo = MockRepo.return_value
         mock_repo.get_by_user.return_value = MagicMock(is_active=True)
 
@@ -120,65 +124,62 @@ class ContextBuilderTests(TestCase):
         mock_dashboard.get_recent_sales_orders.return_value = []
         mock_dashboard.get_recent_employees.return_value = []
 
-        mock_insights = MockInsightsService.return_value
-        mock_insights.get_sales_summary.return_value = {'total_sales_orders': 3}
-        mock_insights.get_top_customers.return_value = [{'name': 'Acme'}]
-        mock_insights.get_overdue_invoices.return_value = []
-        mock_insights.get_overdue_invoices_summary.return_value = {
-            'overdue_invoice_count': 2, 'total_overdue_amount': 4000.0,
+        mock_analytics = MockAnalyticsService.return_value
+        mock_analytics.get_sales_summary.return_value = {'total_sales_orders':3}
+        mock_analytics.get_top_customers.return_value = [{'name':'Acme'}]
+        mock_analytics.get_overdue_invoices.return_value = []
+        mock_analytics.get_overdue_invoices_summary.return_value = {
+            'overdue_invoice_count':2,'total_overdue_amount':4000.0,
         }
-        mock_insights.get_inactive_vendors.return_value = []
-        mock_insights.get_low_inventory.return_value = []
-        mock_insights.get_total_receivables.return_value = {
-            'total_receivable': 20000.0, 'customers_with_balance': 15,
-        }
-        mock_insights.get_revenue_by_customer.return_value = [{'name': 'Acme', 'revenue': 9000.0}]
-        mock_insights.get_revenue_for_period.return_value = {'revenue': 5000.0, 'transaction_count': 2}
+
+        mock_analytics.get_inactive_vendors.return_value = []
+        mock_analytics.get_low_inventory.return_value = []
+        mock_analytics.get_total_receivables.return_value = {
+             'total_receivable': 20000.0, 'customers_with_balance': 15,
+         }
+        mock_analytics.get_revenue_by_customer.return_value = [{'name': 'Acme', 'revenue': 9000.0}]
+        mock_analytics.get_revenue_for_period.return_value = {'revenue': 5000.0, 'transaction_count': 2}
 
         context = build_context(self.user)
-        self.assertTrue(context['netsuite_connected'])
-        self.assertIsNotNone(context['business_context'])
+        self.assertTrue(context.netsuite_connected)
+        self.assertIsNotNone(context.business_context)
 
-        # Pre-existing Dashboard keys — unchanged, still present.
-        self.assertEqual(context['business_context']['summary']['total_customers'], 10)
-        self.assertEqual(context['business_context']['recent_customers'], [])
-        self.assertEqual(context['business_context']['recent_invoices'], [])
-        self.assertEqual(context['business_context']['recent_sales_orders'], [])
-        self.assertEqual(context['business_context']['recent_employees'], [])
+        # Pre-existing Dashboard fields — unchanged, still present.
+        self.assertEqual(context.business_context.summary['total_customers'], 10)
+        self.assertEqual(context.business_context.recent_customers, [])
+        self.assertEqual(context.business_context.recent_invoices, [])
+        self.assertEqual(context.business_context.recent_sales_orders, [])
+        self.assertEqual(context.business_context.recent_employees, [])
 
-        # New Business Insights keys — additive.
-        self.assertEqual(
-            context['business_context']['sales_summary']['total_sales_orders'], 3
-        )
-        self.assertEqual(context['business_context']['top_customers'], [{'name': 'Acme'}])
-        self.assertEqual(context['business_context']['overdue_invoices'], [])
-        self.assertEqual(
-            context['business_context']['overdue_invoices_summary']['overdue_invoice_count'], 2
-        )
-        self.assertEqual(context['business_context']['inactive_vendors'], [])
-        self.assertEqual(context['business_context']['low_inventory'], [])
-        self.assertEqual(
-            context['business_context']['total_receivables']['total_receivable'], 20000.0
-        )
+        # New Business Insights fields — additive.
+        self.assertEqual(context.business_context.sales_summary['total_sales_orders'], 3)
+        self.assertEqual(context.business_context.top_customers, [{'name': 'Acme'}])
+        self.assertEqual(context.business_context.overdue_invoices, [])
+        self.assertEqual(context.business_context.overdue_invoices_summary['overdue_invoice_count'], 2)
+        self.assertEqual(context.business_context.inactive_vendors, [])
+        self.assertEqual(context.business_context.low_inventory, [])
+        self.assertEqual(context.business_context.total_receivables['total_receivable'], 20000.0)
 
-        # New revenue keys — additive.
-        self.assertEqual(
-            context['business_context']['top_customers_by_revenue'],
-            [{'name': 'Acme', 'revenue': 9000.0}],
-        )
-        self.assertEqual(context['business_context']['revenue_this_month']['revenue'], 5000.0)
-        self.assertEqual(context['business_context']['revenue_last_month']['revenue'], 5000.0)
-        self.assertEqual(
-            context['business_context']['revenue_this_fiscal_year']['revenue'], 5000.0
-        )
+        # New revenue fields — additive.
+        self.assertEqual(context.business_context.top_customers_by_revenue,[{'name':'Acme','revenue':9000.0}],)
+        self.assertEqual(context.business_context.revenue_this_month['revenue'],5000.0)
+        self.assertEqual(context.business_context.revenue_last_month['revenue'],5000.0)
+        self.assertEqual(context.business_context.revenue_this_fiscal_year['revenue'],5000.0)
         # get_revenue_for_period is called three times (this month, last
         # month, this fiscal year) with distinct, non-overlapping ranges.
         call_ranges = [
             (c.kwargs['start_date'], c.kwargs['end_date'])
-            for c in mock_insights.get_revenue_for_period.call_args_list
+            for c in mock_analytics.get_revenue_for_period.call_args_list
         ]
         self.assertEqual(len(call_ranges), 3)
         self.assertEqual(len(set(call_ranges)), 3)
+
+        # Also confirm as_dict() round-trips correctly — this is exactly
+        # what ai/prompts.py's json.dumps() call relies on, and what the
+        # missing BusinessContext(**business_context) wrap (fixed this
+        # session) would have crashed on with AttributeError.
+        as_dict = context.as_dict()
+        self.assertEqual(as_dict['business_context']['summary']['total_customers'], 10)
 
     @patch('ai.context_builder.NetSuiteConnectionRepository')
     def test_build_context_not_connected(self, MockRepo):
@@ -186,14 +187,14 @@ class ContextBuilderTests(TestCase):
         mock_repo.get_by_user.return_value = None
 
         context = build_context(self.user)
-        self.assertFalse(context['netsuite_connected'])
-        self.assertIsNone(context['business_context'])
+        self.assertFalse(context.netsuite_connected)
+        self.assertIsNone(context.business_context)
 
-    @patch('ai.context_builder.BusinessInsightsService')
+    @patch('ai.context_builder.AnalyticsService')
     @patch('ai.context_builder.DashboardService')
     @patch('ai.context_builder.NetSuiteConnectionRepository')
     def test_build_context_degrades_gracefully_on_partial_failure(
-        self, MockRepo, MockDashboardService, MockInsightsService
+        self, MockRepo, MockDashboardService, MockAnalyticsService
     ):
         """
         One failing insight (top_customers) must not prevent the rest of
@@ -208,30 +209,81 @@ class ContextBuilderTests(TestCase):
         mock_dashboard.get_recent_customers.return_value = []
         mock_dashboard.get_recent_invoices.return_value = []
         mock_dashboard.get_recent_sales_orders.return_value = []
+        mock_dashboard.get_recent_employees.return_value = []
 
-        mock_insights = MockInsightsService.return_value
-        mock_insights.get_sales_summary.return_value = {'total_sales_orders': 3}
-        mock_insights.get_top_customers.side_effect = Exception('SuiteQL timeout')
-        mock_insights.get_overdue_invoices.return_value = []
-        mock_insights.get_inactive_vendors.return_value = []
-        mock_insights.get_low_inventory.return_value = []
+        mock_analytics = MockAnalyticsService.return_value
+        mock_analytics.get_sales_summary.return_value = {'total_sales_orders': 3}
+        mock_analytics.get_top_customers.side_effect = Exception('SuiteQL timeout')
+        mock_analytics.get_overdue_invoices.return_value = []
+        mock_analytics.get_overdue_invoices_summary.return_value = {}
+        mock_analytics.get_inactive_vendors.return_value = []
+        mock_analytics.get_low_inventory.return_value = []
+        mock_analytics.get_total_receivables.return_value = {}
+        mock_analytics.get_revenue_by_customer.return_value = []
+        mock_analytics.get_revenue_for_period.return_value = {}
 
         context = build_context(self.user)
 
         # The whole request survives — no exception propagated.
-        self.assertTrue(context['netsuite_connected'])
-        self.assertIsNotNone(context['business_context'])
+        self.assertTrue(context.netsuite_connected)
+        self.assertIsNotNone(context.business_context)
 
         # The failing insight is omitted (None), not fabricated.
-        self.assertIsNone(context['business_context']['top_customers'])
+        self.assertIsNone(context.business_context.top_customers)
 
         # Every other insight still built normally.
-        self.assertEqual(context['business_context']['summary']['total_customers'], 10)
-        self.assertEqual(
-            context['business_context']['sales_summary']['total_sales_orders'], 3
-        )
-        self.assertEqual(context['business_context']['overdue_invoices'], [])
+        self.assertEqual(context.business_context.summary['total_customers'], 10)
+        self.assertEqual(context.business_context.sales_summary['total_sales_orders'], 3)
+        self.assertEqual(context.business_context.overdue_invoices, [])
 
+    @patch('ai.context_builder.AnalyticsService')
+    @patch('ai.context_builder.DashboardService')
+    @patch('ai.context_builder.NetSuiteConnectionRepository')
+    def test_build_context_is_cached_for_60_seconds(
+        self, MockRepo, MockDashboardService, MockAnalyticsService
+    ):
+        """
+        No test coverage existed for this at all before this session.
+        build_context() runs ~15 live SuiteQL-backed calls, so a second
+        call within the cache TTL must reuse the cached result rather
+        than re-querying every service again.
+        """
+        mock_repo = MockRepo.return_value
+        mock_repo.get_by_user.return_value = MagicMock(is_active=True)
+        mock_dashboard = MockDashboardService.return_value
+        mock_dashboard.get_summary.return_value = {'total_customers': 10}
+        mock_dashboard.get_recent_customers.return_value = []
+        mock_dashboard.get_recent_invoices.return_value = []
+        mock_dashboard.get_recent_sales_orders.return_value = []
+        mock_dashboard.get_recent_employees.return_value = []
+        mock_analytics = MockAnalyticsService.return_value
+        for method in (
+            'get_sales_summary', 'get_top_customers', 'get_overdue_invoices',
+            'get_overdue_invoices_summary', 'get_inactive_vendors', 'get_low_inventory',
+            'get_total_receivables', 'get_revenue_by_customer', 'get_revenue_for_period',
+        ):
+            getattr(mock_analytics, method).return_value = {}
+
+        first = build_context(self.user)
+        second = build_context(self.user)
+
+        self.assertEqual(first, second)
+        # Only the first call should have actually hit the mocked services.
+        self.assertEqual(mock_dashboard.get_summary.call_count, 1)
+        self.assertEqual(mock_analytics.get_sales_summary.call_count, 1)
+
+    @patch('ai.context_builder.NetSuiteConnectionRepository')
+    def test_build_context_cache_is_scoped_per_user(self, MockRepo):
+        mock_repo = MockRepo.return_value
+        mock_repo.get_by_user.return_value = None
+
+        other_user = _make_user(email='other@example.com')
+        build_context(self.user)
+        # A cached "not connected" result for one user must not leak to
+        # another user's context lookup.
+        self.assertEqual(mock_repo.get_by_user.call_count, 1)
+        build_context(other_user)
+        self.assertEqual(mock_repo.get_by_user.call_count, 2)
 
 class DateRangeHelperTests(TestCase):
     """
@@ -496,14 +548,14 @@ class AIServiceTests(TestCase):
         # setUp, since setUp runs before the patch context is active. Inject
         # a mock provider directly instead — AIService already supports this.
         self.mock_provider = MagicMock()
+        self.mock_provider.model = 'test-model'
         self.service = AIService(provider=self.mock_provider)
 
     @patch('ai.services.build_context')
     def test_ask_returns_answer(self, mock_build_context):
-        mock_build_context.return_value = {
-            'netsuite_connected': True,
-            'business_context': {},
-        }
+        mock_build_context.return_value = AIRequestContext(
+            netsuite_connected=True, business_context=BusinessContext(),
+        )
         self.mock_provider.generate_response.return_value = 'Test answer'
 
         result = self.service.ask(user=self.user, message='Hello')
@@ -512,20 +564,18 @@ class AIServiceTests(TestCase):
 
     @patch('ai.services.build_context')
     def test_ask_returns_disconnected_answer(self, mock_build_context):
-        mock_build_context.return_value = {
-            'netsuite_connected': False,
-            'business_context': None,
-        }
+        mock_build_context.return_value = AIRequestContext(
+            netsuite_connected=False, business_context=None,
+        )
 
         result = self.service.ask(user=self.user, message='Hello')
         self.assertEqual(result['answer'], NETSUITE_NOT_CONNECTED_ANSWER)
 
     @patch('ai.services.build_context')
     def test_ask_with_existing_conversation(self, mock_build_context):
-        mock_build_context.return_value = {
-            'netsuite_connected': True,
-            'business_context': {},
-        }
+        mock_build_context.return_value = AIRequestContext(
+            netsuite_connected=True, business_context=BusinessContext(),
+        )
         self.mock_provider.generate_response.return_value = 'Follow-up answer'
 
         conversation = AIConversation.objects.create(user=self.user, title='Existing')
@@ -538,10 +588,9 @@ class AIServiceTests(TestCase):
 
     @patch('ai.services.build_context')
     def test_ask_saves_messages(self, mock_build_context):
-        mock_build_context.return_value = {
-            'netsuite_connected': True,
-            'business_context': {},
-        }
+        mock_build_context.return_value = AIRequestContext(
+            netsuite_connected=True, business_context=BusinessContext(),
+        )
         self.mock_provider.generate_response.return_value = 'Answer'
 
         result = self.service.ask(user=self.user, message='Hello')
@@ -562,6 +611,67 @@ class AIServiceTests(TestCase):
         self.assertEqual(len(title), 60)
         self.assertTrue(title.endswith('\u2026'))
 
+
+# ===================================================================
+# AIAuditLog Tests
+#
+# No coverage existed for any of this before this session — added per
+# claude_phase4.md Task 1B.
+# ===================================================================
+
+class AIAuditLogTests(TestCase):
+    def setUp(self):
+        self.user = _make_user()
+        self.mock_provider = MagicMock()
+        self.mock_provider.model = 'test-model'
+        self.mock_provider.__class__.__name__ = 'MockProvider'
+        self.service = AIService(provider=self.mock_provider)
+
+    @patch('ai.services.build_context')
+    def test_successful_call_writes_audit_log(self, mock_build_context):
+        mock_build_context.return_value = AIRequestContext(
+            netsuite_connected=True, business_context=BusinessContext(),
+        )
+        self.mock_provider.generate_response.return_value = 'Answer'
+
+        result = self.service.ask(user=self.user, message='Hello')
+
+        log = AIAuditLog.objects.get(conversation_id=result['conversation_id'])
+        self.assertTrue(log.success)
+        self.assertEqual(log.user_id, self.user.id)
+        self.assertIsNone(log.error_message)
+        self.assertIsNotNone(log.latency_ms)
+        self.assertEqual(log.prompt_version, PROMPT_VERSION)
+
+    @patch('ai.services.build_context')
+    def test_failed_provider_call_writes_audit_log_and_reraises(self, mock_build_context):
+        mock_build_context.return_value = AIRequestContext(
+            netsuite_connected=True, business_context=BusinessContext(),
+        )
+        self.mock_provider.generate_response.side_effect = AIProviderRequestException('boom')
+
+        with self.assertRaises(AIProviderRequestException):
+            self.service.ask(user=self.user, message='Hello')
+
+        log = AIAuditLog.objects.get(user=self.user)
+        self.assertFalse(log.success)
+        self.assertIn('boom', log.error_message)
+
+    @patch('ai.services.build_context')
+    def test_not_connected_does_not_write_audit_log(self, mock_build_context):
+        """
+        The NetSuite-not-connected answer is deterministic and never
+        reaches the provider (see AIService._generate_answer's early
+        return) — so there is nothing provider-related to audit.
+        """
+        mock_build_context.return_value = AIRequestContext(
+            netsuite_connected=False, business_context=None,
+        )
+
+        self.service.ask(user=self.user, message='Hello')
+
+        self.assertEqual(AIAuditLog.objects.filter(user=self.user).count(), 0)
+        self.mock_provider.generate_response.assert_not_called()
 
 # ===================================================================
 # Serializer Tests
