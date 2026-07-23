@@ -26,6 +26,7 @@ with no filter.
 """
 
 import logging
+
 from accounts.models import User
 from netsuite.exceptions import NetSuiteConnectionNotFoundException
 from netsuite.models import NetSuiteConnection

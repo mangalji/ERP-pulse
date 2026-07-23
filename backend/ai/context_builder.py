@@ -29,13 +29,24 @@ assistant still answers using whatever context did come back.
 import logging
 
 from django.utils import timezone
+from django.core.cache import cache
 
 from accounts.models import User
-from dashboard.services import BusinessInsightsService, DashboardService
+from analytics.services import AnalyticsService
+from ai.business_context import AIRequestContext, BusinessContext
+from dashboard.services import DashboardService
 from netsuite.repositories import NetSuiteConnectionRepository
 
 logger = logging.getLogger(__name__)
 
+# Short TTL cache of the assembled context (not the LLM's answer — see
+# ai/services.py's docstring for why: caching the final answer text
+# would be actively wrong across different questions/conversations,
+# but the *inputs* to the AI are safe and valuable to cache, since
+# build_context() runs ~15 live SuiteQL calls that return the same
+# result for rapid-fire follow-up questions within one chat session).
+CONTEXT_CACHE_TTL_SECONDS = 60
+CONTEXT_CACHE_KEY_PREFIX = 'ai_business_context'
 
 def _current_month_range() -> tuple[str, str]:
     """First-of-this-month through first-of-next-month, as 'YYYY-MM-DD' strings."""
@@ -97,70 +108,81 @@ def _safe_call(label: str, func):
         return None
 
 
-def build_context(user: User) -> dict:
+def build_context(user: User) -> AIRequestContext:
+    cache_key = f"{CONTEXT_CACHE_KEY_PREFIX}:{user.id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    
+    context = _build_context_uncached(user)
+    cache.set(cache_key,context,CONTEXT_CACHE_TTL_SECONDS)
+    return context
+
+def _build_context_uncached(user:User) -> AIRequestContext:
     connection_repository = NetSuiteConnectionRepository()
     connection = connection_repository.get_by_user(user)
     netsuite_connected = bool(connection and connection.is_active)
 
-    business_context = None
-    if netsuite_connected:
-        dashboard_service = DashboardService()
-        business_insights_service = BusinessInsightsService()
+    if not netsuite_connected:
+        return AIRequestContext(netsuite_connected=False, business_context=None)
+    
+    dashboard_service = DashboardService()
+    analytics_service = AnalyticsService()
 
-        business_context = {
-            # Dashboard context — pre-existing keys, unchanged.
-            'summary': _safe_call(
-                'summary', lambda: dashboard_service.get_summary(user=user)
-            ),
-            'recent_customers': _safe_call(
-                'recent_customers', lambda: dashboard_service.get_recent_customers(user=user)
-            ),
-            'recent_invoices': _safe_call(
-                'recent_invoices', lambda: dashboard_service.get_recent_invoices(user=user)
-            ),
-            'recent_sales_orders': _safe_call(
-                'recent_sales_orders',
-                lambda: dashboard_service.get_recent_sales_orders(user=user),
-            ),
-            'recent_employees': _safe_call(
-                'recent_employees', lambda: dashboard_service.get_recent_employees(user=user)
-            ),
-            # Business Insights — new, additive keys.
-            'sales_summary': _safe_call(
-                'sales_summary', lambda: business_insights_service.get_sales_summary(user=user)
-            ),
-            'top_customers': _safe_call(
-                'top_customers', lambda: business_insights_service.get_top_customers(user=user)
-            ),
-            'overdue_invoices': _safe_call(
-                'overdue_invoices',
-                lambda: business_insights_service.get_overdue_invoices(user=user),
-            ),
-            'overdue_invoices_summary': _safe_call(
-                'overdue_invoices_summary',
-                lambda: business_insights_service.get_overdue_invoices_summary(user=user),
-            ),
-            'inactive_vendors': _safe_call(
-                'inactive_vendors',
-                lambda: business_insights_service.get_inactive_vendors(user=user),
-            ),
-            'low_inventory': _safe_call(
-                'low_inventory', lambda: business_insights_service.get_low_inventory(user=user)
-            ),
-            'total_receivables': _safe_call(
-                'total_receivables',
-                lambda: business_insights_service.get_total_receivables(user=user),
-            ),
+    business_context = {
+        # Dashboard context — pre-existing keys, unchanged.
+        'summary': _safe_call(
+            'summary', lambda: dashboard_service.get_summary(user=user)
+        ),
+        'recent_customers': _safe_call(
+            'recent_customers', lambda: dashboard_service.get_recent_customers(user=user)
+        ),
+        'recent_invoices': _safe_call(
+            'recent_invoices', lambda: dashboard_service.get_recent_invoices(user=user)
+        ),
+        'recent_sales_orders': _safe_call(
+            'recent_sales_orders',
+            lambda: dashboard_service.get_recent_sales_orders(user=user),
+        ),
+        'recent_employees': _safe_call(
+            'recent_employees', lambda: dashboard_service.get_recent_employees(user=user)
+        ),
+        # Business Insights — new, additive keys.
+        'sales_summary': _safe_call(
+            'sales_summary', lambda: analytics_service.get_sales_summary(user=user)
+        ),
+        'top_customers': _safe_call(
+            'top_customers', lambda: analytics_service.get_top_customers(user=user)
+        ),
+        'overdue_invoices': _safe_call(
+            'overdue_invoices',
+            lambda: analytics_service.get_overdue_invoices(user=user),
+        ),
+        'overdue_invoices_summary': _safe_call(
+            'overdue_invoices_summary',
+            lambda: analytics_service.get_overdue_invoices_summary(user=user),
+        ),
+        'inactive_vendors': _safe_call(
+            'inactive_vendors',
+            lambda: analytics_service.get_inactive_vendors(user=user),
+        ),
+        'low_inventory': _safe_call(
+            'low_inventory', lambda: analytics_service.get_low_inventory(user=user)
+        ),
+        'total_receivables': _safe_call(
+            'total_receivables',
+            lambda: analytics_service.get_total_receivables(user=user),
+        ),
             # Revenue — new, additive keys. See dashboard/services.py
             # docstrings for what's verified vs. not yet confirmed
             # against a live NetSuite sandbox.
             'top_customers_by_revenue': _safe_call(
                 'top_customers_by_revenue',
-                lambda: business_insights_service.get_revenue_by_customer(user=user),
+                lambda: analytics_service.get_revenue_by_customer(user=user),
             ),
             'revenue_this_month': _safe_call(
                 'revenue_this_month',
-                lambda: business_insights_service.get_revenue_for_period(
+                lambda: analytics_service.get_revenue_for_period(
                     user=user,
                     start_date=_current_month_range()[0],
                     end_date=_current_month_range()[1],
@@ -168,7 +190,7 @@ def build_context(user: User) -> dict:
             ),
             'revenue_last_month': _safe_call(
                 'revenue_last_month',
-                lambda: business_insights_service.get_revenue_for_period(
+                lambda: analytics_service.get_revenue_for_period(
                     user=user,
                     start_date=_previous_month_range()[0],
                     end_date=_previous_month_range()[1],
@@ -176,7 +198,7 @@ def build_context(user: User) -> dict:
             ),
             'revenue_this_fiscal_year': _safe_call(
                 'revenue_this_fiscal_year',
-                lambda: business_insights_service.get_revenue_for_period(
+                lambda: analytics_service.get_revenue_for_period(
                     user=user,
                     start_date=_current_fiscal_year_range()[0],
                     end_date=_current_fiscal_year_range()[1],
@@ -184,7 +206,4 @@ def build_context(user: User) -> dict:
             ),
         }
 
-    return {
-        'netsuite_connected': netsuite_connected,
-        'business_context': business_context,
-    }
+    return AIRequestContext(netsuite_connected=True, business_context=business_context)

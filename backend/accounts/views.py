@@ -50,7 +50,7 @@ def _get_client_ip(request) -> str | None:
     """
     forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
     if forwarded_for:
-        return forwarded_for().split(',')[0].strip()
+        return forwarded_for.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR')
 
 class RegisterView(APIView):
@@ -196,7 +196,13 @@ class VerifyLoginOTPView(APIView):
         user = authentication_service.verify_login_otp(**serializer.validated_data)
  
         refresh = RefreshToken.for_user(user)
- 
+
+        login_activity_repository.create(
+            user=user,
+            ip_address=_get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')[:512] or None,
+        )
+
         return success_response(
             message='Login successful.',
             data={
@@ -216,7 +222,6 @@ class ResendLoginOTPView(APIView):
     def post(self, request):
         serializer = ResendLoginOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        # result = self.authentication_service.resend_login_otp(**serializer.validated_data)
         result = authentication_service.resend_login_otp(**serializer.validated_data)
 
         return success_response(

@@ -71,6 +71,12 @@ class NetSuiteConnection(models.Model):
     connected_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Failure streak beyond which a "connected" connection is reported as
+    # unhealthy rather than healthy — chosen to tolerate a couple of
+    # transient blips without flapping the status, while still surfacing
+    # a connection that's genuinely stuck failing.
+    UNHEALTHY_FAILURE_THRESHOLD = 3
+
     class Meta:
         db_table = 'netsuite_connection'
 
@@ -97,6 +103,7 @@ class NetSuiteConnection(models.Model):
         if self.consecutive_failures > 0:
             return 'degraded'
         return 'healthy'
+
 
     def __str__(self):
         return f"{self.client_name} ({self.user.email})"

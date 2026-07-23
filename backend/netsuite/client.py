@@ -28,23 +28,19 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-# import requests
 from django.conf import settings
 from django.utils import timezone
 
 from netsuite import errors, http
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import (
-    NetSuiteConfigurationException, 
-    NetSuiteTokenExchangeException, 
+    NetSuiteConfigurationException,
     NetSuiteRecordFetchException,
-    # NetSuiteRecordNotFoundException,
-    )
+    NetSuiteTokenExchangeException,
+)
 from netsuite.oauth import netsuite_account_domain
 
 logger = logging.getLogger(__name__)
-
-# REQUEST_TIMEOUT_SECONDS = 15
 
 
 @dataclass(frozen=True)
@@ -59,7 +55,7 @@ class NetSuiteTokenSet:
 class NetSuiteAuthClient:
     """Handles the token-endpoint calls of the OAuth 2.0 Authorization Code Grant."""
 
-    def __init__(self, 
+    def __init__(self,
                 *,
                 account_id:str,
                 client_id:str,
@@ -168,14 +164,37 @@ class NetSuiteAuthClient:
             access_token=access_token,
         )
 
+    def execute_suiteql(self, *, query: str, access_token: str | None = None) -> dict:
+        """
+        Execute a SuiteQL query.
+
+        Intended for analytics and reporting where REST Record endpoints
+        are insufficient because of pagination limitations.
+        """
+        return self._post(
+            path="query/v1/suiteql",
+            access_token=access_token,
+            data={
+                "q": query,
+            },
+            headers={
+                "Prefer": "transient",
+            },
+        )
+
+    # -----------------------------------------------------------------
+    # Internal request helpers
+    # -----------------------------------------------------------------
+
     def _get(self, *, path: str, access_token: str | None = None, params: dict | None = None) -> dict:
         token = access_token or self.access_token
         if not token:
             raise ValueError("No access token provided or stored on client.")
-        
+
         correlation_id = http.new_correlation_id()
         try:
-            response = http.send('GET',
+            response = http.send(
+                'GET',
                 f'{self._rest_base_url}/{path}',
                 headers={
                     'Authorization': f'Bearer {token}',
@@ -183,30 +202,19 @@ class NetSuiteAuthClient:
                 },
                 params=params,
                 retryable=True,  # GET is idempotent — safe to retry on 429/5xx
-                # timeout=REQUEST_TIMEOUT_SECONDS,
-                correlation_id = correlation_id
+                correlation_id=correlation_id,
             )
         except Exception as exc:
-            logger.exception('NetSuite record request failed (network error). correlation_id=%s', correlation_id,)
+            logger.exception(
+                'NetSuite record request failed (network error). correlation_id=%s', correlation_id,
+            )
             raise NetSuiteRecordFetchException(
                 'Could not reach NetSuite to fetch records. Please try again.'
             ) from exc
-        
+
         errors.raise_for_record_response(response, path=path)
         return response.json()
-        
-        # if response.status_code == 404:
-        #     logger.error('NetSuite record endpoint returned 404 for %s.',path)
-        #     raise NetSuiteRecordNotFoundException('The requested NetSuite record was not found.')
 
-        # if not response.ok:
-        #     logger.error('NetSuite record endpoint returned %s for %s.', response.status_code, path)
-        #     raise NetSuiteRecordFetchException(
-        #         'NetSuite rejected the record request. Please reconnect your account.'
-        #     )
-
-        # return response.json()
-    
     def _post(
         self,
         *,
@@ -233,7 +241,7 @@ class NetSuiteAuthClient:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
-        
+
         if headers:
             request_headers.update(headers)
 
@@ -256,51 +264,16 @@ class NetSuiteAuthClient:
             ) from exc
 
         errors.raise_for_record_response(response, path=path)
-        
-        # if response.status_code == 404:
-        #     logger.error("NetSuite POST endpoint returned 404 for %s.",path,)
 
-        #     raise NetSuiteRecordNotFoundException(
-        #     "The requested NetSuite endpoint was not found."
-        #     )
-        
-        # logger.error("SuiteQL Response: %s", response.text)
-        
-        # if not response.ok:
-        #     logger.error(
-        #         "NetSuite POST endpoint returned %s for %s.",
-        #         response.status_code,path,
-        #     )
-
-        #     raise NetSuiteRecordFetchException(
-        #             "NetSuite rejected the request."
-        #         )
-        
         try:
             return response.json()
-        
         except ValueError as exc:
-
             logger.exception("Invalid JSON returned by NetSuite. correlation_id=%s", correlation_id)
             raise NetSuiteRecordFetchException(
-            "NetSuite returned an invalid response."
-        ) from exc
-    
+                "NetSuite returned an invalid response."
+            ) from exc
 
     def _post_token_request(self, data: dict) -> NetSuiteTokenSet:
-        # try:
-        #     response = requests.post(
-        #         self._token_url,
-        #         data=data,
-        #         auth=(self.client_id, self.client_secret),
-        #         headers={'Content-Type': 'application/x-www-form-urlencoded'},
-        #         timeout=REQUEST_TIMEOUT_SECONDS,
-        #     )
-        # except requests.RequestException as exc:
-        #     logger.exception('NetSuite token request failed (network error).')
-        #     raise NetSuiteTokenExchangeException(
-        #         'Could not reach NetSuite to complete authentication. Please try again.'
-        #     ) from exc
         correlation_id = http.new_correlation_id()
         try:
             response = http.send(
@@ -329,6 +302,7 @@ class NetSuiteAuthClient:
                 response.status_code, correlation_id,
             )
         errors.raise_for_token_response(response)
+
         payload = response.json()
         expires_in = payload.get('expires_in', 3600)
 
@@ -336,23 +310,4 @@ class NetSuiteAuthClient:
             access_token=payload['access_token'],
             refresh_token=payload.get('refresh_token', data.get('refresh_token')),
             access_token_expires_at=timezone.now() + timedelta(seconds=expires_in),
-        )
-        
-    def execute_suiteql(self, *, query: str, access_token: str | None = None,) -> dict:
-        """
-        Execute a SuiteQL query.
-        
-        Intended for analytics and reporting where REST Record endpoints
-        are insufficient because of pagination limitations.
-        """
-
-        return self._post(
-            path="query/v1/suiteql",
-            access_token=access_token,
-            data={
-                "q": query,
-            },
-            headers={
-                "Prefer": "transient",
-            },
         )

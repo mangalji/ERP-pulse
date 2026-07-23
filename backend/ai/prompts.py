@@ -13,6 +13,13 @@ rather than flattened into this single string.
 
 import json
 
+from ai.business_context import AIRequestContext
+
+# Bumped whenever SYSTEM_PROMPT's wording or rules change materially —
+# logged per-request by AIService (via AIAuditLog) so a behavior change
+# in AI answers can be traced back to which prompt version produced it.
+PROMPT_VERSION = 'v1'
+
 SYSTEM_PROMPT = (
     'You are ERP Pulse\'s Business Intelligence Assistant.\n\n'
     'Rules you must always follow:\n'
@@ -30,9 +37,9 @@ def build_system_prompt() -> str:
     return SYSTEM_PROMPT
 
 
-def build_user_prompt(*, context: dict, message: str) -> str:
+def build_user_prompt(*, context: AIRequestContext, message: str) -> str:
     """Combine business context and the user's question into one message for the provider."""
-    if context.get('netsuite_connected'):
+    if context.netsuite_connected:
         field_notes = (
             'Field notes on the JSON below: `top_customers` ranks customers by '
             'outstanding AR balance (money owed to you), NOT revenue generated — '
@@ -44,7 +51,7 @@ def build_user_prompt(*, context: dict, message: str) -> str:
         )
         context_block = (
             f'{field_notes}\n\n'
-            f'Business context: {json.dumps(context.get("business_context"), indent=2)}'
+            f'Business context: {json.dumps(context.business_context.as_dict(), indent=2)}'
         )
     else:
         context_block = (

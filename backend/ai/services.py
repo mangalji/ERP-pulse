@@ -9,14 +9,17 @@ requires changing this class.
 """
 
 import logging
+import time
+
 from django.db import transaction
 from accounts.models import User
+from ai.business_context import AIRequestContext
 from ai.context_builder import build_context
 from ai.exceptions import AIConversationNotFoundException
 from ai.models import AIConversation, AIMessage
-from ai.prompts import build_system_prompt, build_user_prompt
+from ai.prompts import PROMPT_VERSION, build_system_prompt, build_user_prompt
 from ai.providers import AIProvider, OpenAIProvider
-from ai.repositories import ConversationRepository, MessageRepository
+from ai.repositories import AIAuditLogRepository, ConversationRepository, MessageRepository
 # from ai.providers import get_ai_provider
 from ai.providers import AIProviderFactory
 from common.constants import AI_CONVERSATION_HISTORY_LIMIT
@@ -46,6 +49,7 @@ class AIService:
         self.conversation_repository = conversation_repository or ConversationRepository()
         self.message_repository = message_repository or MessageRepository()
         self.provider = provider or AIProviderFactory.create()
+        self.audit_log_repository = AIAuditLogRepository()
 
     def ask(self, *, user: User, message: str, conversation_id=None) -> dict:
         """
@@ -81,7 +85,10 @@ class AIService:
         ]
 
         context = build_context(user)
-        answer = self._generate_answer(context=context, message=message, history=history)
+        answer = self._generate_answer(
+            context=context, message=message, history=history,
+            user=user, conversation=conversation,
+        )
 
         self.message_repository.save(
             conversation=conversation, role=AIMessage.Role.ASSISTANT, content=answer
@@ -115,16 +122,57 @@ class AIService:
             return stripped
         return f'{stripped[:TITLE_MAX_LENGTH - 1]}\u2026'
 
-    def _generate_answer(self, *, context: dict, message: str, history: list[dict] | None = None) -> str:
-        if not context.get('netsuite_connected'):
+    def _generate_answer(
+        self,
+        *,
+        context: AIRequestContext,
+        message: str,
+        history: list[dict] | None = None,
+        user: User,
+        conversation: AIConversation,
+    ) -> str:
+        if not context.netsuite_connected:
             return NETSUITE_NOT_CONNECTED_ANSWER
 
         # AIProviderNotConfiguredException / AIProviderRequestException are
         # intentionally left to propagate to the view and the standard
         # exception handler — a missing API key is a real configuration
         # problem, not something to silently mask as a successful reply.
+        # They're still audit-logged (success=False) below before
+        # re-raising, since a failed provider call is exactly the kind of
+        # thing worth auditing.
         system_prompt = build_system_prompt()
         user_prompt = build_user_prompt(context=context, message=message)
-        return self.provider.generate_response(
-            system_prompt=system_prompt, user_prompt=user_prompt, history=history
+
+        started_at = time.monotonic()
+        try:
+            answer = self.provider.generate_response(
+                system_prompt=system_prompt, user_prompt=user_prompt, history=history
+            )
+        except Exception as exc:
+            self.audit_log_repository.log(
+                user=user,
+                conversation=conversation,
+                provider=self.provider.__class__.__name__,
+                model=getattr(self.provider, 'model', None),
+                prompt_version=PROMPT_VERSION,
+                success=False,
+                latency_ms=self._elapsed_ms(started_at),
+                error_message=str(exc)[:2000],
+            )
+            raise
+
+        self.audit_log_repository.log(
+            user=user,
+            conversation=conversation,
+            provider=self.provider.__class__.__name__,
+            model=getattr(self.provider, 'model', None),
+            prompt_version=PROMPT_VERSION,
+            success=True,
+            latency_ms=self._elapsed_ms(started_at),
         )
+        return answer
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return int((time.monotonic() - started_at) * 1000)

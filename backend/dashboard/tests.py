@@ -20,7 +20,8 @@ from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 
 from accounts.models import User
-from dashboard.services import DashboardService, BusinessInsightsService
+from dashboard.services import DashboardService
+from analytics.services import AnalyticsService
 from dashboard.views import (
     DashboardSummaryView,
     RecentCustomersView,
@@ -138,7 +139,7 @@ class BusinessInsightsServiceTests(TestCase):
     def setUp(self):
         self.user = _make_user()
         self.mock_ns = MagicMock(spec=NetSuiteDataService)
-        self.service = BusinessInsightsService(netsuite_data_service=self.mock_ns)
+        self.service = AnalyticsService(netsuite_data_service=self.mock_ns)
 
     # -- get_top_customers ---------------------------------------------
     def test_get_top_customers(self):

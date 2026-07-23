@@ -12,10 +12,14 @@ here — only sync bookkeeping (what ran, when, how many records, what
 failed). Matches the project-wide rule that NetSuite business data is
 never persisted locally (NETSUITE_CONTEXT.md).
 """
+
 import uuid
-from django.db import models
+
 from django.conf import settings
+from django.db import models
+
 from netsuite.models import NetSuiteConnection
+
 
 class SyncRun(models.Model):
     STATUS_CHOICES = [
@@ -64,7 +68,8 @@ class SyncRun(models.Model):
 
     def __str__(self):
         return f'SyncRun {self.id} ({self.status})'
-    
+
+
 class SyncStage(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),

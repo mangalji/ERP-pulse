@@ -14,9 +14,15 @@ broadly here since NetSuite error bodies can echo back request details.
 """
 
 import requests
-from netsuite.exceptions import NetSuiteRecordFetchException,NetSuiteRecordNotFoundException,NetSuiteTokenExchangeException
 
-def raise_for_record_exception(response: requests.Response,*,path:str)->None:
+from netsuite.exceptions import (
+    NetSuiteRecordFetchException,
+    NetSuiteRecordNotFoundException,
+    NetSuiteTokenExchangeException,
+)
+
+
+def raise_for_record_response(response: requests.Response, *, path: str) -> None:
     """Used by both the record GET endpoints and the generic POST (SuiteQL)."""
     if response.status_code == 404:
         raise NetSuiteRecordNotFoundException('The requested NetSuite record was not found.')
@@ -24,6 +30,7 @@ def raise_for_record_exception(response: requests.Response,*,path:str)->None:
         raise NetSuiteRecordFetchException(
             'NetSuite rejected the record request. Please reconnect your account.'
         )
+
 
 def raise_for_token_response(response: requests.Response) -> None:
     if not response.ok:

@@ -8,7 +8,7 @@ and write to the database.
 """
 
 from accounts.models import User
-from ai.models import AIConversation, AIMessage
+from ai.models import AIAuditLog, AIConversation, AIMessage
 
 
 class ConversationRepository:
@@ -49,3 +49,29 @@ class MessageRepository:
             AIMessage.objects.filter(conversation=conversation).order_by('-created_at')[:limit]
             )
     
+
+class AIAuditLogRepository:
+    """Persistence-only — append-only, no update/delete methods."""
+
+    def log(
+        self,
+        *,
+        user: User | None,
+        conversation: AIConversation | None,
+        provider: str,
+        model: str | None,
+        prompt_version: str,
+        success: bool,
+        latency_ms: int | None = None,
+        error_message: str | None = None,
+    ) -> AIAuditLog:
+        return AIAuditLog.objects.create(
+            user=user,
+            conversation=conversation,
+            provider=provider,
+            model=model,
+            prompt_version=prompt_version,
+            success=success,
+            latency_ms=latency_ms,
+            error_message=error_message,
+        )

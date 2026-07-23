@@ -24,6 +24,6 @@ urlpatterns = [
     path("register/resend-otp/", ResendRegistrationOTPView.as_view(), name="resend-registration-otp"),
     path("register/complete-profile/", CompleteProfileView.as_view(), name="complete-profile"),
     path("login/resend-otp/",ResendLoginOTPView.as_view(),name="resend-login-otp"),
-    path("login-history/", LoginHistoryView.as_view(),name='login-history'),
+    path("login-history/", LoginHistoryView.as_view(), name="login-history"),
     path("health/",health,name="health"),
 ]

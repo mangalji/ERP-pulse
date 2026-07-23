@@ -71,3 +71,54 @@ class AIMessage(models.Model):
     def __str__(self) -> str:
         preview = self.content[:40]
         return f'{self.role}: {preview}'
+
+class AIAuditLog(models.Model):
+    """
+    One row per provider call — internal observability, distinct from
+    AIMessage (the user-facing chat transcript). Tracks *how* an answer
+    was produced (which provider, which prompt version, how long it
+    took, whether it succeeded) rather than *what* was said.
+
+    Written by AIService.ask() on both success and failure — a failed
+    provider call is exactly the kind of thing worth auditing, so
+    success=False rows are expected, not an error condition in
+    themselves.
+
+    conversation/user are nullable + SET_NULL so audit history survives
+    a conversation or user being deleted later, same reasoning as
+    NetSuiteConnectionAuditLog (netsuite/models.py).
+    """
+
+    id = models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null = True,blank=True,
+        on_delete=models.SET_NULL,
+        related_name='ai_audit_logs',    
+        )
+    conversation = models.ForeignKey(
+        AIConversation,
+        on_delete=models.CASCADE,
+        null=True,blank=True,
+        related_name='audit_logs',
+    )
+    provider = models.CharField(max_length=50,null=True,blank=True)
+    model = models.CharField(max_length=100,null=True,blank=True)
+    prompt_version = models.CharField(max_length=20,null=True,blank=True)
+
+    success = models.BooleanField()
+    error_message = models.TextField(null=True, blank=True)
+    latency_ms = models.PositiveIntegerField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ai_audit_log'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at'], name='ai_audit_user_recent_idx'),
+        ]
+
+    def __str__(self) -> str:
+        status = 'OK' if self.success else 'FAILED'
+        return f'{self.provider} ({status}) — {self.created_at:%Y-%m-%d %H:%M}'
