@@ -51,8 +51,8 @@ class RegisterSerializer(serializers.Serializer):
     to AuthenticationService.register(), which only accepts email/password.
     """
     email = serializers.EmailField(max_length=100)
-    password = serializers.CharField(write_only=True, max_length=20, validators=[validate_password])
-    confirm_password = serializers.CharField(write_only=True, max_length=20, validators=[validate_password])
+    password = serializers.CharField(write_only=True, max_length=128, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True, max_length=128, validators=[validate_password])
 
     def validate(self, attrs):
         confirm_password = attrs.pop('confirm_password')
@@ -102,7 +102,7 @@ class LoginSerializer(serializers.Serializer):
     AuthenticationService.login(), not here.
     """
     email = serializers.EmailField(max_length=100)
-    password = serializers.CharField(write_only=True, max_length=20, validators=[validate_password])
+    password = serializers.CharField(write_only=True, max_length=128, validators=[validate_password])
 
 class VerifyLoginOTPSerializer(serializers.Serializer):
     """

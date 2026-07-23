@@ -482,7 +482,7 @@ class AnalyticsService:
                 f'Invalid transaction type: {transaction_type}.'
                 f'must be one of {sorted(self.VALID_TRANSACTION_TYPES)}.'
             )
-            return transaction_type
+        return transaction_type
     @staticmethod
     def _require_valid_date(value: str, *, field_name: str) -> str:
         """

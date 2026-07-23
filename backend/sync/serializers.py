@@ -40,18 +40,19 @@ class TriggerSyncSerializer(serializers.Serializer):
     """
     record_types = serializers.ListField(child=serializers.CharField(max_length=50), required=False, max_length=MAX_RECORD_TYPES_PER_REQUEST)
 
-    def validate_record_types(self,value):
+    def validate_record_types(self, value):
         invalid = [rt for rt in value if not NetSuiteRecordType.is_valid(rt)]
         if invalid:
             raise serializers.ValidationError(
                 f'Unsupported record types(s): {", ".join(invalid)}.'
             )
-            # Dedupe while preserving order — a caller sending the same type
-            # twice shouldn't get two SyncStage rows for it.
-            seen = set()
-            deduped = []
-            for record_type in value:
-                if record_type not in seen:
-                    seen.add(record_type)
-                    deduped.append(record_type)
-            return deduped
+        # Dedupe while preserving order — a caller sending the same type
+        # twice shouldn't get two SyncStage rows for it.
+        seen = set()
+        deduped = []
+        for record_type in value:
+            if record_type not in seen:
+                seen.add(record_type)
+                deduped.append(record_type)
+        return deduped
+
