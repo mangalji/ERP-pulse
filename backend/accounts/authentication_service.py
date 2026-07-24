@@ -14,7 +14,6 @@ from accounts.exceptions import (
     RegistrationSessionNotFoundException,
     ResendCooldownException,
     UserAlreadyExistsException,
-    OTPNotFoundException
 )
 from accounts.models import OTP, User
 from accounts.repositories import UserRepository
@@ -119,13 +118,11 @@ class AuthenticationService:
             raise OTPExpiredException('This OTP has expired. Please request a new code.')
 
         if not verify_value(otp_code, pending['otp_hash']):
-            pending['attempt_count'] += 1
-            registration_cache.save(
-                email=email,
-                data=pending,
-                timeout_seconds=constants.REGISTRATION_SESSION_TTL_MINUTES * 60,
+            new_attempt_count = registration_cache.increment_attempt_count(email)
+            logger.warning(
+                'Registration OTP mismatch for email=%s (attempt %d/%d).',
+                email, new_attempt_count, constants.MAX_OTP_ATTEMPTS,
             )
-            logger.warning('Registration OTP mismatch for email=%s.', email)
             raise OTPMismatchException('The submitted OTP code is incorrect.')
 
         token = generate_signed_token(payload={'email': email}, salt=REGISTRATION_TOKEN_SALT)
@@ -182,6 +179,15 @@ class AuthenticationService:
         """Shared by register()/resend_registration_otp(): generate, store, email a fresh code."""
         raw_code = generate_otp_code(length=constants.OTP_LENGTH)
 
+        send_email(
+                    recipient_list=[email],
+                    subject=constants.EMAIL_SUBJECT_REGISTER,
+                    message=(
+                        f'Your verification code is {raw_code}. '
+                        f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
+                    ),
+                )
+
         registration_cache.save(
             email=email,
             data={
@@ -193,15 +199,6 @@ class AuthenticationService:
                 'last_sent_at': timezone.now(),
             },
             timeout_seconds=constants.REGISTRATION_SESSION_TTL_MINUTES * 60,
-        )
-
-        send_email(
-            recipient_list=[email],
-            subject=constants.EMAIL_SUBJECT_REGISTER,
-            message=(
-                f'Your verification code is {raw_code}. '
-                f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
-            ),
         )
 
     # -----------------------------------------------------------------
@@ -252,14 +249,20 @@ class AuthenticationService:
         """
         Resend LOGIN OTP for an active login flow.
         Enforces the same 60-second cooldown as registration.
+
+        Deliberately returns the same response whether the email exists
+        or not — never reveal whether an email is registered
+        (AUTHENTICATION_DESIGN.md, Section 10).
         """
 
         user = self.user_repository.get_by_email(email)
 
         if user is None:
-            raise InvalidCredentialsException(
-                "Invalid email."
-            )
+            # Don't reveal whether the email exists — always return
+            # success to the caller. The OTP was "sent" as far as the
+            # API consumer knows.
+            logger.info('Login OTP resend requested for unknown email=%s.', email)
+            return {"email": email}
 
         otp = self.otp_service.repository.get_latest_active_otp(
             user=user,
@@ -267,9 +270,10 @@ class AuthenticationService:
         )
 
         if otp is None:
-            raise OTPNotFoundException(
-                "No login request in progress. Please login again."
-            )
+            # Same principle: no active session means the OTP is "sent"
+            # from the caller's perspective.
+            logger.info('No active login OTP for user %s, returning generic response.', user.id)
+            return {"email": email}
 
         seconds_since_last_send = (
             timezone.now() - otp.created_at

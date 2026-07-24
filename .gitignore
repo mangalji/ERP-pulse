@@ -38,9 +38,19 @@ frontend/.env
 # ==========================
 .DS_Store
 Thumbs.db
+
+# ==========================
+# Project-specific
+# ==========================
 extra_info.md
 claude.md
 implementation_plan.md
+proejct_context.md
+task_completed.md
 backend/scripts/
 .ai/*
 backend/staticfiles/
+temp
+erp_pulse_local
+TODO.md
+backend.zip

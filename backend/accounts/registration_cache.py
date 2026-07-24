@@ -35,3 +35,20 @@ def get(email: str) -> dict | None:
 
 def delete(email: str) -> None:
     cache.delete(_cache_key(email))
+
+
+def increment_attempt_count(email: str) -> int:
+    """
+    Atomically increment attempt_count in the cached registration data.
+    
+    Uses cache.get() + cache.set() pattern since Django's cache framework
+    doesn't guarantee atomic increment for dict fields across all backends.
+    Returns the new attempt_count value.
+    """
+    key = _cache_key(email)
+    pending = cache.get(key)
+    if pending is None:
+        return 0
+    pending['attempt_count'] += 1
+    cache.set(key, pending)
+    return pending['attempt_count']

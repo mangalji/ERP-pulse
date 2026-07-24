@@ -35,20 +35,12 @@ def standard_exception_handler(exc, context):
     response = drf_exception_handler(exc, context)
 
     if response is not None:
-        if response.status_code== status.HTTP_400_BAD_REQUEST:
-            response.data = {
-                'success':False,
-                'message': _extract_message(response.data),
-                'errors':response.data,
-                'data':{},
-            }
-        else:
-            response.data={
-                'success':False,
-                'message':_extract_message(response.data),
-                # 'message':'Validation failed.',
-                'data':{},
-            }
+        response.data = {
+            'success': False,
+            'message': _extract_message(response.data),
+            'errors': response.data if response.status_code == status.HTTP_400_BAD_REQUEST else {},
+            'data': {},
+        }
         return response
     
     status_code = getattr(exc,'status_code',None)

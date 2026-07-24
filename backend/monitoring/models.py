@@ -15,7 +15,7 @@ class ErrorLog(models.Model):
     level = models.CharField(max_length=10,choices=LEVEL_CHOICES,default='error')
     message = models.TextField()
     exception_type = models.CharField(max_length=255,blank=True)
-    traceback = models.CharField(max_length=255,blank=True)
+    traceback = models.TextField(blank=True)
     method = models.CharField(max_length=10,blank=True)
     path = models.CharField(max_length=500,blank=True)
     status_code = models.PositiveSmallIntegerField(null=True,blank=True)

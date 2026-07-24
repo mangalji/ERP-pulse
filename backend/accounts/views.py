@@ -312,13 +312,11 @@ class LoginHistoryView(APIView):
         activities = login_activity_repository.list_by_user(request.user)
         return success_response(
             message="login history fetched successfully.",
-            date=LoginActivitySerializer(activities,many=True).data,
+            data=LoginActivitySerializer(activities,many=True).data,
         )
     
-from django.http import JsonResponse
-
 def health(request):
-    return JsonResponse({
-        "status": "ok",
-        "service": "ERP Pulse Backend"
-    })
+    return success_response(
+        message="Service is healthy.",
+        data={"status": "ok", "service": "ERP Pulse Backend"},
+    )

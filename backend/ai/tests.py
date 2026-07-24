@@ -50,7 +50,7 @@ _user_counter = 0
 
 def _make_user(**overrides):
     global _user_counter
-    _user_counter = 1
+    _user_counter += 1
     defaults = {
         'email': 'test@example.com',
         'first_name': 'Test',
