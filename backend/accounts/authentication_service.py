@@ -67,7 +67,7 @@ class AuthenticationService:
         no User row is created here.
         """
         if self.user_repository.email_exists(email):
-            raise UserAlreadyExistsException('An account with this email already exists.')
+            raise UserAlreadyExistsException('This email is already registered. Please log in instead.')
 
         self._issue_registration_otp(email=email, password_hash=hash_value(password))
 
@@ -93,7 +93,7 @@ class AuthenticationService:
 
         logger.info('Registration OTP resent for email=%s.', email)
         return {'email': email}
-    
+
 
     def verify_registration_otp(self, *, email: str, otp_code: str) -> dict:
         """
@@ -123,7 +123,7 @@ class AuthenticationService:
                 'Registration OTP mismatch for email=%s (attempt %d/%d).',
                 email, new_attempt_count, constants.MAX_OTP_ATTEMPTS,
             )
-            raise OTPMismatchException('The submitted OTP code is incorrect.')
+            raise OTPMismatchException('The code you entered is incorrect. Please try again.')
 
         token = generate_signed_token(payload={'email': email}, salt=REGISTRATION_TOKEN_SALT)
 
@@ -160,7 +160,7 @@ class AuthenticationService:
             )
 
         if self.user_repository.mobile_number_exists(mobile_number):
-            raise UserAlreadyExistsException('An account with this mobile number already exists.')
+            raise UserAlreadyExistsException('This mobile number is already linked to another account. Please use a different number.')
 
         user = self.user_repository.create_verified_user(
             email=email,

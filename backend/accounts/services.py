@@ -75,15 +75,15 @@ class OTPService:
         otp = self.repository.get_latest_active_otp(user=user, purpose=purpose)
         if otp is None:
             logger.warning('No active OTP found for user %s (purpose=%s).', user.id, purpose)
-            raise OTPNotFoundException('No active OTP found for this user and purpose.')
+            raise OTPNotFoundException('No active verification code found. Please request a new one.')
 
         if is_expired(otp.expires_at):
             logger.warning('Expired OTP verification attempt for user %s.', user.id)
-            raise OTPExpiredException('This OTP has expired.')
+            raise OTPExpiredException('This OTP has expired. Please request a new code.')
 
         if not verify_value(submitted_code, otp.otp_hash):
             logger.warning('OTP mismatch for user %s (purpose=%s).', user.id, purpose)
-            raise OTPMismatchException('The submitted OTP code is incorrect.')
+            raise OTPMismatchException('The code you entered is incorrect. Please try again.')
 
         self.repository.mark_as_used(otp)
         logger.info('OTP verified successfully for user %s (purpose=%s).', user.id, purpose)
