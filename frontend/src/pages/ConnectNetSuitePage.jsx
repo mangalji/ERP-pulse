@@ -62,8 +62,9 @@ export default function ConnectNetSuitePage() {
     setLoadError('')
     try {
       const data = await netsuiteApi.listConnections()
-      setConnections(data)
-      const hasActive = data.some((c) => c.is_active && c.status === 'connected')
+      const connections = data.results || data || []
+      setConnections(connections)
+      const hasActive = connections.some((c) => c.is_active && c.status === 'connected')
       if (hasActive) connectNetSuite()
       else disconnectNetSuite()
     } catch (err) {

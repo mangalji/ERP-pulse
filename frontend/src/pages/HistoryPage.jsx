@@ -22,7 +22,7 @@ export default function HistoryPage() {
     setError(null)
     try {
       const data = await authApi.getLoginHistory()
-      setActivities(data)
+      setActivities(data.results || data || [])
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load login history')
     } finally {

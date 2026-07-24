@@ -28,8 +28,8 @@ export default function EntityList({
       setError(null)
       return fetchFn({ offset: pageOffset, limit: PAGE_SIZE })
         .then((res) => {
-          setRecords(res.items || [])
-          setTotalResults(res.totalResults || 0)
+          setRecords(res.results || [])
+          setTotalResults(res.count || 0)
           setOffset(pageOffset)
         })
         .catch((err) => {

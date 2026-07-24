@@ -35,10 +35,10 @@ export default function DashboardPage() {
           netsuiteApi.getPurchaseOrders({ limit: 5 }),
         ])
       setSummary(summaryData)
-      setRecentCustomers(customersData.items || [])
-      setRecentSalesOrders(salesOrdersData.items || [])
-      setRecentInvoices(invoicesData.items || [])
-      setRecentPurchaseOrders(purchaseOrdersData.items || [])
+      setRecentCustomers(customersData.results || [])
+      setRecentSalesOrders(salesOrdersData.results || [])
+      setRecentInvoices(invoicesData.results || [])
+      setRecentPurchaseOrders(purchaseOrdersData.results || [])
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load dashboard')
     } finally {
