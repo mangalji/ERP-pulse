@@ -259,28 +259,28 @@ class NetSuiteDataService:
         self.repository.touch_last_used(connection)
         return result
 
-    def get_customers(self, *, user: User) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=user)
+    def get_customers(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=user, limit=limit, offset=offset)
 
-    def get_employees(self, *, user: User) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.EMPLOYEE, user=user)
+    def get_employees(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.EMPLOYEE, user=user, limit=limit, offset=offset)
 
-    def get_vendors(self, *, user: User) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.VENDOR, user=user)
-    
-    def get_sales_orders(self, *, user: User) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.SALES_ORDER, user=user)
-    
-    def get_purchase_orders(self,*,user: User) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.PURCHASE_ORDER,user=user)
-    
-    def get_invoices(self,*,user: User) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.INVOICE,user=user)
+    def get_vendors(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.VENDOR, user=user, limit=limit, offset=offset)
 
-    def get_items(self, *, user: User, item_type: str = NetSuiteRecordType.INVENTORY_ITEM) -> dict:
+    def get_sales_orders(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.SALES_ORDER, user=user, limit=limit, offset=offset)
+    
+    def get_purchase_orders(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.PURCHASE_ORDER, user=user, limit=limit, offset=offset)
+    
+    def get_invoices(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+        return self.get_records(record_type=NetSuiteRecordType.INVOICE, user=user, limit=limit, offset=offset)
+
+    def get_items(self, *, user: User, item_type: str = NetSuiteRecordType.INVENTORY_ITEM, limit: int | None = None, offset: int | None = None) -> dict:
         if not NetSuiteRecordType.is_valid(item_type):
             raise ValueError(f"Invalid NetSuite item type: {item_type}")
-        return self.get_records(record_type=item_type, user=user)
+        return self.get_records(record_type=item_type, user=user, limit=limit, offset=offset)
 
     def _require_connection(self, user: User):
         connection = self.repository.get_by_user(user)

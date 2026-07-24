@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.throttles import NetSuiteSyncThrottle
+from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from sync.serializers import SyncRunSerializer, TriggerSyncSerializer
 from sync.services import SyncManager
@@ -33,10 +34,27 @@ class SyncRunListCreateView(APIView):
         return []
 
     def get(self, request):
-        runs = SyncManager().list_runs(user=request.user)
-        return success_response(
+        try:
+            offset = int(request.query_params.get("offset", 0))
+        except (ValueError, TypeError):
+            offset = 0
+        try:
+            limit = int(request.query_params.get("limit", 20))
+        except (ValueError, TypeError):
+            limit = 20
+        offset = max(0, offset)
+        limit = max(1, min(limit, 100))
+
+        all_runs = SyncManager().list_runs(user=request.user)
+        count = len(all_runs)
+        page = all_runs[offset:offset + limit]
+        return paginated_response(
             message='Sync history fetched successfully.',
-            data=SyncRunSerializer(runs, many=True).data,
+            results=SyncRunSerializer(page, many=True).data,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
         )
 
     def post(self, request):

@@ -35,6 +35,7 @@ from accounts.serializers import (
     ResendLoginOTPSerializer,
     LoginActivitySerializer,
     )
+from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import LoginOTPThrottle, RegisterOTPThrottle
 
@@ -309,10 +310,27 @@ class LoginHistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self,request):
+        try:
+            offset = int(request.query_params.get("offset", 0))
+        except (ValueError, TypeError):
+            offset = 0
+        try:
+            limit = int(request.query_params.get("limit", 20))
+        except (ValueError, TypeError):
+            limit = 20
+        offset = max(0, offset)
+        limit = max(1, min(limit, 100))
+
         activities = login_activity_repository.list_by_user(request.user)
-        return success_response(
-            message="login history fetched successfully.",
-            data=LoginActivitySerializer(activities,many=True).data,
+        count = len(activities)
+        page = activities[offset:offset + limit]
+        return paginated_response(
+            message="Login history fetched successfully.",
+            results=LoginActivitySerializer(page, many=True).data,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
         )
     
 def health(request):

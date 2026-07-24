@@ -11,11 +11,27 @@ used by accounts/ and netsuite/.
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import DashboardThrottle
 from dashboard.services import DashboardService
 
-# dashboard_service = DashboardService()
+dashboard_service = DashboardService()
+
+
+def _parse_pagination_params(request, default_limit=20):
+    """Extract and validate offset/limit from query params."""
+    try:
+        offset = int(request.query_params.get("offset", 0))
+    except (ValueError, TypeError):
+        offset = 0
+    try:
+        limit = int(request.query_params.get("limit", default_limit))
+    except (ValueError, TypeError):
+        limit = default_limit
+    offset = max(0, offset)
+    limit = max(1, min(limit, 100))
+    return offset, limit
 
 
 class DashboardSummaryView(APIView):
@@ -25,8 +41,7 @@ class DashboardSummaryView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        # summary = dashboard_service.get_summary(user=request.user)
-        summary = DashboardService().get_summary(user=request.user)
+        summary = dashboard_service.get_summary(user=request.user)
         return success_response(
             message='Dashboard summary fetched successfully.',
             data=summary,
@@ -40,10 +55,17 @@ class RecentSalesOrdersView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        sales_orders = DashboardService().get_recent_sales_orders(user=request.user)
-        return success_response(
+        offset, limit = _parse_pagination_params(request)
+        all_orders = dashboard_service.get_recent_sales_orders(user=request.user)
+        count = len(all_orders)
+        page = all_orders[offset:offset + limit]
+        return paginated_response(
             message='Recent sales orders fetched successfully.',
-            data={'items': sales_orders},
+            results=page,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
         )
 
 
@@ -54,10 +76,17 @@ class RecentInvoicesView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        invoices = DashboardService().get_recent_invoices(user=request.user)
-        return success_response(
+        offset, limit = _parse_pagination_params(request)
+        all_invoices = dashboard_service.get_recent_invoices(user=request.user)
+        count = len(all_invoices)
+        page = all_invoices[offset:offset + limit]
+        return paginated_response(
             message='Recent invoices fetched successfully.',
-            data={'items': invoices},
+            results=page,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
         )
 
 
@@ -68,8 +97,15 @@ class RecentCustomersView(APIView):
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        customers = DashboardService().get_recent_customers(user=request.user)
-        return success_response(
+        offset, limit = _parse_pagination_params(request)
+        all_customers = dashboard_service.get_recent_customers(user=request.user)
+        count = len(all_customers)
+        page = all_customers[offset:offset + limit]
+        return paginated_response(
             message='Recent customers fetched successfully.',
-            data={'items': customers},
+            results=page,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
         )
