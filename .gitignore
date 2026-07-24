@@ -53,4 +53,5 @@ backend/staticfiles/
 temp
 erp_pulse_local
 TODO.md
+FIX_PLAN.md
 backend.zip
