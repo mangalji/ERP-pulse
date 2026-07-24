@@ -4,6 +4,7 @@ Monitoring API views.
 - HealthCheckView is intentionally AllowAny and unauthenticated: it's
   meant to be hit by Render's own health checks or an external uptime
   pinger (e.g. UptimeRobot) that has no JWT.
+- ReadinessView is a lightweight, DB-only check for orchestrated environments.
 - ErrorLogListView and ApiUsageView expose internal operational data
   (stack traces, request volume) so they're restricted to staff users
   (IsAdminUser -> request.user.is_staff), not just any authenticated user.
@@ -83,6 +84,42 @@ class HealthCheckView(APIView):
         if settings.FIELD_ENCRYPTION_KEY:
             return {"ok": True, "detail": "Field encryption key set."}
         return {"ok": False, "detail": "FIELD_ENCRYPTION_KEY is not set."}
+
+
+class ReadinessView(APIView):
+    """
+    GET /api/v1/monitoring/readiness/
+
+    Lightweight, fast — checks only if the database is reachable.
+    Unlike the HealthCheckView, this does NOT check encryption key or
+    email configuration, so a non-critical config gap never causes
+    a readiness failure and unnecessary pod restart in orchestrated
+    environments.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from django.db import connection as db_connection
+        from django.db.utils import OperationalError
+        from rest_framework.response import Response
+
+        try:
+            with db_connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            return success_response(
+                message="Service is ready.",
+                data={"status": "ready", "database": "connected"},
+            )
+        except OperationalError:
+            return Response(
+                status=503,
+                data={
+                    "success": False,
+                    "message": "Service Unavailable",
+                    "data": {"status": "not ready", "database": "disconnected"},
+                },
+            )
 
 
 class ErrorLogListView(APIView):

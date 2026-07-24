@@ -34,7 +34,7 @@ _counter = 0
 
 def _next_id():
     global _counter
-    _counter = 1
+    _counter += 1
     return _counter
 
 

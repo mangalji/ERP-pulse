@@ -467,13 +467,21 @@ class AuthenticationServiceTests(TestCase):
         self.assertEqual(result, {'email': 'resend-login@example.com'})
 
     def test_resend_login_otp_user_not_found(self):
-        with self.assertRaises(InvalidCredentialsException):
-            self.service.resend_login_otp(email='no-user@example.com')
+        """
+        Should return a generic success (no exception) for unknown
+        emails — never reveal whether an email is registered.
+        """
+        result = self.service.resend_login_otp(email='no-user@example.com')
+        self.assertEqual(result, {'email': 'no-user@example.com'})
 
     def test_resend_login_otp_no_active_otp(self):
+        """
+        Should return a generic success (no exception) when there is
+        no active OTP session — never reveal login state.
+        """
         _make_user(email='no-otp@example.com')
-        with self.assertRaises(OTPNotFoundException):
-            self.service.resend_login_otp(email='no-otp@example.com')
+        result = self.service.resend_login_otp(email='no-otp@example.com')
+        self.assertEqual(result, {'email': 'no-otp@example.com'})
 
     def test_resend_login_otp_cooldown(self):
         _make_user(email='login-cooldown@example.com')
@@ -617,11 +625,18 @@ class AuthViewTests(APITestCase):
         self.assertEqual(response.data['data']['email'], 'resend-login-view@example.com')
 
     def test_resend_login_otp_no_active_session(self):
+        """
+        Should return 200 (generic success) even when there is no active
+        login session — never reveal whether an email is registered or
+        whether a login flow was started.
+        """
         _make_user(email='resend-login-none@example.com')
         response = self.client.post('/api/v1/auth/login/resend-otp/', {
             'email': 'resend-login-none@example.com',
         })
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['data']['email'], 'resend-login-none@example.com')
 
     # -- Me ------------------------------------------------------------
     def test_me_authenticated(self):

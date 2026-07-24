@@ -87,6 +87,14 @@ class NetSuiteConnection(models.Model):
             )
         ]
 
+        indexes = [
+            # Covers NetSuiteConnectionRepository.get_by_user()'s exact
+            # filter shape — the unique constraint above indexes
+            # (user, netsuite_account_id), a different column pair that
+            # doesn't help this query.
+            models.Index(fields=["user", "is_active"], name="netsuite_conn_user_active_idx"),
+        ]
+
     @property
     def health(self) -> str:
         """

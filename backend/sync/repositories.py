@@ -48,7 +48,12 @@ class SyncRunRepository:
         return run
 
     def list_by_connection(self, connection: NetSuiteConnection, *, limit: int = 20):
-        return SyncRun.objects.filter(connection=connection)[:limit]
+        # prefetch_related('stages') — SyncRunSerializer nests every
+        # run's stages (many=True), so without this each run in the
+        # list issues its own separate query for its stages (N+1).
+        # get_by_id() doesn't need this: fetching one run at a time,
+        # DRF's nested serializer issues exactly one stages query either way.
+        return SyncRun.objects.filter(connection=connection).prefetch_related('stages')[:limit]
 
     def get_by_id(self, connection: NetSuiteConnection, run_id) -> SyncRun | None:
         return SyncRun.objects.filter(connection=connection, id=run_id).first()
