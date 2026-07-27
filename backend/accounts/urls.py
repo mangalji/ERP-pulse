@@ -11,6 +11,10 @@ from accounts.views import (
     CompleteProfileView,
     ResendLoginOTPView,
     LoginHistoryView,
+    ForgotPasswordView,
+    ResetPasswordView,
+    ProfileUpdateSendOTPView,
+    ProfileUpdateView,
     health
 )
 urlpatterns = [
@@ -25,5 +29,9 @@ urlpatterns = [
     path("register/complete-profile/", CompleteProfileView.as_view(), name="complete-profile"),
     path("login/resend-otp/",ResendLoginOTPView.as_view(),name="resend-login-otp"),
     path("login-history/", LoginHistoryView.as_view(), name="login-history"),
+    path("forgot-password/", ForgotPasswordView.as_view(), name="forgot-password"),
+    path("forgot-password/reset/", ResetPasswordView.as_view(), name="reset-password"),
+    path("profile/send-otp/", ProfileUpdateSendOTPView.as_view(), name="profile-send-otp"),
+    path("profile/update/", ProfileUpdateView.as_view(), name="profile-update"),
     path("health/",health,name="health"),
 ]

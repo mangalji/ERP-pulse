@@ -131,11 +131,11 @@ class AuthenticationService:
         return {'email': email, 'registration_token': token}
 
     def complete_registration(
-        self, *, registration_token: str, first_name: str, last_name: str, mobile_number: str
+        self, *, registration_token: str, first_name: str, last_name: str, mobile_number: str | None = None
     ) -> User:
         """
         Final step: validate the signed token from OTP verification,
-        validate mobile uniqueness, and create the User — active and
+        validate mobile uniqueness (if provided), and create the User — active and
         email-verified immediately, since OTP verification already
         proved the email. This is the only point in the whole flow where
         a User row is created.
@@ -159,15 +159,17 @@ class AuthenticationService:
                 'Your registration session has expired. Please start again.'
             )
 
-        if self.user_repository.mobile_number_exists(mobile_number):
-            raise UserAlreadyExistsException('This mobile number is already linked to another account. Please use a different number.')
+        # Only check mobile uniqueness if a mobile number was provided
+        if mobile_number:
+            if self.user_repository.mobile_number_exists(mobile_number):
+                raise UserAlreadyExistsException('This mobile number is already linked to another account. Please use a different number.')
 
         user = self.user_repository.create_verified_user(
             email=email,
             password_hash=pending['password_hash'],
             first_name=first_name,
             last_name=last_name,
-            mobile_number=mobile_number,
+            mobile_number=mobile_number or '',
         )
 
         registration_cache.delete(email)
@@ -178,6 +180,13 @@ class AuthenticationService:
     def _issue_registration_otp(self, *, email: str, password_hash: str) -> None:
         """Shared by register()/resend_registration_otp(): generate, store, email a fresh code."""
         raw_code = generate_otp_code(length=constants.OTP_LENGTH)
+
+        # Log OTP visibly for development (console backend prints to terminal).
+        # In production with SMTP configured, this also helps debugging.
+        logger.info(
+            "REGISTRATION OTP for %s: %s (expires in %d minutes)",
+            email, raw_code, constants.OTP_EXPIRY_MINUTES,
+        )
 
         # Save OTP to cache FIRST so registration isn't blocked by
         # email delivery. If the email send fails (SMTP timeout,
@@ -214,6 +223,69 @@ class AuthenticationService:
                 "Failed to send registration OTP email to %s — OTP saved in cache, user can resend.",
                 email,
             )
+
+    # -----------------------------------------------------------------
+    # Password Reset
+    # -----------------------------------------------------------------
+
+    def reset_password(self, *, email: str, otp_code: str, password: str) -> dict:
+        """
+        Verify PASSWORD_RESET OTP and update the user's password.
+        Returns email on success.
+        """
+        user = self.user_repository.get_by_email(email)
+        if user is None:
+            # Don't reveal whether email exists
+            logger.info('Password reset attempted for unknown email=%s.', email)
+            return {'email': email}
+
+        self.otp_service.verify_otp(
+            user=user, purpose=OTP.Purpose.PASSWORD_RESET, submitted_code=otp_code
+        )
+
+        user.set_password(password)
+        user.save(update_fields=['password'])
+
+        logger.info('Password reset completed for user %s.', user.id)
+        return {'email': email}
+
+    # -----------------------------------------------------------------
+    # Profile Update
+    # -----------------------------------------------------------------
+
+    def verify_profile_update_otp(self, *, user, otp_code: str, first_name: str | None = None, last_name: str | None = None, mobile_number: str | None = None, profile_pic: str | None = None) -> User:
+        """
+        Verify PROFILE_UPDATE OTP and update user profile fields.
+        Only updates fields that were provided (not None).
+        """
+        self.otp_service.verify_otp(
+            user=user, purpose=OTP.Purpose.PROFILE_UPDATE, submitted_code=otp_code
+        )
+
+        update_fields = []
+        if first_name is not None:
+            user.first_name = first_name
+            update_fields.append('first_name')
+        if last_name is not None:
+            user.last_name = last_name
+            update_fields.append('last_name')
+        if mobile_number is not None:
+            # Check uniqueness if a new mobile number is provided
+            if mobile_number != user.mobile_number and mobile_number:
+                if self.user_repository.mobile_number_exists(mobile_number):
+                    from accounts.exceptions import UserAlreadyExistsException
+                    raise UserAlreadyExistsException('This mobile number is already linked to another account.')
+            user.mobile_number = mobile_number
+            update_fields.append('mobile_number')
+        if profile_pic is not None:
+            user.profile_pic = profile_pic
+            update_fields.append('profile_pic')
+
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+        logger.info('Profile updated for user %s (fields: %s).', user.id, update_fields)
+        return user
 
     # -----------------------------------------------------------------
     # Login (unchanged)

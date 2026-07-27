@@ -53,7 +53,15 @@ export default function LoginPage() {
           Continue
         </Button>
       </form>
-      <p className="mt-6 text-center text-sm text-[var(--color-muted)]">
+      <div className="mt-4 flex flex-col items-center gap-2">
+        <Link
+          to="/forgot-password"
+          className="text-sm font-medium text-[var(--color-primary)] hover:underline"
+        >
+          Forgot password?
+        </Link>
+      </div>
+      <p className="mt-4 text-center text-sm text-[var(--color-muted)]">
         Don&apos;t have an account?{' '}
         <Link to="/register" className="font-medium text-[var(--color-primary)]">
           Register

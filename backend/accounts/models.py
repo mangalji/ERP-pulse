@@ -25,7 +25,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
-    mobile_number = models.CharField(max_length=20, unique=True)
+    mobile_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
+    profile_pic = models.URLField(null=True, blank=True)
 
     is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
@@ -39,7 +40,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     objects = CustomUserManager()
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['first_name', 'last_name', 'mobile_number']
+    REQUIRED_FIELDS = ['first_name', 'last_name']
 
     class Meta:
         db_table = 'user'
@@ -68,6 +69,8 @@ class OTP(models.Model):
     class Purpose(models.TextChoices):
         REGISTRATION = 'REGISTRATION', 'Registration'
         LOGIN = 'LOGIN', 'Login'
+        PASSWORD_RESET = 'PASSWORD_RESET', 'Password Reset'
+        PROFILE_UPDATE = 'PROFILE_UPDATE', 'Profile Update'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 

@@ -28,6 +28,10 @@ export const AUTH_ENDPOINTS = {
   logout: '/auth/logout/',
   me: '/auth/me/',
   loginHistory: '/auth/login-history/',
+  forgotPassword: '/auth/forgot-password/',
+  resetPassword: '/auth/forgot-password/reset/',
+  profileSendOtp: '/auth/profile/send-otp/',
+  profileUpdate: '/auth/profile/update/',
 }
 
 export const DASHBOARD_ENDPOINTS = {

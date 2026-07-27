@@ -35,6 +35,11 @@ class OTPService:
         to the user. Returns the saved OTP row (never the plaintext code —
         callers that need to confirm delivery only need to know an OTP was
         issued, not what it was).
+
+        Email delivery is intentionally outside the atomic transaction:
+        if the SMTP server is unreachable or rejects the connection,
+        the OTP record in the database is NOT rolled back — the user
+        can request a resend without losing the just-issued code.
         """
         with transaction.atomic():
             self.repository.invalidate_previous_otps(user=user, purpose=purpose)
@@ -50,6 +55,19 @@ class OTPService:
                 expires_at=expires_at,
             )
 
+            logger.info('OTP issued for user %s (purpose=%s).', user.id, purpose)
+
+        # Log OTP visibly for development (console backend prints to terminal).
+        logger.info(
+            "LOGIN OTP for user %s (%s): %s (expires in %d minutes)",
+            user.id, user.email, raw_code, constants.OTP_EXPIRY_MINUTES,
+        )
+
+        # Email delivery outside the atomic transaction — failure here
+        # must NOT roll back the OTP record. The OTP is already saved,
+        # so the user can request a resend. This matches the same
+        # pattern used in AuthenticationService._issue_registration_otp().
+        try:
             send_email(
                 recipient_list=[user.email],
                 subject='Your ERP Pulse verification code',
@@ -57,10 +75,15 @@ class OTPService:
                     f'Your verification code is {raw_code}. '
                     f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
                 ),
+                fail_silently=True,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send login OTP email to %s — OTP saved in DB, user can resend.",
+                user.email,
             )
 
-            logger.info('OTP issued for user %s (purpose=%s).', user.id, purpose)
-            return otp
+        return otp
 
     def verify_otp(self, user, purpose: str, submitted_code: str) -> OTP:
         """

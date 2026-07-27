@@ -332,7 +332,108 @@ class LoginHistoryView(APIView):
             offset=offset,
             limit=limit,
         )
-    
+
+
+class ForgotPasswordView(APIView):
+    """
+    POST /api/v1/auth/forgot-password/
+
+    Initiates password reset flow: validates email exists, sends PASSWORD_RESET OTP.
+    Returns same response whether email exists or not (security: don't reveal registered emails).
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [RegisterOTPThrottle]
+
+    def post(self, request):
+        from accounts.serializers import ForgotPasswordSerializer
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+
+        user = authentication_service.user_repository.get_by_email(email)
+        if user:
+            authentication_service.otp_service.generate_and_send_otp(
+                user=user, purpose=OTP.Purpose.PASSWORD_RESET
+            )
+
+        # Always return success — never reveal whether email is registered
+        return success_response(
+            message='If this email is registered, a password reset code has been sent to it.',
+            data={'email': email},
+        )
+
+
+class ResetPasswordView(APIView):
+    """
+    POST /api/v1/auth/forgot-password/reset/
+
+    Verifies PASSWORD_RESET OTP and updates password.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [RegisterOTPThrottle]
+
+    def post(self, request):
+        from accounts.serializers import ResetPasswordSerializer
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = authentication_service.reset_password(**serializer.validated_data)
+
+        return success_response(
+            message='Password reset successfully. Please log in with your new password.',
+            data=result,
+        )
+
+
+class ProfileUpdateSendOTPView(APIView):
+    """
+    POST /api/v1/auth/profile/send-otp/
+
+    Sends a PROFILE_UPDATE OTP to the authenticated user's email.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [RegisterOTPThrottle]
+
+    def post(self, request):
+        user = request.user
+        authentication_service.otp_service.generate_and_send_otp(
+            user=user, purpose=OTP.Purpose.PROFILE_UPDATE
+        )
+
+        return success_response(
+            message='A verification code has been sent to your email.',
+        )
+
+
+class ProfileUpdateView(APIView):
+    """
+    POST /api/v1/auth/profile/update/
+
+    Verifies PROFILE_UPDATE OTP and updates user profile fields.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [RegisterOTPThrottle]
+
+    def post(self, request):
+        from accounts.serializers import VerifyProfileUpdateOTPSerializer
+        serializer = VerifyProfileUpdateOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = authentication_service.verify_profile_update_otp(
+            user=request.user,
+            **serializer.validated_data,
+        )
+
+        return success_response(
+            message='Profile updated successfully.',
+            data=UserSerializer(user).data,
+        )
+
+
 def health(request):
     return success_response(
         message="Service is healthy.",

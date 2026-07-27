@@ -17,6 +17,8 @@ import PurchaseOrdersPage from '../pages/PurchaseOrdersPage.jsx'
 import InvoicesPage from '../pages/InvoicesPage.jsx'
 import ReportsPage from '../pages/ReportsPage.jsx'
 import HistoryPage from '../pages/HistoryPage.jsx'
+import ForgotPasswordPage from '../pages/auth/ForgotPasswordPage.jsx'
+import ResetPasswordPage from '../pages/auth/ResetPasswordPage.jsx'
 import SettingsPage from '../pages/SettingsPage.jsx'
 import SystemHealthPage from '../pages/SystemHealthPage.jsx'
 
@@ -27,6 +29,8 @@ export default function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/otp-verification" element={<OtpVerificationPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/complete-profile" element={<CompleteProfilePage />} />
 
       <Route

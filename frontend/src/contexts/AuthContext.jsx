@@ -77,6 +77,31 @@ export function AuthProvider({ children }) {
     return res
   }
 
+  const forgotPassword = async (email) => {
+    setError(null)
+    const res = await authApi.forgotPassword(email)
+    return res
+  }
+
+  const resetPassword = async (email, otpCode, password, confirmPassword) => {
+    setError(null)
+    const res = await authApi.resetPassword(email, otpCode, password, confirmPassword)
+    return res
+  }
+
+  const profileSendOtp = async () => {
+    setError(null)
+    const res = await authApi.profileSendOtp()
+    return res
+  }
+
+  const profileUpdate = async (otpCode, profileData) => {
+    setError(null)
+    const res = await authApi.profileUpdate(otpCode, profileData)
+    setUser(res)  // Update the current user in context
+    return res
+  }
+
   const logout = async () => {
     const refresh = getRefreshToken()
     try {
@@ -104,6 +129,10 @@ export function AuthProvider({ children }) {
       verifyRegister,
       completeProfile,
       resendRegisterOtp,
+      forgotPassword,
+      resetPassword,
+      profileSendOtp,
+      profileUpdate,
       logout,
       netSuiteConnected,
       connectNetSuite,

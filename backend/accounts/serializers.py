@@ -29,13 +29,15 @@ name_validator = RegexValidator(
     message="Name can't contain digits or special characters like < > { } [ ].",
 )
 
-def human_name_field(*,max_length: int = 100) -> serializers.CharField:
+def human_name_field(*, max_length: int = 100, required: bool = True) -> serializers.CharField:
     """Shared field definition for first_name/last_name — DRY per this task."""
     return serializers.CharField(
         max_length=max_length,
-        min_length=1,
+        min_length=1 if required else 0,
         trim_whitespace=True,
         validators=[name_validator],
+        required=required,
+        allow_blank=not required,
     )
 
 class RegisterSerializer(serializers.Serializer):
@@ -85,14 +87,20 @@ class VerifyRegistrationOTPSerializer(serializers.Serializer):
 class CompleteProfileSerializer(serializers.Serializer):
     """
     Validates the final registration step: first/last name, mobile
-    number, and the signed token issued by VerifyRegistrationOTPView.
+    number (optional), and the signed token issued by VerifyRegistrationOTPView.
     Mobile-number uniqueness is a business rule and stays in
     AuthenticationService.complete_registration().
     """
     registration_token = serializers.CharField(max_length=2048)
     first_name = human_name_field()
     last_name = human_name_field()
-    mobile_number = serializers.CharField(max_length=16, validators=[mobile_number_validator])
+    mobile_number = serializers.CharField(
+        max_length=16,
+        validators=[mobile_number_validator],
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
 
 class LoginSerializer(serializers.Serializer):
     """
@@ -139,6 +147,7 @@ class UserSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'mobile_number',
+            'profile_pic',
             'is_active',
             'is_email_verified',
             'created_at',
@@ -151,6 +160,53 @@ class UserSerializer(serializers.ModelSerializer):
         is_active=True,
         ).exists()
     
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    """Validates POST /api/v1/auth/forgot-password/ input."""
+    email = serializers.EmailField(max_length=100)
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    """Validates POST /api/v1/auth/forgot-password/reset/ input."""
+    email = serializers.EmailField(max_length=100)
+    otp_code = serializers.CharField(
+        max_length=constants.OTP_LENGTH,
+        min_length=constants.OTP_LENGTH,
+        validators=[otp_code_validator],
+    )
+    password = serializers.CharField(write_only=True, max_length=128, validators=[validate_password])
+    confirm_password = serializers.CharField(write_only=True, max_length=128, validators=[validate_password])
+
+    def validate(self, attrs):
+        confirm_password = attrs.pop('confirm_password')
+        if attrs['password'] != confirm_password:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs
+
+
+class SendProfileUpdateOTPSerializer(serializers.Serializer):
+    """Validates POST /api/v1/auth/profile/send-otp/ input."""
+    pass  # No input needed — OTP is sent to the authenticated user's email
+
+
+class VerifyProfileUpdateOTPSerializer(serializers.Serializer):
+    """Validates POST /api/v1/auth/profile/update/ input."""
+    otp_code = serializers.CharField(
+        max_length=constants.OTP_LENGTH,
+        min_length=constants.OTP_LENGTH,
+        validators=[otp_code_validator],
+    )
+    first_name = human_name_field(required=False)
+    last_name = human_name_field(required=False)
+    mobile_number = serializers.CharField(
+        max_length=16,
+        validators=[mobile_number_validator],
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    profile_pic = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+
 
 class LoginActivitySerializer(serializers.ModelSerializer):
     """Read-only — for the History page's login/activity list."""
