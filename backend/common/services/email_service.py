@@ -6,8 +6,12 @@ Business logic (OTP emails, welcome emails, password reset emails, etc.)
 must remain inside their respective services.
 """
 
+import logging
+
 from django.core.mail import send_mail
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 def send_email(
         *,
@@ -37,10 +41,21 @@ def send_email(
     if not recipient_list:
         raise ValueError("recipient list cannot be empty")
     
-    return send_mail(
-        subject = subject,
-        message = message,
-        from_email = from_email or settings.DEFAULT_FROM_EMAIL,
-        recipient_list= recipient_list,
-        fail_silently=fail_silently,
-    )
+    try:
+        return send_mail(
+            subject = subject,
+            message = message,
+            from_email = from_email or settings.DEFAULT_FROM_EMAIL,
+            recipient_list= recipient_list,
+            fail_silently=fail_silently,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to send email to %s (subject='%s'): %s",
+            recipient_list,
+            subject,
+            str(exc)[:500],
+        )
+        if not fail_silently:
+            raise
+        return 0

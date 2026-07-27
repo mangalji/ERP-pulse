@@ -35,6 +35,14 @@ if config("EMAIL_HOST", default=""):
         cast=bool,
     )
 
+    # Timeout for SMTP connection (in seconds). Prevents worker hangs
+    # when the email server is unreachable or slow to respond.
+    EMAIL_TIMEOUT = config(
+        "EMAIL_TIMEOUT",
+        default=10,
+        cast=int,
+    )
+
 else:
 
     EMAIL_BACKEND = (

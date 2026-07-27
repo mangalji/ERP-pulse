@@ -179,15 +179,9 @@ class AuthenticationService:
         """Shared by register()/resend_registration_otp(): generate, store, email a fresh code."""
         raw_code = generate_otp_code(length=constants.OTP_LENGTH)
 
-        send_email(
-                    recipient_list=[email],
-                    subject=constants.EMAIL_SUBJECT_REGISTER,
-                    message=(
-                        f'Your verification code is {raw_code}. '
-                        f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
-                    ),
-                )
-
+        # Save OTP to cache FIRST so registration isn't blocked by
+        # email delivery. If the email send fails (SMTP timeout,
+        # unreachable server, etc.), the user can request a resend.
         registration_cache.save(
             email=email,
             data={
@@ -200,6 +194,26 @@ class AuthenticationService:
             },
             timeout_seconds=constants.REGISTRATION_SESSION_TTL_MINUTES * 60,
         )
+
+        # Attempt email delivery. Failure is non-fatal — the OTP is
+        # already saved in cache, so the user can request a resend.
+        # fail_silently=True prevents SMTP timeouts from killing the
+        # gunicorn worker.
+        try:
+            send_email(
+                recipient_list=[email],
+                subject=constants.EMAIL_SUBJECT_REGISTER,
+                message=(
+                    f'Your verification code is {raw_code}. '
+                    f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
+                ),
+                fail_silently=True,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send registration OTP email to %s — OTP saved in cache, user can resend.",
+                email,
+            )
 
     # -----------------------------------------------------------------
     # Login (unchanged)
