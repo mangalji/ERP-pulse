@@ -89,7 +89,6 @@ class RecentInvoicesView(APIView):
             limit=limit,
         )
 
-
 class RecentCustomersView(APIView):
     """GET /api/v1/dashboard/recent-customers/"""
 

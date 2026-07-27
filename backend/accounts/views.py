@@ -38,6 +38,7 @@ from accounts.serializers import (
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import LoginOTPThrottle, RegisterOTPThrottle
+from accounts.models import OTP
 
 authentication_service = AuthenticationService()
 login_activity_repository = LoginActivityRepository()

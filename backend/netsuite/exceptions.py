@@ -46,6 +46,19 @@ class NetSuiteConnectionNotFoundException(Exception):
 
     status_code = status.HTTP_404_NOT_FOUND
 
+class NetSuiteConnectionAlreadyExistsException(Exception):
+    """
+    Raised when a user tries to create a connection for a NetSuite
+    account id they already have a connection for.
+ 
+    Checked explicitly in NetSuiteConnectionService.create_connection()
+    before the repository write, so this is what the client sees instead
+    of the raw IntegrityError from the model's
+    (user, netsuite_account_id) unique constraint.
+    """
+ 
+    status_code = status.HTTP_409_CONFLICT
+
 class NetSuiteRecordFetchException(Exception):
     """Raised when a NetSuite REST Record API call fails (network error or non-2xx response)."""
 

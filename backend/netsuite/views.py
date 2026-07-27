@@ -133,6 +133,7 @@ class NetSuiteCustomerDetailView(APIView):
     throttle_classes = [NetSuiteSyncThrottle]
 
     def get(self, request, record_id):
+        _validate_record_id(record_id)
         customer = NetSuiteDataService().get_record(
             record_type=NetSuiteRecordType.CUSTOMER, record_id=record_id, user=request.user,
         )

@@ -53,6 +53,19 @@ class NetSuiteConnectionRepository:
             user=user,
             id=connection_id,
         ).first()
+
+    def exists_for_account(self, user: User, netsuite_account_id: str) -> bool:
+        """
+        Used by NetSuiteConnectionService.create_connection() to give a
+        clean validation error instead of letting the (user,
+        netsuite_account_id) unique constraint raise an IntegrityError
+        that the generic exception handler can't map to anything but a
+        500.
+        """
+        return NetSuiteConnection.objects.filter(
+            user=user,
+            netsuite_account_id=netsuite_account_id,
+        ).exists()
     
     def get_locked(self, connection_id) -> NetSuiteConnection:
         """
@@ -139,9 +152,13 @@ class NetSuiteConnectionRepository:
         connection.last_synced_at = timezone.now()
         connection.last_error = None
         connection.consecutive_failures = 0
-        connection.save(
-            update_fields=['last_synced_at', 'last_error', 'consecutive_failures', 'updated_at']
-        )
+        
+        update_fields=['last_synced_at', 'last_error', 'consecutive_failures', 'updated_at']
+        
+        if connection.status == 'error':
+            connection.status = 'connected'
+            update_fields.append('status')
+        connection.save(update_fields=update_fields)
         return connection
 
     def record_sync_failure(self, connection: NetSuiteConnection, *, error_message: str) -> NetSuiteConnection:

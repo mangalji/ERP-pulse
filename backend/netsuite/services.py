@@ -11,7 +11,7 @@ import logging
 from accounts.models import User
 from netsuite.client import NetSuiteAuthClient
 from netsuite.constants import NetSuiteRecordType
-from netsuite.exceptions import NetSuiteStateMismatchException, NetSuiteConnectionNotFoundException
+from netsuite.exceptions import NetSuiteStateMismatchException, NetSuiteConnectionNotFoundException, NetSuiteConnectionAlreadyExistsException
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionAuditLogRepository, NetSuiteConnectionRepository
 from netsuite.token_manager import NetSuiteTokenManager
@@ -93,6 +93,11 @@ class NetSuiteConnectionService:
             client_id:str,
             client_secret:str,
             netsuite_account_id:str):
+
+        if self.repository.exists_for_account(user,netsuite_account_id):
+            raise NetSuiteConnectionAlreadyExistsException(
+                "You alreadty have a connection for this netsuite account"
+            )
         
         connection = self.repository.create(
             user=user,

@@ -139,9 +139,10 @@ class DashboardViewTests(APITestCase):
         self.user = _make_user()
         self.client = APIClient()
 
-    @patch('dashboard.views.dashboard_service')
-    def test_dashboard_summary(self, mock_dashboard_service):
-        mock_dashboard_service.get_summary.return_value = {'total_customers': 10, 'total_employees': 5}
+    @patch('dashboard.views.DashboardService')
+    def test_dashboard_summary(self, MockDashboardService):
+        mock_service = MockDashboardService.return_value
+        mock_service.get_summary.return_value = {'total_customers': 10, 'total_employees': 5}
 
         self.client.credentials(**_auth_header(self.user))
         response = self.client.get('/api/v1/dashboard/summary/')
@@ -149,9 +150,10 @@ class DashboardViewTests(APITestCase):
         self.assertTrue(response.data['success'])
         self.assertEqual(response.data['data']['total_customers'], 10)
 
-    @patch('dashboard.views.dashboard_service')
-    def test_recent_sales_orders(self, mock_dashboard_service):
-        mock_dashboard_service.get_recent_sales_orders.return_value = [{'id': 1, 'tranId': 'SO-001'}]
+    @patch('dashboard.views.DashboardService')
+    def test_recent_sales_orders(self, MockDashboardService):
+        mock_service = MockDashboardService.return_value
+        mock_service.get_recent_sales_orders.return_value = [{'id': 1, 'tranId': 'SO-001'}]
 
         self.client.credentials(**_auth_header(self.user))
         response = self.client.get('/api/v1/dashboard/recent-sales-orders/')
@@ -173,9 +175,10 @@ class DashboardThrottleTests(APITestCase):
         self.user = _make_user()
         self.client = APIClient()
 
-    @patch('dashboard.views.dashboard_service')
-    def test_dashboard_throttle(self, mock_dashboard_service):
-        mock_dashboard_service.get_summary.return_value = {'total_customers': 1}
+    @patch('dashboard.views.DashboardService')
+    def test_dashboard_throttle(self, MockDashboardService):
+        mock_service = MockDashboardService.return_value
+        mock_service.get_summary.return_value = {'total_customers': 1}
         self.client.credentials(**_auth_header(self.user))
 
         # Make 120 requests (should all succeed with default 120/min)
