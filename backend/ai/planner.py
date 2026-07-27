@@ -97,6 +97,7 @@ class Planner:
         question: str,
         tool_descriptions: list[dict[str, Any]],
         metrics: PipelineMetrics | None = None,
+        conversation_id: str | None = None,
     ) -> ExecutionPlan:
         """
         Produce an ExecutionPlan for the given question.
@@ -107,6 +108,8 @@ class Planner:
                 and ``parameters`` keys — the output of
                 ``ToolRegistry.list_descriptions()``.
             metrics: Optional PipelineMetrics to record planning timing.
+            conversation_id: Optional correlation ID for request tracing
+                across the capability pipeline.
 
         Returns:
             An ExecutionPlan with zero or more tool calls.
@@ -115,7 +118,10 @@ class Planner:
             metrics.mark_planning_start()
 
         if not tool_descriptions:
-            logger.info("Planner: no tool descriptions available — returning empty plan.")
+            logger.info(
+                "Planner: no tool descriptions available — returning empty plan. conversation=%s",
+                conversation_id,
+            )
             if metrics:
                 metrics.mark_planning_end()
             return ExecutionPlan(
@@ -131,8 +137,9 @@ class Planner:
         )
 
         logger.info(
-            "Planner requesting LLM plan for question (first 80 chars): %.80s",
+            "Planner requesting LLM plan for question (first 80 chars): %.80s conversation=%s",
             question,
+            conversation_id,
         )
 
         try:
@@ -143,7 +150,10 @@ class Planner:
         except (AIProviderNotConfiguredException, AIProviderRequestException):
             # If the LLM is unavailable, return an empty plan — the caller
             # (AIService) can fall back to the existing context-driven flow.
-            logger.warning("Planner LLM unavailable; returning empty plan.")
+            logger.warning(
+                "Planner LLM unavailable; returning empty plan. conversation=%s",
+                conversation_id,
+            )
             if metrics:
                 metrics.mark_planning_end()
             return ExecutionPlan(original_question=question)
@@ -154,13 +164,17 @@ class Planner:
         plan = self._parse_plan(raw, question=question)
 
         if plan.is_empty:
-            logger.warning("Planner parsed empty plan from LLM response.")
+            logger.warning(
+                "Planner parsed empty plan from LLM response. conversation=%s",
+                conversation_id,
+            )
         else:
             tool_names = [tc.name for tc in plan.tool_calls]
             logger.info(
-                "Planner produced plan with %d tool(s): %s",
+                "Planner produced plan with %d tool(s): %s conversation=%s",
                 len(tool_names),
                 ", ".join(tool_names),
+                conversation_id,
             )
 
         return plan

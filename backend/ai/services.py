@@ -193,12 +193,15 @@ class AIService:
         )
 
         try:
+            conversation_id_str = str(conversation.id)
+
             # Step 1: Planner
             tool_descriptions = self.tool_registry.list_descriptions()
             plan = self.planner.plan(
                 question=message,
                 tool_descriptions=tool_descriptions,
                 metrics=metrics,
+                conversation_id=conversation_id_str,
             )
 
             if plan.is_empty:
@@ -214,7 +217,9 @@ class AIService:
 
             # Step 2: Tool Executor
             metrics.mark_execution_start()
-            raw_results = self.tool_executor.execute(plan=plan, user=user)
+            raw_results = self.tool_executor.execute(
+                plan=plan, user=user, conversation_id=conversation_id_str,
+            )
             metrics.mark_execution_end()
 
             if not raw_results:
@@ -238,11 +243,12 @@ class AIService:
             # Log validation summary
             validation_meta = [r.metadata for r in validated_results]
             logger.info(
-                "Validation complete — %d result(s), truncations=%d, errors=%d. user=%s",
+                "Validation complete — %d result(s), truncations=%d, errors=%d. user=%s conversation=%s",
                 len(validated_results),
                 sum(m["truncated"] for m in validation_meta),
                 sum(m["serialization_errors"] for m in validation_meta),
                 user.id,
+                conversation_id_str,
             )
 
             # Step 4: Build capability-driven prompt

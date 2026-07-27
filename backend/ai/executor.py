@@ -45,6 +45,7 @@ class ToolExecutor:
         *,
         plan: ExecutionPlan,
         user: User,
+        conversation_id: str | None = None,
     ) -> list[ToolResult]:
         """
         Execute all tool calls in the plan, in order.
@@ -52,6 +53,8 @@ class ToolExecutor:
         Args:
             plan: The ExecutionPlan from the Planner.
             user: The requesting user.
+            conversation_id: Optional correlation ID for request tracing
+                across the capability pipeline.
 
         Returns:
             A list of ToolResult objects, one per tool call in the plan.
@@ -59,24 +62,29 @@ class ToolExecutor:
             and the error message captured, rather than raising.
         """
         if plan.is_empty:
-            logger.info("Executor received empty plan — no tools to run.")
+            logger.info(
+                "Executor received empty plan — no tools to run. conversation=%s",
+                conversation_id,
+            )
             return []
 
         tool_names = [tc.name for tc in plan.tool_calls]
         logger.info(
-            "Executor starting %d tool(s): %s",
+            "Executor starting %d tool(s): %s conversation=%s",
             len(tool_names),
             ", ".join(tool_names),
+            conversation_id,
         )
 
         results: list[ToolResult] = []
         for idx, tool_call in enumerate(plan.tool_calls, start=1):
             logger.debug(
-                "Executor running tool %d/%d: '%s' with params=%s",
+                "Executor running tool %d/%d: '%s' with params=%s conversation=%s",
                 idx,
                 len(plan.tool_calls),
                 tool_call.name,
                 tool_call.params,
+                conversation_id,
             )
             result = self._execute_single(
                 name=tool_call.name,
@@ -90,14 +98,16 @@ class ToolExecutor:
         fail_count = len(results) - success_count
         if fail_count > 0:
             logger.warning(
-                "Executor completed: %d succeeded, %d failed.",
+                "Executor completed: %d succeeded, %d failed. conversation=%s",
                 success_count,
                 fail_count,
+                conversation_id,
             )
         else:
             logger.info(
-                "Executor completed: all %d tool(s) succeeded.",
+                "Executor completed: all %d tool(s) succeeded. conversation=%s",
                 success_count,
+                conversation_id,
             )
 
         return results
