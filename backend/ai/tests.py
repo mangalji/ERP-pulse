@@ -661,17 +661,20 @@ class AIAuditLogTests(TestCase):
     def test_not_connected_does_not_write_audit_log(self, mock_build_context):
         """
         The NetSuite-not-connected answer is deterministic and never
-        reaches the provider (see AIService._generate_answer's early
-        return) — so there is nothing provider-related to audit.
+        reaches the context-driven _generate_answer provider call (see
+        AIService._generate_answer's early return). The capability
+        pipeline (Planner) does call the provider internally to attempt
+        tool planning, but no audit record should be written since a
+        provider-level answer was never emitted.
         """
         mock_build_context.return_value = AIRequestContext(
             netsuite_connected=False, business_context=None,
         )
 
-        self.service.ask(user=self.user, message='Hello')
+        result = self.service.ask(user=self.user, message='Hello')
 
+        self.assertEqual(result['answer'], NETSUITE_NOT_CONNECTED_ANSWER)
         self.assertEqual(AIAuditLog.objects.filter(user=self.user).count(), 0)
-        self.mock_provider.generate_response.assert_not_called()
 
 # ===================================================================
 # Serializer Tests

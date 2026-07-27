@@ -22,10 +22,17 @@ logger = logging.getLogger(__name__)
 
 # Soft limit on the serialised string length of a single tool result.
 # Beyond this, the result is truncated to avoid blowing the LLM context.
-MAX_RESULT_CHARS = 5_000
+# Reduced from 5_000 to 3_000 in Sprint 3 — tool results rarely need
+# more than 3K chars for the LLM to summarise, and the saved context
+# space improves token efficiency.
+MAX_RESULT_CHARS = 3_000
 
 # Maximum number of items preserved from list-shaped results.
 MAX_LIST_ITEMS = 50
+
+# Maximum nesting depth when serialising dict-shaped results.
+# Prevents infinite recursion on deeply nested or circular structures.
+MAX_DICT_DEPTH = 5
 
 
 class ToolResult:

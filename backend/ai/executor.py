@@ -59,16 +59,46 @@ class ToolExecutor:
             and the error message captured, rather than raising.
         """
         if plan.is_empty:
+            logger.info("Executor received empty plan — no tools to run.")
             return []
 
+        tool_names = [tc.name for tc in plan.tool_calls]
+        logger.info(
+            "Executor starting %d tool(s): %s",
+            len(tool_names),
+            ", ".join(tool_names),
+        )
+
         results: list[ToolResult] = []
-        for tool_call in plan.tool_calls:
+        for idx, tool_call in enumerate(plan.tool_calls, start=1):
+            logger.debug(
+                "Executor running tool %d/%d: '%s' with params=%s",
+                idx,
+                len(plan.tool_calls),
+                tool_call.name,
+                tool_call.params,
+            )
             result = self._execute_single(
                 name=tool_call.name,
                 params=tool_call.params,
                 user=user,
             )
             results.append(result)
+
+        # Log execution summary
+        success_count = sum(1 for r in results if r.success)
+        fail_count = len(results) - success_count
+        if fail_count > 0:
+            logger.warning(
+                "Executor completed: %d succeeded, %d failed.",
+                success_count,
+                fail_count,
+            )
+        else:
+            logger.info(
+                "Executor completed: all %d tool(s) succeeded.",
+                success_count,
+            )
 
         return results
 
@@ -87,6 +117,7 @@ class ToolExecutor:
         """
         tool = self._registry.get_tool(name)
         if tool is None:
+            logger.warning("Executor: unknown tool '%s' — skipping.", name)
             return ToolResult(
                 tool_name=name,
                 raw_data=None,
@@ -96,13 +127,14 @@ class ToolExecutor:
 
         try:
             raw_data = self._registry.execute(name=name, user=user, **params)
+            logger.debug("Executor: tool '%s' completed successfully.", name)
             return ToolResult(
                 tool_name=name,
                 raw_data=raw_data,
                 success=True,
             )
         except Exception as exc:
-            logger.exception("Tool '%s' execution failed.", name)
+            logger.exception("Executor: tool '%s' execution failed.", name)
             return ToolResult(
                 tool_name=name,
                 raw_data=None,

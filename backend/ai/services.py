@@ -25,6 +25,7 @@ from ai.business_context import AIRequestContext
 from ai.context_builder import build_context
 from ai.exceptions import AIConversationNotFoundException
 from ai.executor import ToolExecutor
+from ai.metrics import PipelineMetrics
 from ai.models import AIConversation, AIMessage
 from ai.planner import Planner
 from ai.prompts import (
@@ -183,7 +184,13 @@ class AIService:
 
         Returns the answer string on success, or None to trigger fallback.
         """
+        metrics = PipelineMetrics()
         started_at = time.monotonic()
+
+        logger.info(
+            "Capability pipeline starting — user=%s conversation=%s question=%.80s",
+            user.id, conversation.id, message,
+        )
 
         try:
             # Step 1: Planner
@@ -191,20 +198,52 @@ class AIService:
             plan = self.planner.plan(
                 question=message,
                 tool_descriptions=tool_descriptions,
+                metrics=metrics,
             )
 
             if plan.is_empty:
-                logger.info("Planner returned empty plan for: %.100s", message)
+                logger.info(
+                    "Planner returned empty plan — falling back. user=%s conversation=%s",
+                    user.id, conversation.id,
+                )
+                metrics.fallback_used = True
+                self._log_pipeline_metrics(metrics, user, conversation)
                 return None
+
+            metrics.total_tool_count = len(plan.tool_calls)
 
             # Step 2: Tool Executor
+            metrics.mark_execution_start()
             raw_results = self.tool_executor.execute(plan=plan, user=user)
+            metrics.mark_execution_end()
+
             if not raw_results:
-                logger.info("ToolExecutor returned no results.")
+                logger.info(
+                    "ToolExecutor returned no results — falling back. user=%s conversation=%s",
+                    user.id, conversation.id,
+                )
+                metrics.fallback_used = True
+                self._log_pipeline_metrics(metrics, user, conversation)
                 return None
 
+            # Track tool success/failure counts
+            metrics.successful_tools = sum(1 for r in raw_results if r.success)
+            metrics.failed_tools = len(raw_results) - metrics.successful_tools
+
             # Step 3: Result Validator
+            metrics.mark_validation_start()
             validated_results = self.result_validator.validate_all(raw_results)
+            metrics.mark_validation_end()
+
+            # Log validation summary
+            validation_meta = [r.metadata for r in validated_results]
+            logger.info(
+                "Validation complete — %d result(s), truncations=%d, errors=%d. user=%s",
+                len(validated_results),
+                sum(m["truncated"] for m in validation_meta),
+                sum(m["serialization_errors"] for m in validation_meta),
+                user.id,
+            )
 
             # Step 4: Build capability-driven prompt
             user_prompt = self._build_capability_prompt(
@@ -213,11 +252,13 @@ class AIService:
             )
 
             # Step 5: Call AI provider
+            metrics.mark_llm_start()
             answer = self.provider.generate_response(
                 system_prompt=CAPABILITY_DRIVEN_SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 history=history,
             )
+            metrics.mark_llm_end()
 
             self.audit_log_repository.log(
                 user=user,
@@ -229,24 +270,46 @@ class AIService:
                 latency_ms=self._elapsed_ms(started_at),
             )
 
+            self._log_pipeline_metrics(metrics, user, conversation)
+
+            logger.info(
+                "Capability pipeline succeeded — user=%s conversation=%s",
+                user.id, conversation.id,
+            )
+
             return answer
 
         except Exception as exc:
             logger.exception(
-                "Capability pipeline failed for user %s; will fall back.",
-                user.id,
+                "Capability pipeline failed — user=%s conversation=%s error=%.200s",
+                user.id, conversation.id, str(exc),
             )
-            self.audit_log_repository.log(
-                user=user,
-                conversation=conversation,
-                provider=self.provider.__class__.__name__,
-                model=getattr(self.provider, 'model', None),
-                prompt_version=PROMPT_VERSION,
-                success=False,
-                latency_ms=self._elapsed_ms(started_at),
-                error_message=str(exc)[:2000],
-            )
+            metrics.fallback_used = True
+            self._log_pipeline_metrics(metrics, user, conversation)
+
+            # Deliberately NOT logging an audit record here. The capability
+            # pipeline is an optimization / gateway — if it fails, the
+            # context-driven fallback (_generate_answer) runs next and logs
+            # the audit record for the actual provider call. Logging here
+            # would create a duplicate (or spurious) audit entry for the
+            # NetSuite-not-connected case, where no provider call is made
+            # at all.
             return None
+
+    def _log_pipeline_metrics(
+        self,
+        metrics: PipelineMetrics,
+        user: User,
+        conversation: AIConversation,
+    ) -> None:
+        """Log pipeline metrics as a structured log entry."""
+        metrics_dict = metrics.to_dict()
+        logger.info(
+            "Pipeline metrics — user=%s conversation=%s metrics=%s",
+            user.id,
+            conversation.id,
+            metrics_dict,
+        )
 
     def _build_capability_prompt(
         self,
