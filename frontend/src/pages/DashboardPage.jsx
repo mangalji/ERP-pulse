@@ -3,7 +3,6 @@ import DashboardLayout from '../components/layout/DashboardLayout.jsx'
 import KpiCard from '../components/dashboard/KpiCard.jsx'
 import Card from '../components/ui/Card.jsx'
 import SparklineChart from '../components/dashboard/SparklineChart.jsx'
-import TopCustomersBar from '../components/dashboard/TopCustomersBar.jsx'
 import ConnectNetSuiteBanner from '../components/dashboard/ConnectNetSuiteBanner.jsx'
 import BusinessActivityTimeline from '../components/dashboard/BusinessActivityTimeline.jsx'
 import ErrorState from '../components/ui/ErrorState.jsx'
@@ -15,7 +14,6 @@ import { netsuiteApi } from '../services/netsuite.js'
 export default function DashboardPage() {
   const { netSuiteConnected } = useAuth()
   const [summary, setSummary] = useState(null)
-  const [recentCustomers, setRecentCustomers] = useState(null)
   const [recentSalesOrders, setRecentSalesOrders] = useState(null)
   const [recentInvoices, setRecentInvoices] = useState(null)
   const [recentPurchaseOrders, setRecentPurchaseOrders] = useState(null)
@@ -26,16 +24,14 @@ export default function DashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryData, customersData, salesOrdersData, invoicesData, purchaseOrdersData] =
+      const [summaryData, salesOrdersData, invoicesData, purchaseOrdersData] =
         await Promise.all([
           dashboardApi.getSummary(),
-          dashboardApi.getRecentCustomers(),
           dashboardApi.getRecentSalesOrders(),
           dashboardApi.getRecentInvoices(),
           netsuiteApi.getPurchaseOrders({ limit: 5 }),
         ])
       setSummary(summaryData)
-      setRecentCustomers(customersData.results || [])
       setRecentSalesOrders(salesOrdersData.results || [])
       setRecentInvoices(invoicesData.results || [])
       setRecentPurchaseOrders(purchaseOrdersData.results || [])
