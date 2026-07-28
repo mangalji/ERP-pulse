@@ -30,6 +30,8 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+
+
 def send_email(
         *,
         subject:str,
@@ -77,7 +79,7 @@ def send_email(
                 recipient_list=recipient_list,
                 fail_silently=False,
             )
-        return len
+        return len(recipient_list)
 
     except Exception as exc:
         logger.error(
