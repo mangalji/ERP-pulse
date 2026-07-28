@@ -105,8 +105,10 @@ class ExceptionHandlerTests(TestCase):
 # ===================================================================
 
 class EmailServiceTests(TestCase):
+    @override_settings(BREVO_API_KEY='')
     @patch('common.services.email_service.send_mail')
-    def test_send_email_success(self, mock_send_mail):
+    def test_send_email_success_smtp_path(self, mock_send_mail):
+        """BREVO_API_KEY unset -> falls back to Django's send_mail (SMTP/console)."""
         mock_send_mail.return_value = 1
         result = send_email(
             subject='Test',
@@ -123,6 +125,58 @@ class EmailServiceTests(TestCase):
                 message='Hello',
                 recipient_list=[],
             )
+
+    @override_settings(BREVO_API_KEY='test-brevo-key', DEFAULT_FROM_NAME='ERP Pulse')
+    @patch('common.services.email_service.requests.post')
+    def test_send_email_success_brevo_path(self, mock_post):
+        """
+        BREVO_API_KEY set -> sends via Brevo's HTTP API instead of
+        Django's send_mail, so it goes out over HTTPS (port 443)
+        rather than an SMTP port that hosts like Render's free tier
+        block.
+        """
+        mock_post.return_value = MagicMock(status_code=201, text='{"messageId": "abc"}')
+
+        result = send_email(
+            subject='Your OTP',
+            message='Code: 123456',
+            recipient_list=['user@example.com'],
+        )
+
+        self.assertEqual(result, 1)
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args.kwargs
+        self.assertEqual(call_kwargs['headers']['api-key'], 'test-brevo-key')
+        self.assertEqual(call_kwargs['json']['to'], [{'email': 'user@example.com'}])
+        self.assertEqual(call_kwargs['json']['subject'], 'Your OTP')
+        self.assertEqual(call_kwargs['json']['sender']['name'], 'ERP Pulse')
+
+    @override_settings(BREVO_API_KEY='test-brevo-key')
+    @patch('common.services.email_service.requests.post')
+    def test_send_email_brevo_error_response_raises(self, mock_post):
+        """A non-2xx from Brevo must propagate as a failure, not be treated as success."""
+        mock_post.return_value = MagicMock(status_code=401, text='{"message": "invalid api key"}')
+
+        with self.assertRaises(Exception):
+            send_email(
+                subject='Test',
+                message='Hello',
+                recipient_list=['test@example.com'],
+            )
+
+    @override_settings(BREVO_API_KEY='test-brevo-key')
+    @patch('common.services.email_service.requests.post')
+    def test_send_email_brevo_error_fail_silently(self, mock_post):
+        """fail_silently=True must swallow a Brevo failure and return 0, not raise."""
+        mock_post.side_effect = ConnectionError('network unreachable')
+
+        result = send_email(
+            subject='Test',
+            message='Hello',
+            recipient_list=['test@example.com'],
+            fail_silently=True,
+        )
+        self.assertEqual(result, 0)
 
 
 # ===================================================================

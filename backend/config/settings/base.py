@@ -19,6 +19,7 @@ from .jwt import *
 from .rest_framework import *
 from .security import *
 from .logging import *
+from .cache import *
 
 # ------------------------------------------------------------------
 # Paths
