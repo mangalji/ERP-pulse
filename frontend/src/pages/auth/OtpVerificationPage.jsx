@@ -4,7 +4,6 @@ import AuthLayout from '../../components/layout/AuthLayout.jsx'
 import OtpInput from '../../components/ui/OtpInput.jsx'
 import Button from '../../components/ui/Button.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
-import { getAccessToken } from '../../utils/constants.js'
 
 export default function OtpVerificationPage() {
   const navigate = useNavigate()
@@ -23,7 +22,7 @@ export default function OtpVerificationPage() {
   const [secondsRemaining, setSecondsRemaining] = useState(300)
 
   useEffect(() => {
-    if (!emailFromState && !getAccessToken()) {
+    if (!emailFromState) {
       navigate(`/${purpose === 'login' ? 'login' : 'register'}`, { replace: true })
     }
     if (purpose === 'password-reset') {

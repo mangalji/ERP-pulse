@@ -19,6 +19,7 @@ from django.utils import timezone
 from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.views import APIView
 
+from common.throttles import HealthCheckThrottle
 from common.utils.response import success_response
 from monitoring.models import ErrorLog, RequestLog
 from monitoring.serializers import ErrorLogSerializer
@@ -43,6 +44,7 @@ class HealthCheckView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [HealthCheckThrottle]
 
     def get(self, request):
         checks = {
@@ -98,6 +100,7 @@ class ReadinessView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [HealthCheckThrottle]
 
     def get(self, request):
         from django.db import connection as db_connection
@@ -138,7 +141,7 @@ class ErrorLogListView(APIView):
             limit = 50
         limit = max(1,min(limit,200))
 
-        errors = ErrorLog.objects.all()[:limit]
+        errors = ErrorLog.objects.order_by('-created_at')[:limit]
         return success_response(
             message="Recent errors fetched successfully.",
             data=ErrorLogSerializer(errors, many=True).data,

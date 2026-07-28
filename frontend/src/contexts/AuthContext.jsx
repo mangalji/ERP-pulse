@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { authApi } from '../services/auth.js'
-import { getAccessToken, getRefreshToken, clearTokens, setTokens } from '../utils/constants.js'
 
 const AuthContext = createContext(null)
 
@@ -10,18 +9,24 @@ export function AuthProvider({ children }) {
   const [error, setError] = useState(null)
   const [netSuiteConnected, setNetSuiteConnected] = useState(false)
 
+  /**
+   * Bootstrap: check if the user is already logged in by calling
+   * /auth/me/. The browser sends the httpOnly access_token cookie
+   * automatically (withCredentials: true on apiClient). No localStorage
+   * reads needed.
+   *
+   * If the cookie is missing or expired, /auth/me/ returns 401 and we
+   * clear the user state — the user sees the login page.
+   */
   const bootstrap = async () => {
-    const token = getAccessToken()
-    if (!token) {
-      setIsLoading(false)
-      return
-    }
     try {
       const data = await authApi.me()
       setUser(data)
       setNetSuiteConnected(Boolean(data.netsuite_connected))
     } catch {
-      clearTokens()
+      // No valid access_token cookie — user is not logged in. This is
+      // expected on first visit or after cookie expiry.
+      setUser(null)
     } finally {
       setIsLoading(false)
     }
@@ -32,16 +37,17 @@ export function AuthProvider({ children }) {
   }, [])
 
   const login = async (email, password) => {
-  setError(null)
-  const res = await authApi.requestLoginOtp(email, password)
-  return { email: res.email }
-}
+    setError(null)
+    const res = await authApi.requestLoginOtp(email, password)
+    return { email: res.email }
+  }
 
   const verifyLogin = async (email, otpCode) => {
     setError(null)
     const res = await authApi.verifyLoginOtp(email, otpCode)
-    const { access, refresh, user: userData } = res
-    setTokens(access, refresh)
+    // Backend sets httpOnly cookies for access_token and refresh_token.
+    // The `res` also contains the user object — use it directly.
+    const { user: userData } = res
     setUser(userData)
     setNetSuiteConnected(Boolean(userData.netsuite_connected))
     return userData
@@ -49,8 +55,7 @@ export function AuthProvider({ children }) {
 
   const resendLoginOtp = async (email) => {
     setError(null)
-    const res = await authApi.resendLoginOtp(email)
-    return res
+    return await authApi.resendLoginOtp(email)
   }
 
   const register = async (email, password, confirmPassword) => {
@@ -61,53 +66,47 @@ export function AuthProvider({ children }) {
 
   const verifyRegister = async (email, otpCode) => {
     setError(null)
-    const res = await authApi.verifyRegisterOtp(email, otpCode)
-    return res
+    return await authApi.verifyRegisterOtp(email, otpCode)
   }
 
   const completeProfile = async (registrationToken, firstName, lastName, mobileNumber) => {
     setError(null)
-    const res = await authApi.completeProfile(registrationToken, firstName, lastName, mobileNumber)
-    return res
+    return await authApi.completeProfile(registrationToken, firstName, lastName, mobileNumber)
   }
 
   const resendRegisterOtp = async (email) => {
     setError(null)
-    const res = await authApi.resendRegisterOtp(email)
-    return res
+    return await authApi.resendRegisterOtp(email)
   }
 
   const forgotPassword = async (email) => {
     setError(null)
-    const res = await authApi.forgotPassword(email)
-    return res
+    return await authApi.forgotPassword(email)
   }
 
   const resetPassword = async (email, otpCode, password, confirmPassword) => {
     setError(null)
-    const res = await authApi.resetPassword(email, otpCode, password, confirmPassword)
-    return res
+    return await authApi.resetPassword(email, otpCode, password, confirmPassword)
   }
 
   const profileSendOtp = async () => {
     setError(null)
-    const res = await authApi.profileSendOtp()
-    return res
+    return await authApi.profileSendOtp()
   }
 
   const profileUpdate = async (otpCode, profileData) => {
     setError(null)
     const res = await authApi.profileUpdate(otpCode, profileData)
-    setUser(res)  // Update the current user in context
+    setUser(res)
     return res
   }
 
   const logout = async () => {
-    const refresh = getRefreshToken()
     try {
-      if (refresh) await authApi.logout(refresh)
+      // Backend clears the httpOnly cookies and blacklists the refresh
+      // token. The refresh_token cookie is sent automatically.
+      await authApi.logout()
     } finally {
-      clearTokens()
       setUser(null)
       setNetSuiteConnected(false)
     }

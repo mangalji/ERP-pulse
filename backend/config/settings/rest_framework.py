@@ -12,7 +12,12 @@ from decouple import config
 REST_FRAMEWORK = {
 
     # Authentication
+    # CookieJWTAuthentication: reads access token from the httpOnly
+    # cookie set on login (safe from XSS). Falls back to the standard
+    # Authorization header if present, so API clients (curl, Postman)
+    # keep working unchanged.
     "DEFAULT_AUTHENTICATION_CLASSES": (
+        "common.authentication.CookieJWTAuthentication",
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
 
@@ -67,6 +72,11 @@ REST_FRAMEWORK = {
         "netsuite_sync": config(
             "THROTTLE_NETSUITE_SYNC",
             default="30/min",
+        ),
+
+        "health_check": config(
+            "THROTTLE_HEALTH_CHECK",
+            default="60/min",
         ),
     },
 }

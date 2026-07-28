@@ -24,7 +24,7 @@ silently..
 import logging
 import requests
 
-from django.core.mail import send_mail
+from django.core.mail import send_mail as django_send_mail
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ def send_email(
                 sender_email=sender_email
             )
         else:
-            send_email(
+            django_send_mail(
                 subject=subject,
                 message=message,
                 from_email=sender_email,

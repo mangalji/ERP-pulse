@@ -26,3 +26,6 @@ class DashboardThrottle(UserRateThrottle):
 
 class NetSuiteSyncThrottle(UserRateThrottle):
     scope = 'netsuite_sync'
+
+class HealthCheckThrottle(AnonRateThrottle):
+    scope = 'health_check'

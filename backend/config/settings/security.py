@@ -43,6 +43,10 @@ SECURE_PROXY_SSL_HEADER = (
 # HSTS
 # ------------------------------------------------------------------
 
+# DEBUG is not yet defined at import time (security.py is imported by
+# base.py before base.py reads DEBUG from config), so we read it from
+# the env directly — safe default is 0 (disabled) to match local-dev
+# expectations; production.py overrides to 1 year.
 SECURE_HSTS_SECONDS = config(
     "SECURE_HSTS_SECONDS",
     default=0,
@@ -112,6 +116,11 @@ CORS_ALLOWED_ORIGINS = config(
     default="http://localhost:5173",
     cast=Csv(),
 )
+
+# Required for httpOnly cookie-based JWT auth -- without this, the browser
+# won't attach the access_token/refresh_token cookies on cross-origin
+# requests (e.g. frontend on port 5173 calling backend on port 8000).
+CORS_ALLOW_CREDENTIALS = True
 
 # ------------------------------------------------------------------
 # Frontend URL

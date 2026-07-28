@@ -12,6 +12,7 @@ __pycache__/
 # Django
 # ==========================
 backend/.env
+backend/.env.render
 backend/db.sqlite3
 *.sqlite3
 
@@ -21,6 +22,7 @@ backend/db.sqlite3
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+frontend/.env.render
 
 # ==========================
 # Logs

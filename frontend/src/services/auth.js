@@ -48,6 +48,6 @@ export const authApi = {
 
   getLoginHistory: () => apiClient.get(AUTH_ENDPOINTS.loginHistory).then(unwrap),
 
-  logout: (refresh) =>
-    apiClient.post(AUTH_ENDPOINTS.logout, { refresh }).then(unwrap),
+  logout: () =>
+    apiClient.post(AUTH_ENDPOINTS.logout).then(unwrap),
 }

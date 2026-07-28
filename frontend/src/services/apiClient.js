@@ -1,14 +1,23 @@
 import axios from 'axios'
-import { API_BASE, getAccessToken, getRefreshToken, setTokens, clearTokens } from '../utils/constants.js'
+import { API_BASE } from '../utils/constants.js'
 
-export const apiClient = axios.create({ baseURL: API_BASE })
-
-apiClient.interceptors.request.use((config) => {
-  const token = getAccessToken()
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
+/**
+ * Axios instance configured for httpOnly cookie-based JWT auth.
+ *
+ * The browser automatically attaches the access_token and refresh_token
+ * httpOnly cookies on every request to the same origin (or sub-origin
+ * when withCredentials is set). No localStorage reads, no manual
+ * Authorization header injection.
+ */
+export const apiClient = axios.create({
+  baseURL: API_BASE,
+  withCredentials: true, // Send httpOnly cookies cross-origin
 })
 
+// ── Token refresh interceptor ──────────────────────────────────────
+// When a request returns 401, attempt a silent token refresh by calling
+// the refresh endpoint (the browser sends the refresh_token cookie
+// automatically). On success, retry the original request once.
 let isRefreshing = false
 let pendingRequests = []
 
@@ -21,7 +30,7 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config
-    if (!original || !original.url) return Promise.reject(error)
+    if (!original || original._retry) return Promise.reject(error)
 
     const isAuthEndpoint = original.url.includes('/auth/')
     const is401 = error.response?.status === 401
@@ -30,32 +39,33 @@ apiClient.interceptors.response.use(
 
     if (isRefreshing) {
       return new Promise((resolve, reject) => {
-        pendingRequests.push((err) => (err ? reject(err) : resolve(apiClient(original))))
+        pendingRequests.push((err) => {
+          if (err) reject(err)
+          else resolve(apiClient(original))
+        })
       })
     }
 
     isRefreshing = true
-    const refresh = getRefreshToken()
-    if (!refresh) {
-      clearTokens()
-      return Promise.reject(error)
-    }
+    original._retry = true
 
     try {
-      const res = await axios.post(`${API_BASE}/auth/token/refresh/`, { refresh })
-      const { access, refresh: newRefresh } = res.data.data
-      setTokens(access, newRefresh)
-      original.headers.Authorization = `Bearer ${access}`
+      // The refresh_token cookie is sent automatically with
+      // withCredentials: true — no body needed.
+      await apiClient.post('/auth/token/refresh/')
       resolvePending(null)
       return apiClient(original)
     } catch (refreshError) {
-      clearTokens()
+      // Refresh failed (cookie expired or invalid) — redirect to login.
+      // Clear any server-side state by calling logout (cookie will be
+      // cleared by the backend).
       resolvePending(refreshError)
+      window.location.href = '/login'
       return Promise.reject(refreshError)
     } finally {
       isRefreshing = false
     }
-  }
+  },
 )
 
 export const unwrap = (response) => {
