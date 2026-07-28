@@ -121,21 +121,3 @@ def _send_via_brevo(*, subject: str, message: str, recipient_list: list[str], se
         raise RuntimeError(
             f"Brevo API returned {response.status_code}: {response.text[:300]}"
         )
-
-    #     return send_mail(
-    #         subject = subject,
-    #         message = message,
-    #         from_email = from_email or settings.DEFAULT_FROM_EMAIL,
-    #         recipient_list= recipient_list,
-    #         fail_silently=fail_silently,
-    #     )
-    # except Exception as exc:
-    #     logger.error(
-    #         "Failed to send email to %s (subject='%s'): %s",
-    #         recipient_list,
-    #         subject,
-    #         str(exc)[:500],
-    #     )
-    #     if not fail_silently:
-    #         raise
-    #     return 0
