@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { authApi } from '../services/auth.js'
+import { setAccessToken, clearAccessToken } from '../utils/token.js'
 
 const AuthContext = createContext(null)
 
@@ -10,13 +11,9 @@ export function AuthProvider({ children }) {
   const [netSuiteConnected, setNetSuiteConnected] = useState(false)
 
   /**
-   * Bootstrap: check if the user is already logged in by calling
-   * /auth/me/. The browser sends the httpOnly access_token cookie
-   * automatically (withCredentials: true on apiClient). No localStorage
-   * reads needed.
-   *
-   * If the cookie is missing or expired, /auth/me/ returns 401 and we
-   * clear the user state — the user sees the login page.
+   * Bootstrap: check if the user is already logged in by calling /auth/me/.
+   * The in-memory access token (set during login) or the httpOnly cookie
+   * (same-origin only) provides the credential — no localStorage needed.
    */
   const bootstrap = async () => {
     try {
@@ -24,8 +21,6 @@ export function AuthProvider({ children }) {
       setUser(data)
       setNetSuiteConnected(Boolean(data.netsuite_connected))
     } catch {
-      // No valid access_token cookie — user is not logged in. This is
-      // expected on first visit or after cookie expiry.
       setUser(null)
     } finally {
       setIsLoading(false)
@@ -45,8 +40,8 @@ export function AuthProvider({ children }) {
   const verifyLogin = async (email, otpCode) => {
     setError(null)
     const res = await authApi.verifyLoginOtp(email, otpCode)
-    // Backend sets httpOnly cookies for access_token and refresh_token.
-    // The `res` also contains the user object — use it directly.
+    // Store access token in memory (safe from XSS).
+    if (res.access) setAccessToken(res.access)
     const { user: userData } = res
     setUser(userData)
     setNetSuiteConnected(Boolean(userData.netsuite_connected))
@@ -103,10 +98,9 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     try {
-      // Backend clears the httpOnly cookies and blacklists the refresh
-      // token. The refresh_token cookie is sent automatically.
       await authApi.logout()
     } finally {
+      clearAccessToken()
       setUser(null)
       setNetSuiteConnected(false)
     }

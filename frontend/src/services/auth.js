@@ -50,4 +50,7 @@ export const authApi = {
 
   logout: () =>
     apiClient.post(AUTH_ENDPOINTS.logout).then(unwrap),
+
+  refreshToken: (refresh) =>
+    apiClient.post(AUTH_ENDPOINTS.refresh, refresh ? { refresh } : {}).then(unwrap),
 }

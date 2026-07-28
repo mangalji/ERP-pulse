@@ -1,23 +1,31 @@
 import axios from 'axios'
 import { API_BASE } from '../utils/constants.js'
+import { getAccessToken } from '../utils/token.js'
 
 /**
- * Axios instance configured for httpOnly cookie-based JWT auth.
+ * Axios instance configured for dual-mode JWT auth:
  *
- * The browser automatically attaches the access_token and refresh_token
- * httpOnly cookies on every request to the same origin (or sub-origin
- * when withCredentials is set). No localStorage reads, no manual
- * Authorization header injection.
+ * 1. Authorization header (primary for cross-domain — Vercel frontend →
+ *    Render backend). Access token is stored in a JS variable, not
+ *    localStorage, so XSS can't steal it.
+ * 2. httpOnly cookie (fallback for same-origin requests). The browser
+ *    sends it automatically when withCredentials is true.
  */
 export const apiClient = axios.create({
   baseURL: API_BASE,
-  withCredentials: true, // Send httpOnly cookies cross-origin
+  withCredentials: true, // Send httpOnly cookies when on same origin
+})
+
+// Inject the in-memory access token as an Authorization header on every request.
+apiClient.interceptors.request.use((config) => {
+  const token = getAccessToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
 })
 
 // ── Token refresh interceptor ──────────────────────────────────────
-// When a request returns 401, attempt a silent token refresh by calling
-// the refresh endpoint (the browser sends the refresh_token cookie
-// automatically). On success, retry the original request once.
 let isRefreshing = false
 let pendingRequests = []
 
@@ -50,15 +58,21 @@ apiClient.interceptors.response.use(
     original._retry = true
 
     try {
-      // The refresh_token cookie is sent automatically with
-      // withCredentials: true — no body needed.
-      await apiClient.post('/auth/token/refresh/')
+      // Try cookie-based refresh first (same-origin), fall back to
+      // sending the refresh token in the request body (cross-domain).
+      const { default: authApi } = await import('../services/auth.js')
+      const res = await authApi.refreshToken()
+      const newAccess = res.access
+      if (newAccess) {
+        const { setAccessToken } = await import('../utils/token.js')
+        setAccessToken(newAccess)
+        original.headers.Authorization = `Bearer ${newAccess}`
+      }
       resolvePending(null)
       return apiClient(original)
     } catch (refreshError) {
-      // Refresh failed (cookie expired or invalid) — redirect to login.
-      // Clear any server-side state by calling logout (cookie will be
-      // cleared by the backend).
+      const { clearAccessToken } = await import('../utils/token.js')
+      clearAccessToken()
       resolvePending(refreshError)
       window.location.href = '/login'
       return Promise.reject(refreshError)
