@@ -2,6 +2,8 @@ import logging
 
 from django.core.signing import BadSignature, SignatureExpired
 from django.utils import timezone
+from django.contrib.auth.hashers import make_password
+from django.db import transaction
 
 from accounts import registration_cache
 from accounts.exceptions import (
@@ -66,16 +68,19 @@ class AuthenticationService:
         registration (email + hashed password + OTP state) in cache —
         no User row is created here.
         """
+        email = email.lower().strip()
         if self.user_repository.email_exists(email):
             raise UserAlreadyExistsException('This email is already registered. Please log in instead.')
 
-        self._issue_registration_otp(email=email, password_hash=hash_value(password))
+        password_hash = make_password(password)
+        self._issue_registration_otp(email=email, password_hash=password_hash)
 
         logger.info('Registration started for email=%s.', email)
         return {'email': email}
 
     def resend_registration_otp(self, *, email: str) -> dict:
         """Resend a REGISTRATION OTP for an in-flight registration, enforcing the cooldown."""
+        email = email.lower().strip()
         pending = registration_cache.get(email)
         if pending is None:
             raise RegistrationSessionNotFoundException(
@@ -89,6 +94,7 @@ class AuthenticationService:
                 f'Please wait {wait_seconds} more second(s) before requesting a new code.'
             )
 
+        
         self._issue_registration_otp(email=email, password_hash=pending['password_hash'])
 
         logger.info('Registration OTP resent for email=%s.', email)
@@ -103,6 +109,7 @@ class AuthenticationService:
         completed OTP verification — required by complete_registration().
         Still does not create a User.
         """
+        email=email.lower().strip()
         pending = registration_cache.get(email)
         if pending is None:
             raise RegistrationSessionNotFoundException(
@@ -125,11 +132,19 @@ class AuthenticationService:
             )
             raise OTPMismatchException('The code you entered is incorrect. Please try again.')
 
+        # Replay attach protection flag
+        pending['is_verified'] = True
+        registration_cache.save(
+            email=email,
+            data=pending,
+            timeout_seconds=constants.REGISTRATION_SESSION_TTL_MINUTES * 60,
+        )
         token = generate_signed_token(payload={'email': email}, salt=REGISTRATION_TOKEN_SALT)
 
         logger.info('Registration OTP verified for email=%s.', email)
         return {'email': email, 'registration_token': token}
 
+    @transaction.atomic
     def complete_registration(
         self, *, registration_token: str, first_name: str, last_name: str, mobile_number: str | None = None
     ) -> User:
@@ -139,6 +154,8 @@ class AuthenticationService:
         email-verified immediately, since OTP verification already
         proved the email. This is the only point in the whole flow where
         a User row is created.
+        FIX: Added @transaction.atomic decorator to ensure DB creation and
+        cache deletion happen atom  ically.
         """
         try:
             payload = verify_signed_token(
@@ -154,7 +171,7 @@ class AuthenticationService:
         email = payload['email']
 
         pending = registration_cache.get(email)
-        if pending is None:
+        if pending is None or not pending.get('is_verified'):
             raise RegistrationSessionNotFoundException(
                 'Your registration session has expired. Please start again.'
             )
@@ -273,7 +290,6 @@ class AuthenticationService:
             # Check uniqueness if a new mobile number is provided
             if mobile_number != user.mobile_number and mobile_number:
                 if self.user_repository.mobile_number_exists(mobile_number):
-                    from accounts.exceptions import UserAlreadyExistsException
                     raise UserAlreadyExistsException('This mobile number is already linked to another account.')
             user.mobile_number = mobile_number
             update_fields.append('mobile_number')
@@ -376,8 +392,8 @@ class AuthenticationService:
             )
 
         # Invalidate previous OTP
-        otp.is_used = True
-        otp.save(update_fields=["is_used"])
+        # otp.is_used = True
+        # otp.save(update_fields=["is_used"])
 
         # Reuse existing login OTP generation
         self.otp_service.generate_and_send_otp(

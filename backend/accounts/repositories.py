@@ -39,7 +39,7 @@ class UserRepository:
             email=User.objects.normalize_email(email),
             first_name=first_name,
             last_name=last_name,
-            mobile_number=mobile_number,
+            mobile_number=mobile_number or None,
             is_active=True,
             is_email_verified=True,
         )
@@ -107,6 +107,7 @@ class LoginActivityRepository:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-    def list_by_user(self,user:User,*,limit:int=50):
-        """Most recent first (Meta.ordering already does this), capped at `limit`."""
-        return LoginActivity.objects.filter(user=user)[:limit]
+    def get_queryset_by_user(self,user:User,*,limit:int=50):
+        """FIX: Return un-evaluated QuerySet so the View layer can handle
+        proper ORM slicing and count queries without evaluation side-effects."""
+        return LoginActivity.objects.filter(user=user)

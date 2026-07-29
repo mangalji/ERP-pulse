@@ -94,13 +94,11 @@ export default function EntityList({
       ) : (
         <>
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <div className="grid grid-cols-1 gap-0">
+            <div className="flex items-center border-b border-[var(--color-border)] bg-[var(--color-canvas)]">
               {columns.map((column, idx) => (
                 <div
                   key={column.key}
-                  className={`flex items-center px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)] ${
-                    idx !== columns.length - 1 ? 'border-b border-[var(--color-border)]' : ''
-                  } ${column.headerClassName || ''}`}
+                  className={`${column.className || 'flex-1'} px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]`}
                 >
                   {column.label}
                 </div>

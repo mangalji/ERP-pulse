@@ -164,16 +164,37 @@ class NetSuiteAuthClient:
             access_token=access_token,
         )
 
-    def execute_suiteql(self, *, query: str, access_token: str | None = None) -> dict:
+    def execute_suiteql(
+        self,
+        *,
+        query: str,
+        limit: int | None = None,
+        offset: int | None = None,
+        access_token: str | None = None,
+    ) -> dict:
         """
         Execute a SuiteQL query.
 
         Intended for analytics and reporting where REST Record endpoints
         are insufficient because of pagination limitations.
+
+        limit/offset are NOT embedded in the SQL text — NetSuite's
+        documented SuiteQL pagination mechanism is URL query params on
+        the POST itself (POST /query/v1/suiteql?limit=X&offset=Y),
+        exactly like the REST Record collection endpoint. Response shape
+        then includes `count`, `offset`, `totalResults`, and `hasMore`
+        alongside `items`, same envelope as get_records().
         """
+        query_params = {}
+        if limit is not None:
+            query_params['limit'] = limit
+        if offset is not None:
+            query_params['offset'] = offset
+
         return self._post(
             path="query/v1/suiteql",
             access_token=access_token,
+            params=query_params or None,
             data={
                 "q": query,
             },
@@ -222,6 +243,7 @@ class NetSuiteAuthClient:
         access_token: str | None = None,
         data: dict | None = None,
         headers: dict | None = None,
+        params: dict | None = None,
     ) -> dict:
         """
         Generic authenticated POST helper.
@@ -252,6 +274,7 @@ class NetSuiteAuthClient:
                 f"{self._rest_base_url}/{path}",
                 headers=request_headers,
                 json=data,
+                params=params,
                 retryable=True,
                 correlation_id=correlation_id,
             )

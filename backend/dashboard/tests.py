@@ -72,7 +72,11 @@ class DashboardServiceTests(TestCase):
         self.service = DashboardService(netsuite_data_service=self.mock_ns)
 
     def test_get_summary(self):
-        self.mock_ns.get_records.return_value = {'totalResults': 42}
+        # Each SuiteQL list method returns {'totalResults': 42}
+        for method_name in ['list_customers', 'list_employees', 'list_vendors',
+                            'list_inventory_items', 'list_sales_orders',
+                            'list_purchase_orders', 'list_invoices']:
+            getattr(self.mock_ns, method_name).return_value = {'totalResults': 42}
 
         result = self.service.get_summary(user=self.user)
 
@@ -83,10 +87,17 @@ class DashboardServiceTests(TestCase):
         self.assertEqual(result['total_sales_orders'], 42)
         self.assertEqual(result['total_purchase_orders'], 42)
         self.assertEqual(result['total_invoices'], 42)
-        self.assertEqual(self.mock_ns.get_records.call_count, 7)
+        # Each method should be called exactly once
+        for method_name in ['list_customers', 'list_employees', 'list_vendors',
+                            'list_inventory_items', 'list_sales_orders',
+                            'list_purchase_orders', 'list_invoices']:
+            self.assertEqual(getattr(self.mock_ns, method_name).call_count, 1)
 
     def test_get_summary_zero(self):
-        self.mock_ns.get_records.return_value = {'totalResults': 0}
+        for method_name in ['list_customers', 'list_employees', 'list_vendors',
+                            'list_inventory_items', 'list_sales_orders',
+                            'list_purchase_orders', 'list_invoices']:
+            getattr(self.mock_ns, method_name).return_value = {'totalResults': 0}
 
         result = self.service.get_summary(user=self.user)
         self.assertEqual(result['total_customers'], 0)

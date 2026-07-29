@@ -23,7 +23,7 @@ class ConversationRepository:
         return AIConversation.objects.filter(id=conversation_id, user=user).first()
 
     def get_all_for_user(self, *, user: User):
-        return AIConversation.objects.filter(user=user)
+        return (AIConversation.objects.filter(user=user).order_by("-updated_at"))
 
 
 class MessageRepository:

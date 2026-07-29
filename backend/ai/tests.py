@@ -781,7 +781,9 @@ class AIThrottleTests(APITestCase):
         mock_service.ask.return_value = {'conversation_id': '123', 'answer': 'Hi'}
         self.client.credentials(**_auth_header(self.user))
 
-        for _ in range(20):
+        # Default rate is 60/min — send 60 requests successfully, then
+        # verify the 61st is throttled.
+        for _ in range(60):
             response = self.client.post('/api/v1/ai/chat/', {'message': 'Hello'})
             self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 

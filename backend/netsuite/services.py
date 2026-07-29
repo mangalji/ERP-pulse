@@ -235,7 +235,7 @@ class NetSuiteDataService:
             params=params,
         )
 
-    def execute_suiteql(self, *, query: str, user: User) -> dict:
+    def execute_suiteql(self, *, query: str, user: User, limit: int | None = None, offset: int | None = None) -> dict:
         """
         Run a SuiteQL query for `user`'s connected NetSuite account.
 
@@ -246,7 +246,9 @@ class NetSuiteDataService:
         thing that actually talks to NetSuite.
         """
         client, connection = self._get_authenticated_client(user)
-        return self._call_and_track_health(connection, client.execute_suiteql, query=query)
+        return self._call_and_track_health(
+            connection, client.execute_suiteql, query=query, limit=limit, offset=offset,
+        )
 
     def _call_and_track_health(self, connection, client_method, **kwargs) -> dict:
         """
@@ -286,6 +288,200 @@ class NetSuiteDataService:
         if not NetSuiteRecordType.is_valid(item_type):
             raise ValueError(f"Invalid NetSuite item type: {item_type}")
         return self.get_records(record_type=item_type, user=user, limit=limit, offset=offset)
+
+    # -----------------------------------------------------------------
+    # SuiteQL-based list methods
+    #
+    # The plain REST record collection endpoint (get_customers() etc.
+    # above, via get_records()) returns only {id, links} per item —
+    # no business fields at all. This is documented NetSuite behavior,
+    # not a bug in this client: see "Listing All Record Instances" in
+    # Oracle's NetSuite REST API docs, which shows exactly this shape.
+    # Getting field data out of the plain collection endpoint requires
+    # fetching every record individually (N+1 — slow, and not what we
+    # want), so list pages use SuiteQL instead: one call, exact fields,
+    # no extra round trips.
+    #
+    # Field verification status:
+    # - customer/vendor id/entityid/companyname/email fields: already
+    #   verified against a live NetSuite sandbox (see analytics/services.py).
+    # - transaction id/tranid/entity/foreigntotal/trandate/type fields:
+    #   same — already verified in analytics/services.py.
+    # - employee, inventoryitem fields and BUILTIN.DF() usage below:
+    #   NOT yet verified against this project's NetSuite sandbox —
+    #   sourced from Oracle's official SuiteQL documentation and
+    #   confirmed community examples, but should be tested against a
+    #   real account and adjusted if any field name doesn't match.
+    # -----------------------------------------------------------------
+
+    def _list_via_suiteql(self, *, user: User, query: str, limit: int, offset: int) -> dict:
+        response = self.execute_suiteql(query=query, user=user, limit=limit, offset=offset)
+        return {
+            'items': response.get('items', []),
+            'totalResults': response.get('totalResults', 0),
+        }
+
+    def list_customers(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        raw = self._list_via_suiteql(
+            user=user, limit=limit, offset=offset,
+            query="""
+                SELECT id, entityid, companyname, email, phone, isinactive
+                FROM customer
+                ORDER BY id
+            """,
+        )
+        raw['items'] = [
+            {
+                'id': row.get('id'),
+                'entityId': row.get('entityid'),
+                'companyName': row.get('companyname'),
+                'email': row.get('email'),
+                'phone': row.get('phone'),
+                'status': 'Inactive' if row.get('isinactive') == 'T' else 'Active',
+            }
+            for row in raw['items']
+        ]
+        return raw
+
+    def list_vendors(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        raw = self._list_via_suiteql(
+            user=user, limit=limit, offset=offset,
+            query="""
+                SELECT id, entityid, companyname, email, phone, isinactive
+                FROM vendor
+                ORDER BY id
+            """,
+        )
+        raw['items'] = [
+            {
+                'id': row.get('id'),
+                'entityId': row.get('entityid'),
+                'companyName': row.get('companyname'),
+                'email': row.get('email'),
+                'phone': row.get('phone'),
+                'status': 'Inactive' if row.get('isinactive') == 'T' else 'Active',
+            }
+            for row in raw['items']
+        ]
+        return raw
+
+    def list_employees(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        raw = self._list_via_suiteql(
+            user=user, limit=limit, offset=offset,
+            query="""
+                SELECT id, entityid, firstname, lastname, email, title,
+                       BUILTIN.DF(department) AS department
+                FROM employee
+                ORDER BY id
+            """,
+        )
+        raw['items'] = [
+            {
+                'id': row.get('id'),
+                'entityId': row.get('entityid'),
+                'firstName': row.get('firstname'),
+                'lastName': row.get('lastname'),
+                'email': row.get('email'),
+                'title': row.get('title'),
+                'department': row.get('department'),
+            }
+            for row in raw['items']
+        ]
+        return raw
+
+    def list_inventory_items(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        """
+        List inventory items via SuiteQL, falling back to the REST Record
+        API if SuiteQL fails (e.g. the inventoryitem table isn't accessible
+        for this account).
+
+        SuiteQL is preferred because it returns business fields
+        (displayname, cost, vendor) in a single call. The REST Record
+        collection endpoint only returns {id, links} per item — no usable
+        fields — so it's only used for the totalResults count.
+        """
+        try:
+            raw = self._list_via_suiteql(
+                user=user, limit=limit, offset=offset,
+                query="""
+                    SELECT id, itemid, displayname, cost,
+                           BUILTIN.DF(vendor) AS vendorname
+                    FROM inventoryitem
+                    ORDER BY id
+                """,
+            )
+            raw['items'] = [
+                {
+                    'id': row.get('id'),
+                    'itemId': row.get('itemid'),
+                    'displayName': row.get('displayname'),
+                    'vendorName': row.get('vendorname'),
+                    'cost': row.get('cost'),
+                    'type': 'Inventory Item',
+                }
+                for row in raw['items']
+            ]
+            return raw
+        except Exception as exc:
+            logger.warning(
+                'list_inventory_items SuiteQL failed for user %s — '
+                'falling back to REST API. Error: %s', user.id, exc,
+            )
+            # Fallback: REST Record collection endpoint — only {id, links}
+            # per item, but gives a valid totalResults count.
+            response = self.get_records(
+                record_type=NetSuiteRecordType.INVENTORY_ITEM,
+                user=user, limit=limit, offset=offset,
+            )
+            items = response.get('items', [])
+            return {
+                'items': [
+                    {
+                        'id': item.get('id'),
+                        'itemId': None,
+                        'displayName': None,
+                        'vendorName': None,
+                        'cost': None,
+                        'type': 'Inventory Item',
+                    }
+                    for item in items
+                ],
+                'totalResults': response.get('totalResults', len(items)),
+            }
+
+    def _list_transactions_via_suiteql(self, *, user: User, transaction_type: str, limit: int, offset: int) -> dict:
+        """Shared by sales orders/purchase orders/invoices — all live in NetSuite's single `transaction` table, discriminated by `type`."""
+        raw = self._list_via_suiteql(
+            user=user, limit=limit, offset=offset,
+            query=f"""
+                SELECT id, tranid, entity, BUILTIN.DF(entity) AS entityname,
+                       BUILTIN.DF(status) AS status, foreigntotal, trandate
+                FROM transaction
+                WHERE type = '{transaction_type}'
+                ORDER BY id
+            """,
+        )
+        raw['items'] = [
+            {
+                'id': row.get('id'),
+                'tranId': row.get('tranid'),
+                'entity': {'id': row.get('entity'), 'name': row.get('entityname')},
+                'status': row.get('status'),
+                'total': row.get('foreigntotal'),
+                'createdDate': row.get('trandate'),
+            }
+            for row in raw['items']
+        ]
+        return raw
+
+    def list_sales_orders(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        return self._list_transactions_via_suiteql(user=user, transaction_type='SalesOrd', limit=limit, offset=offset)
+
+    def list_purchase_orders(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        return self._list_transactions_via_suiteql(user=user, transaction_type='PurchOrd', limit=limit, offset=offset)
+
+    def list_invoices(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        return self._list_transactions_via_suiteql(user=user, transaction_type='CustInvc', limit=limit, offset=offset)
 
     def _require_connection(self, user: User):
         connection = self.repository.get_by_user(user)

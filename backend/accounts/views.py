@@ -34,6 +34,9 @@ from accounts.serializers import (
     VerifyLoginOTPSerializer,
     ResendLoginOTPSerializer,
     LoginActivitySerializer,
+    ForgotPasswordSerializer,
+    ResetPasswordSerializer,
+    VerifyProfileUpdateOTPSerializer,
 )
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
@@ -374,9 +377,9 @@ class LoginHistoryView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        activities = login_activity_repository.list_by_user(request.user)
-        count = len(activities)
-        page = activities[offset:offset + limit]
+        queryset = login_activity_repository.get_queryset_by_user(request.user)
+        count = queryset.count()
+        page = queryset[offset:offset + limit]
         return paginated_response(
             message="Login history fetched successfully.",
             results=LoginActivitySerializer(page, many=True).data,
@@ -399,7 +402,6 @@ class ForgotPasswordView(APIView):
     throttle_classes = [RegisterOTPThrottle]
 
     def post(self, request):
-        from accounts.serializers import ForgotPasswordSerializer
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
@@ -428,7 +430,6 @@ class ResetPasswordView(APIView):
     throttle_classes = [RegisterOTPThrottle]
 
     def post(self, request):
-        from accounts.serializers import ResetPasswordSerializer
         serializer = ResetPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -472,7 +473,6 @@ class ProfileUpdateView(APIView):
     throttle_classes = [RegisterOTPThrottle]
 
     def post(self, request):
-        from accounts.serializers import VerifyProfileUpdateOTPSerializer
         serializer = VerifyProfileUpdateOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 

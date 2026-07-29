@@ -61,7 +61,7 @@ REST_FRAMEWORK = {
 
         "ai_chat": config(
             "THROTTLE_AI_CHAT",
-            default="20/min",
+            default="60/min",
         ),
 
         "dashboard": config(

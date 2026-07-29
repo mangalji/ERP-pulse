@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Soft limit on the serialised string length of a single tool result.
 # Beyond this, the result is truncated to avoid blowing the LLM context.
-MAX_RESULT_CHARS = 5_000
+MAX_RESULT_CHARS = 20000
 
 # Maximum number of items preserved from list-shaped results.
 MAX_LIST_ITEMS = 50

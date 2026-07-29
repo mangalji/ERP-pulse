@@ -7,10 +7,12 @@ Gemini, or Azure later means adding a new subclass here and changing
 which one AIService is constructed with; AIService itself never changes.
 """
 
+from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
-import json
 
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import requests
 from django.conf import settings
 
@@ -18,8 +20,40 @@ from ai.exceptions import AIProviderNotConfiguredException, AIProviderRequestExc
 
 logger = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT_SECONDS = 30
+CONNECT_TIMEOUT_SECONDS = 5
+READ_TIMEOUT_SECONDS = 30
+RETRYABLE_STATUS_CODES = (
+    429,
+    500,
+    502,
+    503,
+    504,
+)
 
+def build_session() -> requests.session:
+    """
+    Shared HTTP session with retry strategy.
+
+    Retries only transient failures.
+    """
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=1,
+        status_forcelist=RETRYABLE_STATUS_CODES,
+        allowed_methods=frozenset(["POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(
+        max_retries=retry,
+        pool_connections=10,
+        pool_maxsize=20,
+    )
+    session = requests.session()
+    session.mount("https://",adapter)
+    session.mount("http://",adapter)
+    return session
 
 class AIProvider(ABC):
     """Interface every AI provider must implement."""
@@ -43,6 +77,7 @@ class OpenAIProvider(AIProvider):
     """
 
     API_URL = 'https://api.openai.com/v1/chat/completions'
+    _session = build_session()
 
     def __init__(self):
         self.api_key = settings.OPENAI_API_KEY
@@ -59,24 +94,35 @@ class OpenAIProvider(AIProvider):
             messages.extend(history)
         messages.append({'role': 'user', 'content': user_prompt})
 
+        payload = {
+            "model":self.model,
+            "messages":messages,
+        }
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.API_URL,
-                headers={
-                    'Authorization': f'Bearer {self.api_key}',
-                    'Content-Type': 'application/json',
+                headers = {
+                    "Authorization" : f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
                 },
-                json={
-                    'model': self.model,
-                    'messages': messages,
-                },
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                json = payload,
+                timeout = (
+                    CONNECT_TIMEOUT_SECONDS,
+                    READ_TIMEOUT_SECONDS,
+                ),
             )
-        except requests.RequestException as exc:
+
+        except requests.Timeout as exc:
             logger.exception('OpenAI request failed (network error).')
             raise AIProviderRequestException(
-                'Could not reach the AI provider. Please try again.'
+                'Could not reach the AI provider. the AI porvider timed out.'
             ) from exc
+
+        except requests.ConnectionError as exc:
+            logger.exception("Unable to connect to OpenAI.")
+            raise AIProviderRequestException(
+                "Unable"
+            )
 
         if not response.ok:
             # Never log the request body (contains the user's question) or
@@ -96,92 +142,6 @@ class OpenAIProvider(AIProvider):
                 'Received an unexpected response from the AI provider.'
             ) from exc
 
-# class GeminiProvider(AIProvider):
-#     """
-#     Calls Google's Gemini REST API directly using requests.
-
-#     Uses the same provider abstraction as OpenAIProvider so AIService
-#     remains provider-agnostic.
-#     """
-#     API_URL = (
-#         "https://generativelanguage.googleapis.com/v1beta/models/"
-#         "{model}:generateContent?key={api_key}"
-#     )
-#     def __init__(self):
-#         self.api_key = settings.GEMINI_API_KEY
-#         self.model = settings.GEMINI_MODEL
-
-#     def generate_response(self,*,system_prompt:str,user_prompt:str,history: list[dict] | None=None,)-> str:
-
-#         if not self.api_key:
-#             raise AIProviderNotConfiguredException(
-#                 "GEMINI_API_KEY is not configured. Set it in the environment to enable AI responses."
-#             )
-
-#         prompt_parts = [
-#             f"System Instructions:\n{system_prompt}\n"
-#         ]
-
-#         if history:
-#             prompt_parts.append("Conversation History: ")
-
-#             for message in history:
-#                 role = message['role'].capitalize()
-#                 prompt_parts.append(f"{role}: {message['content']}")
-            
-#         prompt_parts.append(f"User: {user_prompt}")
-
-#         final_prompt = "\n\n".join(prompt_parts)
-
-#         try:
-#             response = requests.post(
-#                 self.API_URL.format(
-#                     model=self.model,
-#                     api_key=self.api_key,
-#                 ),
-#                 headers = {
-#                     "Content-Type":"application/json",
-#                 },
-#                 json={
-#                     "contents":[
-#                         {
-#                             "parts":[
-#                                 {
-#                                     "text":final_prompt,
-#                                 }
-#                             ]
-#                         }
-#                     ]
-#                 },
-#                 timeout=REQUEST_TIMEOUT_SECONDS,
-#             )
-#         except requests.RequestException as exc:
-#             logger.exception("Gemini request failed (network error).")
-#             raise AIProviderRequestException(
-#                 "Could not reach the AI provider. Please try again."
-#             ) from exc
-
-#         if not response.ok:
-#             logger.error("Gemini API returned %s.", response.status_code)
-
-#             raise AIProviderRequestException(
-#                 "The AI provider rejected the request. Please try again later."
-#             )
-        
-#         payload = response.json()
-
-#         try:
-#             return (
-#                 payload["candidates"][0]["content"]["parts"][0]["text"].strip()
-#             )
-
-#         except (KeyError, IndexError) as exc:
-#             logger.exception("Unexpected Gemini response shape.")
-
-#             raise AIProviderRequestException(
-#                 "Received an unexpected response from the AI provider."
-#             ) from exc
-
 class GeminiProvider(AIProvider):
     """
     Google Gemini implementation using the Gemini REST API.
@@ -200,22 +160,21 @@ class GeminiProvider(AIProvider):
         self.model = settings.GEMINI_MODEL
 
     def generate_response(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        history: list[dict] | None = None,
-    ) -> str:
+    self,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    history: list[dict] | None = None,
+) -> str:
 
         if not self.api_key:
             raise AIProviderNotConfiguredException(
                 "GEMINI_API_KEY is not configured."
             )
 
-        contents = []
+        contents: list[dict] = []
 
-        # System prompt (Gemini REST currently doesn't have a dedicated
-        # system role in this endpoint, so we send it as the first user turn.)
+        # Gemini REST conversation format
         contents.append(
             {
                 "role": "user",
@@ -224,7 +183,7 @@ class GeminiProvider(AIProvider):
                         "text": (
                             "System Instructions:\n"
                             f"{system_prompt}\n\n"
-                            "Always follow these instructions throughout the conversation."
+                            "Follow these instructions throughout the conversation."
                         )
                     }
                 ],
@@ -236,13 +195,12 @@ class GeminiProvider(AIProvider):
                 "role": "model",
                 "parts": [
                     {
-                        "text": "Understood. I will follow those instructions."
+                        "text": "Understood."
                     }
                 ],
             }
         )
 
-        # Previous conversation
         if history:
             for message in history:
 
@@ -263,7 +221,6 @@ class GeminiProvider(AIProvider):
                     }
                 )
 
-        # Current user message
         contents.append(
             {
                 "role": "user",
@@ -275,9 +232,19 @@ class GeminiProvider(AIProvider):
             }
         )
 
+        payload = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": 0.3,
+                "topP": 0.9,
+                "topK": 40,
+                "maxOutputTokens": 2048,
+            },
+        }
+
         try:
 
-            response = requests.post(
+            response = self._session.post(
                 self.API_URL.format(
                     model=self.model,
                     api_key=self.api_key,
@@ -285,32 +252,68 @@ class GeminiProvider(AIProvider):
                 headers={
                     "Content-Type": "application/json",
                 },
-                json={
-                    "contents": contents,
-                    "generationConfig": {
-                        "temperature": 0.3,
-                        "topP": 0.9,
-                        "topK": 40,
-                        "maxOutputTokens": 2048,
-                    },
-                },
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                json=payload,
+                timeout=(
+                    CONNECT_TIMEOUT_SECONDS,
+                    READ_TIMEOUT_SECONDS,
+                ),
             )
+
+        except requests.Timeout as exc:
+
+            logger.exception("Gemini request timed out.")
+
+            raise AIProviderRequestException(
+                "The AI provider timed out."
+            ) from exc
+
+        except requests.ConnectionError as exc:
+
+            logger.exception("Unable to connect to Gemini.")
+
+            raise AIProviderRequestException(
+                "Unable to reach the AI provider."
+            ) from exc
 
         except requests.RequestException as exc:
 
-            logger.exception(
-                "Gemini request failed (network error)."
+            logger.exception("Unexpected Gemini request failure.")
+
+            raise AIProviderRequestException(
+                "AI provider request failed."
+            ) from exc
+
+        if response.status_code == 401:
+
+            logger.error("Invalid Gemini API key.")
+
+            raise AIProviderRequestException(
+                "Gemini authentication failed."
+            )
+
+        if response.status_code == 429:
+
+            logger.warning("Gemini rate limit exceeded.")
+
+            raise AIProviderRequestException(
+                "The AI provider is currently busy. Please try again shortly."
+            )
+
+        if response.status_code >= 500:
+
+            logger.error(
+                "Gemini server error (%s).",
+                response.status_code,
             )
 
             raise AIProviderRequestException(
-                "Could not reach the AI provider. Please try again."
-            ) from exc
+                "The AI provider is temporarily unavailable."
+            )
 
         if not response.ok:
 
             logger.error(
-                "Gemini API returned %s.",
+                "Gemini returned HTTP %s.",
                 response.status_code,
             )
 
@@ -318,58 +321,59 @@ class GeminiProvider(AIProvider):
                 "The AI provider rejected the request."
             )
 
-        payload = response.json()
-
         try:
 
-            return (
-                payload["candidates"][0]["content"]["parts"][0]["text"]
-                .strip()
-            )
+            data = response.json()
 
-        except (KeyError, IndexError) as exc:
+        except ValueError as exc:
 
-            logger.exception(
-                "Unexpected Gemini response shape."
-            )
+            logger.exception("Invalid JSON received from Gemini.")
 
             raise AIProviderRequestException(
-                "Received an unexpected response from the AI provider."
+                "Invalid response received from the AI provider."
             ) from exc
 
-# def get_ai_provider() -> AIProvider:
-#     """
-#     Returns the configured AI provider.
+        candidates = data.get("candidates")
 
-#     AI_PROVIDER values:
-#     - gemini
-#     """
+        if not candidates:
 
-#     provider = settings.AI_PROVIDER.lower()
+            logger.error("Gemini response missing 'candidates'.")
 
-#     if provider == "gemini":
-#         return GeminiProvider()
+            raise AIProviderRequestException(
+                "Unexpected AI provider response."
+            )
 
-#     if provider == "openai":
-#         return OpenAIProvider()
+        content = candidates[0].get("content")
 
-#     raise AIProviderNotConfiguredException(
-#         f"Unsupported AI provider '{provider}'."
-#     )
+        if not content:
 
-# def get_ai_provider() -> AIProvider:
+            logger.error("Gemini response missing 'content'.")
 
-#     provider = settings.AI_PROVIDER.lower()
+            raise AIProviderRequestException(
+                "Unexpected AI provider response."
+            )
 
-#     if provider == "gemini":
-#         return GeminiProvider()
+        parts = content.get("parts")
 
-#     if provider == "openai":
-#         return OpenAIProvider()
+        if not parts:
 
-#     raise AIProviderNotConfiguredException(
-#         f"Unsupported AI provider '{provider}'."
-#     )
+            logger.error("Gemini response missing 'parts'.")
+
+            raise AIProviderRequestException(
+                "Unexpected AI provider response."
+            )
+
+        text = parts[0].get("text")
+
+        if not isinstance(text, str):
+
+            logger.error("Gemini response missing text.")
+
+            raise AIProviderRequestException(
+                "Unexpected AI provider response."
+            )
+
+        return text.strip()
 
 class AIProviderFactory:
 

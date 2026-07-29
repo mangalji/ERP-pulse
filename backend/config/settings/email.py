@@ -15,6 +15,7 @@ actual branching logic):
 """
 
 from decouple import config
+import os
 
 # ------------------------------------------------------------
 # Select Email Backend

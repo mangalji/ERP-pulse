@@ -107,7 +107,7 @@ class NetSuiteCustomersView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        customers = NetSuiteDataService().get_customers(user=request.user, offset=offset, limit=limit)
+        customers = NetSuiteDataService().list_customers(user=request.user, offset=offset, limit=limit)
         items = customers.get('items', [])
         total = customers.get('totalResults', len(items))
 
@@ -162,7 +162,7 @@ class NetSuiteEmployeesView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        employees = NetSuiteDataService().get_employees(user=request.user, offset=offset, limit=limit)
+        employees = NetSuiteDataService().list_employees(user=request.user, offset=offset, limit=limit)
         items = employees.get('items', [])
         total = employees.get('totalResults', len(items))
 
@@ -214,7 +214,7 @@ class NetSuiteVendorsView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        vendors = NetSuiteDataService().get_vendors(user=request.user, offset=offset, limit=limit)
+        vendors = NetSuiteDataService().list_vendors(user=request.user, offset=offset, limit=limit)
         items = vendors.get('items', [])
         total = vendors.get('totalResults', len(items))
 
@@ -270,7 +270,10 @@ class NetSuiteItemsView(APIView):
         limit = max(1, min(limit, 100))
 
         try:
-            items = NetSuiteDataService().get_items(user=request.user, item_type=item_type, offset=offset, limit=limit)
+            if item_type == NetSuiteRecordType.INVENTORY_ITEM:
+                items = NetSuiteDataService().list_inventory_items(user=request.user, offset=offset, limit=limit)
+            else:
+                items = NetSuiteDataService().get_items(user=request.user, item_type=item_type, offset=offset, limit=limit)
         except ValueError as e:
             raise ValidationError(str(e))
 
@@ -331,7 +334,7 @@ class NetSuiteSalesOrdersView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        sales_orders = NetSuiteDataService().get_sales_orders(user=request.user, offset=offset, limit=limit)
+        sales_orders = NetSuiteDataService().list_sales_orders(user=request.user, offset=offset, limit=limit)
         items = sales_orders.get('items', [])
         total = sales_orders.get('totalResults', len(items))
 
@@ -383,7 +386,7 @@ class NetSuitePurchaseOrderView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        purchase_orders = NetSuiteDataService().get_purchase_orders(user=request.user, offset=offset, limit=limit)
+        purchase_orders = NetSuiteDataService().list_purchase_orders(user=request.user, offset=offset, limit=limit)
         items = purchase_orders.get('items', [])
         total = purchase_orders.get('totalResults', len(items))
 
@@ -435,7 +438,7 @@ class NetSuiteInvoicesView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        invoices = NetSuiteDataService().get_invoices(user=request.user, offset=offset, limit=limit)
+        invoices = NetSuiteDataService().list_invoices(user=request.user, offset=offset, limit=limit)
         items = invoices.get('items', [])
         total = invoices.get('totalResults', len(items))
 

@@ -623,6 +623,130 @@ class NetSuiteDataServiceTests(TestCase):
         self.service.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=self.user)
         self.mock_repo.update_tokens.assert_called_once()
 
+    @patch('netsuite.services.NetSuiteAuthClient')
+    def test_list_customers_reshapes_suiteql_rows(self, MockClient):
+        """
+        Bug fix: the plain REST collection endpoint only returns
+        {id, links} per item (no business fields), which is why list
+        pages showed '--' for every column. list_customers() uses
+        SuiteQL instead and must reshape its lowercase raw column names
+        into the camelCase keys the frontend's columns config expects.
+        """
+        self.mock_repo.get_by_user.return_value = self._active_connection()
+        mock_client = MockClient.return_value
+        mock_client.execute_suiteql.return_value = {
+            'items': [
+                {'id': '1', 'entityid': 'CUST-001', 'companyname': 'Acme Corp',
+                 'email': 'a@acme.com', 'phone': '555-0100', 'isinactive': 'F'},
+                {'id': '2', 'entityid': 'CUST-002', 'companyname': 'Beta LLC',
+                 'email': 'b@beta.com', 'phone': '555-0200', 'isinactive': 'T'},
+            ],
+            'totalResults': 2,
+        }
+
+        result = self.service.list_customers(user=self.user, limit=20, offset=0)
+
+        self.assertEqual(result['totalResults'], 2)
+        self.assertEqual(result['items'][0], {
+            'id': '1', 'entityId': 'CUST-001', 'companyName': 'Acme Corp',
+            'email': 'a@acme.com', 'phone': '555-0100', 'status': 'Active',
+        })
+        self.assertEqual(result['items'][1]['status'], 'Inactive')
+        # limit/offset must reach the client call (pagination actually works)
+        mock_client.execute_suiteql.assert_called_once()
+        self.assertEqual(mock_client.execute_suiteql.call_args.kwargs['limit'], 20)
+        self.assertEqual(mock_client.execute_suiteql.call_args.kwargs['offset'], 0)
+
+    @patch('netsuite.services.NetSuiteAuthClient')
+    def test_list_vendors_reshapes_suiteql_rows(self, MockClient):
+        self.mock_repo.get_by_user.return_value = self._active_connection()
+        mock_client = MockClient.return_value
+        mock_client.execute_suiteql.return_value = {
+            'items': [{'id': '10', 'entityid': 'VEND-001', 'companyname': 'Supplier Co',
+                       'email': 's@supplier.com', 'phone': '555-0300', 'isinactive': 'F'}],
+            'totalResults': 1,
+        }
+
+        result = self.service.list_vendors(user=self.user)
+
+        self.assertEqual(result['items'][0]['companyName'], 'Supplier Co')
+        self.assertEqual(result['items'][0]['status'], 'Active')
+
+    @patch('netsuite.services.NetSuiteAuthClient')
+    def test_list_employees_reshapes_suiteql_rows(self, MockClient):
+        self.mock_repo.get_by_user.return_value = self._active_connection()
+        mock_client = MockClient.return_value
+        mock_client.execute_suiteql.return_value = {
+            'items': [{'id': '5', 'entityid': 'EMP-001', 'firstname': 'Jane',
+                       'lastname': 'Doe', 'email': 'jane@example.com',
+                       'title': 'Accountant', 'department': 'Finance'}],
+            'totalResults': 1,
+        }
+
+        result = self.service.list_employees(user=self.user)
+
+        self.assertEqual(result['items'][0], {
+            'id': '5', 'entityId': 'EMP-001', 'firstName': 'Jane', 'lastName': 'Doe',
+            'email': 'jane@example.com', 'title': 'Accountant', 'department': 'Finance',
+        })
+
+    @patch('netsuite.services.NetSuiteAuthClient')
+    def test_list_inventory_items_reshapes_suiteql_rows(self, MockClient):
+        self.mock_repo.get_by_user.return_value = self._active_connection()
+        mock_client = MockClient.return_value
+        mock_client.execute_suiteql.return_value = {
+            'items': [{'id': '7', 'itemid': 'ITEM-001', 'displayname': 'Widget',
+                       'cost': '12.5', 'vendorname': 'Supplier Co'}],
+            'totalResults': 1,
+        }
+
+        result = self.service.list_inventory_items(user=self.user)
+
+        self.assertEqual(result['items'][0], {
+            'id': '7', 'itemId': 'ITEM-001', 'displayName': 'Widget',
+            'vendorName': 'Supplier Co', 'cost': '12.5', 'type': 'Inventory Item',
+        })
+
+    @patch('netsuite.services.NetSuiteAuthClient')
+    def test_list_sales_orders_reshapes_suiteql_rows_and_filters_by_type(self, MockClient):
+        self.mock_repo.get_by_user.return_value = self._active_connection()
+        mock_client = MockClient.return_value
+        mock_client.execute_suiteql.return_value = {
+            'items': [{'id': '100', 'tranid': 'SO-001', 'entity': '1',
+                       'entityname': 'Acme Corp', 'status': 'Pending Fulfillment',
+                       'foreigntotal': '2500.00', 'trandate': '2026-06-01'}],
+            'totalResults': 1,
+        }
+
+        result = self.service.list_sales_orders(user=self.user)
+
+        self.assertEqual(result['items'][0], {
+            'id': '100', 'tranId': 'SO-001',
+            'entity': {'id': '1', 'name': 'Acme Corp'},
+            'status': 'Pending Fulfillment', 'total': '2500.00', 'createdDate': '2026-06-01',
+        })
+        self.assertIn("type = 'SalesOrd'", mock_client.execute_suiteql.call_args.kwargs['query'])
+
+    @patch('netsuite.services.NetSuiteAuthClient')
+    def test_list_purchase_orders_filters_by_type(self, MockClient):
+        self.mock_repo.get_by_user.return_value = self._active_connection()
+        mock_client = MockClient.return_value
+        mock_client.execute_suiteql.return_value = {'items': [], 'totalResults': 0}
+
+        self.service.list_purchase_orders(user=self.user)
+
+        self.assertIn("type = 'PurchOrd'", mock_client.execute_suiteql.call_args.kwargs['query'])
+
+    @patch('netsuite.services.NetSuiteAuthClient')
+    def test_list_invoices_filters_by_type(self, MockClient):
+        self.mock_repo.get_by_user.return_value = self._active_connection()
+        mock_client = MockClient.return_value
+        mock_client.execute_suiteql.return_value = {'items': [], 'totalResults': 0}
+
+        self.service.list_invoices(user=self.user)
+
+        self.assertIn("type = 'CustInvc'", mock_client.execute_suiteql.call_args.kwargs['query'])
+
 
 # ===================================================================
 # View Tests
@@ -704,7 +828,7 @@ class NetSuiteViewTests(APITestCase):
     @patch('netsuite.views.NetSuiteDataService')
     def test_customers_view(self, MockDataService):
         mock_ns = MockDataService.return_value
-        mock_ns.get_customers.return_value = {'items': [], 'totalResults': 0}
+        mock_ns.list_customers.return_value = {'items': [], 'totalResults': 0}
  
         self.client.credentials(**_auth_header(self.user))
         response = self.client.get('/api/v1/netsuite/customers/')
@@ -724,7 +848,7 @@ class NetSuiteViewTests(APITestCase):
     @patch('netsuite.views.NetSuiteDataService')
     def test_invoices_view(self, MockDataService):
         mock_ns = MockDataService.return_value
-        mock_ns.get_invoices.return_value = {'items': [], 'totalResults': 0}
+        mock_ns.list_invoices.return_value = {'items': [], 'totalResults': 0}
  
         self.client.credentials(**_auth_header(self.user))
         response = self.client.get('/api/v1/netsuite/invoices/')

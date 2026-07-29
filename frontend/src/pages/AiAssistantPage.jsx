@@ -5,6 +5,7 @@ import ChatInput from '../components/chat/ChatInput.jsx'
 import ChatEmptyState from '../components/chat/ChatEmptyState.jsx'
 import LoadingBubble from '../components/chat/LoadingBubble.jsx'
 import ConversationList from '../components/chat/ConversationList.jsx'
+import SuggestedPrompts from '../components/chat/SuggestedPrompts.jsx'
 import { suggestedPrompts, businessPrompts } from '../constants/dummyData.js'
 import { aiApi } from '../services/ai.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
@@ -164,8 +165,8 @@ export default function AiAssistantPage() {
   }
 
   return (
-    <DashboardLayout title="AI Assistant">
-      <div className="flex h-[calc(100vh-8rem)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)]">
+    <DashboardLayout title="AI Assistant" fullHeight>
+      <div className="flex h-full overflow-hidden bg-[var(--color-canvas)]">
         <ConversationList
           conversations={conversations}
           activeId={activeConversationId}
@@ -176,7 +177,7 @@ export default function AiAssistantPage() {
           onRetry={loadHistory}
         />
         <div className="flex flex-1 flex-col min-w-0">
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-6">
+          <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-3">
             {messagesError ? (
               <ErrorState
                 message={messagesError}
@@ -187,6 +188,9 @@ export default function AiAssistantPage() {
             )}
           </div>
           <div className="bg-[var(--color-surface)]">
+            <div className="border-t border-[var(--color-border)] px-4 pt-3 pb-1">
+              <SuggestedPrompts prompts={[...suggestedPrompts, ...businessPrompts]} onSelect={handleSend} />
+            </div>
             <ChatInput ref={chatInputRef} onSend={handleSend} disabled={isThinking || isLoadingMessages} />
           </div>
         </div>
