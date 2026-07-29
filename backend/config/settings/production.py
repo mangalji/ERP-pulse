@@ -22,6 +22,15 @@ DATABASES = {
 # Render Dashboard > Environment tab.
 # ------------------------------------------------------------------
 
+# Cross-site cookie auth for Vercel frontend → Render backend:
+# SameSite=None + Secure=True is required so the browser attaches
+# httpOnly access/refresh cookies on cross-origin API calls.
+# Without this, /auth/me/ (and token refresh) fail with 403 because
+# the cookie is never sent by the browser.
+import os
+JWT_AUTH_COOKIE_SAMESITE = os.environ.get("JWT_AUTH_COOKIE_SAMESITE", "None")
+JWT_AUTH_COOKIE_SECURE = os.environ.get("JWT_AUTH_COOKIE_SECURE", "True").lower() in ("true", "1", "yes")
+
 # Redirect all HTTP to HTTPS
 SECURE_SSL_REDIRECT = True
 
@@ -36,5 +45,3 @@ CSRF_COOKIE_SECURE = True
 
 # Strict referrer policy for production
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
-JWT_AUTH_COOKIE_SAMESITE = "None"
-JWT_AUTH_COOKIE_SECURE = True

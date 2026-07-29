@@ -43,6 +43,11 @@ apiClient.interceptors.response.use(
     const isAuthEndpoint = original.url.includes('/auth/')
     const is401 = error.response?.status === 401
 
+    // Attach the backend's error response so unwrap-like logic works
+    if (error.response?.data) {
+      error.payload = error.response.data
+    }
+
     if (!is401 || isAuthEndpoint) return Promise.reject(error)
 
     if (isRefreshing) {
