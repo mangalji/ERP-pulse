@@ -6,9 +6,17 @@ const FORMATTERS = {
   score: (v) => `${v}/100`,
 }
 
+function formatValue(value, format) {
+  // Handle null, undefined, NaN - show placeholder like other components
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return '--'
+  }
+  return (FORMATTERS[format] ?? FORMATTERS.number)(value)
+}
+
 export default function KpiCard({ label, value, delta, format = 'number' }) {
   const isPositive = delta >= 0
-  const formatted = (FORMATTERS[format] ?? FORMATTERS.number)(value)
+  const formatted = formatValue(value, format)
 
   return (
     <Card className="p-5">
