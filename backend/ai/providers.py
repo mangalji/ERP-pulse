@@ -154,6 +154,7 @@ class GeminiProvider(AIProvider):
         "https://generativelanguage.googleapis.com/v1beta/models/"
         "{model}:generateContent?key={api_key}"
     )
+    _session = build_session()
 
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
