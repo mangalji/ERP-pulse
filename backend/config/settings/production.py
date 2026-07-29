@@ -36,3 +36,5 @@ CSRF_COOKIE_SECURE = True
 
 # Strict referrer policy for production
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+JWT_AUTH_COOKIE_SAMESITE = "None"
+JWT_AUTH_COOKIE_SECURE = True
