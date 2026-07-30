@@ -40,7 +40,7 @@ apiClient.interceptors.response.use(
     const original = error.config
     if (!original || original._retry) return Promise.reject(error)
 
-    const isAuthEndpoint = original.url.includes('/auth/')
+    const isRefreshEndPoint = original.url.includes('/auth/token/refresh/')
     const is401 = error.response?.status === 401
 
     // Attach the backend's error response so unwrap-like logic works
@@ -48,7 +48,7 @@ apiClient.interceptors.response.use(
       error.payload = error.response.data
     }
 
-    if (!is401 || isAuthEndpoint) return Promise.reject(error)
+    if (!is401 || isRefreshEndPoint) return Promise.reject(error)
 
     if (isRefreshing) {
       return new Promise((resolve, reject) => {

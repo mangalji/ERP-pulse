@@ -49,5 +49,5 @@ TEST_DATABASE = {
 
 
 PRODUCTION_DATABASE = dj_database_url.config(
-    default=config("DATABASE_URL")
+    default=config("DATABASE_URL",default="")
 )
