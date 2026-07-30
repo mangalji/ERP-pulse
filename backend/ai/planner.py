@@ -194,9 +194,25 @@ class Planner:
         If parsing fails at any level, returns an empty plan so the
         caller can fall back gracefully rather than crash.
         """
+        # Step 0: Strip markdown code fences. LLMs (Gemini in particular)
+        # very commonly wrap JSON output in ```json ... ``` or ``` ... ```
+        # even when explicitly told to output only JSON — without this,
+        # json.loads() below throws on essentially every response that
+        # includes fences, silently discarding the entire capability
+        # pipeline in favor of the fallback on what is the common case,
+        # not an edge case.
+        cleaned = raw.strip()
+        if cleaned.startswith('```'):
+            cleaned = cleaned[3:]
+            if cleaned.lower().startswith('json'):
+                cleaned = cleaned[4:]
+            if cleaned.endswith('```'):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+
         # Step 1: Parse JSON.
         try:
-            payload = json.loads(raw)
+            payload = json.loads(cleaned)
         except json.JSONDecodeError:
             logger.warning("Planner received malformed JSON: %.200s", raw)
             return ExecutionPlan(original_question=question)

@@ -117,6 +117,7 @@ PLANNER_SYSTEM_PROMPT = (
     "- Decide which tools are relevant. Most questions need 1-3 tools.\n"
     "- For each tool, provide the exact parameters matching its schema.\n"
     "- Output ONLY valid JSON in the format below. No explanations, no greetings.\n"
+    "no markdown code fences (no ```), just the raw JSON object.\n"
     "- If no tool is relevant, output {\"tools\": []}.\n"
     "- Never fabricate data, never answer the question, never calculate.\n\n"
     "Output format:\n"
