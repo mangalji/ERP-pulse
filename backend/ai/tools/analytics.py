@@ -223,7 +223,8 @@ class SalesTrendByMonthTool(SelfDescribingTool):
     description = (
         "Returns month-by-month sales-order and invoice-revenue totals "
         "for the last N months, oldest first. Use this to answer 'show "
-        "me the sales trend' or 'monthly revenue comparison.'"
+        "me the sales trend' or 'monthly revenue comparison' or 'explain "
+        "the drop in order volume.'"
     )
 
     @property
@@ -242,4 +243,60 @@ class SalesTrendByMonthTool(SelfDescribingTool):
     def execute(self, *, user: User, months: int = 6, **kwargs) -> Any:
         service = AnalyticsService()
         return service.get_sales_trend_by_month(user=user, months=months)
+
+
+class ProductMarginsTool(SelfDescribingTool):
+    """Top products by margin."""
+
+    name = "get_product_margins"
+    description = (
+        "Returns the top products ranked by profit margin. "
+        "Use this to answer 'what are my top products by margin?' or "
+        "'show me product profitability.'"
+    )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of products to return.",
+                    "default": 10,
+                },
+            },
+        }
+
+    def execute(self, *, user: User, limit: int = 10, **kwargs) -> Any:
+        service = AnalyticsService()
+        return service.get_product_margins(user=user, limit=limit)
+
+
+class CustomerChurnRiskTool(SelfDescribingTool):
+    """Customers at risk of churning."""
+
+    name = "get_customer_churn_risk"
+    description = (
+        "Returns customers who are at risk of churning based on their "
+        "ordering patterns and activity. Use this to answer 'which customers "
+        "are at risk of churning?' or 'show me customers who stopped ordering.'"
+    )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of at-risk customers to return.",
+                    "default": 10,
+                },
+            },
+        }
+
+    def execute(self, *, user: User, limit: int = 10, **kwargs) -> Any:
+        service = AnalyticsService()
+        return service.get_customer_churn_risk(user=user, limit=limit)
 

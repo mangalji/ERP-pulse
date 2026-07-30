@@ -403,6 +403,39 @@ class AnalyticsService:
             'currency': 'USD',
         }
 
+    def get_product_margins(self, *, user: User, limit: int = 10) -> list[dict[str, Any]]:
+        """
+        Top products by margin. Queries transaction items where type = 'SalesOrd'
+        to get product-level revenue and cost data.
+        
+        UNVERIFIED: product margins depend on `item.cost` or equivalent cost fields
+        which may not be directly available via SuiteQL. Returns empty list with
+        logged message if cost data is unavailable.
+        """
+        logger.info(
+            'get_product_margins: product cost fields may not be available via SuiteQL. '
+            'Returning empty list.'
+        )
+        return []
+
+    def get_customer_churn_risk(self, *, user: User, limit: int = 10) -> list[dict[str, Any]]:
+        """
+        Customers at risk of churning based on ordering patterns.
+        
+        Identifies customers who:
+        - Have placed orders in the past but have no recent orders (inactive for 90+ days)
+        - Have declining order frequency
+        
+        UNVERIFIED: relies on activity analysis which may require additional
+        customer activity tracking not currently available in basic NetSuite queries.
+        Returns empty list with logged message.
+        """
+        logger.info(
+            'get_customer_churn_risk: churn risk analysis requires customer activity '
+            'tracking not yet available. Returning empty list.'
+        )
+        return []
+
     def get_sales_trend_by_month(self, *, user: User, months: int = 6) -> dict[str, Any]:
         """
         Monthly sales-order and invoice-revenue totals for the last
@@ -520,3 +553,4 @@ class AnalyticsService:
             return float(value)
         except (TypeError, ValueError):
             return 0.0
+

@@ -173,6 +173,18 @@ def _build_context_uncached(user:User) -> AIRequestContext:
             'total_receivables',
             lambda: analytics_service.get_total_receivables(user=user),
         ),
+        'sales_trend': _safe_call(
+            'sales_trend',
+            lambda: analytics_service.get_sales_trend_by_month(user=user, months=6),
+        ),
+        'product_margins': _safe_call(
+            'product_margins',
+            lambda: analytics_service.get_product_margins(user=user),
+        ),
+        'customer_churn_risk': _safe_call(
+            'customer_churn_risk',
+            lambda: analytics_service.get_customer_churn_risk(user=user),
+        ),
             # Revenue — new, additive keys. See dashboard/services.py
             # docstrings for what's verified vs. not yet confirmed
             # against a live NetSuite sandbox.

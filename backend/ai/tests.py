@@ -139,6 +139,9 @@ class ContextBuilderTests(TestCase):
          }
         mock_analytics.get_revenue_by_customer.return_value = [{'name': 'Acme', 'revenue': 9000.0}]
         mock_analytics.get_revenue_for_period.return_value = {'revenue': 5000.0, 'transaction_count': 2}
+        mock_analytics.get_sales_trend_by_month.return_value = {'trend': [], 'months': 6}
+        mock_analytics.get_product_margins.return_value = []
+        mock_analytics.get_customer_churn_risk.return_value = []
 
         context = build_context(self.user)
         self.assertTrue(context.netsuite_connected)
@@ -160,11 +163,17 @@ class ContextBuilderTests(TestCase):
         self.assertEqual(context.business_context.low_inventory, [])
         self.assertEqual(context.business_context.total_receivables['total_receivable'], 20000.0)
 
-        # New revenue fields — additive.
+        # New data fields — additive.
         self.assertEqual(context.business_context.top_customers_by_revenue,[{'name':'Acme','revenue':9000.0}],)
         self.assertEqual(context.business_context.revenue_this_month['revenue'],5000.0)
         self.assertEqual(context.business_context.revenue_last_month['revenue'],5000.0)
         self.assertEqual(context.business_context.revenue_this_fiscal_year['revenue'],5000.0)
+
+        # New analytics fields.
+        self.assertIsNotNone(context.business_context.sales_trend)
+        self.assertIsNotNone(context.business_context.product_margins)
+        self.assertIsNotNone(context.business_context.customer_churn_risk)
+
         # get_revenue_for_period is called three times (this month, last
         # month, this fiscal year) with distinct, non-overlapping ranges.
         call_ranges = [
@@ -221,6 +230,10 @@ class ContextBuilderTests(TestCase):
         mock_analytics.get_total_receivables.return_value = {}
         mock_analytics.get_revenue_by_customer.return_value = []
         mock_analytics.get_revenue_for_period.return_value = {}
+        mock_analytics.get_sales_trend_by_month.return_value = {}
+        mock_analytics.get_product_margins.return_value = []
+        mock_analytics.get_customer_churn_risk.return_value = []
+
 
         context = build_context(self.user)
 
@@ -261,6 +274,7 @@ class ContextBuilderTests(TestCase):
             'get_sales_summary', 'get_top_customers', 'get_overdue_invoices',
             'get_overdue_invoices_summary', 'get_inactive_vendors', 'get_low_inventory',
             'get_total_receivables', 'get_revenue_by_customer', 'get_revenue_for_period',
+            'get_sales_trend_by_month', 'get_product_margins', 'get_customer_churn_risk',
         ):
             getattr(mock_analytics, method).return_value = {}
 

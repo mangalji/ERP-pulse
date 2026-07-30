@@ -16,9 +16,11 @@ from typing import Any
 
 from accounts.models import User
 from ai.tools.analytics import (
+    CustomerChurnRiskTool,
     InactiveVendorsTool,
     OverdueInvoicesSummaryTool,
     OverdueInvoicesTool,
+    ProductMarginsTool,
     RevenueByCustomerTool,
     RevenueForPeriodTool,
     SalesSummaryTool,
@@ -49,6 +51,8 @@ TOOL_CLASSES = (
     OverdueInvoicesSummaryTool,
     InactiveVendorsTool,
     SalesTrendByMonthTool,
+    ProductMarginsTool,
+    CustomerChurnRiskTool,
     # Dashboard
     DashboardSummaryTool,
     RecentSalesOrdersTool,

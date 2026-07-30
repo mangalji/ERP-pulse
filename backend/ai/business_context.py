@@ -45,6 +45,10 @@ class BusinessContext:
     revenue_last_month: Optional[dict] = None
     revenue_this_fiscal_year: Optional[dict] = None
 
+    sales_trend: Optional[dict] = None
+    product_margins: Optional[dict] = None
+    customer_churn_risk: Optional[dict] = None
+
     def as_dict(self) -> dict[str,Any]:
         """For ai/prompts.py's json.dumps(...) call — same shape the old bare dict had."""
         return asdict(self)
