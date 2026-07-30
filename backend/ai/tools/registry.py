@@ -25,6 +25,7 @@ from ai.tools.analytics import (
     RevenueForPeriodTool,
     SalesSummaryTool,
     SalesTrendByMonthTool,
+    SalesTrendByWeekTool,
     TopCustomersTool,
     TotalReceivablesTool,
 )

@@ -223,8 +223,7 @@ class SalesTrendByMonthTool(SelfDescribingTool):
     description = (
         "Returns month-by-month sales-order and invoice-revenue totals "
         "for the last N months, oldest first. Use this to answer 'show "
-        "me the sales trend' or 'monthly revenue comparison' or 'explain "
-        "the drop in order volume.'"
+        "me the sales trend' or 'monthly revenue comparison.'"
     )
 
     @property
@@ -243,6 +242,36 @@ class SalesTrendByMonthTool(SelfDescribingTool):
     def execute(self, *, user: User, months: int = 6, **kwargs) -> Any:
         service = AnalyticsService()
         return service.get_sales_trend_by_month(user=user, months=months)
+
+class SalesTrendByWeekTool(SelfDescribingTool):
+    """Weekly sales-order and invoice-revenue trend."""
+
+    name = "get_sales_trend_by_week"
+    description = (
+        "Returns week-by-week sales-order and invoice-revenue totals "
+        "for the last N weeks, oldest first. Use this to answer 'what "
+        "happened last week' or 'explain the drop in order volume' or "
+        "'weekly sales comparison.' Prefer this tool over "
+        "get_sales_trend_by_month when the user asks about weekly data, "
+        "recent drops, or last-week patterns."
+    )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "weeks": {
+                    "type": "integer",
+                    "description": "Number of weeks to include (1-12).",
+                    "default": 4,
+                },
+            },
+        }
+
+    def execute(self, *, user: User, weeks: int = 4, **kwargs) -> Any:
+        service = AnalyticsService()
+        return service.get_sales_trend_by_week(user=user, weeks=weeks)
 
 
 class ProductMarginsTool(SelfDescribingTool):

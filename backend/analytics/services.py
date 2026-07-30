@@ -500,6 +500,63 @@ class AnalyticsService:
             ORDER BY period
         """
 
+    def get_sales_trend_by_week(self, *, user: User, weeks: int = 4) -> dict[str, Any]:
+        """
+        Weekly sales-order and invoice-revenue totals for the last
+        `weeks` weeks, oldest first — useful for answering "what happened
+        last week" or "explain the drop in order volume."
+
+        Returns the same shape as get_sales_trend_by_month but with
+        `period` values in 'IYYY-IW' (ISO week) format instead of 'YYYY-MM'.
+
+        UNVERIFIED: the week-grouping construct has not been confirmed
+        against a live NetSuite sandbox.
+        """
+        DEFAULT_WEEKS = 4
+        MAX_WEEKS = 12
+
+        weeks = self._safe_int(weeks, default=DEFAULT_WEEKS)
+        weeks = max(1, min(weeks, MAX_WEEKS))
+
+        so_rows = self._execute(query=self._weekly_query('SalesOrd', weeks), user=user)
+        invoice_rows = self._execute(query=self._weekly_query('CustInvc', weeks), user=user)
+
+        so_by_period = {row.get('period'): row for row in so_rows if row.get('period')}
+        invoice_by_period = {row.get('period'): row for row in invoice_rows if row.get('period')}
+
+        periods = sorted(set(so_by_period) | set(invoice_by_period))
+
+        trend = [
+            {
+                'period': period,
+                'sales_orders_total': round(self._safe_float(so_by_period.get(period, {}).get('revenue')), 2),
+                'sales_orders_count': self._safe_int(so_by_period.get(period, {}).get('row_count'), default=0),
+                'invoice_revenue_total': round(self._safe_float(invoice_by_period.get(period, {}).get('revenue')), 2),
+                'invoice_count': self._safe_int(invoice_by_period.get(period, {}).get('row_count'), default=0),
+            }
+            for period in periods
+        ]
+
+        return {
+            'weeks': weeks,
+            'currency': 'USD',
+            'trend': trend,
+        }
+
+    @staticmethod
+    def _weekly_query(transaction_type: str, weeks: int) -> str:
+        return f"""
+            SELECT
+                TO_CHAR(trandate, 'IYYY-IW') AS period,
+                SUM(foreigntotal) AS revenue,
+                COUNT(*) AS row_count
+            FROM transaction
+            WHERE type = '{transaction_type}'
+                AND trandate >= TRUNC(SYSDATE, 'IW') - ({weeks} * 7)
+            GROUP BY TO_CHAR(trandate, 'IYYY-IW')
+            ORDER BY period
+        """
+
     def _execute(self, *, query: str, user: User) -> list[dict[str, Any]]:
         response = self.netsuite_data_service.execute_suiteql(query=query, user=user)
         return response.get('items', [])
