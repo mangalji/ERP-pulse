@@ -92,6 +92,12 @@ class OTPRepository:
         otp.is_used = True
         otp.save(update_fields=['is_used', 'updated_at'])
         return otp
+
+    def increment_attempt_count(self,otp:OTP) -> OTP:
+        """Increment the wrong-guess counter on a specific OTP instance and persist it."""
+        otp.attempt_count += 1
+        otp.save(update_fields=['attempt_count','updated_at'])
+        return otp
     
 class LoginActivityRepository:
     """

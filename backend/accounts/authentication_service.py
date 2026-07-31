@@ -287,16 +287,6 @@ class AuthenticationService:
             user.last_name = last_name
             update_fields.append('last_name')
         if mobile_number is not None:
-            # Normalize empty string to None before anything else — '' is
-            # not the same as "no mobile number" at the database level.
-            # mobile_number has a unique constraint, so saving raw ''
-            # (instead of NULL) means the *second* user who clears their
-            # mobile number hits a real, uncaught IntegrityError here
-            # (confirmed by reproducing it) — NULL is exempt from a
-            # unique constraint in Postgres, '' is not. Mirrors the same
-            # normalization UserRepository.create_verified_user() already
-            # does for the registration path.
-            mobile_number = mobile_number or None
             # Check uniqueness if a new mobile number is provided
 
             if mobile_number != user.mobile_number and mobile_number:
@@ -368,6 +358,7 @@ class AuthenticationService:
         or not — never reveal whether an email is registered
         (AUTHENTICATION_DESIGN.md, Section 10).
         """
+        emial = email.lower().strip()
         user = self.user_repository.get_by_email(email)
 
         if user is None:
@@ -377,43 +368,9 @@ class AuthenticationService:
             logger.info('Login OTP resend requested for unknown email=%s.', email)
             return {"email": email}
 
-        otp = self.otp_service.repository.get_latest_active_otp(
-            user=user,
-            purpose=OTP.Purpose.LOGIN,
-        )
-
-        if otp is None:
-            # Same principle: no active session means the OTP is "sent"
-            # from the caller's perspective.
-            logger.info('No active login OTP for user %s, returning generic response.', user.id)
-            return {"email": email}
-
-        seconds_since_last_send = (
-            timezone.now() - otp.created_at
-        ).total_seconds()
-
-        if seconds_since_last_send < constants.OTP_RESEND_COOLDOWN_SECONDS:
-            wait_seconds = int(
-                constants.OTP_RESEND_COOLDOWN_SECONDS
-                - seconds_since_last_send
-            )
-
-            raise ResendCooldownException(
-                f"Please wait {wait_seconds} more second(s) before requesting a new code."
-            )
-
-        # Invalidate previous OTP
-        # otp.is_used = True
-        # otp.save(update_fields=["is_used"])
-
-        # Reuse existing login OTP generation
-        self.otp_service.generate_and_send_otp(
-            user=user,
-            purpose=OTP.Purpose.LOGIN,
-        )
+        self.otp_service.generate_and_send_otp(user=user,purpose=OTP.Purpose.LOGIN)
 
         logger.info("Login OTP resent for user %s.", user.id)
-
         return {
             "email": email,
         }

@@ -250,13 +250,19 @@ class OTPServiceTests(TestCase):
 
     @patch('accounts.services.send_email')
     def test_generate_and_send_otp_invalidates_previous(self, mock_send_email):
-        OTP.objects.create(
+        old_otp = OTP.objects.create(
             user=self.user,
             otp_hash='old',
             purpose=OTP.Purpose.LOGIN,
             expires_at='2099-01-01T00:00:00Z',
             is_used=False,
         )
+        # Past the resend cooldown, so this call exercises "invalidates
+        # previous" rather than being blocked by the (separate, correct)
+        # cooldown check.
+        old_otp.created_at = timezone.now() - timedelta(seconds=61)
+        old_otp.save(update_fields=['created_at'])
+
         self.service.generate_and_send_otp(user=self.user, purpose=OTP.Purpose.LOGIN)
         self.assertEqual(OTP.objects.filter(user=self.user, purpose=OTP.Purpose.LOGIN, is_used=False).count(), 1)
 

@@ -1,6 +1,10 @@
 import logging
 from django.db import transaction
-from accounts.exceptions import OTPExpiredException, OTPMismatchException, OTPNotFoundException
+from accounts.exceptions import (
+    OTPExpiredException, OTPMismatchException, OTPNotFoundException,
+    MaxOTPAttemptsExceededException, ResendCooldownException
+    )
+from django.utils import timezone
 from accounts.models import OTP
 from accounts.repositories import OTPRepository
 from common.services.email_service import send_email
@@ -30,6 +34,16 @@ class OTPService:
         """
         Issue a new OTP for the given user/purpose.
 
+        Enforces OTP_RESEND_COOLDOWN_SECONDS against the previous active
+        OTP for this user/purpose (if any) before issuing — centralized
+        here, rather than duplicated per call site, so every purpose
+        (login, password reset, profile update, registration resend)
+        gets the same protection against rapid repeat sends without
+        each caller having to remember to check it. Registration itself
+        is the one exception: it isn't backed by a DB row yet at that
+        point, so its cooldown is enforced separately against the
+        cached session in AuthenticationService.
+
         Invalidates any prior active OTP of the same purpose, generates
         and hashes a new code, persists it, and emails the plaintext code
         to the user. Returns the saved OTP row (never the plaintext code —
@@ -41,6 +55,15 @@ class OTPService:
         the OTP record in the database is NOT rolled back — the user
         can request a resend without losing the just-issued code.
         """
+
+        existing_otp = self.repository.get_latest_active_otp(user=user,purpose=purpose)
+        if existing_otp is not None:
+            seconds_since_last_send = (timezone.now() - existing_otp.created_at).total_seconds()
+            if seconds_since_last_send < constants.OTP_RESEND_COOLDOWN_SECONDS:
+                wait_seconds = int(constants.OTP_RESEND_COOLDOWN_SECONDS - seconds_since_last_send)
+                raise ResendCooldownException(
+                    f"Please wait {wait_seconds} more second(s) before requesting new code."
+                )
         with transaction.atomic():
             self.repository.invalidate_previous_otps(user=user, purpose=purpose)
 
@@ -92,6 +115,10 @@ class OTPService:
 
         Raises:
             OTPNotFoundException: no active OTP exists for this user/purpose.
+            MaxOTPAttemptsExceededException: too many wrong guesses against
+                this OTP already (common.constants.MAX_OTP_ATTEMPTS) —
+                checked before expiry so a locked-out OTP reports as
+                locked, not merely expired, even if both are true.
             OTPExpiredException: the OTP exists but has expired.
             OTPMismatchException: the submitted code does not match.
         """
@@ -100,12 +127,18 @@ class OTPService:
             logger.warning('No active OTP found for user %s (purpose=%s).', user.id, purpose)
             raise OTPNotFoundException('No active verification code found. Please request a new one.')
 
+        if otp.attempt_count >=constants.MAX_OTP_ATTEMPTS:
+            logger.warning("OTP attempt limit reached for user %s (purpose=%s).",user.id, purpose)
+            raise MaxOTPAttemptsExceededException("Too many incorrect attempts. Please request a new code.")
+        
         if is_expired(otp.expires_at):
             logger.warning('Expired OTP verification attempt for user %s.', user.id)
             raise OTPExpiredException('This OTP has expired. Please request a new code.')
 
         if not verify_value(submitted_code, otp.otp_hash):
-            logger.warning('OTP mismatch for user %s (purpose=%s).', user.id, purpose)
+            new_attempt_count = self.repository.increment_attempt_count(otp).attempt_count
+
+            logger.warning('OTP mismatch for user %s (purpose=%s).', user.id, purpose, new_attempt_count, constants.MAX_OTP_ATTEMPTS)
             raise OTPMismatchException('The code you entered is incorrect. Please try again.')
 
         self.repository.mark_as_used(otp)

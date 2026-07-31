@@ -91,6 +91,12 @@ class OTP(models.Model):
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)
 
+    # Tracks wrong-code guesses against this specific OTP row. Checked
+    # against common.constants.MAX_OTP_ATTEMPTS in OTPService.verify_otp()
+    # — matches the attempt limit registration already enforced via its
+    # cache-based flow, extended here to login/password-reset/profile-update.
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
