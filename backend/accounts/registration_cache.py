@@ -37,7 +37,7 @@ def delete(email: str) -> None:
     cache.delete(_cache_key(email))
 
 
-def increment_attempt_count(email: str) -> int:
+def increment_attempt_count(email: str, *, timeout_seconds: int) -> int:
     """
     Atomically increment attempt_count in the cached registration data.
     
@@ -50,5 +50,5 @@ def increment_attempt_count(email: str) -> int:
     if pending is None:
         return 0
     pending['attempt_count'] += 1
-    cache.set(key, pending)
+    cache.set(key, pending, timeout=timeout_seconds)
     return pending['attempt_count']

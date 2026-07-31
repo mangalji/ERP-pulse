@@ -125,7 +125,7 @@ class AuthenticationService:
             raise OTPExpiredException('This OTP has expired. Please request a new code.')
 
         if not verify_value(otp_code, pending['otp_hash']):
-            new_attempt_count = registration_cache.increment_attempt_count(email)
+            new_attempt_count = registration_cache.increment_attempt_count(email, timeout_seconds=constants.REGISTRATION_SESSION_TTL_MINUTES * 60,)
             logger.warning(
                 'Registration OTP mismatch for email=%s (attempt %d/%d).',
                 email, new_attempt_count, constants.MAX_OTP_ATTEMPTS,
@@ -287,7 +287,18 @@ class AuthenticationService:
             user.last_name = last_name
             update_fields.append('last_name')
         if mobile_number is not None:
+            # Normalize empty string to None before anything else — '' is
+            # not the same as "no mobile number" at the database level.
+            # mobile_number has a unique constraint, so saving raw ''
+            # (instead of NULL) means the *second* user who clears their
+            # mobile number hits a real, uncaught IntegrityError here
+            # (confirmed by reproducing it) — NULL is exempt from a
+            # unique constraint in Postgres, '' is not. Mirrors the same
+            # normalization UserRepository.create_verified_user() already
+            # does for the registration path.
+            mobile_number = mobile_number or None
             # Check uniqueness if a new mobile number is provided
+
             if mobile_number != user.mobile_number and mobile_number:
                 if self.user_repository.mobile_number_exists(mobile_number):
                     raise UserAlreadyExistsException('This mobile number is already linked to another account.')
@@ -336,6 +347,7 @@ class AuthenticationService:
         Step 2 of login: verify the LOGIN OTP and return the authenticated
         User. Issues no token — that is a separate, later concern.
         """
+        email = email.lower().strip()
         user = self.user_repository.get_by_email(email)
         if user is None:
             raise InvalidCredentialsException('Invalid email or verification code.')
@@ -356,7 +368,6 @@ class AuthenticationService:
         or not — never reveal whether an email is registered
         (AUTHENTICATION_DESIGN.md, Section 10).
         """
-
         user = self.user_repository.get_by_email(email)
 
         if user is None:
