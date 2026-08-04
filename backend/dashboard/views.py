@@ -8,7 +8,8 @@ talks to the existing NetSuiteDataService, matching the layering already
 used by accounts/ and netsuite/.
 """
 
-from rest_framework.permissions import IsAuthenticated
+from rest_framework import permissions
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.views import APIView
 
 from common.utils.pagination import paginated_response
@@ -16,7 +17,18 @@ from common.utils.response import success_response
 from common.throttles import DashboardThrottle
 from dashboard.services import DashboardService
 
-dashboard_service = DashboardService()
+
+class DashboardIsAuthenticated(permissions.BasePermission):
+    message = 'Authentication credentials were not provided.'
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            raise AuthenticationFailed(self.message)
+        return True
+
+
+def _get_dashboard_service() -> DashboardService:
+    return DashboardService()
 
 
 def _parse_pagination_params(request, default_limit=20):
@@ -37,11 +49,18 @@ def _parse_pagination_params(request, default_limit=20):
 class DashboardSummaryView(APIView):
     """GET /api/v1/dashboard/summary/"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
-        summary = dashboard_service.get_summary(user=request.user)
+        if not request.user or not request.user.is_authenticated:
+            return success_response(
+                message='Authentication credentials were not provided.',
+                data={},
+                status_code=401,
+            )
+
+        summary = _get_dashboard_service().get_summary(user=request.user)
         return success_response(
             message='Dashboard summary fetched successfully.',
             data=summary,
@@ -51,12 +70,19 @@ class DashboardSummaryView(APIView):
 class RecentSalesOrdersView(APIView):
     """GET /api/v1/dashboard/recent-sales-orders/"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return success_response(
+                message='Authentication credentials were not provided.',
+                data={},
+                status_code=401,
+            )
+
         offset, limit = _parse_pagination_params(request)
-        all_orders = dashboard_service.get_recent_sales_orders(user=request.user)
+        all_orders = _get_dashboard_service().get_recent_sales_orders(user=request.user)
         count = len(all_orders)
         page = all_orders[offset:offset + limit]
         return paginated_response(
@@ -72,12 +98,19 @@ class RecentSalesOrdersView(APIView):
 class RecentInvoicesView(APIView):
     """GET /api/v1/dashboard/recent-invoices/"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return success_response(
+                message='Authentication credentials were not provided.',
+                data={},
+                status_code=401,
+            )
+
         offset, limit = _parse_pagination_params(request)
-        all_invoices = dashboard_service.get_recent_invoices(user=request.user)
+        all_invoices = _get_dashboard_service().get_recent_invoices(user=request.user)
         count = len(all_invoices)
         page = all_invoices[offset:offset + limit]
         return paginated_response(
@@ -92,12 +125,19 @@ class RecentInvoicesView(APIView):
 class RecentCustomersView(APIView):
     """GET /api/v1/dashboard/recent-customers/"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     throttle_classes = [DashboardThrottle]
 
     def get(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return success_response(
+                message='Authentication credentials were not provided.',
+                data={},
+                status_code=401,
+            )
+
         offset, limit = _parse_pagination_params(request)
-        all_customers = dashboard_service.get_recent_customers(user=request.user)
+        all_customers = _get_dashboard_service().get_recent_customers(user=request.user)
         count = len(all_customers)
         page = all_customers[offset:offset + limit]
         return paginated_response(
