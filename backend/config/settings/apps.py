@@ -22,8 +22,14 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
+    "core",
+    "tenancy",
+    "rbac",
+    "audit",
+    "notifications",
     "common",
     "accounts",
+    "invoice",
     "netsuite",
     "ai",
     "dashboard",
@@ -31,6 +37,7 @@ LOCAL_APPS = [
     "monitoring",
     "sync",
     "analytics",
+    "ocr"
 ]
 
 INSTALLED_APPS = (

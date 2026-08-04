@@ -20,17 +20,32 @@ class UserAdmin(DjangoUserAdmin):
         'first_name',
         'last_name',
         'mobile_number',
+        'company',
+        'designation',
+        'department',
         'is_active',
         'is_email_verified',
         'is_staff',
     )
-    list_filter = ('is_active', 'is_staff', 'is_email_verified')
-    search_fields = ('email', 'first_name', 'last_name', 'mobile_number')
+    list_filter = ('is_active', 'is_staff', 'is_email_verified', 'company')
+    search_fields = ('email', 'first_name', 'last_name', 'mobile_number', 'employee_id', 'designation', 'department')
     readonly_fields = ('id', 'created_at', 'updated_at', 'last_login', 'last_login_at')
 
     fieldsets = (
         (None, {'fields': ('id', 'email', 'password')}),
         ('Personal Info', {'fields': ('first_name', 'last_name', 'mobile_number')}),
+        (
+            'Company',
+            {
+                'fields': (
+                    'company',
+                    'employee_id',
+                    'designation',
+                    'department',
+                    'last_activity',
+                )
+            },
+        ),
         (
             'Permissions',
             {
@@ -60,6 +75,10 @@ class UserAdmin(DjangoUserAdmin):
                     'first_name',
                     'last_name',
                     'mobile_number',
+                    'company',
+                    'employee_id',
+                    'designation',
+                    'department',
                     'password1',
                     'password2',
                 ),

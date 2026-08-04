@@ -15,6 +15,7 @@ import InventoryPage from '../pages/InventoryPage.jsx'
 import SalesOrdersPage from '../pages/SalesOrdersPage.jsx'
 import PurchaseOrdersPage from '../pages/PurchaseOrdersPage.jsx'
 import InvoicesPage from '../pages/InvoicesPage.jsx'
+import InvoiceReaderPage from '../pages/InvoiceReaderPage.jsx'
 import ReportsPage from '../pages/ReportsPage.jsx'
 import HistoryPage from '../pages/HistoryPage.jsx'
 import ForgotPasswordPage from '../pages/auth/ForgotPasswordPage.jsx'
@@ -110,6 +111,14 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <InvoicesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/invoice-reader"
+        element={
+          <ProtectedRoute>
+            <InvoiceReaderPage />
           </ProtectedRoute>
         }
       />

@@ -20,6 +20,8 @@ from .rest_framework import *
 from .security import *
 from .logging import *
 from .cache import *
+from .ocr import *
+
 
 # ------------------------------------------------------------------
 # Paths
@@ -69,6 +71,8 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
 
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+
+    "tenancy.middleware.TenantMiddleware",
 
     "django.contrib.messages.middleware.MessageMiddleware",
 
@@ -170,6 +174,10 @@ STATICFILES_STORAGE = (
     "whitenoise.storage.CompressedManifestStaticFilesStorage"
 )
 
+MEDIA_URL = "media/"
+
+MEDIA_ROOT = BASE_DIR / "media"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AI_PROVIDER = config("AI_PROVIDER", default="gemini")
@@ -203,3 +211,16 @@ FIELD_ENCRYPTION_KEY = config(
 
 if DEBUG:
     TEMPLATES[0]["OPTIONS"]["debug"] = True
+
+# ------------------------------------------------------------------
+# Celery
+# ------------------------------------------------------------------
+
+CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes

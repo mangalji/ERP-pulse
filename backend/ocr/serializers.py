@@ -1,0 +1,68 @@
+"""
+Serializers for the OCR application.
+
+``UploadSerializer`` validates the incoming file (extension, size,
+MIME type). ``UploadResponseSerializer`` shapes the response data
+returned after a successful upload.
+"""
+
+from __future__ import annotations
+
+from rest_framework import serializers
+
+from ocr.exceptions import InvalidFileException
+from ocr.validators import validate_extension, validate_file_size, validate_mime_type
+
+
+class UploadSerializer(serializers.Serializer):
+    """
+    Validates the file field on POST /api/v1/ocr/upload/.
+
+    Delegates extension, size, and MIME-type checks to the reusable
+    validators in ``ocr.validators`` so the same rules can be applied
+    outside the request/serializer context (e.g. in service-layer
+    tests).
+    """
+
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        """
+        Validate the uploaded file's extension, size, and MIME type.
+
+        DRF calls this automatically for the ``file`` field. The method
+        is named ``validate_<field_name>`` per DRF convention.
+
+        ``InvalidFileException`` (a plain ``Exception`` subclass with a
+        ``status_code`` attribute) is caught and re-raised as a DRF
+        ``ValidationError`` so DRF includes it in
+        ``serializer.errors`` instead of propagating it as an unhandled
+        exception. The validators themselves stay framework-agnostic.
+        """
+        try:
+            validate_extension(value.name)
+            validate_file_size(value.size)
+            validate_mime_type(value.content_type)
+        except InvalidFileException as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        return value
+
+class UploadResponseSerializer(serializers.Serializer):
+    """
+    Serializes the response data returned after a successful upload.
+
+    Fields:
+        upload_id:  UUID of the created ``OCRUpload`` record.
+        status:     Lifecycle status (always ``UPLOADED`` in Phase 2).
+        filename:   Original filename the user supplied.
+        size:       File size in bytes.
+        extension:  Canonical file extension (e.g. ``pdf``).
+        file_hash:  SHA256 hash of the file content.
+    """
+
+    upload_id = serializers.UUIDField(source='id')
+    status = serializers.CharField()
+    filename = serializers.CharField(source='original_filename')
+    size = serializers.IntegerField(source='file_size')
+    extension = serializers.CharField()
+    file_hash = serializers.CharField()

@@ -5,6 +5,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 
 from accounts.managers import CustomUserManager
+from tenancy.models import Company
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -27,6 +28,22 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=150)
     mobile_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
     profile_pic = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
+
+    # Company relationship — one Company has many Users, a User belongs
+    # to one Company. Company can be NULL for platform-level users.
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='users',
+    )
+
+    # Employee metadata (optional)
+    employee_id = models.CharField(max_length=100, null=True, blank=True)
+    designation = models.CharField(max_length=150, null=True, blank=True)
+    department = models.CharField(max_length=150, null=True, blank=True)
+    last_activity = models.DateTimeField(null=True, blank=True)
 
     is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
