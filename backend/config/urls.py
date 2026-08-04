@@ -19,6 +19,7 @@ urlpatterns = [
     path('api/v1/reports/', include('reports.urls')),
     path('api/v1/monitoring/', include('monitoring.urls')),
     path('api/v1/sync/', include('sync.urls')),
-    path('api/v1/ocr/',include('ocr.urls')),
+    path('api/v1/ocr/', include('ocr.urls')),
     path('api/v1/invoice/', include('invoice.urls')),
+    path('api/v1/superadmin/', include('superadmin.urls')),
 ]

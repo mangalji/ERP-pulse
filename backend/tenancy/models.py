@@ -34,6 +34,8 @@ class Company(BaseModel):
     tenant-scoped data will reference this model.
     """
 
+    Status = CompanyStatus
+
     name = models.CharField(max_length=255, help_text="Display name of the client company.")
     code = models.CharField(max_length=50, unique=True, db_index=True, help_text="Unique immutable company identifier.")
     status = models.CharField(max_length=20,choices=CompanyStatus.choices,default=CompanyStatus.TRIAL,db_index=True)
