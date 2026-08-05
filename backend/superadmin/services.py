@@ -25,30 +25,60 @@ class SuperAdminService:
     """Business logic for AGSuite Super Admin operations."""
 
     def get_dashboard_summary(self):
-        company_qs = Company.objects.all()
-        module_qs = Module.objects.all()
-        plan_qs = Plan.objects.all()
-        session_qs = SupportSession.objects.all()
-        user_qs = User.objects.all()
+        company_summary = Company.objects.aggregate(
+            total=Count("id"),
+            active=Count("id", filter=Q(status=Company.Status.ACTIVE)),
+            suspended=Count("id", filter=Q(status=Company.Status.SUSPENDED)),
+            trial=Count("id", filter=Q(status=Company.Status.TRIAL)),
+        )
 
-        summary = {
-            'total_companies': company_qs.count(),
-            'active_companies': company_qs.filter(status=Company.Status.ACTIVE).count(),
-            'suspended_companies': company_qs.filter(status=Company.Status.SUSPENDED).count(),
-            'trial_companies': company_qs.filter(status=Company.Status.TRIAL).count(),
-            'total_agsuite_employees': user_qs.filter(company__isnull=True).count(),
-            'total_client_employees': user_qs.filter(company__isnull=False).count(),
-            'total_plans': plan_qs.count(),
-            'active_plans': plan_qs.filter(status=PlanStatus.ACTIVE).count(),
-            'total_support_sessions': session_qs.count(),
-            'active_support_sessions': session_qs.filter(status=SupportSessionStatus.ACTIVE).count(),
-            'total_modules': module_qs.count(),
-            'enabled_modules': module_qs.filter(is_active=True).count(),
-            'recent_company_registrations': list(
-                company_qs.order_by('-created_at')[:5].values('id', 'name', 'code', 'status', 'created_at')
+        user_summary = User.objects.aggregate(
+            agsuite=Count("id", filter=Q(company__isnull=True)),
+            client=Count("id", filter=Q(company__isnull=False)),
+        )
+
+        plan_summary = Plan.objects.aggregate(
+            total=Count("id"),
+            active=Count("id", filter=Q(status=PlanStatus.ACTIVE)),
+        )
+
+        support_summary = SupportSession.objects.aggregate(
+            total=Count("id"),
+            active=Count(
+                "id",
+                filter=Q(status=SupportSessionStatus.ACTIVE),
+            ),
+        )
+
+        module_summary = Module.objects.aggregate(
+            total=Count("id"),
+            enabled=Count("id", filter=Q(is_active=True)),
+        )
+
+        return {
+            "total_companies": company_summary["total"],
+            "active_companies": company_summary["active"],
+            "suspended_companies": company_summary["suspended"],
+            "trial_companies": company_summary["trial"],
+            "total_agsuite_employees": user_summary["agsuite"],
+            "total_client_employees": user_summary["client"],
+            "total_plans": plan_summary["total"],
+            "active_plans": plan_summary["active"],
+            "total_support_sessions": support_summary["total"],
+            "active_support_sessions": support_summary["active"],
+            "total_modules": module_summary["total"],
+            "enabled_modules": module_summary["enabled"],
+            "recent_company_registrations": list(
+                Company.objects.order_by("-created_at")
+                .values(
+                    "id",
+                    "name",
+                    "code",
+                    "status",
+                    "created_at",
+                )[:5]
             ),
         }
-        return summary
 
     def get_company_plan_history(self, company_id):
         return list(
@@ -67,7 +97,7 @@ class SuperAdminService:
                 'created_at',
             )
         )
-
+    @transaction.atomic
     def assign_plan(self, *, company_id, plan_id, status=None):
         company = get_object_or_404(Company, pk=company_id)
         plan = get_object_or_404(Plan, pk=plan_id)
@@ -99,7 +129,7 @@ class SuperAdminService:
             company_plan.save(update_fields=['start_date', 'status', 'end_date'])
 
         return company_plan
-
+    @transaction.atomic
     def upgrade_plan(self, *, company_id, plan_id):
         company = get_object_or_404(Company, pk=company_id)
         plan = get_object_or_404(Plan, pk=plan_id)
@@ -113,6 +143,7 @@ class SuperAdminService:
     def downgrade_plan(self, *, company_id, plan_id):
         return self.assign_plan(company_id=company_id, plan_id=plan_id, status=CompanyPlanStatus.TRIAL)
 
+    @transaction.atomic
     def cancel_plan(self, *, company_id):
         company = get_object_or_404(Company, pk=company_id)
         company_plan = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
@@ -122,7 +153,7 @@ class SuperAdminService:
         company_plan.end_date = timezone.now().date()
         company_plan.save(update_fields=['status', 'end_date'])
         return company_plan
-
+    @transaction.atomic
     def renew_plan(self, *, company_id, plan_id=None):
         company = get_object_or_404(Company, pk=company_id)
         company_plan = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
@@ -170,12 +201,33 @@ class SuperAdminService:
     def get_employee_roles(self, *, user):
         return list(user.user_roles.select_related('role').values('role_id', 'role__name'))
 
-    def assign_user_role(self, *, user_id, role_id):
-        user = get_object_or_404(User, pk=user_id)
-        role = get_object_or_404(Role, pk=role_id)
-        user_role, created = UserRole.objects.get_or_create(user=user, role=role)
-        return {'created': created, 'user_role': user_role}
+    @transaction.atomic
+    def assign_user_role(
+    self,
+    *,
+    user_id,
+    role_id,
+        ):
+        user = get_object_or_404(
+            User,
+            pk=user_id,
+        )
 
+        role = get_object_or_404(
+            Role,
+            pk=role_id,
+        )
+
+        user_role, created = UserRole.objects.get_or_create(
+            user=user,
+            role=role,
+        )
+
+        return {
+            "created": created,
+            "user_role": user_role,
+        }
+    
     def remove_user_role(self, *, user_id, role_id):
         user = get_object_or_404(User, pk=user_id)
         deleted, _ = UserRole.objects.filter(user=user, role_id=role_id).delete()
@@ -189,16 +241,35 @@ class SuperAdminService:
         company_module.save(update_fields=['enabled'])
         return company_module
 
-    def bulk_set_company_modules(self, *, company_id, module_ids, enabled):
+    @transaction.atomic
+    def bulk_set_company_modules(
+    self,
+    *,
+    company_id,
+    module_ids,
+    enabled,
+):
         company = get_object_or_404(Company, pk=company_id)
+
         modules = Module.objects.filter(pk__in=module_ids)
-        updated = []
+
+        company_modules = []
+
         for module in modules:
-            company_module, _ = CompanyModule.objects.get_or_create(company=company, module=module)
+            company_module, _ = CompanyModule.objects.get_or_create(
+                company=company,
+                module=module,
+            )
+
             company_module.enabled = enabled
-            company_module.save(update_fields=['enabled'])
-            updated.append(company_module)
-        return updated
+
+            company_modules.append(company_module)
+
+        CompanyModule.objects.bulk_update(
+            company_modules,
+            ["enabled"],
+        )
+        return company_modules
 
     def list_company_modules(self, *, company_id):
         company = get_object_or_404(Company, pk=company_id)
@@ -238,9 +309,22 @@ class SuperAdminService:
             qs = qs.filter(Q(reason__icontains=search) | Q(company__name__icontains=search))
         return list(qs.order_by('-started_at')[:50])
 
-    def create_employee(self, *, email, password=None, first_name='', last_name='', company_id=None, role_ids=None):
+    @transaction.atomic
+    def create_employee(
+        self,
+        *,
+        email,
+        password=None,
+        first_name="",
+        last_name="",
+        company_id=None,
+        role_ids=None,
+    ):
         if User.objects.filter(email=email).exists():
-            raise ValueError('Employee with this email already exists.')
+            raise ValueError(
+                "Employee with this email already exists."
+            )
+
         user = User.objects.create(
             email=email,
             first_name=first_name,
@@ -249,13 +333,28 @@ class SuperAdminService:
             is_active=True,
             is_email_verified=True,
         )
+
         if password:
             user.set_password(password)
-            user.save(update_fields=['password'])
-        for role_id in role_ids or []:
-            role = Role.objects.filter(pk=role_id).first()
-            if role:
-                UserRole.objects.get_or_create(user=user, role=role)
+            user.save(update_fields=["password"])
+
+        if role_ids:
+
+            roles = Role.objects.filter(
+                pk__in=role_ids
+            )
+
+            UserRole.objects.bulk_create(
+                [
+                    UserRole(
+                        user=user,
+                        role=role,
+                    )
+                    for role in roles
+                ],
+                ignore_conflicts=True,
+            )
+
         return user
 
     def update_employee(self, *, employee_id, **data):

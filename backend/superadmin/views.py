@@ -106,17 +106,20 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
+        data = superadmin_service.get_dashboard_summary()
         return success_response(
             message='Company statistics fetched successfully.',
             data={
-                'total_companies': Company.objects.count(),
-                'active_companies': Company.objects.filter(status=Company.Status.ACTIVE).count(),
-                'trial_companies': Company.objects.filter(status=Company.Status.TRIAL).count(),
-                'suspended_companies': Company.objects.filter(status=Company.Status.SUSPENDED).count(),
-                'expired_companies': Company.objects.filter(status=Company.Status.EXPIRED).count(),
-                'total_users': User.objects.count(),
-                'ag_suite_users': User.objects.filter(company__isnull=True).count(),
-                'company_users': User.objects.filter(company__isnull=False).count(),
+            "total_companies": data["total_companies"],
+            "active_companies": data["active_companies"],
+            "trial_companies": data["trial_companies"],
+            "suspended_companies": data["suspended_companies"],
+            "total_users": (
+                data["total_agsuite_employees"]
+                + data["total_client_employees"]
+            ),
+            "ag_suite_users": data["total_agsuite_employees"],
+            "company_users": data["total_client_employees"],
             },
         )
 
@@ -291,7 +294,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         first_name = request.data.get('first_name', '')
         last_name = request.data.get('last_name', '')
         company_id = request.data.get('company_id')
-        role_ids = request.data.getlist('role_ids') or request.data.get('role_ids')
+        role_ids = request.data.get('role_ids',[])
+        if isinstance(role_ids, str):
+            role_ids = [role_ids]
         if not email:
             return Response({'detail': 'email is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -351,18 +356,18 @@ class NotificationViewSet(viewsets.ViewSet):
         searchable = request.query_params.get('search')
         is_read = request.query_params.get('is_read')
         if is_read is not None:
-            try:
-                is_read = is_read.lower() in {'1', 'true', 'yes'}
-            except AttributeError:
-                is_read = None
-        limit = request.query_params.get('limit')
-        offset = request.query_params.get('offset', 0)
+            is_read = is_read.lower() in {'1', 'true', 'yes'}
         try:
-            limit = int(limit) if limit is not None else None
-            offset = int(offset)
-        except (TypeError, ValueError):
-            limit = None
-            offset = 0
+            limit = int(request.query_params.get('limit',20))
+            offset = int(request.query_params.get("offset", 0))
+        except ValueError:
+            return Response(
+                {
+                    'detail':'limit and offset must be integers.'
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
         notifications = superadmin_service.list_notifications(
             user=request.user,
             searchable=searchable,

@@ -23,6 +23,27 @@ import ResetPasswordPage from '../pages/auth/ResetPasswordPage.jsx'
 import SettingsPage from '../pages/SettingsPage.jsx'
 import SystemHealthPage from '../pages/SystemHealthPage.jsx'
 
+import SuperAdminDashboardPage from '../pages/superadmin/DashboardPage.jsx'
+import SuperAdminCompaniesPage from '../pages/superadmin/CompaniesPage.jsx'
+import SuperAdminPlansPage from '../pages/superadmin/PlansPage.jsx'
+import SuperAdminModulesPage from '../pages/superadmin/ModulesPage.jsx'
+import SuperAdminEmployeesPage from '../pages/superadmin/EmployeesPage.jsx'
+import SuperAdminSupportSessionsPage from '../pages/superadmin/SupportSessionsPage.jsx'
+import SuperAdminNotificationsPage from '../pages/superadmin/NotificationsPage.jsx'
+import SuperAdminSettingsPage from '../pages/superadmin/SettingsPage.jsx'
+
+// Client Company Portal
+import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
+import ClientInvoiceReaderPage from '../pages/client/InvoiceReaderPage.jsx'
+import ClientOcrJobsPage from '../pages/client/OcrJobsPage.jsx'
+import ClientAiAssistantPage from '../pages/client/AiAssistantPage.jsx'
+import ClientEmployeesPage from '../pages/client/EmployeesPage.jsx'
+import ClientReportsPage from '../pages/client/ReportsPage.jsx'
+import ClientAnalyticsPage from '../pages/client/AnalyticsPage.jsx'
+import ClientNotificationsPage from '../pages/client/NotificationsPage.jsx'
+import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
+import ClientProfilePage from '../pages/client/ProfilePage.jsx'
+
 export default function AppRoutes() {
   return (
     <Routes>
@@ -151,6 +172,154 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <SystemHealthPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* AGSuite Super Admin Portal */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <SuperAdminDashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/companies"
+        element={
+          <ProtectedRoute>
+            <SuperAdminCompaniesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/plans"
+        element={
+          <ProtectedRoute>
+            <SuperAdminPlansPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/modules"
+        element={
+          <ProtectedRoute>
+            <SuperAdminModulesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/employees"
+        element={
+          <ProtectedRoute>
+            <SuperAdminEmployeesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/support"
+        element={
+          <ProtectedRoute>
+            <SuperAdminSupportSessionsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/notifications"
+        element={
+          <ProtectedRoute>
+            <SuperAdminNotificationsPage />
+          </ProtectedRoute>
+        }
+      />
+<Route
+        path="/admin/settings"
+        element={
+          <ProtectedRoute>
+            <SuperAdminSettingsPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Client Company Portal */}
+      <Route
+        path="/app"
+        element={
+          <ProtectedRoute>
+            <ClientDashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/invoice-reader"
+        element={
+          <ProtectedRoute>
+            <ClientInvoiceReaderPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/ocr-jobs"
+        element={
+          <ProtectedRoute>
+            <ClientOcrJobsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/ai-assistant"
+        element={
+          <ProtectedRoute>
+            <ClientAiAssistantPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/employees"
+        element={
+          <ProtectedRoute>
+            <ClientEmployeesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/reports"
+        element={
+          <ProtectedRoute>
+            <ClientReportsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/analytics"
+        element={
+          <ProtectedRoute>
+            <ClientAnalyticsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/notifications"
+        element={
+          <ProtectedRoute>
+            <ClientNotificationsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/settings"
+        element={
+          <ProtectedRoute>
+            <ClientCompanySettingsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/profile"
+        element={
+          <ProtectedRoute>
+            <ClientProfilePage />
           </ProtectedRoute>
         }
       />

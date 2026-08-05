@@ -7,10 +7,10 @@ User = get_user_model()
 
 
 class PlanSerializer(serializers.ModelSerializer):
-    enabled_modules = serializers.SlugRelatedField(
+    enabled_models = serializers.SlugRelatedField(
         many=True,
         read_only=True,
-        slug_field='name'
+        slug_field='code',
     )
 
     class Meta:
@@ -32,6 +32,7 @@ class CompanyPlanSerializer(serializers.ModelSerializer):
 class SupportSessionSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.name', read_only=True)
     support_user_name = serializers.CharField(source='support_user.get_full_name', read_only=True)
+    support_user_email = serializers.EmailField(source='support_user.email',read_only=True)
 
     class Meta:
         model = SupportSession
@@ -40,11 +41,24 @@ class SupportSessionSerializer(serializers.ModelSerializer):
 
 
 class CompanySerializer(serializers.ModelSerializer):
-    # For company detail, we might need nested data, but we'll keep it simple for now
+    user_count = serializers.IntegerField(
+        read_only=True,
+    )
+
+    module_count = serializers.IntegerField(
+        read_only=True,
+    )
+
     class Meta:
         model = Company
-        fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
+
+        fields = "__all__"
+
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+        )
 
 
 class ModuleSerializer(serializers.ModelSerializer):
@@ -58,6 +72,10 @@ class CompanyModuleSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.name', read_only=True)
     module_name = serializers.CharField(source='module.name', read_only=True)
     module_code = serializers.CharField(source='module.code', read_only=True)
+    company_code = serializers.CharField(
+    source="company.code",
+    read_only=True,
+)
 
     class Meta:
         from tenancy.models import CompanyModule
@@ -67,9 +85,38 @@ class CompanyModuleSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    full_name = serializers.CharField(source='get_full_name', read_only=True)
+    full_name = serializers.CharField(
+        source="get_full_name",
+        read_only=True,
+    )
+
+    company_name = serializers.CharField(
+        source="company.name",
+        read_only=True,
+    )
 
     class Meta:
         model = User
-        fields = ('id', 'email', 'first_name', 'last_name', 'full_name', 'employee_id', 'designation', 'department', 'is_active', 'is_staff', 'is_email_verified', 'last_activity', 'company')
-        read_only_fields = ('id', 'created_at', 'updated_at')
+
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "employee_id",
+            "designation",
+            "department",
+            "is_active",
+            "is_staff",
+            "is_email_verified",
+            "last_activity",
+            "company",
+            "company_name",
+        )
+
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+        )

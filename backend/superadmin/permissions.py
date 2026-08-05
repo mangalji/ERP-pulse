@@ -20,5 +20,5 @@ class IsSuperAdmin(permissions.BasePermission):
 
         return request.user.user_roles.filter(
             role__company__isnull=True,
-            role__name='super_admin',
+            role__name__iexact="super_admin",
         ).exists()
