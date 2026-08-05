@@ -9,7 +9,8 @@ const NAV_ITEMS = [
   { to: '/app/ocr-jobs', label: 'OCR Jobs', icon: OcrIcon },
   { to: '/app/ai-assistant', label: 'AI Assistant', icon: SparkleIcon },
   { to: '/app/employees', label: 'Employees', icon: EmployeesIcon },
-  { to: '/app/reports', label: 'Reports', icon: ReportIcon },
+{ to: '/app/reports', label: 'Reports', icon: ReportIcon },
+  { to: '/app/reports-engine', label: 'Reports Engine', icon: ReportEngineIcon },
   { to: '/app/analytics', label: 'Analytics', icon: AnalyticsIcon },
   { to: '/app/notifications', label: 'Notifications', icon: BellIcon },
   { to: '/app/settings', label: 'Company Settings', icon: GearIcon },
@@ -350,6 +351,14 @@ function ReportIcon(props) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path d="M6 3h9l4 4v14H6z" />
       <path d="M9 12h6M9 16h6M9 8h3" />
+    </svg>
+  )
+}
+function ReportEngineIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6M9 13h6M9 17h6M9 9h2" />
     </svg>
   )
 }

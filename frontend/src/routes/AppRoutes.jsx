@@ -44,6 +44,22 @@ import ClientNotificationsPage from '../pages/client/NotificationsPage.jsx'
 import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
 import ClientProfilePage from '../pages/client/ProfilePage.jsx'
 
+// Executive BI Portal
+import BIDashboardPage from '../pages/bi/DashboardPage.jsx'
+import BiSalesAnalyticsPage from '../pages/bi/SalesAnalyticsPage.jsx'
+import BiPurchaseAnalyticsPage from '../pages/bi/PurchaseAnalyticsPage.jsx'
+import BiCustomerAnalyticsPage from '../pages/bi/CustomerAnalyticsPage.jsx'
+import BiInventoryAnalyticsPage from '../pages/bi/InventoryAnalyticsPage.jsx'
+import BiFinanceAnalyticsPage from '../pages/bi/FinanceAnalyticsPage.jsx'
+import BiAiInsightsPage from '../pages/bi/AiInsightsPage.jsx'
+
+// Reports Engine
+import ReportsEngineDashboardPage from '../pages/reports-engine/ReportsDashboardPage.jsx'
+import GenerateReportPage from '../pages/reports-engine/GenerateReportPage.jsx'
+import ScheduledReportsPage from '../pages/reports-engine/ScheduledReportsPage.jsx'
+import ReportHistoryPage from '../pages/reports-engine/ReportHistoryPage.jsx'
+import TemplatesPage from '../pages/reports-engine/TemplatesPage.jsx'
+
 export default function AppRoutes() {
   return (
     <Routes>
@@ -320,6 +336,106 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <ClientProfilePage />
+          </ProtectedRoute>
+        }
+      />
+
+{/* Executive BI Portal */}
+      <Route
+        path="/app/bi"
+        element={
+          <ProtectedRoute>
+            <BIDashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/bi/sales"
+        element={
+          <ProtectedRoute>
+            <BiSalesAnalyticsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/bi/purchase"
+        element={
+          <ProtectedRoute>
+            <BiPurchaseAnalyticsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/bi/customers"
+        element={
+          <ProtectedRoute>
+            <BiCustomerAnalyticsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/bi/inventory"
+        element={
+          <ProtectedRoute>
+            <BiInventoryAnalyticsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/bi/finance"
+        element={
+          <ProtectedRoute>
+            <BiFinanceAnalyticsPage />
+          </ProtectedRoute>
+        }
+      />
+<Route
+        path="/app/bi/insights"
+        element={
+          <ProtectedRoute>
+            <BiAiInsightsPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Reports Engine */}
+      <Route
+        path="/app/reports-engine"
+        element={
+          <ProtectedRoute>
+            <ReportsEngineDashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/reports-engine/generate"
+        element={
+          <ProtectedRoute>
+            <GenerateReportPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/reports-engine/schedules"
+        element={
+          <ProtectedRoute>
+            <ScheduledReportsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/reports-engine/history"
+        element={
+          <ProtectedRoute>
+            <ReportHistoryPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/reports-engine/templates"
+        element={
+          <ProtectedRoute>
+            <TemplatesPage />
           </ProtectedRoute>
         }
       />

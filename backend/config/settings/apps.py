@@ -1,5 +1,4 @@
-"""
-Application definitions for ERP Pulse.
+"""Application definitions for ERP Pulse.
 
 This module keeps application registration isolated from the rest of the
 settings so base.py remains clean and easy to read.
@@ -38,7 +37,9 @@ LOCAL_APPS = [
     "sync",
     "analytics",
     "ocr",
-    "superadmin"
+"superadmin",
+    "bi",
+    "reports_engine",
 ]
 
 INSTALLED_APPS = (

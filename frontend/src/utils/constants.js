@@ -79,6 +79,35 @@ export const CLIENT_ENDPOINTS = {
   notificationMarkAllRead: '/client/notifications/mark_all_read/',
 }
 
+export const BI_ENDPOINTS = {
+  summary: '/bi/summary/',
+  sales: '/bi/sales/',
+  purchase: '/bi/purchase/',
+  customer: '/bi/customer/',
+  inventory: '/bi/inventory/',
+  finance: '/bi/finance/',
+  alerts: '/bi/alerts/',
+  insights: '/bi/insights/',
+  health: '/bi/health/',
+}
+
+export const REPORTS_ENGINE_ENDPOINTS = {
+  templates: '/reports-engine/templates/',
+  template: (id) => `/reports-engine/templates/${id}/`,
+  templateTypes: '/reports-engine/templates/types/',
+  schedules: '/reports-engine/schedules/',
+  schedule: (id) => `/reports-engine/schedules/${id}/`,
+  scheduleActivate: (id) => `/reports-engine/schedules/${id}/activate/`,
+  scheduleDeactivate: (id) => `/reports-engine/schedules/${id}/deactivate/`,
+  scheduleRunNow: (id) => `/reports-engine/schedules/${id}/run_now/`,
+  generate: '/reports-engine/generate/',
+  preview: '/reports-engine/preview/',
+  email: '/reports-engine/email/',
+  history: '/reports-engine/history/',
+  historyMetadata: (id) => `/reports-engine/history/${id}/metadata/`,
+  historyDownload: (id) => `/reports-engine/history/${id}/download/`,
+}
+
 export const SUPERADMIN_ENDPOINTS = {
   companies: '/superadmin/companies/',
   companyStats: '/superadmin/companies/stats/',
