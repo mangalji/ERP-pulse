@@ -64,3 +64,6 @@ DEPLOYMENT_CHECKLIST.md
 app_ss
 media
 docs
+frontend.zip
+*.zip
+s -*
