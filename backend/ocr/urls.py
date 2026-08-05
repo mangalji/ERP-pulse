@@ -7,8 +7,22 @@ All OCR endpoints are mounted under /api/v1/ocr/ via the root
 
 from django.urls import path
 
-from ocr.views import UploadView
+from ocr.views import (
+    DocumentHistoryView,
+    DocumentVersionView,
+    UploadView,
+)
 
 urlpatterns = [
     path('upload/', UploadView.as_view(), name='ocr-upload'),
+    path(
+        'documents/<uuid:document_id>/history/',
+        DocumentHistoryView.as_view(),
+        name='ocr-document-history',
+    ),
+    path(
+        'documents/<uuid:document_id>/history/<int:version>/',
+        DocumentVersionView.as_view(),
+        name='ocr-document-version',
+    ),
 ]

@@ -478,15 +478,30 @@ class OCRServiceTests(TestCase):
         with self.assertRaises(InvalidFileException):
             self.service.upload(file=file, user=self.user)
 
-    def test_extract_not_implemented(self):
-        with self.assertRaises(NotImplementedError):
-            self.service.extract(upload_id='test-id', user=self.user)
+    def test_extract_delegates_to_extraction_service(self):
+        """``extract`` should delegate, not raise NotImplementedError."""
+        from unittest.mock import MagicMock, patch
 
-    def test_save_result_not_implemented(self):
-        with self.assertRaises(NotImplementedError):
-            self.service.save_result(
-                upload_id='test-id', result={}, user=self.user
+        upload = self.service.upload(file=_make_pdf(), user=self.user)
+        mock_extractor = MagicMock()
+        mock_extractor.extract.return_value = {'status': 'COMPLETED', 'data': {}}
+        self.service._extraction_service = mock_extractor
+        result = self.service.extract(upload_id=upload.id, user=self.user)
+        mock_extractor.extract.assert_called_once()
+        self.assertEqual(result['status'], 'COMPLETED')
+
+    def test_save_result_delegates_to_pipeline(self):
+        """``save_result`` should delegate to the IDP pipeline."""
+        from unittest.mock import MagicMock, patch
+
+        upload = self.service.upload(file=_make_pdf(), user=self.user)
+        with patch('ocr.services.ocr_service.idp_pipeline_service') as mock_pipeline:
+            mock_pipeline.process_upload.return_value = {'document_id': 'doc-1'}
+            result = self.service.save_result(
+                upload_id=upload.id, result={}, user=self.user
             )
+            mock_pipeline.process_upload.assert_called_once()
+            self.assertEqual(result['document_id'], 'doc-1')
 
 
 # ==================================================================

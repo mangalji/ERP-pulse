@@ -47,6 +47,42 @@ class UploadSerializer(serializers.Serializer):
             raise serializers.ValidationError(str(exc)) from exc
         return value
 
+
+class DocumentVersionSerializer(serializers.Serializer):
+    """
+    Serializes a single immutable version snapshot of a document.
+
+    Used by the version history endpoints. Exposes the version number,
+    normalized/reviewed JSON, confidence, validation errors, and the
+    author + timestamp.
+    """
+
+    id = serializers.UUIDField()
+    version_number = serializers.IntegerField()
+    normalized_json = serializers.JSONField()
+    reviewed_json = serializers.JSONField()
+    confidence = serializers.JSONField()
+    validation_errors = serializers.JSONField()
+    created_by = serializers.CharField(source='created_by.email', default=None)
+    created_at = serializers.DateTimeField()
+
+
+class DocumentHistorySerializer(serializers.Serializer):
+    """
+    Serializes a document plus its ordered version history.
+
+    Used by GET /documents/{id}/history/.
+    """
+
+    id = serializers.UUIDField()
+    document_type = serializers.CharField()
+    status = serializers.CharField()
+    current_version = serializers.IntegerField()
+    overall_confidence = serializers.FloatField(allow_null=True)
+    processing_metadata = serializers.JSONField()
+    versions = DocumentVersionSerializer(many=True)
+
+
 class UploadResponseSerializer(serializers.Serializer):
     """
     Serializes the response data returned after a successful upload.

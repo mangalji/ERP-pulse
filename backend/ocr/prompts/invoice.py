@@ -1,35 +1,21 @@
 """
-Prompt templates for Gemini OCR extraction.
+Invoice extraction prompts for Gemini.
 
-All prompts are stored here as module-level constants so they are
-never hardcoded inside service or client code. This makes them
-auditable, translatable, and easy to version-control.
-
-Each template is a plain string with ``{placeholders}`` that are
-filled by the calling code.
+Provides the system persona and the structured extraction prompt used
+for invoice documents. Returns a JSON object with the standard invoice
+fields and per-field confidence.
 """
 
 from __future__ import annotations
 
-#: System-level instruction for the Gemini model.
-#: This is the "persona" prompt — it tells the model what role to
-#: adopt and how to behave.
+#: System-level persona for invoice extraction.
 SYSTEM_PROMPT: str = (
     "You are a precise invoice OCR extraction engine. "
     "Your only task is to read invoice images and extract structured data. "
     "You never invent data, never guess, never add explanations."
 )
 
-#: The main extraction prompt. Instructs Gemini to return a JSON
-#: object with specific fields. The ``{image_context}`` placeholder
-#: can be used to pass additional context (e.g. the filename or
-#: upload ID) if needed.
-#:
-#: The prompt explicitly forbids:
-#: - Markdown formatting
-#: - Explanatory text
-#: - Invented or default values
-#: - Non-JSON output
+#: The main invoice extraction prompt.
 EXTRACTION_PROMPT: str = (
     "Extract the following fields from this invoice image."
     " Return ONLY valid JSON. No markdown. No explanation. No code blocks.\n\n"
@@ -59,17 +45,4 @@ EXTRACTION_PROMPT: str = (
     "8. Return ONLY the JSON object. No other text.\n"
     "9. Numeric fields must be numbers, not strings.\n"
     "10. Preserve original formatting for text fields."
-)
-
-#: Confidence validation prompt. Used as a second pass when the
-#: initial extraction has low confidence for some fields.
-#: Instructs Gemini to re-evaluate specific fields.
-REVIEW_PROMPT: str = (
-    "Review the following invoice extraction result.\n"
-    "The following fields have low confidence: {low_confidence_fields}.\n"
-    "Please re-examine the invoice image and provide corrected values "
-    "for these fields only.\n"
-    "Return ONLY valid JSON with the corrected fields.\n"
-    "If the original value was correct, return it unchanged.\n"
-    "No markdown. No explanation."
 )
