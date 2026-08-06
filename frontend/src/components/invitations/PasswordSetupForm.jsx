@@ -20,7 +20,7 @@ export default function PasswordSetupForm({ onSubmit, isLoading }) {
       setError('Password must be at least 8 characters.')
       return
     }
-    onSubmit({ password, confirmPassword, first_name: firstName, last_name: lastName })
+    onSubmit({ password, confirm_password: confirmPassword, first_name: firstName, last_name: lastName })
   }
 
   return (

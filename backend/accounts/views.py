@@ -63,7 +63,11 @@ def _get_client_ip(request) -> str | None:
 
 class RegisterView(APIView):
     """
-    POST /api/v1/auth/register/
+    LEGACY (Sprint 8.4) — not wired into accounts/urls.py, unreachable
+    from the public API. Public registration was retired in favor of
+    invitation-only onboarding (see invitations.views.InvitationViewSet).
+    Kept in place per DEVELOPMENT_GUIDELINES.md ("never delete"); do not
+    re-route this without a product decision to bring registration back.
 
     Step 1 of registration: validates email/password and triggers a
     REGISTRATION OTP email. No User row is created here -- the pending
@@ -90,6 +94,8 @@ class RegisterView(APIView):
 
 class ResendRegistrationOTPView(APIView):
     """
+    LEGACY (Sprint 8.4) — not wired into accounts/urls.py, unreachable.
+
     POST /api/v1/auth/register/resend-otp/
 
     Resends the REGISTRATION OTP for an in-flight registration.
@@ -113,6 +119,8 @@ class ResendRegistrationOTPView(APIView):
 
 class VerifyRegistrationOTPView(APIView):
     """
+    LEGACY (Sprint 8.4) — not wired into accounts/urls.py, unreachable.
+
     POST /api/v1/auth/register/verify-otp/
 
     Verifies the REGISTRATION OTP. Still does not create the User -- on
@@ -139,6 +147,8 @@ class VerifyRegistrationOTPView(APIView):
 
 class CompleteProfileView(APIView):
     """
+    LEGACY (Sprint 8.4) — not wired into accounts/urls.py, unreachable.
+
     POST /api/v1/auth/register/complete-profile/
 
     Final step of registration: validates the signed registration_token

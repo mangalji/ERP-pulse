@@ -61,12 +61,6 @@ export default function LoginPage() {
           Forgot password?
         </Link>
       </div>
-      <p className="mt-4 text-center text-sm text-[var(--color-muted)]">
-        Don&apos;t have an account?{' '}
-        <Link to="/register" className="font-medium text-[var(--color-primary)]">
-          Register
-        </Link>
-      </p>
     </AuthLayout>
   )
 }

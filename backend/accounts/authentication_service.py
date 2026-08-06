@@ -305,7 +305,14 @@ class AuthenticationService:
         return user
 
     # -----------------------------------------------------------------
-    # Login (unchanged)
+    # Login
+    #
+    # Sprint 8.4: public registration is retired, so every account now
+    # reaches ACTIVE (is_active=True, is_email_verified=True) exclusively
+    # via the Invitation Activation flow (invitations.services.accept_
+    # invitation). Deliberately reuses is_active/is_email_verified as the
+    # only gate — no new status field/migration per Sprint 8.4 scope
+    # (product decision: keep changes minimal for the manager/client demo).
     # -----------------------------------------------------------------
 
     def login(self, *, email: str, password: str) -> User:
@@ -322,9 +329,11 @@ class AuthenticationService:
             raise InvalidCredentialsException('Invalid email or password.')
 
         if not user.is_active or not user.is_email_verified:
-            logger.warning('Login rejected for unverified/inactive user %s.', user.id)
+            logger.warning('Login rejected for inactive/unverified user %s.', user.id)
             raise AccountNotVerifiedException(
-                'This account has not completed registration verification.'
+                'Please activate your account first. Check your email for the '
+                'invitation link, or contact your administrator if your access '
+                'has been disabled.'
             )
 
         self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)

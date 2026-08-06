@@ -262,15 +262,16 @@ class ThrottleBehaviorTests(APITestCase):
         self.addCleanup(setattr, SimpleRateThrottle, 'THROTTLE_RATES', original_rates)
 
     def test_register_endpoint_returns_429_once_limit_exceeded(self):
+        # Sprint 8.4: RegisterView is LEGACY and no longer routed
+        # (accounts/urls.py), so this exercises the 'register_otp' throttle
+        # scope via forgot-password instead — still an AllowAny endpoint
+        # using RegisterOTPThrottle (see accounts/views.py:ForgotPasswordView),
+        # so the scope under test is unchanged.
         from django.urls import reverse
 
         self._patch_rate('register_otp', '2/min')
-        url = reverse('register')
-        payload = {
-            'email': 'throttle-test@example.com',
-            'password': 'StrongPass123!',
-            'confirm_password': 'StrongPass123!',
-        }
+        url = reverse('forgot-password')
+        payload = {'email': 'throttle-test@example.com'}
 
         # Throttling is checked before the view body runs, so the first two
         # requests count toward the limit regardless of what they return.
@@ -283,15 +284,13 @@ class ThrottleBehaviorTests(APITestCase):
         self.assertIn('message', response.data)
 
     def test_register_endpoint_allows_requests_within_limit(self):
+        # See note above — targets forgot-password (same 'register_otp'
+        # throttle scope) now that RegisterView is unrouted.
         from django.urls import reverse
 
         self._patch_rate('register_otp', '5/min')
-        url = reverse('register')
-        payload = {
-            'email': 'within-limit@example.com',
-            'password': 'StrongPass123!',
-            'confirm_password': 'StrongPass123!',
-        }
+        url = reverse('forgot-password')
+        payload = {'email': 'within-limit@example.com'}
 
         response = self.client.post(url, payload)
         self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)

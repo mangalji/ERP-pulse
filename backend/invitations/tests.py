@@ -209,3 +209,45 @@ class InvitationTests(APITestCase):
             'last_name': 'User',
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_invitation_activation_then_login_end_to_end(self):
+        """
+        Sprint 8.4 verification: Invitation -> Set Password -> Login must
+        work end-to-end now that public registration is retired. Mirrors
+        exactly what the frontend now sends (password + confirm_password),
+        guarding against the PasswordSetupForm/InvitationAcceptPage key
+        mismatch bug (confirmPassword vs confirm_password) that was fixed
+        in this sprint.
+        """
+        invitation = invitation_service.create_invitation(
+            email='e2e@example.com',
+            company_id=self.company.id,
+            created_by=self.superadmin,
+        )
+
+        # Step 1: accept invitation (Set Password / Activate User)
+        accept_response = self.client.post('/api/v1/invitations/accept/', {
+            'token': str(invitation.token),
+            'password': 'newpass123',
+            'confirm_password': 'newpass123',
+            'first_name': 'End',
+            'last_name': 'ToEnd',
+        }, format='json')
+        self.assertEqual(accept_response.status_code, status.HTTP_200_OK)
+
+        user = User.objects.get(email='e2e@example.com')
+        self.assertTrue(user.is_active)
+        self.assertTrue(user.is_email_verified)
+
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.status, 'ACCEPTED')
+
+        # Step 2: login with the freshly-activated account (step 1 of the
+        # two-step OTP login) must now succeed rather than being rejected
+        # as "not active".
+        login_response = self.client.post('/api/v1/auth/login/', {
+            'email': 'e2e@example.com',
+            'password': 'newpass123',
+        }, format='json')
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(login_response.data['success'])

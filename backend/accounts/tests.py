@@ -441,6 +441,20 @@ class AuthenticationServiceTests(TestCase):
         with self.assertRaises(AccountNotVerifiedException):
             self.service.login(email='inactive@example.com', password='testpass123')
 
+    def test_login_inactive_user_message_is_invitation_oriented(self):
+        # Sprint 8.4: with public registration retired, an inactive account
+        # can only mean "hasn't accepted their invitation yet" or "disabled
+        # by an admin" — the message should guide the user accordingly
+        # rather than reference the old registration flow.
+        _make_user(email='inactive-msg@example.com', is_active=False)
+        try:
+            self.service.login(email='inactive-msg@example.com', password='testpass123')
+            self.fail('Expected AccountNotVerifiedException')
+        except AccountNotVerifiedException as exc:
+            message = str(exc)
+            self.assertIn('activate your account', message)
+            self.assertNotIn('registration verification', message)
+
     def test_login_unverified_user(self):
         _make_user(email='unverified@example.com', is_email_verified=False)
         with self.assertRaises(AccountNotVerifiedException):
@@ -555,26 +569,40 @@ class AuthViewTests(APITestCase):
         cache.clear()
         self.client = APIClient()
 
-    # -- Register ------------------------------------------------------
-    @patch('accounts.authentication_service.send_email')
-    def test_register_success(self, mock_send_email):
+    # -- Register (LEGACY, Sprint 8.4: publicly unreachable) -----------
+    def test_register_endpoint_unreachable(self):
+        """
+        Sprint 8.4: public registration is retired. RegisterView still
+        exists (accounts/views.py, marked LEGACY) but is no longer wired
+        into accounts/urls.py, so this path must now 404.
+        """
         response = self.client.post('/api/v1/auth/register/', {
             'email': 'new@example.com',
             'password': 'StrongPass1!',
             'confirm_password': 'StrongPass1!',
         })
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(response.data['success'])
-        self.assertEqual(response.data['data']['email'], 'new@example.com')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_register_duplicate_email(self):
-        _make_user(email='exists@example.com')
-        response = self.client.post('/api/v1/auth/register/', {
-            'email': 'exists@example.com',
-            'password': 'StrongPass1!',
-            'confirm_password': 'StrongPass1!',
+    def test_register_verify_otp_endpoint_unreachable(self):
+        response = self.client.post('/api/v1/auth/register/verify-otp/', {
+            'email': 'new@example.com',
+            'otp_code': '123456',
         })
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_register_resend_otp_endpoint_unreachable(self):
+        response = self.client.post('/api/v1/auth/register/resend-otp/', {
+            'email': 'new@example.com',
+        })
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_register_complete_profile_endpoint_unreachable(self):
+        response = self.client.post('/api/v1/auth/register/complete-profile/', {
+            'registration_token': 'anything',
+            'first_name': 'New',
+            'last_name': 'User',
+        })
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     # -- Login ---------------------------------------------------------
     def test_login_success(self):

@@ -2,9 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import ProtectedRoute from './ProtectedRoute.jsx'
 
 import LoginPage from '../pages/auth/LoginPage.jsx'
-import RegisterPage from '../pages/auth/RegisterPage.jsx'
 import OtpVerificationPage from '../pages/auth/OtpVerificationPage.jsx'
-import CompleteProfilePage from '../pages/auth/CompleteProfilePage.jsx'
 import DashboardPage from '../pages/DashboardPage.jsx'
 import ConnectNetSuitePage from '../pages/ConnectNetSuitePage.jsx'
 import AiAssistantPage from '../pages/AiAssistantPage.jsx'
@@ -72,11 +70,18 @@ export default function AppRoutes() {
     <Routes>
       <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
+      {/*
+        LEGACY (Sprint 8.4): public registration retired in favor of
+        invitation-only onboarding. RegisterPage.jsx and CompleteProfilePage.jsx
+        remain on disk per DEVELOPMENT_GUIDELINES.md ("never delete files")
+        but are intentionally not routed here, so they are unreachable from
+        the UI. Do not re-add these routes without a product decision.
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/complete-profile" element={<CompleteProfilePage />} />
+      */}
       <Route path="/otp-verification" element={<OtpVerificationPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
-      <Route path="/complete-profile" element={<CompleteProfilePage />} />
 
       <Route
         path="/dashboard"
