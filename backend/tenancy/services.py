@@ -14,10 +14,13 @@ from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from datetime import timedelta
 
 from accounts.models import User
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
+from invitations.models import Invitation, InvitationStatus
+from invitations.services import invitation_service
 from notifications.models import Notification
 from rbac.models import Role, UserRole
 from tenancy.models import CompanyModule, CompanySettings
@@ -48,23 +51,30 @@ class ClientPortalService:
     @transaction.atomic
     def create_employee(self, *, company, acting_user, **data):
         email = data.get('email')
-        password = data.get('password')
         if User.objects.filter(email=email).exists():
             raise ValueError('A user with this email already exists.')
 
         employee = User.objects.create(
-            email=email,
+            email=email.lower().strip(),
             first_name=data.get('first_name', ''),
             last_name=data.get('last_name', ''),
             designation=data.get('designation', ''),
             department=data.get('department', ''),
             company=company,
-            is_active=True,
-            is_email_verified=True,
+            is_active=False,
+            is_email_verified=False,
         )
-        if password:
-            employee.set_password(password)
-            employee.save(update_fields=['password'])
+        employee.set_password(User.objects.make_random_password())
+        employee.save(update_fields=['password'])
+
+        role_id = data.get('role_id')
+        Invitation.objects.create(
+            email=email.lower().strip(),
+            company=company,
+            role_id=role_id,
+            expires_at=timezone.now() + timedelta(days=7),
+            created_by=acting_user,
+        )
 
         audit_service.log(
             module=AuditModule.EMPLOYEE,
@@ -73,9 +83,38 @@ class ClientPortalService:
             entity_id=str(employee.id),
             company=company,
             user=acting_user,
-            new_value={'email': employee.email},
+            new_value={'email': employee.email, 'role_id': role_id},
         )
         return employee
+
+    def resend_employee_invitation(self, *, company, employee_id, acting_user):
+        employee = self.get_employee(company=company, employee_id=employee_id)
+        invitation = Invitation.objects.filter(
+            email=employee.email,
+            company=company,
+            status=InvitationStatus.PENDING,
+        ).order_by('-created_at').first()
+        if not invitation:
+            raise ValueError('No pending invitation found for this employee.')
+        invitation_service.resend_invitation(invitation_id=invitation.id)
+        return employee
+
+    def list_employees(self, *, company, search=None, status=None):
+        qs = User.objects.filter(company=company).select_related('company').prefetch_related('user_roles__role')
+        if search:
+            qs = qs.filter(
+                Q(email__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+            )
+        if status:
+            if status == 'active':
+                qs = qs.filter(is_active=True)
+            elif status == 'inactive':
+                qs = qs.filter(is_active=False)
+            elif status == 'pending':
+                qs = qs.filter(is_active=False)
+        return qs.order_by('first_name', 'last_name')
 
     @transaction.atomic
     def update_employee(self, *, company, employee_id, acting_user, **data):

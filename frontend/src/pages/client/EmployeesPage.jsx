@@ -18,7 +18,7 @@ export default function EmployeesPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [form, setForm] = useState({ email: '', first_name: '', last_name: '', password: '' })
+  const [form, setForm] = useState({ email: '', first_name: '', last_name: '', role_id: '', designation: '', department: '' })
 
   const loadEmployees = useCallback(async () => {
     setLoading(true)
@@ -26,8 +26,6 @@ export default function EmployeesPage() {
     try {
       const data = await clientApi.listEmployees({ limit: 100 })
       const list = data?.results ?? data ?? []
-      // The backend already scopes to request.user.company. No client-side
-      // filtering is performed here.
       setEmployees(list)
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load employees')
@@ -48,17 +46,17 @@ export default function EmployeesPage() {
     event.preventDefault()
     setCreating(true)
     try {
-// company_id is intentionally NOT sent — the backend scopes the
-      // new employee to request.user.company.
       await clientApi.createEmployee({
         email: form.email,
-        password: form.password,
         first_name: form.first_name,
         last_name: form.last_name,
+        role_id: form.role_id ? Number(form.role_id) : undefined,
+        designation: form.designation,
+        department: form.department,
       })
-      addToast('Employee created successfully', 'success')
+      addToast('Employee invitation sent successfully', 'success')
       setShowCreate(false)
-      setForm({ email: '', first_name: '', last_name: '', password: '' })
+      setForm({ email: '', first_name: '', last_name: '', role_id: '', designation: '', department: '' })
       loadEmployees()
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to create employee', 'error')

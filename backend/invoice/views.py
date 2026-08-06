@@ -8,6 +8,7 @@ import os
 from django.conf import settings
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -18,7 +19,7 @@ from audit.models import AuditAction, AuditModule
 
 from invoice.services import invoice_service, start_background_processing
 from invoice.validators import InvoiceValidator
-from invoice.models import InvoiceBatch, InvoiceFile, ExtractedInvoice, InvoiceReviewHistory, InvoiceNetSuiteMapping, FileStatus
+from invoice.models import InvoiceBatch, InvoiceFile, ExtractedInvoice, InvoiceReviewHistory, InvoiceNetSuiteMapping, FileStatus, ExtractionStatus
 from invoice.serializers import InvoiceBatchSerializer, InvoiceFileSerializer, ExtractedInvoiceSerializer, InvoiceNetSuiteMappingSerializer
 
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
@@ -146,6 +147,13 @@ class InvoiceReviewView(views.APIView):
         new_data = request.data.get('data', {})
 
         if action_type == 'approve':
+            validator = InvoiceValidator()
+            errors = validator.validate(extraction.extracted_json or {})
+            if errors:
+                return Response(
+                    {'detail': 'Validation failed', 'errors': [e.to_dict() for e in errors]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             extraction.extraction_status = ExtractionStatus.COMPLETED
             invoice_file.status = FileStatus.APPROVED
             extraction.reviewed_by = request.user

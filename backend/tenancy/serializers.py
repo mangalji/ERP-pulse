@@ -23,6 +23,7 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
     company = serializers.UUIDField(source='company_id', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
     roles = serializers.SerializerMethodField()
+    invitation_status = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -42,6 +43,7 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
             'company',
             'company_name',
             'roles',
+            'invitation_status',
             'created_at',
         )
         read_only_fields = fields
@@ -51,20 +53,29 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
             obj.user_roles.select_related('role').values('role_id', 'role__name')
         )
 
+    def get_invitation_status(self, obj):
+        invitation = Invitation.objects.filter(
+            email=obj.email,
+            company=obj.company,
+        ).order_by('-created_at').first()
+        if not invitation:
+            return 'NONE'
+        if invitation.status == InvitationStatus.ACCEPTED:
+            return 'ACCEPTED'
+        if invitation.is_expired():
+            return 'EXPIRED'
+        return invitation.status
 
-class CreateEmployeeSerializer(serializers.ModelSerializer):
-    """Validates input for creating a company employee."""
 
-    class Meta:
-        model = User
-        fields = ('email', 'password', 'first_name', 'last_name', 'designation', 'department')
-        extra_kwargs = {
-            'password': {'write_only': True, 'required': True},
-            'first_name': {'required': False, 'allow_blank': True},
-            'last_name': {'required': False, 'allow_blank': True},
-            'designation': {'required': False, 'allow_blank': True},
-            'department': {'required': False, 'allow_blank': True},
-        }
+class CreateEmployeeSerializer(serializers.Serializer):
+    """Validates input for creating a company employee via invitation."""
+
+    email = serializers.EmailField(required=True)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    designation = serializers.CharField(required=False, allow_blank=True)
+    department = serializers.CharField(required=False, allow_blank=True)
+    role_id = serializers.IntegerField(required=False, allow_null=True)
 
 
 class UpdateEmployeeSerializer(serializers.ModelSerializer):

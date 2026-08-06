@@ -17,6 +17,7 @@ class AuditModule(models.TextChoices):
 
     COMPANY = 'company', 'Company'
     EMPLOYEE = 'employee', 'Employee'
+    INVOICE = 'invoice', 'Invoice'
     OCR = 'ocr', 'OCR'
     AI = 'ai', 'AI'
     REPORTS = 'reports', 'Reports'

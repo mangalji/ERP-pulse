@@ -79,7 +79,7 @@ class InvoiceService:
                 extraction_status=ExtractionStatus.COMPLETED,
             )
 
-            invoice_file.status = FileStatus.COMPLETED
+            invoice_file.status = FileStatus.EXTRACTED
             invoice_file.processing_time = time.perf_counter() - start_time
             invoice_file.save()
 

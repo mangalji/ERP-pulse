@@ -570,7 +570,7 @@ class UploadEndpointTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(response.data['success'])
         self.assertEqual(
-            response.data['message'], 'File uploaded successfully.'
+            response.data['message'], 'Upload accepted. Processing has been queued.'
         )
         data = response.data['data']
         self.assertIn('upload_id', data)

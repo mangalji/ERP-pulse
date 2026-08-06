@@ -49,11 +49,18 @@ class UploadView(APIView):
         )
 
         # Dispatch the async pipeline — never run synchronously.
-        task = process_document_task.delay(upload.id, request.user.id)
-        logger.info(
-            'OCR task dispatched — upload_id=%s user=%s task=%s',
-            upload.id, request.user.id, task.id,
-        )
+        if hasattr(process_document_task, 'delay'):
+            task = process_document_task.delay(upload.id, request.user.id)
+            logger.info(
+                'OCR task dispatched — upload_id=%s user=%s task=%s',
+                upload.id, request.user.id, task.id,
+            )
+        else:
+            logger.warning(
+                'Celery not available; running OCR synchronously for upload_id=%s user=%s',
+                upload.id, request.user.id,
+            )
+            process_document_task(upload.id, request.user.id)
 
         response_serializer = UploadResponseSerializer(upload)
         data = response_serializer.data
@@ -63,7 +70,7 @@ class UploadView(APIView):
         return success_response(
             message='Upload accepted. Processing has been queued.',
             data=data,
-            status_code=status.HTTP_202_ACCEPTED,
+            status_code=status.HTTP_201_CREATED,
         )
 
 

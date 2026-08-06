@@ -83,7 +83,7 @@ class InvoiceBatchSerializer(serializers.ModelSerializer):
 
     def get_extracted_data(self, obj):
         data = []
-        for invoice_file in obj.files.filter(status=FileStatus.COMPLETED).select_related('extraction'):
+        for invoice_file in obj.files.filter(status__in=[FileStatus.EXTRACTED, FileStatus.APPROVED, FileStatus.READY_FOR_NETSUITE]).select_related('extraction'):
             extraction = getattr(invoice_file, 'extraction', None)
             if extraction:
                 data.append({

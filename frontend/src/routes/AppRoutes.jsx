@@ -34,6 +34,14 @@ import SuperAdminDemoRequestDetailPage from '../pages/superadmin/DemoRequestDeta
 import SuperAdminCompanySubscriptionPage from '../pages/superadmin/CompanySubscriptionPage.jsx'
 import InvitationAcceptPage from '../pages/invitations/InvitationAcceptPage.jsx'
 
+// Public Website
+import PublicHomePage from '../pages/public/HomePage.jsx'
+import PublicFeaturesPage from '../pages/public/FeaturesPage.jsx'
+import PublicPricingPage from '../pages/public/PricingPage.jsx'
+import PublicAboutPage from '../pages/public/AboutPage.jsx'
+import PublicContactPage from '../pages/public/ContactPage.jsx'
+import PublicRequestDemoPage from '../pages/public/RequestDemoPage.jsx'
+
 // Client Company Portal
 import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
 import ClientInvoiceReaderPage from '../pages/client/InvoiceReaderPage.jsx'
@@ -68,7 +76,14 @@ import TemplatesPage from '../pages/reports-engine/TemplatesPage.jsx'
 export default function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      {/* Public Website */}
+      <Route path="/" element={<PublicHomePage />} />
+      <Route path="/features" element={<PublicFeaturesPage />} />
+      <Route path="/pricing" element={<PublicPricingPage />} />
+      <Route path="/about" element={<PublicAboutPage />} />
+      <Route path="/contact" element={<PublicContactPage />} />
+      <Route path="/request-demo" element={<PublicRequestDemoPage />} />
+
       <Route path="/login" element={<LoginPage />} />
       {/*
         LEGACY (Sprint 8.4): public registration retired in favor of
