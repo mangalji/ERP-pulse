@@ -7,39 +7,94 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+wheels/
+*.egg
+*.whl
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
 
 # ==========================
 # Django
 # ==========================
 backend/.env
+backend/.env.*
 backend/.env.render
 backend/db.sqlite3
 *.sqlite3
+backend/static/
+backend/staticfiles/
+media/
+backend/media/
 
 # ==========================
-# Node
+# Node / Vite
 # ==========================
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+frontend/.env.*
 frontend/.env.render
+.vite/
+.cache/
+.parcel-cache/
 
 # ==========================
 # Logs
 # ==========================
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
 # ==========================
-# IDE
+# IDE / Editor
 # ==========================
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+.factorypath
 
 # ==========================
 # OS
 # ==========================
 .DS_Store
 Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ==========================
+# Environment / Secrets
+# ==========================
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
 
 # ==========================
 # Project-specific
@@ -51,19 +106,24 @@ proejct_context.md
 task_completed.md
 backend/scripts/
 .ai/*
-backend/staticfiles/
 temp
 erp_pulse_local
 TODO.md
 FIX_PLAN.md
 backend.zip
-
-v2_changes.md
-SPRINT3_CHANGES.md
-DEPLOYMENT_CHECKLIST.md
-app_ss
-media
-docs
 frontend.zip
 *.zip
-s -*
+*.rar
+*.7z
+*.tar.gz
+s-*
+debug_demo_detail.py
+backend/debug_*.py
+*.local
+
+# ==========================
+# Documentation builds
+# ==========================
+docs/_build/
+docs/_build/
+site/
