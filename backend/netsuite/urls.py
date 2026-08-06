@@ -20,6 +20,11 @@ from netsuite.views import (
     NetSuiteConnectionListCreateView,
     NetSuiteConnectionDetailView,
     NetSuiteConnectionSwitchView,
+    NetSuiteCompanyConnectionsView,
+    NetSuiteAssignEmployeeView,
+    NetSuiteRemoveEmployeeView,
+    NetSuiteTestConnectionView,
+    NetSuiteMyConnectionView,
 )
 
 urlpatterns = [
@@ -42,4 +47,9 @@ urlpatterns = [
     path("connections/",NetSuiteConnectionListCreateView.as_view(),name="netsuite_connection_list_create_view"),
     path("connections/<uuid:connection_id>/", NetSuiteConnectionDetailView.as_view(),name="netsuite_connection_detail_view"),
     path("connections/<uuid:connection_id>/switch/", NetSuiteConnectionSwitchView.as_view(),name="netsuite_connection_switch_view"),
+    path("company/connections/", NetSuiteCompanyConnectionsView.as_view(), name="netsuite_company_connections"),
+    path("company/connections/<uuid:connection_id>/assign-employee/", NetSuiteAssignEmployeeView.as_view(), name="netsuite_assign_employee"),
+    path("company/connections/<uuid:connection_id>/remove-employee/<uuid:employee_id>/", NetSuiteRemoveEmployeeView.as_view(), name="netsuite_remove_employee"),
+    path("company/connections/<uuid:connection_id>/test/", NetSuiteTestConnectionView.as_view(), name="netsuite_test_connection"),
+    path("my/connection/", NetSuiteMyConnectionView.as_view(), name="netsuite_my_connection"),
 ]

@@ -38,6 +38,13 @@ class NetSuiteConnection(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="netsuite_connections")
+    company = models.ForeignKey(
+        'tenancy.Company',
+        on_delete=models.CASCADE,
+        related_name='netsuite_connections',
+        null=True,
+        blank=True,
+    )
     client_name = models.CharField(max_length=255,null=True,blank=True)
     environment = models.CharField(
         max_length=20,
@@ -93,6 +100,7 @@ class NetSuiteConnection(models.Model):
             # (user, netsuite_account_id), a different column pair that
             # doesn't help this query.
             models.Index(fields=["user", "is_active"], name="netsuite_conn_user_active_idx"),
+            models.Index(fields=["company", "is_active"], name="ns_conn_co_active_idx"),
         ]
 
     @property
@@ -172,3 +180,40 @@ class NetSuiteConnectionAuditLog(models.Model):
 
     def __str__(self):
         return f'{self.get_action_display()} — {self.client_name or self.netsuite_account_id}'
+
+
+class EmployeeConnection(models.Model):
+    """
+    Assigns a company employee to a specific NetSuite connection.
+
+    Employees do not manage credentials directly. They use whatever
+    connection the Company Admin assigns to them.
+    """
+
+    employee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='employee_netsuite_connections',
+    )
+    connection = models.ForeignKey(
+        NetSuiteConnection,
+        on_delete=models.CASCADE,
+        related_name='employee_assignments',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'employee_netsuite_connection'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['employee', 'connection'],
+                name='unique_employee_connection',
+            )
+        ]
+        indexes = [
+            models.Index(fields=['employee'], name='emp_conn_emp_idx'),
+            models.Index(fields=['connection'], name='emp_conn_conn_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.employee.email} → {self.connection.client_name or self.connection.netsuite_account_id}'

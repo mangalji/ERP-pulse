@@ -37,9 +37,12 @@ LOCAL_APPS = [
     "sync",
     "analytics",
     "ocr",
-"superadmin",
+    "superadmin",
     "bi",
     "reports_engine",
+    "demo",
+    "invitations",
+    "subscriptions",
 ]
 
 INSTALLED_APPS = (

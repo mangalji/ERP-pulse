@@ -205,7 +205,7 @@ class VerifyProfileUpdateOTPSerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
     )
-    profile_pic = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    profile_pic = serializers.ImageField(required=False, allow_null=True)
 
 
 class LoginActivitySerializer(serializers.ModelSerializer):

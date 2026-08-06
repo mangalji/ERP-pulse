@@ -144,3 +144,24 @@ export const SUPERADMIN_ENDPOINTS = {
   notificationMarkRead: (id) => `/superadmin/notifications/${id}/mark_read/`,
   notificationMarkAllRead: '/superadmin/notifications/mark_all_read/',
 }
+
+export const DEMO_ENDPOINTS = {
+  submit: '/demo/submit/',
+  list: '/demo/list/',
+  detail: (id) => `/demo/${id}/detail/`,
+  convert: (id) => `/demo/${id}/convert/`,
+  approve: (id) => `/demo/${id}/approve/`,
+  reject: (id) => `/demo/${id}/reject/`,
+  assign: (id) => `/demo/${id}/assign/`,
+}
+
+export const INVITATION_ENDPOINTS = {
+  create: '/invitations/create/',
+  list: '/invitations/list/',
+  detail: (id) => `/invitations/${id}/detail/`,
+  validate: '/invitations/validate/',
+  accept: '/invitations/accept/',
+  send: (id) => `/invitations/${id}/send/`,
+  resend: (id) => `/invitations/${id}/resend/`,
+  publicResend: '/invitations/public-resend/',
+}

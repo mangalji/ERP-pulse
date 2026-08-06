@@ -12,6 +12,7 @@ from accounts.models import User
 from netsuite.client import NetSuiteAuthClient
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteStateMismatchException, NetSuiteConnectionNotFoundException, NetSuiteConnectionAlreadyExistsException
+from netsuite.models import EmployeeConnection, NetSuiteConnection
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionAuditLogRepository, NetSuiteConnectionRepository
 from netsuite.token_manager import NetSuiteTokenManager
@@ -92,7 +93,8 @@ class NetSuiteConnectionService:
             environment:str,
             client_id:str,
             client_secret:str,
-            netsuite_account_id:str):
+            netsuite_account_id:str,
+            company_id=None):
 
         if self.repository.exists_for_account(user,netsuite_account_id):
             raise NetSuiteConnectionAlreadyExistsException(
@@ -106,6 +108,7 @@ class NetSuiteConnectionService:
             environment=environment,
             client_secret=client_secret,
             netsuite_account_id=netsuite_account_id,
+            company_id=company_id,
         )
         self.audit_log_repository.log(action='created', connection=connection)
 
@@ -164,6 +167,58 @@ class NetSuiteConnectionService:
         switched = self.repository.switch_active_connection(user,connection,)
         self.audit_log_repository.log(action='switched_active', connection=switched)
         return switched
+
+    def get_company_connections(self, *, company_id):
+        return NetSuiteConnection.objects.filter(company_id=company_id).order_by('-is_active', '-connected_at')
+
+    def assign_employee(self, *, connection_id, employee_id):
+        from accounts.models import User
+        connection = NetSuiteConnection.objects.get(pk=connection_id)
+        employee = User.objects.get(pk=employee_id)
+
+        if connection.company and employee.company_id != connection.company_id:
+            raise ValueError('Employee does not belong to the same company as this connection.')
+
+        assignment, _ = EmployeeConnection.objects.get_or_create(
+            employee=employee,
+            connection=connection,
+        )
+        return assignment
+
+    def remove_employee(self, *, connection_id, employee_id):
+        deleted, _ = EmployeeConnection.objects.filter(
+            connection_id=connection_id,
+            employee_id=employee_id,
+        ).delete()
+        if deleted == 0:
+            raise ValueError('Employee is not assigned to this connection.')
+
+    def get_employee_connection(self, *, employee_id):
+        assignment = EmployeeConnection.objects.select_related('connection').filter(employee_id=employee_id).first()
+        if not assignment:
+            return None
+        return assignment.connection
+
+    def test_connection(self, *, connection_id):
+        connection = NetSuiteConnection.objects.get(pk=connection_id)
+        client = NetSuiteAuthClient(
+            account_id=connection.netsuite_account_id,
+            client_id=connection.client_id,
+            client_secret=connection.client_secret,
+        )
+        try:
+            client.get_records(record_type='customer', limit=1)
+            connection.status = 'connected'
+            connection.last_error = None
+            connection.consecutive_failures = 0
+            connection.save(update_fields=['status', 'last_error', 'consecutive_failures', 'updated_at'])
+            return {'success': True, 'message': 'Connection test successful.'}
+        except Exception as exc:
+            connection.status = 'error'
+            connection.last_error = str(exc)[:2000]
+            connection.consecutive_failures += 1
+            connection.save(update_fields=['status', 'last_error', 'consecutive_failures', 'updated_at'])
+            return {'success': False, 'message': str(exc)}
     
 
 class NetSuiteDataService:

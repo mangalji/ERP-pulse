@@ -18,12 +18,16 @@ from common.utils.response import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException
+from netsuite.models import EmployeeConnection, NetSuiteConnection
 from netsuite.serializers import (
     NetSuiteCallbackSerializer, 
     NetSuiteConnectionCreateSerializer,
     NetSuiteConnectionListSerializer,
     NetSuiteConnectionRenameSerializer,
-    NetSuiteConnectionSwitchSerializer)
+    NetSuiteConnectionSwitchSerializer,
+    EmployeeConnectionSerializer,
+    AssignEmployeeSerializer,
+)
 from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
 
 def _validate_record_id(record_id: str) -> None:
@@ -556,4 +560,130 @@ class NetSuiteConnectionSwitchView(APIView):
             data=NetSuiteConnectionListSerializer(
                 connection
             ).data,
+        )
+
+
+class NetSuiteCompanyConnectionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        company = getattr(request.user, 'company', None)
+        if not company:
+            return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
+
+        connections = NetSuiteConnectionService().get_company_connections(company_id=company.id)
+        serializer = NetSuiteConnectionListSerializer(connections, many=True)
+        return success_response(
+            message='Company connections fetched successfully.',
+            data=serializer.data,
+        )
+
+    def post(self, request):
+        company = getattr(request.user, 'company', None)
+        if not company:
+            return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = NetSuiteConnectionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            result = NetSuiteConnectionService().create_connection(
+                user=request.user,
+                company_id=company.id,
+                **serializer.validated_data,
+            )
+            return success_response(
+                message="Connection created successfully.",
+                data={
+                    "connection": NetSuiteConnectionListSerializer(result["connection"]).data,
+                    "authorization_url": result["authorization_url"],
+                },
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class NetSuiteAssignEmployeeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id):
+        company = getattr(request.user, 'company', None)
+        if not company:
+            return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            connection = NetSuiteConnection.objects.get(pk=connection_id, company=company)
+        except NetSuiteConnection.DoesNotExist:
+            return Response({'detail': 'Connection not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = AssignEmployeeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            assignment = NetSuiteConnectionService().assign_employee(
+                connection_id=connection_id,
+                employee_id=serializer.validated_data['employee_id'],
+            )
+            return success_response(
+                message='Employee assigned successfully.',
+                data=EmployeeConnectionSerializer(assignment).data,
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except User.DoesNotExist:
+            return Response({'detail': 'Employee not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class NetSuiteRemoveEmployeeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id, employee_id):
+        company = getattr(request.user, 'company', None)
+        if not company:
+            return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            connection = NetSuiteConnection.objects.get(pk=connection_id, company=company)
+        except NetSuiteConnection.DoesNotExist:
+            return Response({'detail': 'Connection not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            NetSuiteConnectionService().remove_employee(
+                connection_id=connection_id,
+                employee_id=employee_id,
+            )
+            return success_response(message='Employee removed successfully.')
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class NetSuiteTestConnectionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id):
+        company = getattr(request.user, 'company', None)
+        if not company:
+            return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            connection = NetSuiteConnection.objects.get(pk=connection_id, company=company)
+        except NetSuiteConnection.DoesNotExist:
+            return Response({'detail': 'Connection not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        result = NetSuiteConnectionService().test_connection(connection_id=connection_id)
+        status_code = status.HTTP_200_OK if result['success'] else status.HTTP_400_BAD_REQUEST
+        return Response(result, status=status_code)
+
+
+class NetSuiteMyConnectionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        connection = NetSuiteConnectionService().get_employee_connection(employee_id=request.user.id)
+        if not connection:
+            return Response({'detail': 'No NetSuite connection assigned.'}, status=status.HTTP_404_NOT_FOUND)
+
+        return success_response(
+            message='Your NetSuite connection fetched successfully.',
+            data=NetSuiteConnectionListSerializer(connection).data,
         )

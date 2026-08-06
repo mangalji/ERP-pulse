@@ -20,4 +20,7 @@ urlpatterns = [
     path('api/v1/client/', include('tenancy.urls')),
     path('api/v1/bi/', include('bi.urls')),
     path('api/v1/reports-engine/', include('reports_engine.urls')),
+    path('api/v1/demo/', include('demo.urls')),
+    path('api/v1/invitations/', include('invitations.urls')),
+    path('api/v1/subscriptions/', include('subscriptions.urls')),
 ]

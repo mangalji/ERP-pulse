@@ -25,6 +25,9 @@ class AuditModule(models.TextChoices):
     SETTINGS = 'settings', 'Settings'
     RBAC = 'rbac', 'RBAC'
     AUTH = 'auth', 'Authentication'
+    DEMO = 'demo', 'Demo Request'
+    INVITATION = 'invitation', 'Invitation'
+    SUBSCRIPTION = 'subscription', 'Subscription'
 
 
 class AuditAction(models.TextChoices):
@@ -43,6 +46,11 @@ class AuditAction(models.TextChoices):
     UPLOAD = 'upload', 'Upload'
     REVIEW = 'review', 'Review'
     CHAT = 'chat', 'Chat'
+    ASSIGN = 'assign', 'Assign'
+    APPROVE = 'approve', 'Approve'
+    REJECT = 'reject', 'Reject'
+    SEND = 'send', 'Send'
+    ACCEPT = 'accept', 'Accept'
 
 
 class AuditLog(models.Model):

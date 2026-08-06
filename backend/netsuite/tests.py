@@ -1119,3 +1119,114 @@ class NetSuiteTokenManagerTests(TestCase):
             self.manager.get_valid_access_token(connection)
 
         self.mock_repo.record_sync_failure.assert_called_once()
+
+
+# ===================================================================
+# Company / Employee NetSuite Tests
+# ===================================================================
+
+from tenancy.models import Company
+from netsuite.models import EmployeeConnection
+
+class NetSuiteCompanyConnectionTests(TestCase):
+    def setUp(self):
+        self.company = Company.objects.create(
+            name='Test Co',
+            code='TC',
+            status=Company.Status.ACTIVE,
+        )
+        self.admin = User.objects.create_user(
+            email='admin@test.com',
+            password='testpass123',
+            company=self.company,
+            is_active=True,
+            is_email_verified=True,
+        )
+        self.employee = User.objects.create_user(
+            email='emp@test.com',
+            password='testpass123',
+            company=self.company,
+            is_active=True,
+            is_email_verified=True,
+        )
+        self.connection = _make_connection(self.admin, company=self.company)
+
+    def test_get_company_connections(self):
+        service = NetSuiteConnectionService()
+        connections = service.get_company_connections(company_id=self.company.id)
+        self.assertEqual(connections.count(), 1)
+
+    def test_assign_employee(self):
+        service = NetSuiteConnectionService()
+        assignment = service.assign_employee(connection_id=self.connection.id, employee_id=self.employee.id)
+        self.assertEqual(assignment.employee, self.employee)
+        self.assertEqual(assignment.connection, self.connection)
+
+    def test_remove_employee(self):
+        service = NetSuiteConnectionService()
+        service.assign_employee(connection_id=self.connection.id, employee_id=self.employee.id)
+        service.remove_employee(connection_id=self.connection.id, employee_id=self.employee.id)
+        self.assertFalse(EmployeeConnection.objects.filter(employee=self.employee, connection=self.connection).exists())
+
+    def test_get_employee_connection(self):
+        service = NetSuiteConnectionService()
+        service.assign_employee(connection_id=self.connection.id, employee_id=self.employee.id)
+        conn = service.get_employee_connection(employee_id=self.employee.id)
+        self.assertEqual(conn.id, self.connection.id)
+
+    def test_employee_from_different_company_cannot_be_assigned(self):
+        other_company = Company.objects.create(name='Other Co', code='OC', status=Company.Status.ACTIVE)
+        other_emp = User.objects.create_user(
+            email='other@test.com',
+            password='testpass123',
+            company=other_company,
+        )
+        service = NetSuiteConnectionService()
+        with self.assertRaises(ValueError):
+            service.assign_employee(connection_id=self.connection.id, employee_id=other_emp.id)
+
+
+class NetSuiteCompanyConnectionViewTests(APITestCase):
+    def setUp(self):
+        self.company = Company.objects.create(
+            name='Test Co',
+            code='TC',
+            status=Company.Status.ACTIVE,
+        )
+        self.admin = User.objects.create_user(
+            email='admin@test.com',
+            password='testpass123',
+            company=self.company,
+            is_active=True,
+            is_email_verified=True,
+        )
+        self.employee = User.objects.create_user(
+            email='emp@test.com',
+            password='testpass123',
+            company=self.company,
+            is_active=True,
+            is_email_verified=True,
+        )
+        self.connection = _make_connection(self.admin, company=self.company)
+
+    def test_company_connections_list(self):
+        self.client.credentials(**_auth_header(self.admin))
+        response = self.client.get('/api/v1/netsuite/company/connections/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+
+    def test_assign_employee_view(self):
+        self.client.credentials(**_auth_header(self.admin))
+        response = self.client.post(f'/api/v1/netsuite/company/connections/{self.connection.id}/assign-employee/', {
+            'employee_id': str(self.employee.id),
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+
+    def test_my_connection_employee_view(self):
+        EmployeeConnection.objects.create(employee=self.employee, connection=self.connection)
+        self.client.credentials(**_auth_header(self.employee))
+        response = self.client.get('/api/v1/netsuite/my/connection/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['data']['id'], str(self.connection.id))

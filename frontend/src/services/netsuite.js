@@ -25,4 +25,14 @@ export const netsuiteApi = {
   getPurchaseOrder: (id) => apiClient.get(`${NETSUITE_ENDPOINTS.purchaseOrders}${id}/`).then(unwrap),
   getInvoices: (params) => apiClient.get(NETSUITE_ENDPOINTS.invoices, { params }).then(unwrap),
   getInvoice: (id) => apiClient.get(`${NETSUITE_ENDPOINTS.invoices}${id}/`).then(unwrap),
+  // Company-level connection management
+  getCompanyConnections: () => apiClient.get('/api/v1/netsuite/company/connections/').then(unwrap),
+  assignEmployee: (connectionId, employeeId) =>
+    apiClient.post(`/api/v1/netsuite/company/connections/${connectionId}/assign-employee/`, { employee_id: employeeId }).then(unwrap),
+  removeEmployee: (connectionId, employeeId) =>
+    apiClient.post(`/api/v1/netsuite/company/connections/${connectionId}/remove-employee/${employeeId}/`).then(unwrap),
+  testConnection: (connectionId) =>
+    apiClient.post(`/api/v1/netsuite/company/connections/${connectionId}/test/`).then(unwrap),
+  getMyConnection: () => apiClient.get('/api/v1/netsuite/my/connection/').then(unwrap),
 }
+

@@ -31,6 +31,10 @@ import SuperAdminEmployeesPage from '../pages/superadmin/EmployeesPage.jsx'
 import SuperAdminSupportSessionsPage from '../pages/superadmin/SupportSessionsPage.jsx'
 import SuperAdminNotificationsPage from '../pages/superadmin/NotificationsPage.jsx'
 import SuperAdminSettingsPage from '../pages/superadmin/SettingsPage.jsx'
+import SuperAdminDemoRequestsPage from '../pages/superadmin/DemoRequestsPage.jsx'
+import SuperAdminDemoRequestDetailPage from '../pages/superadmin/DemoRequestDetailPage.jsx'
+import SuperAdminCompanySubscriptionPage from '../pages/superadmin/CompanySubscriptionPage.jsx'
+import InvitationAcceptPage from '../pages/invitations/InvitationAcceptPage.jsx'
 
 // Client Company Portal
 import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
@@ -43,6 +47,9 @@ import ClientAnalyticsPage from '../pages/client/AnalyticsPage.jsx'
 import ClientNotificationsPage from '../pages/client/NotificationsPage.jsx'
 import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
 import ClientProfilePage from '../pages/client/ProfilePage.jsx'
+import ClientSubscriptionPage from '../pages/client/SubscriptionPage.jsx'
+import NetSuiteIntegrationsPage from '../pages/client/NetSuiteIntegrationsPage.jsx'
+import EmployeeNetSuitePage from '../pages/client/EmployeeNetSuitePage.jsx'
 
 // Executive BI Portal
 import BIDashboardPage from '../pages/bi/DashboardPage.jsx'
@@ -249,7 +256,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
-<Route
+      <Route
         path="/admin/settings"
         element={
           <ProtectedRoute>
@@ -257,6 +264,33 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/admin/demo-requests"
+        element={
+          <ProtectedRoute>
+            <SuperAdminDemoRequestsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/demo-requests/:id"
+        element={
+          <ProtectedRoute>
+            <SuperAdminDemoRequestDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/companies/:id/subscription"
+        element={
+          <ProtectedRoute>
+            <SuperAdminCompanySubscriptionPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Invitation */}
+      <Route path="/invitation/:token" element={<InvitationAcceptPage />} />
 
       {/* Client Company Portal */}
       <Route
@@ -336,6 +370,30 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <ClientProfilePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/subscription"
+        element={
+          <ProtectedRoute>
+            <ClientSubscriptionPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/integrations/netsuite"
+        element={
+          <ProtectedRoute>
+            <NetSuiteIntegrationsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/netsuite"
+        element={
+          <ProtectedRoute>
+            <EmployeeNetSuitePage />
           </ProtectedRoute>
         }
       />

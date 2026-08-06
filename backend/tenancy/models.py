@@ -93,6 +93,8 @@ class CompanyModule(BaseModel):
     module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="company_modules")
     enabled = models.BooleanField(default=True)
     usage_limit = models.PositiveIntegerField(null=True, blank=True)
+    usage_count = models.PositiveIntegerField(default=0)
+    last_usage_reset = models.DateTimeField(null=True, blank=True)
     activated_at = models.DateTimeField(null=True, blank=True)
     activated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -112,6 +114,11 @@ class CompanyModule(BaseModel):
 
     def __str__(self):
         return f"{self.company.name} → {self.module.name}"
+
+    def is_limit_exceeded(self):
+        if self.usage_limit is None or self.usage_limit <= 0:
+            return False
+        return self.usage_count >= self.usage_limit
 
 
 class CompanySettings(BaseModel):

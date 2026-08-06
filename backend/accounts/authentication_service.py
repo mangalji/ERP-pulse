@@ -270,7 +270,7 @@ class AuthenticationService:
     # Profile Update
     # -----------------------------------------------------------------
 
-    def verify_profile_update_otp(self, *, user, otp_code: str, first_name: str | None = None, last_name: str | None = None, mobile_number: str | None = None, profile_pic: str | None = None) -> User:
+    def verify_profile_update_otp(self, *, user, otp_code: str, first_name: str | None = None, last_name: str | None = None, mobile_number: str | None = None, profile_pic=None) -> User:
         """
         Verify PROFILE_UPDATE OTP and update user profile fields.
         Only updates fields that were provided (not None).

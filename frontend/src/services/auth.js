@@ -36,11 +36,25 @@ export const authApi = {
     apiClient.post(AUTH_ENDPOINTS.profileSendOtp).then(unwrap),
 
   profileUpdate: (otpCode, { firstName, lastName, mobileNumber, profilePic } = {}) => {
-    const body = { otp_code: otpCode }
-    if (firstName !== undefined) body.first_name = firstName
-    if (lastName !== undefined) body.last_name = lastName
-    if (mobileNumber !== undefined) body.mobile_number = mobileNumber
-    if (profilePic !== undefined) body.profile_pic = profilePic
+    const hasFile = profilePic instanceof File
+    const body = hasFile ? new FormData() : { otp_code: otpCode }
+    if (hasFile) {
+      body.append('otp_code', otpCode)
+    } else {
+      body.otp_code = otpCode
+    }
+    if (firstName !== undefined) {
+      hasFile ? body.append('first_name', firstName) : body.first_name = firstName
+    }
+    if (lastName !== undefined) {
+      hasFile ? body.append('last_name', lastName) : body.last_name = lastName
+    }
+    if (mobileNumber !== undefined) {
+      hasFile ? body.append('mobile_number', mobileNumber) : body.mobile_number = mobileNumber
+    }
+    if (profilePic !== undefined && profilePic !== null) {
+      body.append('profile_pic', profilePic)
+    }
     return apiClient.post(AUTH_ENDPOINTS.profileUpdate, body).then(unwrap)
   },
 

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from netsuite.models import NetSuiteConnection
+from netsuite.models import NetSuiteConnection, EmployeeConnection
 from django.utils import timezone
 from django.core.validators import RegexValidator
 
@@ -41,6 +41,7 @@ class NetSuiteConnectionCreateSerializer(serializers.Serializer):
 class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
     token_expires_in_seconds = serializers.SerializerMethodField()
     health = serializers.ReadOnlyField()
+    company_name = serializers.CharField(source='company.name', read_only=True)
 
     class Meta:
         model = NetSuiteConnection
@@ -58,6 +59,8 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
             "last_error",
             "consecutive_failures",
             "token_expires_in_seconds",
+            "company",
+            "company_name",
         )
 
     def get_token_expires_in_seconds(self, obj):
@@ -72,3 +75,20 @@ class NetSuiteConnectionRenameSerializer(serializers.Serializer):
 
 class NetSuiteConnectionSwitchSerializer(serializers.Serializer):
     pass
+
+
+class EmployeeConnectionSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.get_full_name', read_only=True)
+    employee_email = serializers.CharField(source='employee.email', read_only=True)
+
+    class Meta:
+        model = EmployeeConnection
+        fields = ('id', 'employee', 'employee_name', 'employee_email', 'connection', 'created_at')
+
+
+class AssignEmployeeSerializer(serializers.Serializer):
+    employee_id = serializers.UUIDField()
+
+
+class NetSuiteConnectionTestSerializer(serializers.Serializer):
+    connection_id = serializers.UUIDField()
