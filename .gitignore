@@ -127,3 +127,8 @@ backend/debug_*.py
 docs/_build/
 docs/_build/
 site/
+DEVELOPMENT_GUIDELINES.md
+SPRINT*
+backend/ai/v2_changes.md
+docs
+s*
