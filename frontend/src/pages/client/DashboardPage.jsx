@@ -1,5 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Pie,
+  PieChart,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Badge from '../../components/ui/Badge.jsx'
@@ -10,22 +22,38 @@ import Button from '../../components/ui/Button.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
-const FILE_STATUS_TONE = {
-  UPLOADED: 'neutral',
-  PROCESSING: 'primary',
-  EXTRACTED: 'primary',
-  REVIEW_REQUIRED: 'netsuite',
-  APPROVED: 'positive',
-  REJECTED: 'negative',
-  READY_FOR_NETSUITE: 'positive',
-  FAILED: 'negative',
+const CHART_COLORS = [
+  'var(--color-primary)',
+  'var(--color-positive)',
+  'var(--color-negative)',
+  'var(--color-netsuite)',
+  'var(--color-warning)',
+  'var(--color-muted)',
+]
+
+const QUICK_ACTIONS = [
+  { label: 'Upload Invoice', href: '/app/invoice-reader', intent: 'primary' },
+  { label: 'Add Employee', href: '/app/employees', intent: 'secondary' },
+  { label: 'Invite Employee', href: '/app/employees', intent: 'secondary' },
+  { label: 'Connect NetSuite', href: '/app/integrations/netsuite', intent: 'secondary' },
+  { label: 'Generate Report', href: '/app/reports', intent: 'secondary' },
+  { label: 'Open AI Assistant', href: '/app/ai-assistant', intent: 'secondary' },
+]
+
+const ACTIVITY_TONE = {
+  employee: 'primary',
+  invoice: 'positive',
+  ocr: 'netsuite',
+  report: 'warning',
+  ai: 'primary',
+  netsuite: 'netsuite',
 }
 
 export default function DashboardPage() {
   const { user } = useAuth()
   const [summary, setSummary] = useState(null)
-  const [recentInvoices, setRecentInvoices] = useState([])
-  const [batches, setBatches] = useState([])
+  const [charts, setCharts] = useState(null)
+  const [activity, setActivity] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -33,14 +61,14 @@ export default function DashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryData, recentInvoicesData, batchesData] = await Promise.all([
-        clientApi.getDashboardSummary(),
-        clientApi.getRecentInvoices(),
-        clientApi.listInvoiceBatches({ limit: 5 }),
+      const [summaryData, chartsData, activityData] = await Promise.all([
+        clientApi.getExecutiveSummary(),
+        clientApi.getExecutiveCharts(),
+        clientApi.getActivityFeed(10),
       ])
       setSummary(summaryData)
-      setRecentInvoices(recentInvoicesData?.results ?? recentInvoicesData ?? [])
-      setBatches(batchesData?.results ?? batchesData ?? [])
+      setCharts(chartsData)
+      setActivity(activityData)
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load dashboard')
     } finally {
@@ -55,19 +83,48 @@ export default function DashboardPage() {
 
   const kpis = useMemo(() => {
     if (!summary)
-      return Array.from({ length: 4 }, (_, i) => ({ id: `skeleton-${i}`, label: 'Loading...', value: '--' }))
-
-    const totalFiles = batches.reduce((acc, b) => acc + (b.total_files || 0), 0)
-    const processedFiles = batches.reduce((acc, b) => acc + (b.processed_files || 0), 0)
-    const failedFiles = batches.reduce((acc, b) => acc + (b.failed_files || 0), 0)
+      return Array.from({ length: 14 }, (_, i) => ({ id: `skeleton-${i}`, label: 'Loading...', value: '--' }))
 
     return [
-      { id: 'invoices', label: 'Invoice Batches', value: summary.total_invoices ?? batches.length, icon: 'invoice' },
-      { id: 'files', label: 'Total Files', value: totalFiles, icon: 'file' },
-      { id: 'processed', label: 'Processed Files', value: processedFiles, icon: 'check' },
-      { id: 'failed', label: 'Failed Files', value: failedFiles, icon: 'alert' },
+      { id: 'total_employees', label: 'Total Employees', value: summary.total_employees ?? 0 },
+      { id: 'active_employees', label: 'Active Employees', value: summary.active_employees ?? 0 },
+      { id: 'pending_invitations', label: 'Pending Invitations', value: summary.pending_invitations ?? 0 },
+      { id: 'connected_netsuite', label: 'Connected NetSuite Accounts', value: summary.connected_netsuite ?? 0 },
+      { id: 'invoices_uploaded', label: 'Invoices Uploaded', value: summary.invoices_uploaded ?? 0 },
+      { id: 'invoices_pending_review', label: 'Invoices Pending Review', value: summary.invoices_pending_review ?? 0 },
+      { id: 'approved_invoices', label: 'Approved Invoices', value: summary.approved_invoices ?? 0 },
+      { id: 'ocr_failed', label: 'OCR Failed', value: summary.ocr_failed ?? 0 },
+      { id: 'reports_generated', label: 'Reports Generated', value: summary.reports_generated ?? 0 },
+      { id: 'ai_requests', label: 'AI Requests', value: summary.ai_requests ?? 0 },
+      { id: 'subscription_plan', label: 'Subscription Plan', value: summary.subscription_plan ?? '--' },
+      { id: 'plan_expiry', label: 'Plan Expiry', value: summary.plan_expiry ? new Date(summary.plan_expiry).toLocaleDateString() : '--' },
+      { id: 'storage_used_mb', label: 'Storage Used', value: summary.storage_used_mb != null ? `${summary.storage_used_mb} MB` : '--' },
     ]
-  }, [summary, batches])
+  }, [summary])
+
+  const activityItems = useMemo(() => {
+    if (!activity) return []
+    const items = []
+    activity.recent_employees?.forEach((e) => {
+      items.push({ id: `emp-${e.id}`, type: 'employee', text: `${e.first_name} ${e.last_name} (${e.email})`, time: e.created_at })
+    })
+    activity.recent_invoices?.forEach((inv) => {
+      items.push({ id: `inv-${inv.id}`, type: 'invoice', text: `${inv.original_filename || 'Invoice'}`, time: inv.created_at, meta: inv.status })
+    })
+    activity.recent_ocr_jobs?.forEach((job) => {
+      items.push({ id: `ocr-${job.id}`, type: 'ocr', text: `Batch #${job.id} — ${job.total_files} files`, time: job.created_at, meta: job.status })
+    })
+    activity.recent_reports?.forEach((rpt) => {
+      items.push({ id: `rpt-${rpt.id}`, type: 'report', text: `${rpt.report_type || 'Report'}`, time: rpt.generated_at, meta: rpt.status })
+    })
+    activity.recent_ai_conversations?.forEach((conv) => {
+      items.push({ id: `ai-${conv.id}`, type: 'ai', text: conv.title || 'AI Conversation', time: conv.updated_at })
+    })
+    activity.recent_netsuite_syncs?.forEach((sync) => {
+      items.push({ id: `ns-${sync.id}`, type: 'netsuite', text: `${sync.client_name || sync.netsuite_account_id || 'Connection'}`, time: sync.last_synced_at, meta: sync.status })
+    })
+    return items.sort((a, b) => new Date(b.time) - new Date(a.time)).slice(0, 20)
+  }, [activity])
 
   return (
     <ClientLayout title="Dashboard" breadcrumb="Dashboard">
@@ -77,7 +134,7 @@ export default function DashboardPage() {
             Welcome back{user?.first_name ? `, ${user.first_name}` : ''}
           </h1>
           <p className="text-sm text-[var(--color-muted)]">
-            Monitor your invoice processing pipeline and company activity at a glance.
+            Executive overview of your company&apos;s employees, invoices, AI activity, and NetSuite integration.
           </p>
         </div>
 
@@ -85,174 +142,170 @@ export default function DashboardPage() {
           <ErrorState message={error} onRetry={loadDashboard} />
         ) : (
           <>
-            {/* KPI cards */}
+            {/* KPI Cards */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {kpis.map((kpi) => (
                 <Card key={kpi.id} className="p-5">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-sm text-[var(--color-muted)]">{kpi.label}</p>
-                      {loading ? (
-                        <Skeleton className="mt-2 h-8 w-16" />
-                      ) : (
-                        <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">{kpi.value}</p>
-                      )}
-                    </div>
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-primary-soft)] text-[var(--color-primary)]">
-                      <KpiIcon type={kpi.icon} />
-                    </span>
-                  </div>
+                  <p className="text-sm text-[var(--color-muted)]">{kpi.label}</p>
+                  {loading ? (
+                    <Skeleton className="mt-2 h-8 w-20" />
+                  ) : (
+                    <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">{kpi.value}</p>
+                  )}
                 </Card>
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-              {/* Recent batches */}
-              <Card className="p-5 xl:col-span-2">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-                    Recent Invoice Batches
-                  </h2>
-                  <Link to="/app/invoice-reader" className="text-sm font-medium text-[var(--color-primary)] hover:underline">
-                    View all
-                  </Link>
-                </div>
+            {/* Charts */}
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <Card className="p-5">
+                <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Invoices by Status</h2>
                 {loading ? (
-                  <div className="flex flex-col gap-3">
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <Skeleton key={i} className="h-12 w-full" />
-                    ))}
-                  </div>
-                ) : batches.length === 0 ? (
-                  <EmptyState
-                    title="No batches yet"
-                    description="Upload your first invoice to get started."
-                    actionLabel="Upload invoices"
-                    action={() => (window.location.href = '/app/invoice-reader')}
-                  />
+                  <Skeleton className="h-64 w-full" />
+                ) : charts?.invoice_charts?.by_status?.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <PieChart>
+                      <Pie data={charts.invoice_charts.by_status} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={80} label>
+                        {charts.invoice_charts.by_status.map((entry, index) => (
+                          <Cell key={index} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
                 ) : (
-                  <div className="flex flex-col gap-2">
-                    {batches.map((batch) => (
-                      <div
-                        key={batch.id}
-                        className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-3"
-                      >
-                        <div>
-                          <p className="text-sm font-medium text-[var(--color-ink)]">
-                            Batch #{batch.id}
-                          </p>
-                          <p className="text-xs text-[var(--color-muted)]">
-                            {new Date(batch.created_at).toLocaleString()} · {batch.total_files} files
-                          </p>
-                        </div>
-                        <Badge tone={FILE_STATUS_TONE[batch.status] || 'neutral'}>{batch.status}</Badge>
-                      </div>
-                    ))}
-                  </div>
+                  <EmptyState title="No data" description="Invoice status breakdown will appear here." />
                 )}
               </Card>
 
-              {/* Quick actions */}
               <Card className="p-5">
-                <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-                  Quick Actions
-                </h2>
-                <div className="flex flex-col gap-2">
-                  <Button intent="primary" size="md" onClick={() => (window.location.href = '/app/invoice-reader')}>
-                    Upload Invoices
-                  </Button>
-                  <Button intent="secondary" size="md" onClick={() => (window.location.href = '/app/ocr-jobs')}>
-                    View OCR Jobs
-                  </Button>
-                  <Button intent="secondary" size="md" onClick={() => (window.location.href = '/app/ai-assistant')}>
-                    Ask AI Assistant
-                  </Button>
-                </div>
+                <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Invoices by Month</h2>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : charts?.invoice_charts?.by_month?.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={charts.invoice_charts.by_month}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                      <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="var(--color-muted)" />
+                      <YAxis tick={{ fontSize: 11 }} stroke="var(--color-muted)" />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyState title="No data" description="Monthly invoice volume will appear here." />
+                )}
+              </Card>
+
+              <Card className="p-5">
+                <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">OCR Success vs Failed</h2>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : charts?.invoice_charts?.ocr_success_vs_failed?.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <PieChart>
+                      <Pie data={charts.invoice_charts.ocr_success_vs_failed} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={80} label>
+                        {charts.invoice_charts.ocr_success_vs_failed.map((entry, index) => (
+                          <Cell key={index} fill={entry.status === 'Success' ? 'var(--color-positive)' : 'var(--color-negative)'} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyState title="No data" description="OCR success rate will appear here." />
+                )}
+              </Card>
+
+              <Card className="p-5">
+                <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Employee Growth</h2>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : charts?.employee_growth?.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={charts.employee_growth}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                      <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="var(--color-muted)" />
+                      <YAxis tick={{ fontSize: 11 }} stroke="var(--color-muted)" />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="var(--color-netsuite)" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyState title="No data" description="Employee growth will appear here." />
+                )}
+              </Card>
+
+              <Card className="p-5 xl:col-span-2">
+                <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">AI Usage</h2>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : charts?.ai_usage?.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={charts.ai_usage}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                      <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="var(--color-muted)" />
+                      <YAxis tick={{ fontSize: 11 }} stroke="var(--color-muted)" />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="var(--color-primary)" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyState title="No data" description="AI usage trends will appear here." />
+                )}
               </Card>
             </div>
 
-            {/* Recent invoices from NetSuite */}
+            {/* Recent Activity */}
             <Card className="p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-                  Recent Invoices
-                </h2>
-                <span className="text-xs text-[var(--color-muted)]">Live from NetSuite</span>
-              </div>
+              <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Recent Activity</h2>
               {loading ? (
-                <Skeleton className="h-32 w-full" />
-              ) : recentInvoices.length === 0 ? (
-                <EmptyState title="No invoices found" description="Recent invoices from NetSuite will appear here." />
+                <div className="flex flex-col gap-3">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
+                  ))}
+                </div>
+              ) : activityItems.length === 0 ? (
+                <EmptyState title="No recent activity" description="Recent employees, invoices, and syncs will appear here." />
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]">
-                        <th className="pb-2 pr-4 font-medium">Invoice #</th>
-                        <th className="pb-2 pr-4 font-medium">Customer</th>
-                        <th className="pb-2 pr-4 font-medium">Status</th>
-                        <th className="pb-2 pr-4 font-medium">Total</th>
-                        <th className="pb-2 font-medium">Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recentInvoices.map((inv) => (
-                        <tr key={inv.id || inv.internalId} className="border-b border-[var(--color-border)] last:border-0">
-                          <td className="py-3 pr-4 font-medium text-[var(--color-ink)]">{inv.tranId || '--'}</td>
-                          <td className="py-3 pr-4 text-[var(--color-ink-soft)]">
-                            {inv.entity && typeof inv.entity === 'object' ? inv.entity.name : '--'}
-                          </td>
-                          <td className="py-3 pr-4">
-                            <Badge tone={inv.status === 'Approved' ? 'positive' : 'neutral'}>{inv.status || '--'}</Badge>
-                          </td>
-                          <td className="py-3 pr-4 font-mono-tabular text-[var(--color-ink)]">
-                            {inv.total != null ? `$${Number(inv.total).toLocaleString('en-US')}` : '--'}
-                          </td>
-                          <td className="py-3 text-[var(--color-muted)]">{inv.createdDate || inv.date || '--'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="flex flex-col gap-2">
+                  {activityItems.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <Badge tone={ACTIVITY_TONE[item.type] || 'neutral'}>{item.type.replace('_', ' ')}</Badge>
+                        <span className="text-sm text-[var(--color-ink)]">{item.text}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-[var(--color-muted)]">
+                        {item.meta && <span>{item.meta}</span>}
+                        <span>{item.time ? new Date(item.time).toLocaleString() : '--'}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
+            </Card>
+
+            {/* Quick Actions */}
+            <Card className="p-5">
+              <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Quick Actions</h2>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                {QUICK_ACTIONS.map((action) => (
+                  <Button
+                    key={action.label}
+                    intent={action.intent}
+                    size="md"
+                    onClick={() => (window.location.href = action.href)}
+                  >
+                    {action.label}
+                  </Button>
+                ))}
+              </div>
             </Card>
           </>
         )}
       </div>
     </ClientLayout>
-  )
-}
-
-function KpiIcon({ type }) {
-  const common = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: '1.8', className: 'h-5 w-5' }
-  if (type === 'invoice') {
-    return (
-      <svg {...common}>
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <path d="M14 2v6h6" />
-        <path d="M12 18v-6M9 15l3 3 3-3" />
-      </svg>
-    )
-  }
-  if (type === 'file') {
-    return (
-      <svg {...common}>
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <path d="M14 2v6h6" />
-      </svg>
-    )
-  }
-  if (type === 'check') {
-    return (
-      <svg {...common}>
-        <path d="M20 6 9 17l-5-5" />
-      </svg>
-    )
-  }
-  return (
-    <svg {...common}>
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 8v4M12 16h.01" />
-    </svg>
   )
 }

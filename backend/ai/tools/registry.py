@@ -37,6 +37,13 @@ from ai.tools.dashboard import (
     RecentInvoicesTool,
     RecentSalesOrdersTool,
 )
+from ai.tools.invoice import (
+    ApprovedInvoicesTool,
+    InvoiceStatsTool,
+    OCRFailuresTool,
+    PendingInvoicesTool,
+    RecentInvoiceBatchesTool,
+)
 from ai.tools.reports import SalesTrendTool
 
 # Register all tool classes here. Adding a new tool means importing its
@@ -62,6 +69,12 @@ TOOL_CLASSES = (
     RecentEmployeesTool,
     # Reports
     SalesTrendTool,
+    # Invoice / OCR
+    InvoiceStatsTool,
+    PendingInvoicesTool,
+    ApprovedInvoicesTool,
+    OCRFailuresTool,
+    RecentInvoiceBatchesTool,
 )
 
 

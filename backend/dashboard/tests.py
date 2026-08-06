@@ -19,12 +19,15 @@ from rest_framework import status
 from rest_framework.test import APITestCase, APIClient
 
 from accounts.models import User
-from dashboard.services import DashboardService
+from dashboard.services import DashboardService, DashboardAggregateService
 from dashboard.views import (
     DashboardSummaryView,
     RecentCustomersView,
     RecentInvoicesView,
     RecentSalesOrdersView,
+    ExecutiveSummaryView,
+    ExecutiveChartsView,
+    ActivityFeedView,
 )
 from netsuite.services import NetSuiteDataService
 
@@ -200,3 +203,85 @@ class DashboardThrottleTests(APITestCase):
         # 121st request should be throttled
         response = self.client.get('/api/v1/dashboard/summary/')
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+# ===================================================================
+# Executive Dashboard Aggregate View Tests
+# ===================================================================
+
+class ExecutiveDashboardViewTests(APITestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = _make_user()
+        self.client = APIClient()
+
+    @patch('dashboard.views.DashboardAggregateService')
+    def test_executive_summary(self, MockAggService):
+        mock_service = MockAggService.return_value
+        mock_service.get_executive_summary.return_value = {
+            'total_employees': 5,
+            'active_employees': 4,
+            'pending_invitations': 1,
+            'connected_netsuite': 2,
+            'invoices_uploaded': 10,
+            'invoices_pending_review': 3,
+            'approved_invoices': 5,
+            'ocr_failed': 2,
+            'reports_generated': 3,
+            'ai_requests': 8,
+            'subscription_plan': 'Pro',
+            'plan_expiry': '2026-12-31',
+            'storage_used_mb': 128.5,
+        }
+
+        self.client.credentials(**_auth_header(self.user))
+        response = self.client.get('/api/v1/dashboard/executive-summary/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['data']['total_employees'], 5)
+        self.assertEqual(response.data['data']['subscription_plan'], 'Pro')
+
+    @patch('dashboard.views.DashboardAggregateService')
+    def test_executive_charts(self, MockAggService):
+        mock_service = MockAggService.return_value
+        mock_service.get_invoice_charts.return_value = {
+            'by_status': [{'status': 'APPROVED', 'count': 5}],
+            'by_month': [{'month': '2026-07', 'count': 3}],
+            'ocr_success_vs_failed': [{'status': 'Success', 'count': 8}, {'status': 'Failed', 'count': 2}],
+        }
+        mock_service.get_employee_growth.return_value = [{'month': '2026-07', 'count': 2}]
+        mock_service.get_ai_usage.return_value = [{'month': '2026-07', 'count': 5}]
+
+        self.client.credentials(**_auth_header(self.user))
+        response = self.client.get('/api/v1/dashboard/executive-charts/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        self.assertEqual(len(response.data['data']['invoice_charts']['by_status']), 1)
+        self.assertEqual(len(response.data['data']['employee_growth']), 1)
+        self.assertEqual(len(response.data['data']['ai_usage']), 1)
+
+    @patch('dashboard.views.DashboardAggregateService')
+    def test_activity_feed(self, MockAggService):
+        mock_service = MockAggService.return_value
+        mock_service.get_activity_feed.return_value = {
+            'recent_employees': [],
+            'recent_invoices': [],
+            'recent_ocr_jobs': [],
+            'recent_reports': [],
+            'recent_ai_conversations': [],
+            'recent_netsuite_syncs': [],
+        }
+
+        self.client.credentials(**_auth_header(self.user))
+        response = self.client.get('/api/v1/dashboard/activity-feed/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        self.assertIn('recent_employees', response.data['data'])
+
+    def test_executive_endpoints_require_auth(self):
+        response = self.client.get('/api/v1/dashboard/executive-summary/')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        response = self.client.get('/api/v1/dashboard/executive-charts/')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        response = self.client.get('/api/v1/dashboard/activity-feed/')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

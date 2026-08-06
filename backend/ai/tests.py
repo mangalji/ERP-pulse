@@ -197,7 +197,8 @@ class ContextBuilderTests(TestCase):
 
         context = build_context(self.user)
         self.assertFalse(context.netsuite_connected)
-        self.assertIsNone(context.business_context)
+        self.assertIsNotNone(context.business_context)
+        self.assertIsNone(context.business_context.invoice_stats)
 
     @patch('ai.context_builder.AnalyticsService')
     @patch('ai.context_builder.DashboardService')

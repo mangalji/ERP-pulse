@@ -6,4 +6,7 @@ export const dashboardApi = {
   getRecentCustomers: () => apiClient.get(DASHBOARD_ENDPOINTS.recentCustomers).then(unwrap),
   getRecentSalesOrders: () => apiClient.get(DASHBOARD_ENDPOINTS.recentSalesOrders).then(unwrap),
   getRecentInvoices: () => apiClient.get(DASHBOARD_ENDPOINTS.recentInvoices).then(unwrap),
+  getExecutiveSummary: () => apiClient.get(DASHBOARD_ENDPOINTS.executiveSummary).then(unwrap),
+  getExecutiveCharts: () => apiClient.get(DASHBOARD_ENDPOINTS.executiveCharts).then(unwrap),
+  getActivityFeed: (limit = 10) => apiClient.get(DASHBOARD_ENDPOINTS.activityFeed, { params: { limit } }).then(unwrap),
 }

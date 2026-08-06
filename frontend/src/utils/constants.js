@@ -33,6 +33,9 @@ export const DASHBOARD_ENDPOINTS = {
   recentCustomers: '/dashboard/recent-customers/',
   recentSalesOrders: '/dashboard/recent-sales-orders/',
   recentInvoices: '/dashboard/recent-invoices/',
+  executiveSummary: '/dashboard/executive-summary/',
+  executiveCharts: '/dashboard/executive-charts/',
+  activityFeed: '/dashboard/activity-feed/',
 }
 
 export const REPORTS_ENDPOINTS = {

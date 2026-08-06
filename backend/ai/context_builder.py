@@ -4,20 +4,23 @@ Builds the business context passed to the AI provider.
 Per AI_CONTEXT.md ("Facts come from analytics. Explanations come from
 AI."), this module never fabricates business data and never fetches raw
 NetSuite data itself — it only orchestrates existing services
-(DashboardService, BusinessInsightsService) and assembles their results.
-All actual NetSuite calls and business-metric logic live in those
-services (dashboard/services.py); this module owns none of it.
+(DashboardService, BusinessInsightsService, InvoiceService) and assembles
+their results. All actual NetSuite calls and business-metric logic live
+in those services; this module owns none of it.
 
 `netsuite_connected` reflects a real, current check against the user's
 actual NetSuiteConnection (reusing netsuite's own repository rather than
 querying the model directly here, per DRY). `business_context` is
-populated only when connected, combining:
+populated when connected, combining:
 
 - Dashboard context (summary, recent_customers, recent_sales_orders,
   recent_invoices) — pre-existing keys, unchanged.
 - Business Insights (sales_summary, top_customers, overdue_invoices,
   inactive_vendors, low_inventory) — reused from BusinessInsightsService,
   not duplicated here.
+- Local invoice/OCR context (invoice_stats, pending_invoices,
+  approved_invoices, ocr_failures, recent_invoice_batches) — always
+  available from the local database, independent of NetSuite.
 
 Each insight is fetched independently and can fail without failing the
 whole request: a failure is logged and that key is set to None (never
@@ -35,6 +38,7 @@ from accounts.models import User
 from analytics.services import AnalyticsService
 from ai.business_context import AIRequestContext, BusinessContext
 from dashboard.services import DashboardService
+from invoice.models import InvoiceFile, InvoiceBatch, FileStatus
 from netsuite.repositories import NetSuiteConnectionRepository
 
 logger = logging.getLogger(__name__)
@@ -47,6 +51,7 @@ logger = logging.getLogger(__name__)
 # result for rapid-fire follow-up questions within one chat session).
 CONTEXT_CACHE_TTL_SECONDS = 60
 CONTEXT_CACHE_KEY_PREFIX = 'ai_business_context'
+
 
 def _current_month_range() -> tuple[str, str]:
     """First-of-this-month through first-of-next-month, as 'YYYY-MM-DD' strings."""
@@ -108,24 +113,161 @@ def _safe_call(label: str, func):
         return None
 
 
+def _build_invoice_stats(user: User) -> dict | None:
+    """Aggregate invoice counts and status breakdown for the user's company."""
+    company = getattr(user, 'company', None)
+    if not company:
+        return None
+
+    batches = InvoiceBatch.objects.filter(company=company)
+    total_batches = batches.count()
+    total_files = InvoiceFile.objects.filter(batch__company=company).count()
+
+    status_counts = {}
+    for status in FileStatus.values:
+        status_counts[status] = InvoiceFile.objects.filter(
+            batch__company=company, status=status
+        ).count()
+
+    failed = InvoiceFile.objects.filter(
+        batch__company=company, status=FileStatus.FAILED
+    ).count()
+
+    return {
+        'total_batches': total_batches,
+        'total_files': total_files,
+        'status_counts': status_counts,
+        'failed_files': failed,
+    }
+
+
+def _build_pending_invoices(user: User, limit: int = 10) -> list | None:
+    """Invoices pending review (EXTRACTED or REVIEW_REQUIRED)."""
+    company = getattr(user, 'company', None)
+    if not company:
+        return None
+
+    qs = InvoiceFile.objects.filter(
+        batch__company=company,
+        status__in=[FileStatus.EXTRACTED, FileStatus.REVIEW_REQUIRED],
+    ).select_related('batch', 'extraction').order_by('-created_at')[:limit]
+
+    return [
+        {
+            'file_id': str(f.id),
+            'filename': f.original_filename,
+            'status': f.status,
+            'confidence': getattr(getattr(f, 'extraction', None), 'confidence_score', None),
+            'batch_id': str(f.batch_id),
+            'created_at': f.created_at.isoformat(),
+        }
+        for f in qs
+    ]
+
+
+def _build_approved_invoices(user: User, limit: int = 10) -> list | None:
+    """Approved invoices ready for NetSuite."""
+    company = getattr(user, 'company', None)
+    if not company:
+        return None
+
+    qs = InvoiceFile.objects.filter(
+        batch__company=company,
+        status=FileStatus.APPROVED,
+    ).select_related('batch', 'extraction').order_by('-created_at')[:limit]
+
+    return [
+        {
+            'file_id': str(f.id),
+            'filename': f.original_filename,
+            'confidence': getattr(getattr(f, 'extraction', None), 'confidence_score', None),
+            'batch_id': str(f.batch_id),
+            'created_at': f.created_at.isoformat(),
+        }
+        for f in qs
+    ]
+
+
+def _build_ocr_failures(user: User, limit: int = 10) -> list | None:
+    """Failed OCR/invoice files."""
+    company = getattr(user, 'company', None)
+    if not company:
+        return None
+
+    qs = InvoiceFile.objects.filter(
+        batch__company=company,
+        status=FileStatus.FAILED,
+    ).select_related('batch').order_by('-created_at')[:limit]
+
+    return [
+        {
+            'file_id': str(f.id),
+            'filename': f.original_filename,
+            'batch_id': str(f.batch_id),
+            'created_at': f.created_at.isoformat(),
+        }
+        for f in qs
+    ]
+
+
+def _build_recent_invoice_batches(user: User, limit: int = 5) -> list | None:
+    """Recent invoice batches for the user's company."""
+    company = getattr(user, 'company', None)
+    if not company:
+        return None
+
+    qs = InvoiceBatch.objects.filter(company=company).order_by('-created_at')[:limit]
+
+    return [
+        {
+            'batch_id': str(b.id),
+            'total_files': b.total_files,
+            'processed_files': b.processed_files,
+            'failed_files': b.failed_files,
+            'status': b.status,
+            'created_at': b.created_at.isoformat(),
+        }
+        for b in qs
+    ]
+
+
 def build_context(user: User) -> AIRequestContext:
     cache_key = f"{CONTEXT_CACHE_KEY_PREFIX}:{user.id}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    
+
     context = _build_context_uncached(user)
-    cache.set(cache_key,context,CONTEXT_CACHE_TTL_SECONDS)
+    cache.set(cache_key, context, CONTEXT_CACHE_TTL_SECONDS)
     return context
 
-def _build_context_uncached(user:User) -> AIRequestContext:
+
+def _build_context_uncached(user: User) -> AIRequestContext:
     connection_repository = NetSuiteConnectionRepository()
     connection = connection_repository.get_by_user(user)
     netsuite_connected = bool(connection and connection.is_active)
 
+    # Local invoice/OCR context — always available, independent of NetSuite.
+    invoice_stats = _safe_call('invoice_stats', lambda: _build_invoice_stats(user))
+    pending_invoices = _safe_call('pending_invoices', lambda: _build_pending_invoices(user))
+    approved_invoices = _safe_call('approved_invoices', lambda: _build_approved_invoices(user))
+    ocr_failures = _safe_call('ocr_failures', lambda: _build_ocr_failures(user))
+    recent_invoice_batches = _safe_call(
+        'recent_invoice_batches', lambda: _build_recent_invoice_batches(user)
+    )
+
     if not netsuite_connected:
-        return AIRequestContext(netsuite_connected=False, business_context=None)
-    
+        return AIRequestContext(
+            netsuite_connected=False,
+            business_context=BusinessContext(
+                invoice_stats=invoice_stats,
+                pending_invoices=pending_invoices,
+                approved_invoices=approved_invoices,
+                ocr_failures=ocr_failures,
+                recent_invoice_batches=recent_invoice_batches,
+            ),
+        )
+
     dashboard_service = DashboardService()
     analytics_service = AnalyticsService()
 
@@ -185,37 +327,41 @@ def _build_context_uncached(user:User) -> AIRequestContext:
             'customer_churn_risk',
             lambda: analytics_service.get_customer_churn_risk(user=user),
         ),
-            # Revenue — new, additive keys. See dashboard/services.py
-            # docstrings for what's verified vs. not yet confirmed
-            # against a live NetSuite sandbox.
-            'top_customers_by_revenue': _safe_call(
-                'top_customers_by_revenue',
-                lambda: analytics_service.get_revenue_by_customer(user=user),
+        # Revenue — new, additive keys.
+        'top_customers_by_revenue': _safe_call(
+            'top_customers_by_revenue',
+            lambda: analytics_service.get_revenue_by_customer(user=user),
+        ),
+        'revenue_this_month': _safe_call(
+            'revenue_this_month',
+            lambda: analytics_service.get_revenue_for_period(
+                user=user,
+                start_date=_current_month_range()[0],
+                end_date=_current_month_range()[1],
             ),
-            'revenue_this_month': _safe_call(
-                'revenue_this_month',
-                lambda: analytics_service.get_revenue_for_period(
-                    user=user,
-                    start_date=_current_month_range()[0],
-                    end_date=_current_month_range()[1],
-                ),
+        ),
+        'revenue_last_month': _safe_call(
+            'revenue_last_month',
+            lambda: analytics_service.get_revenue_for_period(
+                user=user,
+                start_date=_previous_month_range()[0],
+                end_date=_previous_month_range()[1],
             ),
-            'revenue_last_month': _safe_call(
-                'revenue_last_month',
-                lambda: analytics_service.get_revenue_for_period(
-                    user=user,
-                    start_date=_previous_month_range()[0],
-                    end_date=_previous_month_range()[1],
-                ),
+        ),
+        'revenue_this_fiscal_year': _safe_call(
+            'revenue_this_fiscal_year',
+            lambda: analytics_service.get_revenue_for_period(
+                user=user,
+                start_date=_current_fiscal_year_range()[0],
+                end_date=_current_fiscal_year_range()[1],
             ),
-            'revenue_this_fiscal_year': _safe_call(
-                'revenue_this_fiscal_year',
-                lambda: analytics_service.get_revenue_for_period(
-                    user=user,
-                    start_date=_current_fiscal_year_range()[0],
-                    end_date=_current_fiscal_year_range()[1],
-                ),
-            ),
-        }
+        ),
+        # Local invoice/OCR context — additive, independent of NetSuite.
+        'invoice_stats': invoice_stats,
+        'pending_invoices': pending_invoices,
+        'approved_invoices': approved_invoices,
+        'ocr_failures': ocr_failures,
+        'recent_invoice_batches': recent_invoice_batches,
+    }
 
     return AIRequestContext(netsuite_connected=True, business_context=BusinessContext(**business_context))

@@ -32,6 +32,9 @@ export const suggestedPrompts = [
   'Which customers are at risk of churning?',
   'Show me my top 5 products by margin',
   'Explain the drop in order volume last week',
+  'Show pending invoices awaiting review',
+  'Which invoices failed OCR processing?',
+  'What invoices are ready for NetSuite?',
 ]
 
 export const businessPrompts = [
@@ -40,6 +43,8 @@ export const businessPrompts = [
   'Which customers need follow-up?',
   'Show recent business activity',
   'Give me today\u2019s business insights',
+  'How many invoices have we processed this month?',
+  'Show OCR failure rate',
 ]
 
 export const chatHistoryPreview = [

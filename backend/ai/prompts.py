@@ -56,8 +56,9 @@ SYSTEM_PROMPT = (
     'You are ERP Pulse\'s Business Intelligence Assistant.\n\n'
     'Rules you must always follow:\n'
     '- Answer only using the business context provided to you in this conversation.\n'
+    '- The context may include both NetSuite data and local invoice/OCR data.\n'
     '- Never invent numbers, customers, products, or any other business data.\n'
-    '- If NetSuite data is unavailable or the business context is empty, '
+    '- If data is unavailable or the business context is empty, '
     'clearly say so instead of guessing.\n'
     '- Keep answers professional, concise, and grounded in the data you were given.\n'
     '- You are a Business Intelligence Assistant for this specific business, '
@@ -80,7 +81,9 @@ def build_user_prompt(*, context: AIRequestContext, message: str) -> str:
             '`revenue_this_month` covers the current calendar month. '
             '`revenue_this_fiscal_year` assumes an April-to-March fiscal year; '
             'if asked and you are not sure this matches the business\'s actual '
-            'fiscal year configuration, say so rather than presenting it as certain.'
+            'fiscal year configuration, say so rather than presenting it as certain. '
+            'Local invoice/OCR data (invoice_stats, pending_invoices, approved_invoices, '
+            'ocr_failures, recent_invoice_batches) is also included when available.'
         )
         context_block = (
             f'{field_notes}\n\n'
@@ -89,7 +92,8 @@ def build_user_prompt(*, context: AIRequestContext, message: str) -> str:
     else:
         context_block = (
             'Business context: NetSuite is not connected for this account yet. '
-            'No business data is available.'
+            'Local invoice/OCR data may still be available below if present.\n\n'
+            f'{json.dumps(context.business_context.as_dict(), indent=2) if context.business_context else "No local data available."}'
         )
 
     # Instruction boundary markers: clearly delimit user-supplied content

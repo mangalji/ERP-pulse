@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import DashboardThrottle
-from dashboard.services import DashboardService
+from dashboard.services import DashboardService, DashboardAggregateService
 
 
 class DashboardIsAuthenticated(permissions.BasePermission):
@@ -147,4 +147,78 @@ class RecentCustomersView(APIView):
             request=request,
             offset=offset,
             limit=limit,
+        )
+
+
+class ExecutiveSummaryView(APIView):
+    """GET /api/v1/dashboard/executive-summary/"""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [DashboardThrottle]
+
+    def get(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return success_response(
+                message='Authentication credentials were not provided.',
+                data={},
+                status_code=401,
+            )
+
+        data = DashboardAggregateService().get_executive_summary(user=request.user)
+        return success_response(
+            message='Executive summary fetched successfully.',
+            data=data,
+        )
+
+
+class ExecutiveChartsView(APIView):
+    """GET /api/v1/dashboard/executive-charts/"""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [DashboardThrottle]
+
+    def get(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return success_response(
+                message='Authentication credentials were not provided.',
+                data={},
+                status_code=401,
+            )
+
+        service = DashboardAggregateService()
+        data = {
+            'invoice_charts': service.get_invoice_charts(user=request.user),
+            'employee_growth': service.get_employee_growth(user=request.user),
+            'ai_usage': service.get_ai_usage(user=request.user),
+        }
+        return success_response(
+            message='Executive charts fetched successfully.',
+            data=data,
+        )
+
+
+class ActivityFeedView(APIView):
+    """GET /api/v1/dashboard/activity-feed/"""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [DashboardThrottle]
+
+    def get(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return success_response(
+                message='Authentication credentials were not provided.',
+                data={},
+                status_code=401,
+            )
+
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, 50))
+
+        data = DashboardAggregateService().get_activity_feed(user=request.user, limit=limit)
+        return success_response(
+            message='Activity feed fetched successfully.',
+            data=data,
         )
