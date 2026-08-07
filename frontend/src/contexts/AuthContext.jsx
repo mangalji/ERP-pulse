@@ -109,10 +109,13 @@ export function AuthProvider({ children }) {
   const connectNetSuite = () => setNetSuiteConnected(true)
   const disconnectNetSuite = () => setNetSuiteConnected(false)
 
+  const isSuperAdmin = Boolean(user?.is_superadmin || user?.is_staff)
+
   const value = useMemo(
     () => ({
       user,
       isAuthenticated: Boolean(user),
+      isSuperAdmin,
       isLoading,
       error,
       login,

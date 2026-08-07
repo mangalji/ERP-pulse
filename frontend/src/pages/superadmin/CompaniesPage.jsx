@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import DataTable from '../../components/superadmin/DataTable.jsx'
@@ -21,9 +22,13 @@ const EMPTY_FORM = {
   contact_phone: '',
   country: '',
   status: 'TRIAL',
+  admin_first_name: '',
+  admin_last_name: '',
+  admin_email: '',
 }
 
 export default function CompaniesPage() {
+  const navigate = useNavigate()
   const { toasts, addToast, removeToast } = useToast()
 
   const [rows, setRows] = useState([])
@@ -260,6 +265,10 @@ export default function CompaniesPage() {
               <Input label="Contact Email" type="email" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })} />
               <Input label="Contact Phone" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} />
               <Input label="Country" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
+              <h4 className="mt-2 text-sm font-medium text-[var(--color-ink-soft)]">Admin User</h4>
+              <Input label="First Name" value={form.admin_first_name} onChange={(e) => setForm({ ...form, admin_first_name: e.target.value })} />
+              <Input label="Last Name" value={form.admin_last_name} onChange={(e) => setForm({ ...form, admin_last_name: e.target.value })} />
+              <Input label="Admin Email" type="email" value={form.admin_email} onChange={(e) => setForm({ ...form, admin_email: e.target.value })} required />
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-[var(--color-ink-soft)]">Status</span>
                 <select
@@ -309,15 +318,22 @@ export default function CompaniesPage() {
                   { label: 'Country', value: selected.country },
                 ]}
               />
-              <InfoCard
-                title="Usage"
-                items={[
-                  { label: 'Users', value: selected.user_count ?? 0 },
-                  { label: 'Modules', value: selected.module_count ?? 0 },
-                  { label: 'Created', value: selected.created_at ? new Date(selected.created_at).toLocaleDateString() : '—' },
-                ]}
-              />
-            </div>
+               <InfoCard
+                 title="Usage"
+                 items={[
+                   { label: 'Users', value: selected.user_count ?? 0 },
+                   { label: 'Modules', value: selected.module_count ?? 0 },
+                   { label: 'Created', value: selected.created_at ? new Date(selected.created_at).toLocaleDateString() : '—' },
+                 ]}
+               />
+               <Button
+                 size="sm"
+                 intent="secondary"
+                 onClick={() => navigate(`/admin/companies/${selected.id}/subscription`)}
+               >
+                 View Subscription
+               </Button>
+             </div>
           </div>
         </div>
       )}

@@ -320,24 +320,40 @@ class AuthenticationService:
         Step 1 of login: verify credentials and, if valid and the account
         is active/verified, send a LOGIN OTP. Issues no token.
         """
+        import traceback
+        print(f"DEBUG_LOGIN_SERVICE: login() entered with email={email}")
         user = self.user_repository.get_by_email(email)
-
-        if user is None or not user.check_password(password):
-            # Same exception for "no such user" and "wrong password" —
-            # never reveal whether an email is registered.
-            logger.warning('Login attempt failed for email=%s.', email)
+        print(f"DEBUG_LOGIN_SERVICE: get_by_email returned = {user}")
+        if user is None:
+            print("DEBUG_LOGIN_SERVICE: user is None → raising InvalidCredentialsException")
+            raise InvalidCredentialsException('Invalid email or password.')
+        print(f"DEBUG_LOGIN_SERVICE: user.is_active = {user.is_active}")
+        print(f"DEBUG_LOGIN_SERVICE: user.is_email_verified = {user.is_email_verified}")
+        pw_ok = user.check_password(password)
+        print(f"DEBUG_LOGIN_SERVICE: check_password = {pw_ok}")
+        if not pw_ok:
+            print("DEBUG_LOGIN_SERVICE: password check failed → raising InvalidCredentialsException")
             raise InvalidCredentialsException('Invalid email or password.')
 
         if not user.is_active or not user.is_email_verified:
-            logger.warning('Login rejected for inactive/unverified user %s.', user.id)
+            print(f"DEBUG_LOGIN_SERVICE: account not active/verified → raising AccountNotVerifiedException")
+            print(f"DEBUG_LOGIN_SERVICE: is_active={user.is_active}, is_email_verified={user.is_email_verified}")
             raise AccountNotVerifiedException(
                 'Please activate your account first. Check your email for the '
                 'invitation link, or contact your administrator if your access '
                 'has been disabled.'
             )
-
-        self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)
-
+        print("DEBUG_LOGIN_SERVICE: BEFORE OTP generation")
+        try:
+            self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)
+        except Exception as e:
+            print(f"DEBUG_LOGIN_SERVICE: OTP EXCEPTION:")
+            print(f"  type: {type(e).__name__}")
+            print(f"  message: {str(e)}")
+            print(f"  status_code attr: {getattr(e, 'status_code', 'NONE')}")
+            print(f"  traceback:\n{traceback.format_exc()}")
+            raise
+        print("DEBUG_LOGIN_SERVICE: AFTER OTP generation, returning user")
         logger.info('Login OTP sent for user %s.', user.id)
         return user
 

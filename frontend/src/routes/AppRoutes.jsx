@@ -1,25 +1,12 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
+import PublicLayout from '../components/layout/PublicLayout.jsx'
 
 import LoginPage from '../pages/auth/LoginPage.jsx'
 import OtpVerificationPage from '../pages/auth/OtpVerificationPage.jsx'
-import DashboardPage from '../pages/DashboardPage.jsx'
-import ConnectNetSuitePage from '../pages/ConnectNetSuitePage.jsx'
-import AiAssistantPage from '../pages/AiAssistantPage.jsx'
-import CustomersPage from '../pages/CustomersPage.jsx'
-import EmployeesPage from '../pages/EmployeesPage.jsx'
-import VendorsPage from '../pages/VendorsPage.jsx'
-import InventoryPage from '../pages/InventoryPage.jsx'
-import SalesOrdersPage from '../pages/SalesOrdersPage.jsx'
-import PurchaseOrdersPage from '../pages/PurchaseOrdersPage.jsx'
-import InvoicesPage from '../pages/InvoicesPage.jsx'
-import InvoiceReaderPage from '../pages/InvoiceReaderPage.jsx'
-import ReportsPage from '../pages/ReportsPage.jsx'
-import HistoryPage from '../pages/HistoryPage.jsx'
 import ForgotPasswordPage from '../pages/auth/ForgotPasswordPage.jsx'
 import ResetPasswordPage from '../pages/auth/ResetPasswordPage.jsx'
-import SettingsPage from '../pages/SettingsPage.jsx'
-import SystemHealthPage from '../pages/SystemHealthPage.jsx'
 
 import SuperAdminDashboardPage from '../pages/superadmin/DashboardPage.jsx'
 import SuperAdminCompaniesPage from '../pages/superadmin/CompaniesPage.jsx'
@@ -45,6 +32,8 @@ import PublicRequestDemoPage from '../pages/public/RequestDemoPage.jsx'
 // Client Company Portal
 import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
 import ClientInvoiceReaderPage from '../pages/client/InvoiceReaderPage.jsx'
+import ClientInvoiceDetailPage from '../pages/client/InvoiceDetailPage.jsx'
+import ClientPayloadPreviewPage from '../pages/client/PayloadPreviewPage.jsx'
 import ClientOcrJobsPage from '../pages/client/OcrJobsPage.jsx'
 import ClientAiAssistantPage from '../pages/client/AiAssistantPage.jsx'
 import ClientEmployeesPage from '../pages/client/EmployeesPage.jsx'
@@ -73,17 +62,53 @@ import ScheduledReportsPage from '../pages/reports-engine/ScheduledReportsPage.j
 import ReportHistoryPage from '../pages/reports-engine/ReportHistoryPage.jsx'
 import TemplatesPage from '../pages/reports-engine/TemplatesPage.jsx'
 
+/* Legacy flat pages (DashboardLayout) — retained on disk per DEVELOPMENT_GUIDELINES.md.
+ * These pages are NOT routed; their legacy URLs redirect to /app/* equivalents.
+ * Commented imports kept for traceability. Do not delete files.
+ */
+// import DashboardPage from '../pages/DashboardPage.jsx'
+// import ConnectNetSuitePage from '../pages/ConnectNetSuitePage.jsx'
+// import AiAssistantPage from '../pages/AiAssistantPage.jsx'
+// import CustomersPage from '../pages/CustomersPage.jsx'
+// import EmployeesPage from '../pages/EmployeesPage.jsx'
+// import VendorsPage from '../pages/VendorsPage.jsx'
+// import InventoryPage from '../pages/InventoryPage.jsx'
+// import SalesOrdersPage from '../pages/SalesOrdersPage.jsx'
+// import PurchaseOrdersPage from '../pages/PurchaseOrdersPage.jsx'
+// import InvoicesPage from '../pages/InvoicesPage.jsx'
+// import InvoiceReaderPage from '../pages/InvoiceReaderPage.jsx'
+// import ReportsPage from '../pages/ReportsPage.jsx'
+// import HistoryPage from '../pages/HistoryPage.jsx'
+// import SettingsPage from '../pages/SettingsPage.jsx'
+// import SystemHealthPage from '../pages/SystemHealthPage.jsx'
+
+/* Legacy auth pages — intentionally not routed (Sprint 8.4: invitation-only onboarding). */
+// import RegisterPage from '../pages/auth/RegisterPage.jsx'
+// import CompleteProfilePage from '../pages/auth/CompleteProfilePage.jsx'
+
+function PublicRoute({ children }) {
+  return <PublicLayout>{children}</PublicLayout>
+}
+
+function CatchAllRoute() {
+  const { isAuthenticated, isSuperAdmin } = useAuth()
+  const location = useLocation()
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location.pathname }} replace />
+  return <Navigate to={isSuperAdmin ? '/admin' : '/app'} replace />
+}
+
 export default function AppRoutes() {
   return (
     <Routes>
       {/* Public Website */}
-      <Route path="/" element={<PublicHomePage />} />
-      <Route path="/features" element={<PublicFeaturesPage />} />
-      <Route path="/pricing" element={<PublicPricingPage />} />
-      <Route path="/about" element={<PublicAboutPage />} />
-      <Route path="/contact" element={<PublicContactPage />} />
-      <Route path="/request-demo" element={<PublicRequestDemoPage />} />
+      <Route path="/" element={<PublicRoute><PublicHomePage /></PublicRoute>} />
+      <Route path="/features" element={<PublicRoute><PublicFeaturesPage /></PublicRoute>} />
+      <Route path="/pricing" element={<PublicRoute><PublicPricingPage /></PublicRoute>} />
+      <Route path="/about" element={<PublicRoute><PublicAboutPage /></PublicRoute>} />
+      <Route path="/contact" element={<PublicRoute><PublicContactPage /></PublicRoute>} />
+      <Route path="/request-demo" element={<PublicRoute><PublicRequestDemoPage /></PublicRoute>} />
 
+      {/* Authentication */}
       <Route path="/login" element={<LoginPage />} />
       {/*
         LEGACY (Sprint 8.4): public registration retired in favor of
@@ -91,139 +116,33 @@ export default function AppRoutes() {
         remain on disk per DEVELOPMENT_GUIDELINES.md ("never delete files")
         but are intentionally not routed here, so they are unreachable from
         the UI. Do not re-add these routes without a product decision.
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/complete-profile" element={<CompleteProfilePage />} />
       */}
       <Route path="/otp-verification" element={<OtpVerificationPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <DashboardPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/connect-netsuite"
-        element={
-          <ProtectedRoute>
-            <ConnectNetSuitePage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/ai-assistant"
-        element={
-          <ProtectedRoute>
-            <AiAssistantPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/customers"
-        element={
-          <ProtectedRoute>
-            <CustomersPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/employees"
-        element={
-          <ProtectedRoute>
-            <EmployeesPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/vendors"
-        element={
-          <ProtectedRoute>
-            <VendorsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/inventory"
-        element={
-          <ProtectedRoute>
-            <InventoryPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/sales-orders"
-        element={
-          <ProtectedRoute>
-            <SalesOrdersPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/purchase-orders"
-        element={
-          <ProtectedRoute>
-            <PurchaseOrdersPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/invoices"
-        element={
-          <ProtectedRoute>
-            <InvoicesPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/invoice-reader"
-        element={
-          <ProtectedRoute>
-            <InvoiceReaderPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/reports"
-        element={
-          <ProtectedRoute>
-            <ReportsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/history"
-        element={
-          <ProtectedRoute>
-            <HistoryPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/settings"
-        element={
-          <ProtectedRoute>
-            <SettingsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/system-health"
-        element={
-          <ProtectedRoute>
-            <SystemHealthPage />
-          </ProtectedRoute>
-        }
-      />
+      {/* Legacy redirects → new client portal routes */}
+      <Route path="/dashboard" element={<Navigate to="/app" replace />} />
+      <Route path="/connect-netsuite" element={<Navigate to="/app/integrations/netsuite" replace />} />
+      <Route path="/ai-assistant" element={<Navigate to="/app/ai-assistant" replace />} />
+      <Route path="/customers" element={<Navigate to="/app/bi/customers" replace />} />
+      <Route path="/employees" element={<Navigate to="/app/employees" replace />} />
+      <Route path="/vendors" element={<Navigate to="/app" replace />} />
+      <Route path="/inventory" element={<Navigate to="/app/bi/inventory" replace />} />
+      <Route path="/sales-orders" element={<Navigate to="/app/bi/sales" replace />} />
+      <Route path="/purchase-orders" element={<Navigate to="/app/bi/purchase" replace />} />
+      <Route path="/invoices" element={<Navigate to="/app/invoice-reader" replace />} />
+      <Route path="/invoice-reader" element={<Navigate to="/app/invoice-reader" replace />} />
+      <Route path="/reports" element={<Navigate to="/app/reports" replace />} />
+      <Route path="/history" element={<Navigate to="/app" replace />} />
+      <Route path="/settings" element={<Navigate to="/app/settings" replace />} />
+      <Route path="/system-health" element={<Navigate to="/app" replace />} />
 
       {/* AGSuite Super Admin Portal */}
       <Route
         path="/admin"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminDashboardPage />
           </ProtectedRoute>
         }
@@ -231,7 +150,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/companies"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminCompaniesPage />
           </ProtectedRoute>
         }
@@ -239,7 +158,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/plans"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminPlansPage />
           </ProtectedRoute>
         }
@@ -247,7 +166,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/modules"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminModulesPage />
           </ProtectedRoute>
         }
@@ -255,7 +174,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/employees"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminEmployeesPage />
           </ProtectedRoute>
         }
@@ -263,7 +182,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/support"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminSupportSessionsPage />
           </ProtectedRoute>
         }
@@ -271,7 +190,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/notifications"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminNotificationsPage />
           </ProtectedRoute>
         }
@@ -279,7 +198,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/settings"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminSettingsPage />
           </ProtectedRoute>
         }
@@ -287,7 +206,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/demo-requests"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminDemoRequestsPage />
           </ProtectedRoute>
         }
@@ -295,7 +214,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/demo-requests/:id"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminDemoRequestDetailPage />
           </ProtectedRoute>
         }
@@ -303,7 +222,7 @@ export default function AppRoutes() {
       <Route
         path="/admin/companies/:id/subscription"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <SuperAdminCompanySubscriptionPage />
           </ProtectedRoute>
         }
@@ -316,7 +235,7 @@ export default function AppRoutes() {
       <Route
         path="/app"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientDashboardPage />
           </ProtectedRoute>
         }
@@ -324,15 +243,31 @@ export default function AppRoutes() {
       <Route
         path="/app/invoice-reader"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientInvoiceReaderPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/invoice-reader/:id"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <ClientInvoiceDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/invoice-reader/:id/payload"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <ClientPayloadPreviewPage />
           </ProtectedRoute>
         }
       />
       <Route
         path="/app/ocr-jobs"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientOcrJobsPage />
           </ProtectedRoute>
         }
@@ -340,7 +275,7 @@ export default function AppRoutes() {
       <Route
         path="/app/ai-assistant"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientAiAssistantPage />
           </ProtectedRoute>
         }
@@ -348,7 +283,7 @@ export default function AppRoutes() {
       <Route
         path="/app/employees"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientEmployeesPage />
           </ProtectedRoute>
         }
@@ -356,7 +291,7 @@ export default function AppRoutes() {
       <Route
         path="/app/reports"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientReportsPage />
           </ProtectedRoute>
         }
@@ -364,7 +299,7 @@ export default function AppRoutes() {
       <Route
         path="/app/analytics"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientAnalyticsPage />
           </ProtectedRoute>
         }
@@ -372,7 +307,7 @@ export default function AppRoutes() {
       <Route
         path="/app/notifications"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientNotificationsPage />
           </ProtectedRoute>
         }
@@ -380,7 +315,7 @@ export default function AppRoutes() {
       <Route
         path="/app/settings"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientCompanySettingsPage />
           </ProtectedRoute>
         }
@@ -388,7 +323,7 @@ export default function AppRoutes() {
       <Route
         path="/app/profile"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientProfilePage />
           </ProtectedRoute>
         }
@@ -396,7 +331,7 @@ export default function AppRoutes() {
       <Route
         path="/app/subscription"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ClientSubscriptionPage />
           </ProtectedRoute>
         }
@@ -404,7 +339,7 @@ export default function AppRoutes() {
       <Route
         path="/app/integrations/netsuite"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <NetSuiteIntegrationsPage />
           </ProtectedRoute>
         }
@@ -412,17 +347,17 @@ export default function AppRoutes() {
       <Route
         path="/app/netsuite"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <EmployeeNetSuitePage />
           </ProtectedRoute>
         }
       />
 
-{/* Executive BI Portal */}
+      {/* Executive BI Portal */}
       <Route
         path="/app/bi"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <BIDashboardPage />
           </ProtectedRoute>
         }
@@ -430,7 +365,7 @@ export default function AppRoutes() {
       <Route
         path="/app/bi/sales"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <BiSalesAnalyticsPage />
           </ProtectedRoute>
         }
@@ -438,7 +373,7 @@ export default function AppRoutes() {
       <Route
         path="/app/bi/purchase"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <BiPurchaseAnalyticsPage />
           </ProtectedRoute>
         }
@@ -446,7 +381,7 @@ export default function AppRoutes() {
       <Route
         path="/app/bi/customers"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <BiCustomerAnalyticsPage />
           </ProtectedRoute>
         }
@@ -454,7 +389,7 @@ export default function AppRoutes() {
       <Route
         path="/app/bi/inventory"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <BiInventoryAnalyticsPage />
           </ProtectedRoute>
         }
@@ -462,15 +397,15 @@ export default function AppRoutes() {
       <Route
         path="/app/bi/finance"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <BiFinanceAnalyticsPage />
           </ProtectedRoute>
         }
       />
-<Route
+      <Route
         path="/app/bi/insights"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <BiAiInsightsPage />
           </ProtectedRoute>
         }
@@ -480,7 +415,7 @@ export default function AppRoutes() {
       <Route
         path="/app/reports-engine"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ReportsEngineDashboardPage />
           </ProtectedRoute>
         }
@@ -488,7 +423,7 @@ export default function AppRoutes() {
       <Route
         path="/app/reports-engine/generate"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <GenerateReportPage />
           </ProtectedRoute>
         }
@@ -496,7 +431,7 @@ export default function AppRoutes() {
       <Route
         path="/app/reports-engine/schedules"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ScheduledReportsPage />
           </ProtectedRoute>
         }
@@ -504,7 +439,7 @@ export default function AppRoutes() {
       <Route
         path="/app/reports-engine/history"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <ReportHistoryPage />
           </ProtectedRoute>
         }
@@ -512,13 +447,14 @@ export default function AppRoutes() {
       <Route
         path="/app/reports-engine/templates"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="client">
             <TemplatesPage />
           </ProtectedRoute>
         }
       />
 
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      {/* Catch-all: route to portal if authenticated, login if not */}
+      <Route path="*" element={<CatchAllRoute />} />
     </Routes>
   )
 }

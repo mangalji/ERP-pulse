@@ -61,8 +61,8 @@ export default function InvoiceDetailPage() {
 
   const handleApprove = async () => {
     try {
-      const result = await invoiceApi.reviewFile(id, { action: 'approve' })
-      setFile(result)
+      await invoiceApi.reviewFile(id, { action: 'approve' })
+      await loadFile()
       addToast('Invoice approved', 'success')
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Approve failed', 'error')
@@ -71,8 +71,8 @@ export default function InvoiceDetailPage() {
 
   const handleReject = async () => {
     try {
-      const result = await invoiceApi.reviewFile(id, { action: 'reject' })
-      setFile(result)
+      await invoiceApi.reviewFile(id, { action: 'reject' })
+      await loadFile()
       addToast('Invoice rejected', 'success')
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Reject failed', 'error')
@@ -90,14 +90,10 @@ export default function InvoiceDetailPage() {
     }
   }
 
-  const handleViewHistory = async () => {
-    try {
-      const data = await invoiceApi.getFileHistory(id)
-      setHistory(data || [])
-      setShowHistory(true)
-    } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to load history', 'error')
-    }
+  const handleViewHistory = () => {
+    const history = file?.extraction?.review_history || []
+    setHistory(history)
+    setShowHistory(true)
   }
 
   const handlePreviewPayload = async () => {
@@ -170,7 +166,7 @@ export default function InvoiceDetailPage() {
               <Button intent="secondary" size="sm" onClick={handlePreviewPayload}>Payload Preview</Button>
               {extraction && file.status === 'EXTRACTED' && (
                 <>
-                  <Button intent="secondary" size="sm" onClick={() => setEditing(true)}>Edit</Button>
+                  <Button intent="secondary" size="sm" onClick={() => { setEditForm({ ...data }); setEditing(true) }}>Edit</Button>
                   <Button size="sm" onClick={handleApprove}>Approve</Button>
                   <Button intent="negative" size="sm" onClick={handleReject}>Reject</Button>
                 </>
@@ -236,7 +232,7 @@ export default function InvoiceDetailPage() {
                           <td className="px-4 py-3 text-sm">{record.field}</td>
                           <td className="px-4 py-3 text-sm">{record.old_value}</td>
                           <td className="px-4 py-3 text-sm">{record.new_value}</td>
-                          <td className="px-4 py-3 text-sm">{record.edited_by?.get_full_name || 'Unknown'}</td>
+                          <td className="px-4 py-3 text-sm">{record.edited_by_name || record.edited_by?.get_full_name || 'Unknown'}</td>
                           <td className="px-4 py-3 text-sm">{new Date(record.edited_at).toLocaleString()}</td>
                         </tr>
                       ))}

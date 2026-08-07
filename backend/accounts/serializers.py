@@ -138,6 +138,10 @@ class UserSerializer(serializers.ModelSerializer):
     their own account than this via the API.
     """
     netsuite_connected = serializers.SerializerMethodField()
+    is_superadmin = serializers.BooleanField(
+        source='is_superuser',
+        read_only=True,
+    )
  
     class Meta:
         model = User
@@ -151,6 +155,8 @@ class UserSerializer(serializers.ModelSerializer):
             'is_active',
             'is_email_verified',
             'created_at',
+            'is_staff',
+            'is_superadmin',
             'netsuite_connected'
         ]
         read_only_fields = fields

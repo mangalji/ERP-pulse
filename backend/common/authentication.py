@@ -62,9 +62,12 @@ class CookieJWTAuthentication(BaseAuthentication):
         jwt_auth = JWTAuthentication()
         try:
             validated_token = jwt_auth.get_validated_token(access_token)
-        except (InvalidToken, TokenError) as exc:
-            logger.debug('Cookie JWT rejected: %s', exc)
-            raise AuthenticationFailed('Access token is invalid or expired.') from exc
+        # except (InvalidToken, TokenError) as exc:
+        #     logger.debug('Cookie JWT rejected: %s', exc)
+        #     raise AuthenticationFailed('Access token is invalid or expired.') from exc
+        except (InvalidToken, TokenError):
+            logger.debug("Ignoring invalid access_token cookie.")
+            return None
 
         user = jwt_auth.get_user(validated_token)
         return user, validated_token

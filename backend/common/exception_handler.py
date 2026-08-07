@@ -33,8 +33,14 @@ def standard_exception_handler(exc, context):
        without leaking internal detail to the client.
     """
     response = drf_exception_handler(exc, context)
+    print(f"DEBUG_EXC_HANDLER: exception type = {type(exc).__name__}")
+    print(f"DEBUG_EXC_HANDLER: exception message = {str(exc)}")
+    print(f"DEBUG_EXC_HANDLER: hasattr status_code = {hasattr(exc, 'status_code')}, value = {getattr(exc, 'status_code', 'NONE')}")
+    import traceback as tb_module2
+    print(f"DEBUG_EXC_HANDLER: traceback:\n{''.join(tb_module2.format_exception(type(exc), exc, exc.__traceback__))}")
 
     if response is not None:
+        print(f"DEBUG_EXC_HANDLER: drf response status = {response.status_code}")
         response.data = {
             'success': False,
             'message': _extract_message(response.data),

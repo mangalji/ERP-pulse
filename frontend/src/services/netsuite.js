@@ -32,7 +32,7 @@ export const netsuiteApi = {
   removeEmployee: (connectionId, employeeId) =>
     apiClient.post(`/api/v1/netsuite/company/connections/${connectionId}/remove-employee/${employeeId}/`).then(unwrap),
   testConnection: (connectionId) =>
-    apiClient.post(`/api/v1/netsuite/company/connections/${connectionId}/test/`).then(unwrap),
+    apiClient.post(`/api/v1/netsuite/company/connections/${connectionId}/test/`).then((response) => response.data),
   getMyConnection: () => apiClient.get('/api/v1/netsuite/my/connection/').then(unwrap),
 }
 

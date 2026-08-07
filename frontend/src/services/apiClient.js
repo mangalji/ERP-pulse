@@ -90,6 +90,9 @@ apiClient.interceptors.response.use(
 export const unwrap = (response) => {
   const { success, data, message } = response.data
   if (success) return data
+  if (success === undefined && response.status >= 200 && response.status < 300) {
+    return response.data
+  }
   const err = new Error(message || 'Request failed')
   err.status = response.status
   err.payload = response.data

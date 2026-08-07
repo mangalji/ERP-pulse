@@ -48,8 +48,9 @@ export default function OtpVerificationPage() {
     setIsSubmitting(true)
     try {
       if (purpose === 'login') {
-        await verifyLogin(email, code)
-        navigate('/dashboard', { replace: true })
+        const userData = await verifyLogin(email, code)
+        const isSuperAdmin = Boolean(userData?.is_superadmin || userData?.is_staff)
+        navigate(isSuperAdmin ? '/admin' : '/app', { replace: true })
       } else {
         const result = await verifyRegister(email, code)
         navigate('/complete-profile', { state: { registrationToken: result.registration_token, email } })

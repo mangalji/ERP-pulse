@@ -49,6 +49,11 @@ class CompanySerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
+    admin_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    admin_email = serializers.EmailField(write_only=True, required=False, allow_null=True)
+    admin_first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    admin_last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
     class Meta:
         model = Company
 
@@ -59,6 +64,26 @@ class CompanySerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+    def create(self, validated_data):
+        admin_email = validated_data.pop('admin_email', None)
+        admin_first_name = validated_data.pop('admin_first_name', None)
+        admin_last_name = validated_data.pop('admin_last_name', None)
+
+        company = super().create(validated_data)
+
+        if admin_email:
+            from invitations.services import invitation_service
+            from rbac.models import Role
+            admin_role = Role.objects.filter(name__iexact='Company Admin', company=None).first()
+            invitation_service.create_invitation(
+                email=admin_email,
+                company_id=company.id,
+                role_id=admin_role.id if admin_role else None,
+                created_by=None,
+            )
+
+        return company
 
 
 class ModuleSerializer(serializers.ModelSerializer):

@@ -9,6 +9,7 @@ import ConnectionCard from '../../components/netsuite/ConnectionCard.jsx'
 import ConnectionTable from '../../components/netsuite/ConnectionTable.jsx'
 import AssignEmployeesDialog from '../../components/netsuite/AssignEmployeesDialog.jsx'
 import { netsuiteApi } from '../../services/netsuite.js'
+import { clientApi } from '../../services/client.js'
 
 export default function NetSuiteIntegrationsPage() {
   const { toasts, addToast, removeToast } = useToast()
@@ -27,10 +28,12 @@ export default function NetSuiteIntegrationsPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [connData] = await Promise.all([
+      const [connData, empData] = await Promise.all([
         netsuiteApi.getCompanyConnections(),
+        clientApi.listEmployees({ limit: 100 }),
       ])
       setConnections(connData || [])
+      setCompanyEmployees(empData?.results ?? empData ?? [])
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to load connections', 'error')
     } finally {

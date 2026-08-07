@@ -6,6 +6,7 @@ import { superadminApi } from '../../services/superadmin.js'
 const NAV_ITEMS = [
   { to: '/admin', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/admin/companies', label: 'Companies', icon: BuildingIcon },
+  { to: '/admin/demo-requests', label: 'Demo Requests', icon: DemoIcon },
   { to: '/admin/plans', label: 'Plans', icon: PlanIcon },
   { to: '/admin/modules', label: 'Modules', icon: ModulesIcon },
   { to: '/admin/employees', label: 'Employees', icon: EmployeesIcon },
@@ -327,6 +328,15 @@ function BuildingIcon(props) {
       <path d="M3 21h18" />
       <path d="M5 21V7l7-4 7 4v14" />
       <path d="M9 21v-6h6v6" />
+    </svg>
+  )
+}
+function DemoIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="M9 21c0 .6 2.7 1 3 1s3-.4 3-1" />
+      <rect x="4" y="3" width="16" height="12" rx="2" />
+      <path d="M9 7h6M9 11h6" />
     </svg>
   )
 }

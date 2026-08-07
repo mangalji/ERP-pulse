@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Badge from '../../components/ui/Badge.jsx'
@@ -35,6 +36,7 @@ const STATUS_LABEL = {
 }
 
 export default function InvoiceReaderPage() {
+  const navigate = useNavigate()
   const { toasts, addToast, removeToast } = useToast()
   const [batch, setBatch] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -252,6 +254,9 @@ export default function InvoiceReaderPage() {
                         </td>
                         <td className="py-3">
                           <div className="flex flex-wrap gap-2">
+                            <Button size="sm" intent="ghost" onClick={() => navigate(`/app/invoice-reader/${file.id}`)}>
+                              View Detail
+                            </Button>
                             {extraction && (
                               <>
                                 <Button size="sm" intent="secondary" onClick={() => handleApprove(file.id)}>

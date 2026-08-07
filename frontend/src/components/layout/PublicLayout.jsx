@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import Button from '../components/ui/Button.jsx'
+import Button from '../ui/Button.jsx'
 
 const NAV_LINKS = [
   { label: 'Home', to: '/' },
