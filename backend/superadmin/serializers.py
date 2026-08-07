@@ -1,5 +1,9 @@
 from rest_framework import serializers
-from .models import Plan, CompanyPlan, SupportSession
+from .models import (
+    Plan, CompanyPlan, SupportSession,
+    SubscriptionHistory, Transaction,
+    DiscountType, BillingCycle, CompanyPlanStatus,
+)
 from tenancy.models import Company, CompanyModule, Module
 from django.contrib.auth import get_user_model
 
@@ -22,11 +26,24 @@ class PlanSerializer(serializers.ModelSerializer):
 class CompanyPlanSerializer(serializers.ModelSerializer):
     plan_name = serializers.CharField(source='plan.name', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
+    assigned_by_email = serializers.CharField(source='assigned_by.email', read_only=True)
+    discount_display = serializers.SerializerMethodField()
+    effective_price = serializers.SerializerMethodField()
 
     class Meta:
         model = CompanyPlan
         fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'created_at', 'updated_at', 'original_price', 'final_price')
+
+    def get_discount_display(self, obj):
+        if obj.discount_type == DiscountType.NONE:
+            return None
+        if obj.discount_type == DiscountType.PERCENTAGE:
+            return f'{obj.discount_value}%'
+        return f'₹{obj.discount_value}'
+
+    def get_effective_price(self, obj):
+        return obj.final_price
 
 
 class SupportSessionSerializer(serializers.ModelSerializer):
@@ -90,6 +107,7 @@ class PlanDetailSerializer(serializers.ModelSerializer):
     """Extended plan serializer for detail page."""
     enabled_modules = serializers.SerializerMethodField()
     included_modules_count = serializers.SerializerMethodField()
+    companies_using_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Plan
@@ -110,14 +128,31 @@ class PlanDetailSerializer(serializers.ModelSerializer):
     def get_included_modules_count(self, obj):
         return obj.enabled_models.count()
 
+    def get_companies_using_count(self, obj):
+        return obj.company_plans.filter(
+            status__in=[CompanyPlanStatus.ACTIVE, CompanyPlanStatus.TRIAL]
+        ).count()
+
 
 class CompanyPlanSummarySerializer(serializers.ModelSerializer):
     """Lightweight plan summary for company detail page."""
     plan_name = serializers.CharField(source='plan.name', read_only=True)
+    discount_display = serializers.SerializerMethodField()
 
     class Meta:
         model = CompanyPlan
-        fields = ['id', 'plan_name', 'status', 'start_date', 'end_date', 'is_auto_renew']
+        fields = [
+            'id', 'plan_name', 'status', 'start_date', 'end_date', 'is_auto_renew',
+            'discount_type', 'discount_value', 'billing_cycle', 'original_price', 'final_price',
+            'discount_display',
+        ]
+
+    def get_discount_display(self, obj):
+        if obj.discount_type == DiscountType.NONE:
+            return None
+        if obj.discount_type == DiscountType.PERCENTAGE:
+            return f'{obj.discount_value}%'
+        return f'₹{obj.discount_value}'
 
 
 class CompanyDetailSerializer(serializers.ModelSerializer):
@@ -250,3 +285,125 @@ class UserSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+
+class SubscriptionHistorySerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source='company.name', read_only=True)
+    plan_name = serializers.CharField(source='plan.name', read_only=True)
+    assigned_by_email = serializers.CharField(source='assigned_by.email', read_only=True)
+    discount_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SubscriptionHistory
+        fields = '__all__'
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+    def get_discount_display(self, obj):
+        if obj.discount_type == DiscountType.NONE:
+            return None
+        if obj.discount_type == DiscountType.PERCENTAGE:
+            return f'{obj.discount_value}%'
+        return f'₹{obj.discount_value}'
+
+
+class TransactionSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source='company.name', read_only=True)
+    plan_name = serializers.CharField(source='plan.name', read_only=True)
+    discount_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Transaction
+        fields = '__all__'
+        read_only_fields = ('id', 'created_at')
+
+    def get_discount_amount(self, obj):
+        return obj.original_amount - obj.final_amount
+
+
+class CompanyDetailSerializer(serializers.ModelSerializer):
+    """Extended company serializer for the detail page.
+    Includes subscription plan, assigned modules, employee stats, and NetSuite connection status.
+    """
+    user_count = serializers.SerializerMethodField()
+    module_count = serializers.SerializerMethodField()
+    active_user_count = serializers.SerializerMethodField()
+    current_plan = serializers.SerializerMethodField()
+    assigned_modules = serializers.SerializerMethodField()
+    netsuite_connected = serializers.SerializerMethodField()
+    netsuite_account_id = serializers.SerializerMethodField()
+    netsuite_environment = serializers.SerializerMethodField()
+    netsuite_last_sync = serializers.SerializerMethodField()
+    transactions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Company
+        fields = [
+            'id', 'name', 'code', 'status', 'contact_email', 'contact_phone',
+            'country', 'created_at', 'updated_at',
+            'user_count', 'active_user_count', 'module_count',
+            'current_plan', 'assigned_modules',
+            'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
+            'transactions',
+        ]
+        read_only_fields = fields
+
+    def get_user_count(self, obj):
+        return obj.users.count()
+
+    def get_active_user_count(self, obj):
+        return obj.users.filter(is_active=True).count()
+
+    def get_module_count(self, obj):
+        return obj.company_modules.count()
+
+    def get_current_plan(self, obj):
+        plan = obj.company_plans.filter(
+            status__in=['ACTIVE', 'TRIAL']
+        ).select_related('plan').first()
+        if plan:
+            return CompanyPlanSummarySerializer(plan).data
+        return None
+
+    def get_assigned_modules(self, obj):
+        modules = obj.company_modules.select_related('module').filter(enabled=True)
+        return [
+            {
+                'id': cm.module.id,
+                'name': cm.module.name,
+                'code': cm.module.code,
+                'display_name': cm.module.display_name,
+                'enabled': cm.enabled,
+            }
+            for cm in modules
+        ]
+
+    def get_netsuite_connected(self, obj):
+        return obj.netsuite_connections.filter(is_active=True).exists()
+
+    def get_netsuite_account_id(self, obj):
+        conn = obj.netsuite_connections.filter(is_active=True).first()
+        return conn.netsuite_account_id if conn else None
+
+    def get_netsuite_environment(self, obj):
+        conn = obj.netsuite_connections.filter(is_active=True).first()
+        return conn.get_environment_display() if conn and conn.environment else None
+
+    def get_netsuite_last_sync(self, obj):
+        conn = obj.netsuite_connections.filter(is_active=True).first()
+        return conn.last_synced_at if conn else None
+
+    def get_transactions(self, obj):
+        transactions = obj.transactions.all()[:10]
+        return [
+            {
+                'transaction_id': t.transaction_id,
+                'plan_name': t.plan.name if t.plan else None,
+                'original_amount': str(t.original_amount),
+                'discount_amount': str(t.original_amount - t.final_amount),
+                'final_amount': str(t.final_amount),
+                'payment_status': t.payment_status,
+                'billing_cycle': t.billing_cycle,
+                'created_at': t.created_at,
+            }
+            for t in transactions
+        ]

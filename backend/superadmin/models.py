@@ -21,6 +21,9 @@ class Plan(BaseModel):
     max_employees = models.PositiveIntegerField(default=0)
     max_ocr_documents = models.PositiveIntegerField(default=0)
     max_storage_gb = models.PositiveIntegerField(default=0)  # in GB
+    trial_days = models.PositiveIntegerField(default=14, help_text='Number of trial days for new assignments')
+    ai_credits = models.PositiveIntegerField(default=0, help_text='AI credits included per billing cycle')
+    ocr_credits = models.PositiveIntegerField(default=0, help_text='OCR documents allowed per billing cycle')
     enabled_models = models.ManyToManyField(Module, related_name='plans', blank=True)
     status = models.CharField(max_length=20, choices=PlanStatus.choices, default=PlanStatus.ACTIVE)
 
@@ -37,6 +40,18 @@ class CompanyPlanStatus(models.TextChoices):
     EXPIRED = 'EXPIRED', 'Expired'
     CANCELLED = 'CANCELLED', 'Cancelled'
     TRIAL = 'TRIAL', 'Trial'
+    REPLACED = 'REPLACED', 'Replaced'
+
+
+class DiscountType(models.TextChoices):
+    NONE = 'NONE', 'No Discount'
+    PERCENTAGE = 'PERCENTAGE', 'Percentage'
+    FIXED = 'FIXED', 'Fixed Amount'
+
+
+class BillingCycle(models.TextChoices):
+    MONTHLY = 'MONTHLY', 'Monthly'
+    YEARLY = 'YEARLY', 'Yearly'
 
 
 class CompanyPlan(BaseModel):
@@ -49,6 +64,18 @@ class CompanyPlan(BaseModel):
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=CompanyPlanStatus.choices, default=CompanyPlanStatus.TRIAL)
     is_auto_renew = models.BooleanField(default=False)
+    discount_type = models.CharField(max_length=20, choices=DiscountType.choices, default=DiscountType.NONE)
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    billing_cycle = models.CharField(max_length=20, choices=BillingCycle.choices, default=BillingCycle.MONTHLY)
+    original_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    final_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_plans',
+    )
 
     class Meta:
         db_table = 'sa_company_plan'
@@ -69,6 +96,92 @@ class SupportSessionStatus(models.TextChoices):
     ACTIVE = 'ACTIVE', 'Active'
     ENDED = 'ENDED', 'Ended'
     EXPIRED = 'EXPIRED', 'Expired'
+
+
+class SubscriptionHistory(BaseModel):
+    """
+    Read-only historical record of every plan assignment/upgrade/downgrade.
+    Never overwritten — a new entry is always created for each change.
+    """
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='subscription_history')
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name='subscription_history')
+    company_plan = models.ForeignKey(
+        CompanyPlan, on_delete=models.SET_NULL, null=True, blank=True, related_name='history_entries'
+    )
+    original_price = models.DecimalField(max_digits=10, decimal_places=2)
+    discount_type = models.CharField(max_length=20, choices=DiscountType.choices, default=DiscountType.NONE)
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    final_price = models.DecimalField(max_digits=10, decimal_places=2)
+    billing_cycle = models.CharField(max_length=20, choices=BillingCycle.choices, default=BillingCycle.MONTHLY)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='subscription_history_entries',
+    )
+    status_before = models.CharField(max_length=20, choices=CompanyPlanStatus.choices, default=CompanyPlanStatus.ACTIVE)
+    status_after = models.CharField(max_length=20, choices=CompanyPlanStatus.choices, default=CompanyPlanStatus.ACTIVE)
+    change_type = models.CharField(max_length=30, help_text='assign, upgrade, downgrade, renew, cancel')
+
+    class Meta:
+        db_table = 'sa_subscription_history'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.company.name} - {self.change_type} - {self.plan.name}'
+
+
+class PaymentStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    SUCCESS = 'SUCCESS', 'Success'
+    FAILED = 'FAILED', 'Failed'
+    REFUNDED = 'REFUNDED', 'Refunded'
+
+
+class TransactionStatus(models.TextChoices):
+    INITIATED = 'INITIATED', 'Initiated'
+    COMPLETED = 'COMPLETED', 'Completed'
+    PENDING = 'PENDING', 'Pending'
+    FAILED = 'FAILED', 'Failed'
+    REFUNDED = 'REFUNDED', 'Refunded'
+
+
+class Transaction(BaseModel):
+    """
+    Read-only transaction record for plan assignments and payments.
+    Prepared for future payment gateway integration (Razorpay, Stripe, Manual).
+    """
+    TRANSACTION_ID_PREFIX = 'TXN'
+
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='transactions')
+    subscription_history = models.ForeignKey(
+        SubscriptionHistory, on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions'
+    )
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name='transactions', null=True, blank=True)
+    transaction_id = models.CharField(max_length=64, unique=True)
+    original_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    final_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    billing_cycle = models.CharField(max_length=20, choices=BillingCycle.choices, default=BillingCycle.MONTHLY)
+    payment_status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)
+    transaction_status = models.CharField(max_length=20, choices=TransactionStatus.choices, default=TransactionStatus.INITIATED)
+    payment_method = models.CharField(max_length=50, default='MANUAL', help_text='Razorpay, Stripe, Manual, etc.')
+    invoice_number = models.CharField(max_length=64, blank=True, help_text='GST invoice number if applicable')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'sa_transaction'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.transaction_id} - {self.company.name} - {self.final_amount}'
+
+    @property
+    def discount_amount_value(self):
+        return self.original_amount - self.final_amount
 
 
 class SupportSession(BaseModel):

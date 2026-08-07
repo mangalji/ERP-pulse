@@ -130,6 +130,7 @@ export default function CompanyDetailPage() {
             { label: 'Start Date', value: plan && plan.start_date ? new Date(plan.start_date).toLocaleDateString() : '—' },
             { label: 'Expiry Date', value: plan && plan.end_date ? new Date(plan.end_date).toLocaleDateString() : '—' },
             { label: 'Auto-Renew', value: plan ? (plan.is_auto_renew ? 'Yes' : 'No') : '—' },
+            { label: 'Billing Cycle', value: plan ? (plan.billing_cycle || 'MONTHLY') : '—' },
           ]}
         />
 
@@ -151,8 +152,48 @@ export default function CompanyDetailPage() {
                   return `${daysLeft > 0 ? `${daysLeft} days` : 'Expired'} (${new Date(plan.end_date).toLocaleDateString()})`
                 })() : '—',
               },
+              { label: 'Original Price', value: `₹${Number(plan.original_price || 0).toFixed(2)}` },
+              { label: 'Discount', value: plan.discount_display || 'None' },
+              { label: 'Final Price', value: `₹${Number(plan.final_price || 0).toFixed(2)}` },
             ]}
           />
+        )}
+
+        {company.transactions && company.transactions.length > 0 && (
+          <SectionCard title="Transactions">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]">
+                    <th className="pb-2 pr-4 font-medium">Transaction ID</th>
+                    <th className="pb-2 pr-4 font-medium">Plan</th>
+                    <th className="pb-2 pr-4 font-medium">Amount</th>
+                    <th className="pb-2 pr-4 font-medium">Discount</th>
+                    <th className="pb-2 pr-4 font-medium">Final Amount</th>
+                    <th className="pb-2 pr-4 font-medium">Status</th>
+                    <th className="pb-2 font-medium">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {company.transactions.map((tx) => (
+                    <tr key={tx.transaction_id} className="border-b border-[var(--color-border)] last:border-0">
+                      <td className="py-3 pr-4 font-mono text-xs text-[var(--color-ink)]">{tx.transaction_id}</td>
+                      <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{tx.plan_name || '—'}</td>
+                      <td className="py-3 pr-4 text-[var(--color-ink-soft)]">₹{Number(tx.original_amount).toFixed(2)}</td>
+                      <td className="py-3 pr-4 text-[var(--color-ink-soft)]">
+                        -₹{Number(tx.original_amount - tx.final_amount).toFixed(2)}
+                      </td>
+                      <td className="py-3 pr-4 font-medium text-[var(--color-primary)]">₹{Number(tx.final_amount).toFixed(2)}</td>
+                      <td className="py-3 pr-4 capitalize">{tx.payment_status}</td>
+                      <td className="py-3 pr-4 text-[var(--color-muted)]">
+                        {tx.created_at ? new Date(tx.created_at).toLocaleDateString() : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
         )}
 
         <InfoCard

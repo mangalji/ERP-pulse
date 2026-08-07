@@ -11,6 +11,9 @@ export const subscriptionApi = {
   getMyModules: () =>
     apiClient.get('/api/v1/subscriptions/my-modules/').then(unwrap),
 
+  getMyTransactions: () =>
+    apiClient.get('/api/v1/subscriptions/my-transactions/').then(unwrap),
+
   listPlans: (params) =>
     apiClient.get('/api/v1/subscriptions/plans/', { params }).then(unwrap),
 

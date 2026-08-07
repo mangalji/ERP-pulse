@@ -39,6 +39,7 @@ export const superadminApi = {
   cancelPlan: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPlanCancel, payload).then(unwrap),
   renewPlan: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPlanRenew, payload).then(unwrap),
   getCompanyPlanHistory: (companyId) => apiClient.get(SUPERADMIN_ENDPOINTS.companyPlanHistory(companyId)).then(unwrap),
+  fetchCompanyTransactions: (companyId) => apiClient.get(`/superadmin/companies/${companyId}/transactions/`).then(unwrap),
 
   // ── Modules ──────────────────────────────────────────────────
   listModules: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.modules, { params }).then(unwrap),

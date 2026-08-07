@@ -9,7 +9,10 @@ from audit.services import audit_service
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from notifications.models import Notification
-from superadmin.models import CompanyPlan, Plan, SupportSession
+from superadmin.models import (
+    CompanyPlan, Plan, SupportSession,
+    SubscriptionHistory, Transaction,
+)
 from superadmin.permissions import IsSuperAdmin
 from superadmin.serializers import (
     CompanyModuleSerializer,
@@ -21,6 +24,8 @@ from superadmin.serializers import (
     PlanDetailSerializer,
     SupportSessionSerializer,
     UserSerializer,
+    SubscriptionHistorySerializer,
+    TransactionSerializer,
 )
 from superadmin.services import SuperAdminService
 from tenancy.models import Company, CompanyModule, Module
@@ -151,8 +156,13 @@ class CompanyViewSet(viewsets.ModelViewSet):
             ),
             "ag_suite_users": data["total_agsuite_employees"],
             "company_users": data["total_client_employees"],
-            },
-        )
+             },
+         )
+
+    @action(detail=True, methods=['get'])
+    def transactions(self, request, pk=None):
+        data = superadmin_service.get_company_transactions(company_id=pk)
+        return success_response(message='Transactions fetched successfully.', data=data)
 
 
 class PlanViewSet(viewsets.ModelViewSet):
@@ -251,27 +261,49 @@ class CompanyPlanViewSet(viewsets.ModelViewSet):
         company_id = request.data.get('company_id')
         plan_id = request.data.get('plan_id')
         status_value = request.data.get('status')
+        discount_type = request.data.get('discount_type')
+        discount_value = request.data.get('discount_value')
+        billing_cycle = request.data.get('billing_cycle')
         if not company_id or not plan_id:
             return Response({'detail': 'company_id and plan_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        company_plan = superadmin_service.assign_plan(company_id=company_id, plan_id=plan_id, status=status_value)
+        company_plan = superadmin_service.assign_plan(
+            company_id=company_id, plan_id=plan_id,
+            discount_type=discount_type, discount_value=discount_value,
+            billing_cycle=billing_cycle, assigned_by=request.user,
+            status=status_value,
+        )
         return success_response(message='Plan assigned successfully.', data=CompanyPlanSerializer(company_plan).data)
 
     @action(detail=False, methods=['post'])
     def upgrade(self, request):
         company_id = request.data.get('company_id')
         plan_id = request.data.get('plan_id')
+        discount_type = request.data.get('discount_type')
+        discount_value = request.data.get('discount_value')
+        billing_cycle = request.data.get('billing_cycle')
         if not company_id or not plan_id:
             return Response({'detail': 'company_id and plan_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        company_plan = superadmin_service.upgrade_plan(company_id=company_id, plan_id=plan_id)
+        company_plan = superadmin_service.upgrade_plan(
+            company_id=company_id, plan_id=plan_id,
+            discount_type=discount_type, discount_value=discount_value,
+            billing_cycle=billing_cycle, assigned_by=request.user,
+        )
         return success_response(message='Plan upgraded successfully.', data=CompanyPlanSerializer(company_plan).data)
 
     @action(detail=False, methods=['post'])
     def downgrade(self, request):
         company_id = request.data.get('company_id')
         plan_id = request.data.get('plan_id')
+        discount_type = request.data.get('discount_type')
+        discount_value = request.data.get('discount_value')
+        billing_cycle = request.data.get('billing_cycle')
         if not company_id or not plan_id:
             return Response({'detail': 'company_id and plan_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        company_plan = superadmin_service.downgrade_plan(company_id=company_id, plan_id=plan_id)
+        company_plan = superadmin_service.downgrade_plan(
+            company_id=company_id, plan_id=plan_id,
+            discount_type=discount_type, discount_value=discount_value,
+            billing_cycle=billing_cycle, assigned_by=request.user,
+        )
         return success_response(message='Plan downgraded successfully.', data=CompanyPlanSerializer(company_plan).data)
 
     @action(detail=False, methods=['post'])
@@ -279,16 +311,23 @@ class CompanyPlanViewSet(viewsets.ModelViewSet):
         company_id = request.data.get('company_id')
         if not company_id:
             return Response({'detail': 'company_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        company_plan = superadmin_service.cancel_plan(company_id=company_id)
+        company_plan = superadmin_service.cancel_plan(company_id=company_id, assigned_by=request.user)
         return success_response(message='Plan cancelled successfully.', data=CompanyPlanSerializer(company_plan).data)
 
     @action(detail=False, methods=['post'])
     def renew(self, request):
         company_id = request.data.get('company_id')
         plan_id = request.data.get('plan_id')
+        discount_type = request.data.get('discount_type')
+        discount_value = request.data.get('discount_value')
+        billing_cycle = request.data.get('billing_cycle')
         if not company_id:
             return Response({'detail': 'company_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        company_plan = superadmin_service.renew_plan(company_id=company_id, plan_id=plan_id)
+        company_plan = superadmin_service.renew_plan(
+            company_id=company_id, plan_id=plan_id,
+            discount_type=discount_type, discount_value=discount_value,
+            billing_cycle=billing_cycle, assigned_by=request.user,
+        )
         return success_response(message='Plan renewed successfully.', data=CompanyPlanSerializer(company_plan).data)
 
     @action(detail=True, methods=['get'])

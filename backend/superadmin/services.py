@@ -17,6 +17,12 @@ from superadmin.models import (
     PlanStatus,
     SupportSession,
     SupportSessionStatus,
+    SubscriptionHistory,
+    Transaction,
+    DiscountType,
+    BillingCycle,
+    PaymentStatus,
+    TransactionStatus,
 )
 from tenancy.models import Company, CompanyModule, Module
 
@@ -83,7 +89,7 @@ class SuperAdminService:
     def get_company_plan_history(self, company_id):
         return list(
             CompanyPlan.objects.filter(company_id=company_id)
-            .select_related('plan', 'company')
+            .select_related('plan', 'company', 'assigned_by')
             .order_by('-start_date', '-created_at')
             .values(
                 'id',
@@ -94,14 +100,48 @@ class SuperAdminService:
                 'start_date',
                 'end_date',
                 'is_auto_renew',
+                'discount_type',
+                'discount_value',
+                'billing_cycle',
+                'original_price',
+                'final_price',
+                'assigned_by__email',
+                'created_at',
+            )
+        )
+
+    def get_company_transactions(self, company_id):
+        return list(
+            Transaction.objects.filter(company_id=company_id)
+            .select_related('plan')
+            .order_by('-created_at')
+            .values(
+                'id',
+                'transaction_id',
+                'plan__name',
+                'original_amount',
+                'final_amount',
+                'discount_amount',
+                'billing_cycle',
+                'payment_status',
+                'transaction_status',
+                'payment_method',
+                'invoice_number',
                 'created_at',
             )
         )
     @transaction.atomic
-    def assign_plan(self, *, company_id, plan_id, status=None):
+    def assign_plan(self, *, company_id, plan_id, discount_type=None, discount_value=None,
+                    billing_cycle=None, assigned_by=None, status=None):
         company = get_object_or_404(Company, pk=company_id)
         plan = get_object_or_404(Plan, pk=plan_id)
         normalized_status = status or CompanyPlanStatus.ACTIVE
+        normalized_discount_type = discount_type or DiscountType.NONE
+        normalized_discount_value = discount_value or 0
+        normalized_billing_cycle = billing_cycle or BillingCycle.MONTHLY
+
+        original_price = plan.yearly_price if normalized_billing_cycle == BillingCycle.YEARLY else plan.monthly_price
+        final_price = self._calculate_final_price(original_price, normalized_discount_type, normalized_discount_value)
 
         active_existing = CompanyPlan.objects.filter(
             company=company,
@@ -118,6 +158,12 @@ class SuperAdminService:
                 'start_date': timezone.now().date(),
                 'status': normalized_status,
                 'is_auto_renew': False,
+                'discount_type': normalized_discount_type,
+                'discount_value': normalized_discount_value,
+                'billing_cycle': normalized_billing_cycle,
+                'original_price': original_price,
+                'final_price': final_price,
+                'assigned_by': assigned_by,
             },
         )
 
@@ -126,35 +172,155 @@ class SuperAdminService:
             company_plan.status = normalized_status
             company_plan.end_date = None if normalized_status in [CompanyPlanStatus.ACTIVE, CompanyPlanStatus.TRIAL] else company_plan.end_date
             company_plan.is_auto_renew = company_plan.is_auto_renew
-            company_plan.save(update_fields=['start_date', 'status', 'end_date'])
+            company_plan.discount_type = normalized_discount_type
+            company_plan.discount_value = normalized_discount_value
+            company_plan.billing_cycle = normalized_billing_cycle
+            company_plan.original_price = original_price
+            company_plan.final_price = final_price
+            company_plan.assigned_by = assigned_by
+            company_plan.save(update_fields=['start_date', 'status', 'end_date', 'discount_type', 'discount_value',
+                                              'billing_cycle', 'original_price', 'final_price', 'assigned_by'])
+
+        self._create_subscription_history(
+            company=company, plan=plan, company_plan=company_plan,
+            original_price=original_price, discount_type=normalized_discount_type,
+            discount_value=normalized_discount_value, final_price=final_price,
+            billing_cycle=normalized_billing_cycle, assigned_by=assigned_by,
+            status_before=CompanyPlanStatus.CANCELLED, status_after=normalized_status,
+            change_type='assign',
+        )
+
+        self._create_transaction(
+            company=company, plan=plan, original_amount=original_price,
+            final_amount=final_price, billing_cycle=normalized_billing_cycle,
+        )
 
         return company_plan
+
+    @staticmethod
+    def _calculate_final_price(original_price, discount_type, discount_value):
+        if discount_type == DiscountType.PERCENTAGE:
+            discount_amount = original_price * (discount_value / 100)
+        elif discount_type == DiscountType.FIXED:
+            discount_amount = discount_value
+        else:
+            discount_amount = 0
+        return max(original_price - discount_amount, 0)
+
+    def _create_subscription_history(self, *, company, plan, company_plan, original_price,
+                                     discount_type, discount_value, final_price, billing_cycle,
+                                     assigned_by, status_before, status_after, change_type):
+        SubscriptionHistory.objects.create(
+            company=company,
+            plan=plan,
+            company_plan=company_plan,
+            original_price=original_price,
+            discount_type=discount_type,
+            discount_value=discount_value,
+            final_price=final_price,
+            billing_cycle=billing_cycle,
+            start_date=company_plan.start_date,
+            end_date=company_plan.end_date,
+            assigned_by=assigned_by,
+            status_before=status_before,
+            status_after=status_after,
+            change_type=change_type,
+        )
+
+    def _create_transaction(self, *, company, plan, original_amount, final_amount, billing_cycle):
+        from django.utils.crypto import get_random_string
+        transaction_id = f'TXN-{get_random_string(8).upper()}'
+        Transaction.objects.create(
+            company=company,
+            plan=plan,
+            transaction_id=transaction_id,
+            original_amount=original_amount,
+            final_amount=final_amount,
+            billing_cycle=billing_cycle,
+            payment_status=PaymentStatus.PENDING,
+            transaction_status=TransactionStatus.INITIATED,
+            payment_method='MANUAL',
+        )
     @transaction.atomic
-    def upgrade_plan(self, *, company_id, plan_id):
+    def upgrade_plan(self, *, company_id, plan_id, discount_type=None, discount_value=None,
+                     billing_cycle=None, assigned_by=None):
         company = get_object_or_404(Company, pk=company_id)
         plan = get_object_or_404(Plan, pk=plan_id)
-        current = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
-        if current:
-            current.status = CompanyPlanStatus.CANCELLED
-            current.end_date = timezone.now().date()
-            current.save(update_fields=['status', 'end_date'])
-        return self.assign_plan(company_id=company.id, plan_id=plan.id, status=CompanyPlanStatus.ACTIVE)
+        old_plan = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
+        if old_plan:
+            old_status = old_plan.status
+            old_plan.status = CompanyPlanStatus.CANCELLED
+            old_plan.end_date = timezone.now().date()
+            old_plan.save(update_fields=['status', 'end_date'])
+        else:
+            old_status = None
 
-    def downgrade_plan(self, *, company_id, plan_id):
-        return self.assign_plan(company_id=company_id, plan_id=plan_id, status=CompanyPlanStatus.TRIAL)
+        new_plan = self.assign_plan(
+            company_id=company.id, plan_id=plan.id,
+            discount_type=discount_type, discount_value=discount_value,
+            billing_cycle=billing_cycle, assigned_by=assigned_by,
+            status=CompanyPlanStatus.ACTIVE,
+        )
+
+        if old_status:
+            SubscriptionHistory.objects.filter(
+                company=company, company_plan=old_plan
+            ).update(status_after=CompanyPlanStatus.CANCELLED)
+
+        return new_plan
 
     @transaction.atomic
-    def cancel_plan(self, *, company_id):
+    def downgrade_plan(self, *, company_id, plan_id, discount_type=None, discount_value=None,
+                       billing_cycle=None, assigned_by=None):
+        company = get_object_or_404(Company, pk=company_id)
+        plan = get_object_or_404(Plan, pk=plan_id)
+        old_plan = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
+        if old_plan:
+            old_status = old_plan.status
+            old_plan.status = CompanyPlanStatus.CANCELLED
+            old_plan.end_date = timezone.now().date()
+            old_plan.save(update_fields=['status', 'end_date'])
+        else:
+            old_status = None
+
+        new_plan = self.assign_plan(
+            company_id=company.id, plan_id=plan.id,
+            discount_type=discount_type, discount_value=discount_value,
+            billing_cycle=billing_cycle, assigned_by=assigned_by,
+            status=CompanyPlanStatus.TRIAL,
+        )
+
+        if old_status:
+            SubscriptionHistory.objects.filter(
+                company=company, company_plan=old_plan
+            ).update(status_after=CompanyPlanStatus.CANCELLED)
+
+        return new_plan
+
+    @transaction.atomic
+    def cancel_plan(self, *, company_id, assigned_by=None):
         company = get_object_or_404(Company, pk=company_id)
         company_plan = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
         if not company_plan:
             raise ValueError('No active plan found for this company.')
+        old_status = company_plan.status
         company_plan.status = CompanyPlanStatus.CANCELLED
         company_plan.end_date = timezone.now().date()
         company_plan.save(update_fields=['status', 'end_date'])
+
+        self._create_subscription_history(
+            company=company, plan=company_plan.plan, company_plan=company_plan,
+            original_price=company_plan.original_price, discount_type=company_plan.discount_type,
+            discount_value=company_plan.discount_value, final_price=company_plan.final_price,
+            billing_cycle=company_plan.billing_cycle, assigned_by=assigned_by,
+            status_before=old_status, status_after=CompanyPlanStatus.CANCELLED,
+            change_type='cancel',
+        )
+
         return company_plan
     @transaction.atomic
-    def renew_plan(self, *, company_id, plan_id=None):
+    def renew_plan(self, *, company_id, plan_id=None, discount_type=None, discount_value=None,
+                   billing_cycle=None, assigned_by=None):
         company = get_object_or_404(Company, pk=company_id)
         company_plan = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
         if company_plan is None and plan_id is None:
@@ -163,7 +329,12 @@ class SuperAdminService:
             plan_id = company_plan.plan_id
         if plan_id is not None:
             plan = get_object_or_404(Plan, pk=plan_id)
-            company_plan = self.assign_plan(company_id=company.id, plan_id=plan.id, status=CompanyPlanStatus.ACTIVE)
+            company_plan = self.assign_plan(
+                company_id=company.id, plan_id=plan.id,
+                discount_type=discount_type, discount_value=discount_value,
+                billing_cycle=billing_cycle, assigned_by=assigned_by,
+                status=CompanyPlanStatus.ACTIVE,
+            )
             return company_plan
         company_plan.status = CompanyPlanStatus.ACTIVE
         company_plan.start_date = timezone.now().date()

@@ -7,6 +7,7 @@ import InfoCard from '../../components/superadmin/InfoCard.jsx'
 import SectionCard from '../../components/superadmin/SectionCard.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
+import Input from '../../components/ui/Input.jsx'
 import { superadminApi } from '../../services/superadmin.js'
 
 export default function PlanDetailPage() {
@@ -15,6 +16,9 @@ export default function PlanDetailPage() {
   const [plan, setPlan] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState({})
+  const [saving, setSaving] = useState(false)
 
   const loadPlan = useCallback(async () => {
     setLoading(true)
@@ -32,6 +36,20 @@ export default function PlanDetailPage() {
   useEffect(() => {
     loadPlan()
   }, [loadPlan])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const updated = await superadminApi.updatePlan(id, editForm)
+      setPlan(updated)
+      setEditOpen(false)
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(err.payload?.message || err.message || 'Failed to update plan')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -74,9 +92,14 @@ export default function PlanDetailPage() {
           title={plan.name}
           subtitle={plan.description}
           actions={
-            <Button size="sm" intent="secondary" onClick={() => navigate(`/admin/plans`)}>
-              Back to Plans
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" intent="secondary" onClick={() => navigate(`/admin/plans`)}>
+                Back to Plans
+              </Button>
+              <Button size="sm" onClick={() => { setEditForm({ ...plan }); setEditOpen(true) }}>
+                Edit Plan
+              </Button>
+            </div>
           }
         />
 
@@ -94,8 +117,8 @@ export default function PlanDetailPage() {
         <InfoCard
           title="Pricing"
           items={[
-            { label: 'Monthly Price', value: `$${Number(plan.monthly_price || 0).toFixed(2)}` },
-            { label: 'Yearly Price', value: `$${Number(plan.yearly_price || 0).toFixed(2)}` },
+            { label: 'Monthly Price', value: `₹${Number(plan.monthly_price || 0).toFixed(2)}` },
+            { label: 'Yearly Price', value: `₹${Number(plan.yearly_price || 0).toFixed(2)}` },
           ]}
         />
 
@@ -105,6 +128,9 @@ export default function PlanDetailPage() {
             { label: 'Max Employees', value: plan.max_employees ?? 0 },
             { label: 'Max OCR Documents', value: plan.max_ocr_documents ?? 0 },
             { label: 'Max Storage (GB)', value: plan.max_storage_gb ?? 0 },
+            { label: 'Trial Days', value: plan.trial_days ?? 0 },
+            { label: 'AI Credits', value: plan.ai_credits ?? 0 },
+            { label: 'OCR Credits', value: plan.ocr_credits ?? 0 },
           ]}
         />
 
@@ -163,6 +189,82 @@ export default function PlanDetailPage() {
               </table>
             </div>
           </SectionCard>
+        )}
+
+        {/* Edit Plan Modal */}
+        {editOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setEditOpen(false)} />
+            <div className="relative w-full max-w-2xl rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+              <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+                Edit Plan
+              </h3>
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input
+                  label="Plan Name"
+                  value={editForm.name || ''}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                />
+                <Input
+                  label="Description"
+                  value={editForm.description || ''}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                />
+                <Input
+                  label="Monthly Price (₹)"
+                  type="number"
+                  value={editForm.monthly_price || ''}
+                  onChange={(e) => setEditForm({ ...editForm, monthly_price: e.target.value })}
+                />
+                <Input
+                  label="Yearly Price (₹)"
+                  type="number"
+                  value={editForm.yearly_price || ''}
+                  onChange={(e) => setEditForm({ ...editForm, yearly_price: e.target.value })}
+                />
+                <Input
+                  label="Max Employees"
+                  type="number"
+                  value={editForm.max_employees || ''}
+                  onChange={(e) => setEditForm({ ...editForm, max_employees: e.target.value })}
+                />
+                <Input
+                  label="Max OCR Documents"
+                  type="number"
+                  value={editForm.max_ocr_documents || ''}
+                  onChange={(e) => setEditForm({ ...editForm, max_ocr_documents: e.target.value })}
+                />
+                <Input
+                  label="Max Storage (GB)"
+                  type="number"
+                  value={editForm.max_storage_gb || ''}
+                  onChange={(e) => setEditForm({ ...editForm, max_storage_gb: e.target.value })}
+                />
+                <Input
+                  label="Trial Days"
+                  type="number"
+                  value={editForm.trial_days || ''}
+                  onChange={(e) => setEditForm({ ...editForm, trial_days: e.target.value })}
+                />
+                <Input
+                  label="AI Credits"
+                  type="number"
+                  value={editForm.ai_credits || ''}
+                  onChange={(e) => setEditForm({ ...editForm, ai_credits: e.target.value })}
+                />
+                <Input
+                  label="OCR Credits"
+                  type="number"
+                  value={editForm.ocr_credits || ''}
+                  onChange={(e) => setEditForm({ ...editForm, ocr_credits: e.target.value })}
+                />
+              </div>
+              <div className="mt-6 flex justify-end gap-2">
+                <Button intent="secondary" size="sm" onClick={() => setEditOpen(false)}>Cancel</Button>
+                <Button size="sm" onClick={handleSave} isLoading={saving}>Save Changes</Button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </AdminLayout>
