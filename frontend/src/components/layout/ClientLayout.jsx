@@ -3,20 +3,25 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
-const NAV_ITEMS = [
-  { to: '/app', label: 'Dashboard', icon: DashboardIcon, end: true },
-  { to: '/app/invoice-reader', label: 'Invoice Reader', icon: InvoiceIcon },
-  { to: '/app/ocr-jobs', label: 'OCR Jobs', icon: OcrIcon },
-  { to: '/app/ai-assistant', label: 'AI Assistant', icon: SparkleIcon },
-  { to: '/app/employees', label: 'Employees', icon: EmployeesIcon },
-{ to: '/app/reports', label: 'Reports', icon: ReportIcon },
-  { to: '/app/reports-engine', label: 'Reports Engine', icon: ReportEngineIcon },
-  { to: '/app/analytics', label: 'Analytics', icon: AnalyticsIcon },
-  { to: '/app/notifications', label: 'Notifications', icon: BellIcon },
-  { to: '/app/settings', label: 'Company Settings', icon: GearIcon },
+/**
+ * All possible sidebar items. Each item maps to a module code.
+ * Items without a module_code are always shown (Dashboard, Profile, Notifications, Settings).
+ */
+const ALL_NAV_ITEMS = [
+  { to: '/app', label: 'Dashboard', icon: DashboardIcon, end: true, module: 'dashboard' },
+  { to: '/app/invoice-reader', label: 'Invoice Reader', icon: InvoiceIcon, module: 'invoice_reader' },
+  { to: '/app/ocr-jobs', label: 'OCR Jobs', icon: OcrIcon, module: 'ocr' },
+  { to: '/app/ai-assistant', label: 'AI Assistant', icon: SparkleIcon, module: 'ai' },
+  { to: '/app/employees', label: 'Employees', icon: EmployeesIcon, module: 'employees' },
+  { to: '/app/reports', label: 'Reports', icon: ReportIcon, module: 'reports' },
+  { to: '/app/reports-engine', label: 'Reports Engine', icon: ReportEngineIcon, module: 'reports' },
+  { to: '/app/analytics', label: 'Analytics', icon: AnalyticsIcon, module: 'bi' },
+  { to: '/app/notifications', label: 'Notifications', icon: BellIcon, module: 'notifications' },
+  { to: '/app/settings', label: 'Company Settings', icon: GearIcon, module: null },
 ]
 
-const EMPLOYEE_ONLY_ITEMS = ['/app/invoice-reader', '/app/ocr-jobs', '/app/ai-assistant', '/app/notifications']
+/* Employee-only items that always show for any authenticated user */
+const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
 
 /**
  * Reusable Client Company Portal layout.
@@ -32,6 +37,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   const [notifOpen, setNotifOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState([])
+  const [availableModules, setAvailableModules] = useState([])
   const userMenuRef = useRef(null)
   const notifRef = useRef(null)
 
@@ -57,6 +63,18 @@ export default function ClientLayout({ title, breadcrumb, children }) {
 
   useEffect(() => {
     loadUnread()
+  }, [])
+
+  useEffect(() => {
+    const loadModules = async () => {
+      try {
+        const res = await clientApi.getMe()
+        setAvailableModules(res?.modules || [])
+      } catch {
+        setAvailableModules([])
+      }
+    }
+    loadModules()
   }, [])
 
   useEffect(() => {
@@ -103,9 +121,11 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     item.end ? currentPath === item.to : currentPath.startsWith(item.to),
   )
 
-  const visibleNav = NAV_ITEMS.filter(
-    (item) => isCompanyAdmin || EMPLOYEE_ONLY_ITEMS.some((p) => item.to.startsWith(p)),
-  )
+  const visibleNav = ALL_NAV_ITEMS.filter((item) => {
+    if (!item.module) return true
+    if (isCompanyAdmin) return true
+    return availableModules.some((m) => m.module__code === item.module)
+  })
 
   return (
     <div className="flex min-h-screen bg-[var(--color-canvas)]">

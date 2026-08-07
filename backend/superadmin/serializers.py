@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Plan, CompanyPlan, SupportSession
-from tenancy.models import Company, Module
+from tenancy.models import Company, CompanyModule, Module
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -84,6 +84,111 @@ class CompanySerializer(serializers.ModelSerializer):
             )
 
         return company
+
+
+class PlanDetailSerializer(serializers.ModelSerializer):
+    """Extended plan serializer for detail page."""
+    enabled_modules = serializers.SerializerMethodField()
+    included_modules_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Plan
+        fields = '__all__'
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+    def get_enabled_modules(self, obj):
+        return [
+            {
+                'id': m.id,
+                'name': m.name,
+                'code': m.code,
+                'display_name': m.display_name,
+            }
+            for m in obj.enabled_models.all()
+        ]
+
+    def get_included_modules_count(self, obj):
+        return obj.enabled_models.count()
+
+
+class CompanyPlanSummarySerializer(serializers.ModelSerializer):
+    """Lightweight plan summary for company detail page."""
+    plan_name = serializers.CharField(source='plan.name', read_only=True)
+
+    class Meta:
+        model = CompanyPlan
+        fields = ['id', 'plan_name', 'status', 'start_date', 'end_date', 'is_auto_renew']
+
+
+class CompanyDetailSerializer(serializers.ModelSerializer):
+    """Extended company serializer for the detail page.
+    Includes subscription plan, assigned modules, employee stats, and NetSuite connection status.
+    """
+    user_count = serializers.SerializerMethodField()
+    module_count = serializers.SerializerMethodField()
+    active_user_count = serializers.SerializerMethodField()
+    current_plan = serializers.SerializerMethodField()
+    assigned_modules = serializers.SerializerMethodField()
+    netsuite_connected = serializers.SerializerMethodField()
+    netsuite_account_id = serializers.SerializerMethodField()
+    netsuite_environment = serializers.SerializerMethodField()
+    netsuite_last_sync = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Company
+        fields = [
+            'id', 'name', 'code', 'status', 'contact_email', 'contact_phone',
+            'country', 'created_at', 'updated_at',
+            'user_count', 'active_user_count', 'module_count',
+            'current_plan', 'assigned_modules',
+            'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
+        ]
+        read_only_fields = fields
+
+    def get_user_count(self, obj):
+        return obj.users.count()
+
+    def get_active_user_count(self, obj):
+        return obj.users.filter(is_active=True).count()
+
+    def get_module_count(self, obj):
+        return obj.company_modules.count()
+
+    def get_current_plan(self, obj):
+        plan = obj.company_plans.filter(
+            status__in=['ACTIVE', 'TRIAL']
+        ).select_related('plan').first()
+        if plan:
+            return CompanyPlanSummarySerializer(plan).data
+        return None
+
+    def get_assigned_modules(self, obj):
+        modules = obj.company_modules.select_related('module').filter(enabled=True)
+        return [
+            {
+                'id': cm.module.id,
+                'name': cm.module.name,
+                'code': cm.module.code,
+                'display_name': cm.module.display_name,
+                'enabled': cm.enabled,
+            }
+            for cm in modules
+        ]
+
+    def get_netsuite_connected(self, obj):
+        return obj.netsuite_connections.filter(is_active=True).exists()
+
+    def get_netsuite_account_id(self, obj):
+        conn = obj.netsuite_connections.filter(is_active=True).first()
+        return conn.netsuite_account_id if conn else None
+
+    def get_netsuite_environment(self, obj):
+        conn = obj.netsuite_connections.filter(is_active=True).first()
+        return conn.get_environment_display() if conn and conn.environment else None
+
+    def get_netsuite_last_sync(self, obj):
+        conn = obj.netsuite_connections.filter(is_active=True).first()
+        return conn.last_synced_at if conn else None
 
 
 class ModuleSerializer(serializers.ModelSerializer):

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Badge from '../../components/ui/Badge.jsx'
@@ -18,7 +19,9 @@ export default function EmployeesPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [roles, setRoles] = useState([])
   const [form, setForm] = useState({ email: '', first_name: '', last_name: '', role_id: '', designation: '', department: '' })
+  const navigate = useNavigate()
 
   const loadEmployees = useCallback(async () => {
     setLoading(true)
@@ -34,13 +37,32 @@ export default function EmployeesPage() {
     }
   }, [])
 
+  const loadRoles = useCallback(async () => {
+    try {
+      const data = await clientApi.listRoles()
+      setRoles(data.results || data || [])
+    } catch {
+      setRoles([])
+    }
+  }, [])
+
   useEffect(() => {
     loadEmployees()
-  }, [loadEmployees])
+    loadRoles()
+  }, [loadEmployees, loadRoles])
 
   const filtered = employees.filter((e) =>
     `${e.first_name || ''} ${e.last_name || ''} ${e.email || ''}`.toLowerCase().includes(searchTerm.toLowerCase()),
   )
+
+  const getRoleName = (employee) => {
+    const roleIds = employee.roles || []
+    const roleNames = roleIds.map(r => {
+      const role = roles.find(rr => String(rr.id) === String(r.role_id))
+      return role ? role.name : ''
+    })
+    return roleNames.filter(Boolean).join(', ') || '—'
+  }
 
   const handleCreate = async (event) => {
     event.preventDefault()
@@ -80,9 +102,29 @@ export default function EmployeesPage() {
     }
   }
 
+  const handleResetPassword = async (employee) => {
+    try {
+      await clientApi.resendEmployeeInvitation(employee.id)
+      addToast('Invitation resent — employee will receive a password setup link', 'success')
+    } catch (err) {
+      addToast(err.payload?.message || err.message || 'Failed to resend invitation', 'error')
+    }
+  }
+
   return (
     <ClientLayout title="Employees" breadcrumb="Employees">
       <div className="flex flex-col gap-6">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/app')}
+            className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
+        </div>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex flex-col gap-1">
             <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
@@ -112,13 +154,6 @@ export default function EmployeesPage() {
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
               <Input
-                id="empPassword"
-                label="Password"
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-              />
-              <Input
                 id="empFirst"
                 label="First name"
                 value={form.first_name}
@@ -129,6 +164,31 @@ export default function EmployeesPage() {
                 label="Last name"
                 value={form.last_name}
                 onChange={(e) => setForm({ ...form, last_name: e.target.value })}
+              />
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-[var(--color-ink-soft)]">Role</span>
+                <select
+                  value={form.role_id}
+                  onChange={(e) => setForm({ ...form, role_id: e.target.value })}
+                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                >
+                  <option value="">Select a role</option>
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.id}>{role.name}</option>
+                  ))}
+                </select>
+              </label>
+              <Input
+                id="empDesignation"
+                label="Designation"
+                value={form.designation}
+                onChange={(e) => setForm({ ...form, designation: e.target.value })}
+              />
+              <Input
+                id="empDepartment"
+                label="Department"
+                value={form.department}
+                onChange={(e) => setForm({ ...form, department: e.target.value })}
               />
               <div className="flex gap-2 sm:col-span-2">
                 <Button type="submit" isLoading={creating}>
@@ -173,7 +233,7 @@ export default function EmployeesPage() {
                   <tr className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]">
                     <th className="pb-2 pr-4 font-medium">Name</th>
                     <th className="pb-2 pr-4 font-medium">Email</th>
-                    <th className="pb-2 pr-4 font-medium">Designation</th>
+                    <th className="pb-2 pr-4 font-medium">Role</th>
                     <th className="pb-2 pr-4 font-medium">Department</th>
                     <th className="pb-2 pr-4 font-medium">Status</th>
                     <th className="pb-2 font-medium">Actions</th>
@@ -186,7 +246,7 @@ export default function EmployeesPage() {
                         {employee.full_name || `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || '—'}
                       </td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.email}</td>
-                      <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.designation || '—'}</td>
+                      <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{getRoleName(employee)}</td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.department || '—'}</td>
                       <td className="py-3 pr-4">
                         <Badge tone={employee.is_active ? 'positive' : 'neutral'}>
@@ -194,9 +254,17 @@ export default function EmployeesPage() {
                         </Badge>
                       </td>
                       <td className="py-3">
-                        <Button size="sm" intent="secondary" onClick={() => handleToggleActive(employee)}>
-                          {employee.is_active ? 'Deactivate' : 'Activate'}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleResetPassword(employee)}
+                            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                          >
+                            Reset Password
+                          </button>
+                          <Button size="sm" intent="secondary" onClick={() => handleToggleActive(employee)}>
+                            {employee.is_active ? 'Deactivate' : 'Activate'}
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}

@@ -33,6 +33,15 @@ export default function DemoRequestDetailPage() {
   const [plans, setPlans] = useState([])
   const [modules, setModules] = useState([])
 
+  /* Reject popup state */
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+
+  /* Converted company info */
+  const [convertedCompany, setConvertedCompany] = useState(null)
+
+  const canAct = request && ['NEW', 'PROPOSAL_SENT'].includes(request.status)
+
   useEffect(() => {
     loadRequest()
     loadPlans()
@@ -79,16 +88,51 @@ export default function DemoRequestDetailPage() {
     try {
       const result = await demoApi.convert(id, {
         plan_id: planId || undefined,
-        module_ids: moduleIds.length > 0 ? module_ids : undefined,
+        module_ids: moduleIds.length > 0 ? moduleIds : undefined,
         admin_email: adminEmail,
         admin_first_name: adminFirstName,
         admin_last_name: adminLastName,
       })
       addToast('Company converted successfully!', 'success')
+      setConvertedCompany(result.data || result)
       setWizardOpen(false)
-      navigate('/admin/companies')
+      loadRequest()
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Conversion failed', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAccept = async () => {
+    setSaving(true)
+    try {
+      const data = await demoApi.approve(id)
+      setRequest(data)
+      addToast('Demo request approved!', 'success')
+      setWizardOpen(true)
+      setStep(0)
+    } catch (err) {
+      addToast(err.payload?.message || err.message || 'Approval failed', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRejectConfirm = async () => {
+    if (!rejectReason.trim()) {
+      addToast('Please provide a reason for rejection.', 'error')
+      return
+    }
+    setSaving(true)
+    try {
+      const data = await demoApi.reject(id, rejectReason)
+      setRequest(data)
+      addToast('Demo request rejected.', 'success')
+      setRejectOpen(false)
+      setRejectReason('')
+    } catch (err) {
+      addToast(err.payload?.message || err.message || 'Rejection failed', 'error')
     } finally {
       setSaving(false)
     }
@@ -124,12 +168,32 @@ export default function DemoRequestDetailPage() {
   return (
     <AdminLayout title="Demo Request" breadcrumb="Demo Request">
       <div className="flex max-w-3xl flex-col gap-6">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/admin/demo-requests')}
+            className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="text-sm text-[var(--color-muted)]">Demo Requests</span>
+        </div>
         <PageHeader
           title={`Demo Request ${request.demo_request_number}`}
           subtitle={request.company_name}
           actions={
-            request.status === 'APPROVED' || request.status === 'CONTACTED' ? (
-              <Button onClick={() => setWizardOpen(true)}>Convert to Company</Button>
+            canAct ? (
+              <>
+                <Button intent="secondary" size="sm" onClick={() => setRejectOpen(true)} isLoading={saving}>
+                  Reject
+                </Button>
+                <Button size="sm" onClick={handleAccept} isLoading={saving}>
+                  Accept
+                </Button>
+              </>
+            ) : request.status === 'APPROVED' || request.status === 'CONTACTED' ? (
+              <Button onClick={() => setWizardOpen(true)} disabled={request.status === 'ONBOARDED'}>Convert to Company</Button>
             ) : null
           }
         />
@@ -155,6 +219,59 @@ export default function DemoRequestDetailPage() {
             </div>
           )}
         </Card>
+
+        {/* Converted Company Info */}
+        {convertedCompany && request.status === 'ONBOARDED' && (
+          <Card className="p-5">
+            <h3 className="mb-3 font-[var(--font-display)] text-sm font-semibold text-[var(--color-ink)]">
+              Created Company
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><span className="text-[var(--color-muted)]">Company:</span> {convertedCompany.company_name || '—'}</div>
+              <div><span className="text-[var(--color-muted)]">Code:</span> {convertedCompany.company_code || '—'}</div>
+              <div><span className="text-[var(--color-muted)]">Admin Email:</span> {convertedCompany.admin_email || '—'}</div>
+              <div><span className="text-[var(--color-muted)]">Created:</span> {convertedCompany.created_at ? new Date(convertedCompany.created_at).toLocaleDateString() : '—'}</div>
+            </div>
+            {convertedCompany.company_id && (
+              <button
+                onClick={() => navigate(`/admin/companies/${convertedCompany.company_id}`)}
+                className="mt-3 text-sm font-medium text-[var(--color-primary)] hover:underline"
+              >
+                View Company
+              </button>
+            )}
+          </Card>
+        )}
+
+        {/* Reject Popup */}
+        {rejectOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setRejectOpen(false)} />
+            <div className="relative w-full max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+              <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+                Reject Demo Request
+              </h3>
+              <p className="mt-2 text-sm text-[var(--color-muted)]">
+                Please provide a reason for rejecting this demo request:
+              </p>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Enter rejection reason..."
+                className="mt-3 w-full rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-negative)] focus:ring-2 focus:ring-[var(--color-negative-soft)]"
+                rows={4}
+              />
+              <div className="mt-6 flex justify-end gap-2">
+                <Button intent="secondary" size="sm" onClick={() => setRejectOpen(false)}>
+                  Cancel
+                </Button>
+                <Button intent="secondary" size="sm" onClick={handleRejectConfirm} isLoading={saving}>
+                  Submit
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Convert Wizard Modal */}
         {wizardOpen && (

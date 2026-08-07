@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useNavigate } from 'react'
 import { useParams } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
@@ -100,6 +100,17 @@ export default function CompanySubscriptionPage() {
   return (
     <AdminLayout title="Company Subscription" breadcrumb="Subscription">
       <div className="flex flex-col gap-6">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate(`/admin/companies/${id}`)}
+            className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="text-sm text-[var(--color-muted)]">Company Detail</span>
+        </div>
         <PageHeader
           title={subscription?.name || 'Company'}
           subtitle={`Subscription management for ${subscription?.name || ''}`}

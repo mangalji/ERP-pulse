@@ -74,6 +74,7 @@ export const CLIENT_ENDPOINTS = {
   employeeDeactivate: (id) => `/client/employees/${id}/deactivate/`,
   employeeAssignRole: (id) => `/client/employees/${id}/assign_role/`,
   employeeRemoveRole: (id) => `/client/employees/${id}/remove_role/`,
+  employeeResendInvitation: (id) => `/client/employees/${id}/resend_invitation/`,
   roles: '/client/roles/',
   settings: '/client/settings/',
   notifications: '/client/notifications/',

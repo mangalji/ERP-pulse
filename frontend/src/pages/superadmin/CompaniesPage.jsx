@@ -6,9 +6,9 @@ import DataTable from '../../components/superadmin/DataTable.jsx'
 import SearchBox from '../../components/superadmin/SearchBox.jsx'
 import StatusBadge from '../../components/superadmin/StatusBadge.jsx'
 import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
-import InfoCard from '../../components/superadmin/InfoCard.jsx'
-import Button from '../../components/ui/Button.jsx'
 import Card from '../../components/ui/Card.jsx'
+// import InfoCard from '../../components/superadmin/InfoCard.jsx' // unused after drawer removal
+import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
@@ -41,9 +41,9 @@ export default function CompaniesPage() {
   const [sortBy, setSortBy] = useState('name')
   const [sortOrder, setSortOrder] = useState('asc')
 
-  const [selected, setSelected] = useState(null)
+  {/* const [selected, setSelected] = useState(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
-
+  */}
   const [createOpen, setCreateOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
@@ -88,10 +88,12 @@ export default function CompaniesPage() {
     setOffset(0)
   }
 
+  {/* openDrawer no longer used — company names now navigate to /admin/companies/:id detail page
   const openDrawer = (company) => {
     setSelected(company)
     setDrawerOpen(true)
   }
+  */}
 
   const handleCreate = async () => {
     setSaving(true)
@@ -102,8 +104,7 @@ export default function CompaniesPage() {
       setForm(EMPTY_FORM)
       setOffset(0)
       load()
-      setSelected(created)
-      setDrawerOpen(true)
+      navigate(`/admin/companies/${created.id}`)
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to create company', 'error')
     } finally {
@@ -130,7 +131,7 @@ export default function CompaniesPage() {
       key: 'name',
       header: 'Name',
       render: (row) => (
-        <button onClick={() => openDrawer(row)} className="font-medium text-[var(--color-primary)] hover:underline">
+        <button onClick={() => navigate(`/admin/companies/${row.id}`)} className="font-medium text-[var(--color-primary)] hover:underline">
           {row.name}
         </button>
       ),
@@ -144,20 +145,20 @@ export default function CompaniesPage() {
     },
     {
       key: 'user_count',
-      header: 'Users',
+      header: 'Employees',
       render: (row) => <span className="text-[var(--color-ink-soft)]">{row.user_count ?? 0}</span>,
     },
     {
-      key: 'module_count',
-      header: 'Modules',
-      render: (row) => <span className="text-[var(--color-ink-soft)]">{row.module_count ?? 0}</span>,
+      key: 'created_at',
+      header: 'Created',
+      render: (row) => <span className="text-[var(--color-muted)]">{row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}</span>,
     },
     {
       key: 'actions',
       header: 'Actions',
       render: (row) => (
         <div className="flex items-center gap-1">
-          <button onClick={() => openDrawer(row)} className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]">
+          <button onClick={() => navigate(`/admin/companies/${row.id}`)} className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]">
             View
           </button>
           {row.status === 'SUSPENDED' ? (
@@ -198,6 +199,17 @@ export default function CompaniesPage() {
   return (
     <AdminLayout title="Companies" breadcrumb="Companies">
       <div className="flex flex-col gap-6">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/admin')}
+            className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
+        </div>
         <PageHeader
           title="Companies"
           subtitle="Manage all client companies across the platform."
@@ -290,7 +302,7 @@ export default function CompaniesPage() {
         </div>
       )}
 
-      {/* Company Detail Drawer */}
+       {/* Company Detail Drawer — replaced by CompanyDetailPage route at /admin/companies/:id
       {drawerOpen && selected && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/40" onClick={() => setDrawerOpen(false)} />
@@ -319,24 +331,25 @@ export default function CompaniesPage() {
                 ]}
               />
                <InfoCard
-                 title="Usage"
-                 items={[
-                   { label: 'Users', value: selected.user_count ?? 0 },
-                   { label: 'Modules', value: selected.module_count ?? 0 },
-                   { label: 'Created', value: selected.created_at ? new Date(selected.created_at).toLocaleDateString() : '—' },
-                 ]}
+                  title="Usage"
+                  items={[
+                    { label: 'Users', value: selected.user_count ?? 0 },
+                    { label: 'Modules', value: selected.module_count ?? 0 },
+                    { label: 'Created', value: selected.created_at ? new Date(selected.created_at).toLocaleDateString() : '—' },
+                  ]}
                />
                <Button
-                 size="sm"
-                 intent="secondary"
-                 onClick={() => navigate(`/admin/companies/${selected.id}/subscription`)}
-               >
-                 View Subscription
-               </Button>
-             </div>
+                  size="sm"
+                  intent="secondary"
+                  onClick={() => navigate(`/admin/companies/${selected.id}/subscription`)}
+                >
+                  View Subscription
+                </Button>
+              </div>
           </div>
         </div>
       )}
+      */}
 
       <ConfirmDialog
         open={!!confirm}

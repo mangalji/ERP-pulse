@@ -63,6 +63,8 @@ export const clientApi = {
     apiClient.post(CLIENT_ENDPOINTS.employeeAssignRole(id), { role_id: roleId }).then(unwrap),
   removeEmployeeRole: (id, roleId) =>
     apiClient.post(CLIENT_ENDPOINTS.employeeRemoveRole(id), { role_id: roleId }).then(unwrap),
+  resendEmployeeInvitation: (id) =>
+    apiClient.post(CLIENT_ENDPOINTS.employeeResendInvitation(id)).then(unwrap),
 
   // ── Roles (company-scoped) ──────────────────────────────────
   listRoles: () => apiClient.get(CLIENT_ENDPOINTS.roles).then(unwrap),

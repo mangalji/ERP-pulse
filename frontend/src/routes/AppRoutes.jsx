@@ -11,6 +11,7 @@ import ResetPasswordPage from '../pages/auth/ResetPasswordPage.jsx'
 import SuperAdminDashboardPage from '../pages/superadmin/DashboardPage.jsx'
 import SuperAdminCompaniesPage from '../pages/superadmin/CompaniesPage.jsx'
 import SuperAdminPlansPage from '../pages/superadmin/PlansPage.jsx'
+import SuperAdminPlanDetailPage from '../pages/superadmin/PlanDetailPage.jsx'
 import SuperAdminModulesPage from '../pages/superadmin/ModulesPage.jsx'
 import SuperAdminEmployeesPage from '../pages/superadmin/EmployeesPage.jsx'
 import SuperAdminSupportSessionsPage from '../pages/superadmin/SupportSessionsPage.jsx'
@@ -18,6 +19,7 @@ import SuperAdminNotificationsPage from '../pages/superadmin/NotificationsPage.j
 import SuperAdminSettingsPage from '../pages/superadmin/SettingsPage.jsx'
 import SuperAdminDemoRequestsPage from '../pages/superadmin/DemoRequestsPage.jsx'
 import SuperAdminDemoRequestDetailPage from '../pages/superadmin/DemoRequestDetailPage.jsx'
+import SuperAdminCompanyDetailPage from '../pages/superadmin/CompanyDetailPage.jsx'
 import SuperAdminCompanySubscriptionPage from '../pages/superadmin/CompanySubscriptionPage.jsx'
 import InvitationAcceptPage from '../pages/invitations/InvitationAcceptPage.jsx'
 
@@ -164,6 +166,14 @@ export default function AppRoutes() {
         }
       />
       <Route
+        path="/admin/plans/:id"
+        element={
+          <ProtectedRoute requiredRole="admin">
+            <SuperAdminPlanDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/admin/modules"
         element={
           <ProtectedRoute requiredRole="admin">
@@ -216,6 +226,14 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute requiredRole="admin">
             <SuperAdminDemoRequestDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/companies/:id"
+        element={
+          <ProtectedRoute requiredRole="admin">
+            <SuperAdminCompanyDetailPage />
           </ProtectedRoute>
         }
       />

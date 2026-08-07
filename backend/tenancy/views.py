@@ -196,6 +196,20 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
             data={'deleted': result['deleted']},
         )
 
+    @action(detail=True, methods=['post'])
+    def resend_invitation(self, request, pk=None):
+        company = self._company(request)
+        try:
+            employee = client_portal_service.resend_employee_invitation(
+                company=company, employee_id=pk, acting_user=request.user,
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return success_response(
+            message='Invitation resent successfully.',
+            data=CompanyEmployeeSerializer(employee).data,
+        )
+
 
 class ClientRoleListView(APIView):
     """

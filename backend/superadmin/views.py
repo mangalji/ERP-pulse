@@ -15,13 +15,16 @@ from superadmin.serializers import (
     CompanyModuleSerializer,
     CompanyPlanSerializer,
     CompanySerializer,
+    CompanyDetailSerializer,
     ModuleSerializer,
     PlanSerializer,
+    PlanDetailSerializer,
     SupportSessionSerializer,
     UserSerializer,
 )
 from superadmin.services import SuperAdminService
 from tenancy.models import Company, CompanyModule, Module
+from rbac.models import Role, UserRole
 
 User = get_user_model()
 superadmin_service = SuperAdminService()
@@ -40,7 +43,35 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        return queryset.annotate(user_count=Count('users'), module_count=Count('company_modules'))
+        return queryset.annotate(
+            user_count=Count('users', distinct=True),
+            module_count=Count('company_modules', distinct=True),
+        ).prefetch_related('company_plans')
+
+    def list(self, request, *args, **kwargs):
+        """Override to return paginated response in success envelope format."""
+        queryset = self.filter_queryset(self.get_queryset())
+        offset = int(request.query_params.get('offset', 0))
+        limit = int(request.query_params.get('limit', 20))
+        count = queryset.count()
+        page = queryset[offset:offset + limit]
+        return paginated_response(
+            message='Companies fetched successfully.',
+            results=CompanySerializer(page, many=True).data,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
+        )
+
+    def retrieve(self, request, *args, **kwargs):
+        """Override to return company detail with subscription, modules, employees, and netsuite info."""
+        company = self.get_object()
+        serializer = CompanyDetailSerializer(company)
+        return success_response(
+            message='Company fetched successfully.',
+            data=serializer.data,
+        )
 
     @action(detail=True, methods=['post'])
     def suspend(self, request, pk=None):
@@ -132,6 +163,78 @@ class PlanViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'monthly_price', 'yearly_price', 'created_at']
     ordering = ['name']
+
+    def list(self, request, *args, **kwargs):
+        """Override to return paginated response in success envelope format."""
+        queryset = self.filter_queryset(self.get_queryset())
+        offset = int(request.query_params.get('offset', 0))
+        limit = int(request.query_params.get('limit', 20))
+        count = queryset.count()
+        page = queryset[offset:offset + limit]
+        return paginated_response(
+            message='Plans fetched successfully.',
+            results=PlanSerializer(page, many=True).data,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
+        )
+
+    def retrieve(self, request, *args, **kwargs):
+        """Override to return plan detail with included modules and companies using this plan."""
+        plan = self.get_object()
+        plan_data = PlanDetailSerializer(plan).data
+
+        # Companies using this plan
+        companies = CompanyPlan.objects.filter(plan=plan).select_related('company').order_by('company__name')
+        company_list = [
+            {
+                'company_id': str(cp.company.id),
+                'company_name': cp.company.name,
+                'status': cp.status,
+                'start_date': cp.start_date,
+                'end_date': cp.end_date,
+            }
+            for cp in companies
+        ]
+        plan_data['companies_using'] = company_list
+
+        return success_response(
+            message='Plan fetched successfully.',
+            data=plan_data,
+        )
+
+    @action(detail=True, methods=['post'])
+    def activate(self, request, pk=None):
+        plan = self.get_object()
+        plan.status = PlanStatus.ACTIVE
+        plan.save(update_fields=['status'])
+        audit_service.log(
+            module=AuditModule.SUBSCRIPTION,
+            action=AuditAction.UPDATE,
+            entity='Plan',
+            entity_id=str(plan.id),
+            user=request.user,
+            old_value={'status': 'INACTIVE'},
+            new_value={'status': plan.status},
+        )
+        return success_response(message='Plan activated successfully.', data=PlanSerializer(plan).data)
+
+    @action(detail=True, methods=['post'])
+    def deactivate(self, request, pk=None):
+        plan = self.get_object()
+        plan.status = PlanStatus.INACTIVE
+        plan.save(update_fields=['status'])
+        audit_service.log(
+            module=AuditModule.SUBSCRIPTION,
+            action=AuditAction.UPDATE,
+            entity='Plan',
+            entity_id=str(plan.id),
+            user=request.user,
+            old_value={'status': 'ACTIVE'},
+            new_value={'status': plan.status},
+        )
+        return success_response(message='Plan deactivated successfully.', data=PlanSerializer(plan).data)
 
 
 class CompanyPlanViewSet(viewsets.ModelViewSet):

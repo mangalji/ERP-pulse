@@ -163,7 +163,14 @@ export default function DashboardPage() {
                     <tbody>
                       {recentCompanies.map((company) => (
                         <tr key={company.id} className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-canvas)]">
-                          <td className="px-4 py-3 font-medium text-[var(--color-ink)]">{company.name}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              onClick={() => navigate(`/admin/companies/${company.id}`)}
+                              className="font-medium text-[var(--color-primary)] hover:underline"
+                            >
+                              {company.name}
+                            </button>
+                          </td>
                           <td className="px-4 py-3 text-[var(--color-ink-soft)]">{company.code}</td>
                           <td className="px-4 py-3"><StatusBadge status={company.status} /></td>
                           <td className="px-4 py-3 text-[var(--color-muted)]">

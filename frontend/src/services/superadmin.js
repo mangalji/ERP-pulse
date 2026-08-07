@@ -28,6 +28,8 @@ export const superadminApi = {
   createPlan: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.plans, payload).then(unwrap),
   updatePlan: (id, payload) => apiClient.patch(`${SUPERADMIN_ENDPOINTS.plans}${id}/`, payload).then(unwrap),
   deletePlan: (id) => apiClient.delete(`${SUPERADMIN_ENDPOINTS.plans}${id}/`).then(unwrap),
+  activatePlan: (id) => apiClient.post(`${SUPERADMIN_ENDPOINTS.plans}${id}/activate/`).then(unwrap),
+  deactivatePlan: (id) => apiClient.post(`${SUPERADMIN_ENDPOINTS.plans}${id}/deactivate/`).then(unwrap),
 
   // ── Company Plans (subscriptions) ────────────────────────────
   listCompanyPlans: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.companyPlans, { params }).then(unwrap),
@@ -40,6 +42,8 @@ export const superadminApi = {
 
   // ── Modules ──────────────────────────────────────────────────
   listModules: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.modules, { params }).then(unwrap),
+  getModule: (id) => apiClient.get(`${SUPERADMIN_ENDPOINTS.modules}${id}/`).then(unwrap),
+  updateModule: (id, payload) => apiClient.patch(`${SUPERADMIN_ENDPOINTS.modules}${id}/`, payload).then(unwrap),
   fetchCompanyModules: (companyId) =>
     apiClient.get(SUPERADMIN_ENDPOINTS.companyModulesFetch, { params: { company_id: companyId } }).then(unwrap),
   setCompanyModule: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyModulesSet, payload).then(unwrap),

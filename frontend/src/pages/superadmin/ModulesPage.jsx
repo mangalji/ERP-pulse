@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import DataTable from '../../components/superadmin/DataTable.jsx'
@@ -6,6 +7,7 @@ import SearchBox from '../../components/superadmin/SearchBox.jsx'
 import StatusBadge from '../../components/superadmin/StatusBadge.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Card from '../../components/ui/Card.jsx'
+import Input from '../../components/ui/Input.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
 
@@ -27,6 +29,12 @@ export default function ModulesPage() {
   const [assignCompany, setAssignCompany] = useState('')
   const [assignLoading, setAssignLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const navigate = useNavigate()
+
+  /* Module Edit Modal state (View/Edit) */
+  const [editModalOpen, setEditModalOpen] = useState(false)
+  const [editModule, setEditModule] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', code: '', display_name: '', description: '', is_active: true })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -122,17 +130,38 @@ export default function ModulesPage() {
     { key: 'name', header: 'Name', render: (row) => <span className="font-medium text-[var(--color-ink)]">{row.name}</span> },
     { key: 'code', header: 'Code', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.code}</span> },
     { key: 'display_name', header: 'Display Name', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.display_name || '—'}</span> },
+    { key: 'description', header: 'Description', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.description || '—'}</span> },
     { key: 'is_active', header: 'Status', render: (row) => <StatusBadge status={row.is_active} /> },
     {
-      key: 'sort_order',
-      header: 'Sort Order',
-      render: (row) => <span className="text-[var(--color-ink-soft)]">{row.sort_order ?? 0}</span>,
+      key: 'actions',
+      header: 'Actions',
+      render: (row) => (
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => { setEditModule(row); setEditForm({ name: row.name, code: row.code, display_name: row.display_name || '', description: row.description || '', is_active: row.is_active }); setEditModalOpen(true) }}
+            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+          >
+            View
+          </button>
+        </div>
+      ),
     },
   ]
 
   return (
     <AdminLayout title="Modules" breadcrumb="Modules">
       <div className="flex flex-col gap-6">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/admin')}
+            className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
+        </div>
         <PageHeader
           title="Modules"
           subtitle="View feature modules and manage per-company assignments."
@@ -229,6 +258,53 @@ export default function ModulesPage() {
             <div className="mt-6 flex justify-end gap-2">
               <Button intent="secondary" onClick={() => setAssignOpen(false)}>Cancel</Button>
               <Button onClick={saveAssignments} isLoading={saving}>Save Assignments</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Module Edit Modal (View/Edit) */}
+      {editModalOpen && editModule && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setEditModalOpen(false)} />
+          <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+            <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+              Edit Module
+            </h3>
+            <div className="mt-4 flex flex-col gap-4">
+              <Input label="Name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+              <Input label="Code" value={editForm.code} onChange={(e) => setEditForm({ ...editForm, code: e.target.value })} readOnly />
+              <Input label="Display Name" value={editForm.display_name} onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })} />
+              <Input label="Description" value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-[var(--color-ink-soft)]">Status</span>
+                <select
+                  value={editForm.is_active ? 'active' : 'inactive'}
+                  onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value === 'active' })}
+                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button intent="secondary" size="sm" onClick={() => setEditModalOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={async () => {
+                setSaving(true)
+                try {
+                  await superadminApi.updateModule(editModule.id, editForm)
+                  addToast('Module updated successfully')
+                  setEditModalOpen(false)
+                  load()
+                } catch (err) {
+                  addToast(err.payload?.message || err.message || 'Failed to update module', 'error')
+                } finally {
+                  setSaving(false)
+                }
+              }} isLoading={saving}>
+                Save
+              </Button>
             </div>
           </div>
         </div>

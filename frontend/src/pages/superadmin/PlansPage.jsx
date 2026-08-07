@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import DataTable from '../../components/superadmin/DataTable.jsx'
@@ -38,6 +39,27 @@ export default function PlansPage() {
   const [form, setForm] = useState(EMPTY_PLAN)
   const [saving, setSaving] = useState(false)
   const [confirm, setConfirm] = useState(null)
+  const navigate = useNavigate()
+
+  const handlePlanAction = async () => {
+    if (!confirm) return
+    setSaving(true)
+    try {
+      if (confirm.action === 'activate') {
+        await superadminApi.activatePlan(confirm.plan.id)
+        addToast('Plan activated successfully')
+      } else {
+        await superadminApi.deactivatePlan(confirm.plan.id)
+        addToast('Plan deactivated successfully')
+      }
+      setConfirm(null)
+      load()
+    } catch (err) {
+      addToast(err.payload?.message || err.message || 'Action failed', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -99,6 +121,7 @@ export default function PlansPage() {
     }
   }
 
+  /* Old delete handler — kept for rollback
   const handleDelete = async () => {
     setSaving(true)
     try {
@@ -112,6 +135,7 @@ export default function PlansPage() {
       setSaving(false)
     }
   }
+  */
 
   const totalPages = Math.ceil(count / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
@@ -120,7 +144,14 @@ export default function PlansPage() {
     {
       key: 'name',
       header: 'Name',
-      render: (row) => <span className="font-medium text-[var(--color-ink)]">{row.name}</span>,
+      render: (row) => (
+        <button
+          onClick={() => navigate(`/admin/plans/${row.id}`)}
+          className="font-medium text-[var(--color-primary)] hover:underline"
+        >
+          {row.name}
+        </button>
+      ),
     },
     {
       key: 'monthly_price',
@@ -138,21 +169,49 @@ export default function PlansPage() {
       render: (row) => <span className="text-[var(--color-ink-soft)]">{row.max_employees ?? 0}</span>,
     },
     {
+      key: 'enabled_models',
+      header: 'Included Modules',
+      render: (row) => <span className="text-[var(--color-ink-soft)]">{row.enabled_models?.length ?? 0}</span>,
+    },
+    {
       key: 'status',
       header: 'Status',
       render: (row) => <StatusBadge status={row.status} />,
+    },
+    {
+      key: 'created_at',
+      header: 'Created',
+      render: (row) => <span className="text-[var(--color-muted)]">{row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}</span>,
     },
     {
       key: 'actions',
       header: 'Actions',
       render: (row) => (
         <div className="flex items-center gap-1">
-          <button onClick={() => openEdit(row)} className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]">
+          <button
+            onClick={() => navigate(`/admin/plans/${row.id}`)}
+            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+          >
+            View
+          </button>
+          <button onClick={() => openEdit(row)} className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]">
             Edit
           </button>
-          <button onClick={() => setConfirm({ plan: row })} className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-negative)] hover:bg-[var(--color-negative-soft)]">
-            Delete
-          </button>
+          {row.status === 'ACTIVE' ? (
+            <button
+              onClick={() => setConfirm({ plan: row, action: 'deactivate' })}
+              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-netsuite)] hover:bg-[var(--color-netsuite-soft)]"
+            >
+              Deactivate
+            </button>
+          ) : (
+            <button
+              onClick={() => setConfirm({ plan: row, action: 'activate' })}
+              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
+            >
+              Activate
+            </button>
+          )}
         </div>
       ),
     },
@@ -161,6 +220,17 @@ export default function PlansPage() {
   return (
     <AdminLayout title="Plans" breadcrumb="Plans">
       <div className="flex flex-col gap-6">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/admin')}
+            className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
+        </div>
         <PageHeader
           title="Plans"
           subtitle="Manage subscription plans and their limits."
@@ -238,12 +308,25 @@ export default function PlansPage() {
         </div>
       )}
 
+      {/* Old delete confirm dialog — replaced by activate/deactivate
       <ConfirmDialog
         open={!!confirm}
         title="Delete plan?"
         message={confirm ? `Are you sure you want to delete ${confirm.plan.name}?` : ''}
         confirmLabel="Delete"
         onConfirm={handleDelete}
+        onCancel={() => setConfirm(null)}
+        loading={saving}
+      />
+      */}
+
+      <ConfirmDialog
+        open={!!confirm}
+        title={confirm ? `${confirm.action === 'activate' ? 'Activate' : 'Deactivate'} plan?` : ''}
+        message={confirm ? `Are you sure you want to ${confirm.action} ${confirm?.plan?.name}?` : ''}
+        confirmLabel={confirm?.action === 'activate' ? 'Activate' : 'Deactivate'}
+        intent="primary"
+        onConfirm={handlePlanAction}
         onCancel={() => setConfirm(null)}
         loading={saving}
       />
