@@ -117,14 +117,36 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     : 'U'
 
   const currentPath = location.pathname
-  const activeNav = NAV_ITEMS.find((item) =>
+  const activeNav = ALL_NAV_ITEMS.find((item) =>
     item.end ? currentPath === item.to : currentPath.startsWith(item.to),
   )
+
+  const userModules = user?.modules || availableModules
+  const userPermissions = user?.permissions || []
 
   const visibleNav = ALL_NAV_ITEMS.filter((item) => {
     if (!item.module) return true
     if (isCompanyAdmin) return true
-    return availableModules.some((m) => m.module__code === item.module)
+    const hasModule = userModules.some((m) => m.module_code === item.module)
+    if (!hasModule) return false
+    // TASK 5: Employee Module Access — even if the company has the module,
+    // the employee's role must grant the corresponding permission.
+    // We map module codes to permission codes for this check.
+    const modulePermissionMap = {
+      'invoice_reader': 'ocr.upload',
+      'ocr': 'ocr.upload',
+      'ai': 'ai.chat',
+      'employees': 'employee.manage',
+      'reports': 'reports.view',
+      'reports_engine': 'reports.view',
+      'analytics': 'reports.view',
+      'dashboard': 'dashboard.view',
+    }
+    const permCode = modulePermissionMap[item.module]
+    if (permCode) {
+      return userPermissions.includes(permCode)
+    }
+    return true
   })
 
   return (

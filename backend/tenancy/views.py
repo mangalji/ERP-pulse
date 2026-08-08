@@ -56,6 +56,8 @@ class ClientMeView(APIView):
             ),
             'modules': context['modules'],
             'roles': context['roles'],
+            'permissions': context['permissions'],
+            'plan': context['plan'],
         }
         return success_response(message='Client context fetched successfully.', data=data)
 

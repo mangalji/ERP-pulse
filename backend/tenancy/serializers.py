@@ -9,7 +9,7 @@ the service/view layer.
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-
+from invitations.models import Invitation, InvitationStatus
 from rbac.models import Role
 from tenancy.models import Company, CompanySettings
 
@@ -81,9 +81,11 @@ class CreateEmployeeSerializer(serializers.Serializer):
 class UpdateEmployeeSerializer(serializers.ModelSerializer):
     """Validates PATCH input for updating a company employee."""
 
+    role_id = serializers.IntegerField(required=False, allow_null=True)
+
     class Meta:
         model = User
-        fields = ('first_name', 'last_name', 'designation', 'department')
+        fields = ('first_name', 'last_name', 'designation', 'department', 'role_id')
         extra_kwargs = {
             'first_name': {'required': False, 'allow_blank': True},
             'last_name': {'required': False, 'allow_blank': True},

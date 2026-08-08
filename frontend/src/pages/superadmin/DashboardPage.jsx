@@ -106,7 +106,7 @@ export default function DashboardPage() {
     ]
   }, [summary])
 
-  const recentCompanies = summary?.recent_company_registrations || []
+  // const recentCompanies = summary?.recent_company_registrations || []
 
   return (
     <AdminLayout title="Dashboard" breadcrumb="Dashboard">
@@ -144,7 +144,7 @@ export default function DashboardPage() {
               </div>
             )}
 
-            <SectionCard title="Recent Companies">
+            {/* <SectionCard title="Recent Companies">
               {loading ? (
                 <Skeleton className="h-40 w-full" />
               ) : recentCompanies.length === 0 ? (
@@ -182,7 +182,7 @@ export default function DashboardPage() {
                   </table>
                 </div>
               )}
-            </SectionCard>
+            </SectionCard> */}
           </>
         )}
       </div>

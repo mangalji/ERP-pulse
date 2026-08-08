@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import AuthLayout from '../../components/layout/AuthLayout.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext.jsx'
 
 export default function ForgotPasswordPage() {
   const { forgotPassword } = useAuth()
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [success, setSuccess] = useState('')
@@ -19,7 +20,12 @@ export default function ForgotPasswordPage() {
     setIsSubmitting(true)
     try {
       const result = await forgotPassword(email)
-      setSuccess(result.message || 'If this email is registered, a password reset code has been sent to it.')
+      const msg = result.message || 'If this email is registered, a password reset code has been sent to it.'
+      setSuccess(msg)
+      // Auto-redirect to reset code page after a short delay
+      setTimeout(() => {
+        navigate('/reset-password', { state: { email } })
+      }, 1500)
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to send reset code')
     } finally {
@@ -57,13 +63,16 @@ export default function ForgotPasswordPage() {
       </p>
       {success && (
         <div className="mt-4 text-center">
-        <Link
-          to="/reset-password"
-          state={{ email }}
-          className="text-sm font-medium text-[var(--color-primary)]"
-        >
-          Enter reset code
-        </Link>
+          <p className="text-xs text-[var(--color-muted)]">
+            Redirecting to enter your code...
+          </p>
+          <Link
+            to="/reset-password"
+            state={{ email }}
+            className="text-sm font-medium text-[var(--color-primary)]"
+          >
+            Enter reset code
+          </Link>
         </div>
       )}
     </AuthLayout>

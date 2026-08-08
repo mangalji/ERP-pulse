@@ -108,6 +108,7 @@ class SubscriptionService:
         self._create_transaction(
             company=company, plan=plan, original_amount=original_price,
             final_amount=final_price, billing_cycle=normalized_billing_cycle,
+            status=normalized_status,
         )
 
         # Sync module access with plan
@@ -129,12 +130,12 @@ class SubscriptionService:
     @staticmethod
     def _calculate_final_price(original_price, discount_type, discount_value):
         if discount_type == DiscountType.PERCENTAGE:
-            discount_amount = original_price * (discount_value / 100)
+            discount_amount = int(original_price) * (int(discount_value) / 100)
         elif discount_type == DiscountType.FIXED:
-            discount_amount = discount_value
+            discount_amount = int(discount_value)
         else:
             discount_amount = 0
-        return max(original_price - discount_amount, 0)
+        return max(int(original_price) - discount_amount, 0)
 
     def _create_subscription_history(self, *, company, plan, company_plan, original_price,
                                      discount_type, discount_value, final_price, billing_cycle,
@@ -156,9 +157,16 @@ class SubscriptionService:
             change_type=change_type,
         )
 
-    def _create_transaction(self, *, company, plan, original_amount, final_amount, billing_cycle):
+    def _create_transaction(self, *, company, plan, original_amount, final_amount, billing_cycle, status=None):
         from django.utils.crypto import get_random_string
         transaction_id = f'TXN-{get_random_string(8).upper()}'
+        # TRIAL plans are assigned without payment processing — mark as completed.
+        if status == CompanyPlanStatus.TRIAL:
+            payment_status = PaymentStatus.SUCCESS
+            transaction_status = TransactionStatus.COMPLETED
+        else:
+            payment_status = PaymentStatus.PENDING
+            transaction_status = TransactionStatus.INITIATED
         Transaction.objects.create(
             company=company,
             plan=plan,
@@ -166,8 +174,8 @@ class SubscriptionService:
             original_amount=original_amount,
             final_amount=final_amount,
             billing_cycle=billing_cycle,
-            payment_status=PaymentStatus.PENDING,
-            transaction_status=TransactionStatus.INITIATED,
+            payment_status=payment_status,
+            transaction_status=transaction_status,
             payment_method='MANUAL',
         )
 

@@ -481,16 +481,7 @@ class SuperAdminService:
         return list(qs.order_by('-started_at')[:50])
 
     @transaction.atomic
-    def create_employee(
-        self,
-        *,
-        email,
-        password=None,
-        first_name="",
-        last_name="",
-        company_id=None,
-        role_ids=None,
-    ):
+    def create_employee(self,*,email,password=None,first_name="",last_name="",company_id=None,role_ids=None,role=None):
         if User.objects.filter(email=email).exists():
             raise ValueError(
                 "Employee with this email already exists."
@@ -508,23 +499,33 @@ class SuperAdminService:
         if password:
             user.set_password(password)
             user.save(update_fields=["password"])
-
+        ROLE_NAME_MAP = {
+            "admin": "Company Admin",
+            "employee": "Employee",
+        }
         if role_ids:
 
             roles = Role.objects.filter(
                 pk__in=role_ids
             )
-
-            UserRole.objects.bulk_create(
-                [
-                    UserRole(
-                        user=user,
-                        role=role,
-                    )
-                    for role in roles
-                ],
-                ignore_conflicts=True,
+        else:
+            role_name = ROLE_NAME_MAP.get(role)
+            if role_name is None:
+                raise ValueError(f"Invalid role: {role}")
+            roles = Role.objects.filter(
+                name__iexact='Company Admin'
             )
+        UserRole.objects.bulk_create(
+            
+            [
+                UserRole(
+                    user=user,
+                    role=role_obj,
+                )
+                for role_obj in roles
+            ],
+            ignore_conflicts=True,
+        )
 
         return user
 

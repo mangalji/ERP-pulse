@@ -15,10 +15,11 @@ import { superadminApi } from '../../services/superadmin.js'
 const PAGE_SIZE = 10
 
 const EMPTY_EMPLOYEE = {
-  email: '',
-  password: '',
   first_name: '',
   last_name: '',
+  email: '',
+  role:'admin',
+  // password: '',
   company_id: '',
 }
 
@@ -82,13 +83,14 @@ export default function EmployeesPage() {
       await superadminApi.createEmployee({
         ...form,
         company_id: form.company_id || undefined,
+        role: form.role,
       })
-      addToast('Employee created successfully')
+      addToast('User created successfully')
       setCreateOpen(false)
       setOffset(0)
       load()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to create employee', 'error')
+      addToast(err.payload?.message || err.message || 'Failed to create user', 'error')
     } finally {
       setSaving(false)
     }
@@ -112,6 +114,20 @@ export default function EmployeesPage() {
     }
   }
 
+  const handleToggleAdmin = async (employee) => {
+    setSaving(true)
+    try {
+      await superadminApi.updateEmployee(employee.id, { is_staff: !employee.is_staff })
+      addToast(employee.is_staff ? 'Admin privileges revoked' : 'Promoted to admin')
+      load()
+    } catch (err) {
+      addToast(err.payload?.message || err.message || 'Action failed', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+  
+
   const totalPages = Math.ceil(count / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
@@ -134,6 +150,13 @@ export default function EmployeesPage() {
     { key: 'designation', header: 'Designation', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.designation || '—'}</span> },
     { key: 'department', header: 'Department', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.department || '—'}</span> },
     {
+      key: 'is_staff',
+      header: 'Admin',
+      render: (row) => (
+        <StatusBadge status={row.is_staff ? 'ACTIVE' : 'INACTIVE'} />
+      ),
+    },
+    {
       key: 'is_active',
       header: 'Status',
       render: (row) => <StatusBadge status={row.is_active ? 'ACTIVE' : 'INACTIVE'} />,
@@ -143,6 +166,14 @@ export default function EmployeesPage() {
       header: 'Actions',
       render: (row) => (
         <div className="flex items-center gap-1">
+          {!row.is_staff && (
+            <button
+              onClick={() => setConfirm({ employee: row, action: 'promote' })}
+              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
+            >
+              Promote Admin
+            </button>
+          )}
           {row.is_active ? (
             <button
               onClick={() => setConfirm({ employee: row, action: 'deactivate' })}
@@ -178,15 +209,15 @@ export default function EmployeesPage() {
           <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
         </div>
         <PageHeader
-          title="Employees"
-          subtitle="Manage AGSuite and client employees."
-          actions={<Button onClick={openCreate}>Create Employee</Button>}
+          title="Users"
+          subtitle="Manage AGSuite and client users."
+          actions={<Button onClick={openCreate}>Create User</Button>}
         />
 
         <Card className="p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <SearchBox value={search} onChange={(v) => { setSearch(v); setOffset(0) }} placeholder="Search employees..." />
-            <span className="text-xs text-[var(--color-muted)]">{count} employee{count !== 1 ? 's' : ''}</span>
+            <SearchBox value={search} onChange={(v) => { setSearch(v); setOffset(0) }} placeholder="Search users..." />
+            <span className="text-xs text-[var(--color-muted)]">{count} user{count !== 1 ? 's' : ''}</span>
           </div>
 
           <DataTable
@@ -195,8 +226,8 @@ export default function EmployeesPage() {
             loading={loading}
             error={error}
             onRetry={load}
-            emptyTitle="No employees found"
-            emptyDescription="Try adjusting your search or create a new employee."
+            emptyTitle="No users found"
+            emptyDescription="Try adjusting your search or create a new user."
           />
 
           {totalPages > 1 && (
@@ -217,34 +248,59 @@ export default function EmployeesPage() {
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40" onClick={() => setCreateOpen(false)} />
-          <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
-            <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">Create Employee</h3>
+            <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+            <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">Create User</h3>
             <div className="mt-4 flex flex-col gap-4">
               <Input label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-              <Input label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
               <div className="grid grid-cols-2 gap-4">
                 <Input label="First Name" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
                 <Input label="Last Name" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
               </div>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">Company</span>
-                <select
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-[var(--color-ink-soft)]">Company</span>
+                  <select
                   value={form.company_id}
                   onChange={(e) => setForm({ ...form, company_id: e.target.value })}
                   className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                  >
+                    <option value="">AGSuite Internal User</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                Role
+                </span>
+
+                <select
+                  value={form.role}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      role: e.target.value,
+                    })
+                  }
+                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                 >
-                  <option value="">AGSuite (no company)</option>
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
+                  <option value="employee">
+                      Employee
+                  </option>
+                
+                  <option value="company_admin">
+                      Company Admin
+                  </option>
+                
                 </select>
               </label>
+
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <Button intent="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
               <Button onClick={handleCreate} isLoading={saving}>Create</Button>
             </div>
-          </div>
         </div>
       )}
 
@@ -262,4 +318,5 @@ export default function EmployeesPage() {
       <Toast toasts={toasts} removeToast={removeToast} />
     </AdminLayout>
   )
+
 }

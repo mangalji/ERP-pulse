@@ -19,6 +19,8 @@ export default function PlanDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [editForm, setEditForm] = useState({})
   const [saving, setSaving] = useState(false)
+  const [allModules, setAllModules] = useState([])
+  const [loadingModules, setLoadingModules] = useState(false)
 
   const loadPlan = useCallback(async () => {
     setLoading(true)
@@ -26,6 +28,20 @@ export default function PlanDetailPage() {
     try {
       const data = await superadminApi.getPlan(id)
       setPlan(data)
+      setEditForm({
+        name: data.name,
+        description: data.description,
+        monthly_price: data.monthly_price,
+        yearly_price: data.yearly_price,
+        max_employees: data.max_employees,
+        max_ocr_documents: data.max_ocr_documents,
+        max_storage_gb: data.max_storage_gb,
+        trial_days: data.trial_days,
+        ai_credits: data.ai_credits,
+        ocr_credits: data.ocr_credits,
+        status: data.status,
+        enabled_models: (data.enabled_modules || []).map((m) => m.id),
+      })
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load plan')
     } finally {
@@ -36,6 +52,23 @@ export default function PlanDetailPage() {
   useEffect(() => {
     loadPlan()
   }, [loadPlan])
+
+  const loadModules = async () => {
+    setLoadingModules(true)
+    try {
+      const modData = await superadminApi.listModules()
+      setAllModules(modData.results || modData || [])
+    } catch {
+      setAllModules([])
+    } finally {
+      setLoadingModules(false)
+    }
+  }
+
+  const handleEdit = () => {
+    loadModules()
+    setEditOpen(true)
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -96,7 +129,7 @@ export default function PlanDetailPage() {
               <Button size="sm" intent="secondary" onClick={() => navigate(`/admin/plans`)}>
                 Back to Plans
               </Button>
-              <Button size="sm" onClick={() => { setEditForm({ ...plan }); setEditOpen(true) }}>
+              <Button size="sm" onClick={() => handleEdit()}>
                 Edit Plan
               </Button>
             </div>
@@ -252,12 +285,41 @@ export default function PlanDetailPage() {
                   value={editForm.ai_credits || ''}
                   onChange={(e) => setEditForm({ ...editForm, ai_credits: e.target.value })}
                 />
-                <Input
-                  label="OCR Credits"
-                  type="number"
-                  value={editForm.ocr_credits || ''}
-                  onChange={(e) => setEditForm({ ...editForm, ocr_credits: e.target.value })}
-                />
+                 <Input
+                   label="OCR Credits"
+                   type="number"
+                   value={editForm.ocr_credits || ''}
+                   onChange={(e) => setEditForm({ ...editForm, ocr_credits: e.target.value })}
+                 />
+                 <div className="sm:col-span-2">
+                   <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">
+                     Included Modules
+                   </label>
+                   {loadingModules ? (
+                     <p className="text-sm text-[var(--color-muted)]">Loading modules...</p>
+                   ) : (
+                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                       {allModules.map((mod) => (
+                         <label key={mod.id} className="flex items-center gap-2 text-sm">
+                           <input
+                             type="checkbox"
+                             checked={(editForm.enabled_models || []).includes(mod.id)}
+                             onChange={(e) => {
+                               const current = editForm.enabled_models || []
+                               if (e.target.checked) {
+                                 setEditForm({ ...editForm, enabled_models: [...current, mod.id] })
+                               } else {
+                                 setEditForm({ ...editForm, enabled_models: current.filter((m) => m !== mod.id) })
+                               }
+                             }}
+                             className="rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                           />
+                           <span>{mod.display_name || mod.name}</span>
+                         </label>
+                       ))}
+                     </div>
+                   )}
+                 </div>
               </div>
               <div className="mt-6 flex justify-end gap-2">
                 <Button intent="secondary" size="sm" onClick={() => setEditOpen(false)}>Cancel</Button>

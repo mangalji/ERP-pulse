@@ -82,7 +82,8 @@ class OTPService:
 
         # Log OTP visibly for development (console backend prints to terminal).
         logger.info(
-            "LOGIN OTP for user %s (%s): %s (expires in %d minutes)",
+            "%s OTP for user %s (%s): %s (expires in %d minutes)",
+            purpose.replace('_', ' ').title(),
             user.id, user.email, raw_code, constants.OTP_EXPIRY_MINUTES,
         )
 

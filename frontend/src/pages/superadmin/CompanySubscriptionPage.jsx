@@ -47,16 +47,14 @@ export default function CompanySubscriptionPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [subData, modData, usageData, histData, plansData] = await Promise.all([
+      const [subData, modData, histData, plansData] = await Promise.all([
         superadminApi.getCompany(id),
         superadminApi.fetchCompanyModules(id),
-        subscriptionApi.getMyUsage(),
         subscriptionApi.getCompanyPlanHistory(id),
         subscriptionApi.listPlans(),
       ])
       setSubscription(subData)
       setModules(modData.results || modData || [])
-      setUsage(usageData || [])
       setHistory(histData || [])
       setPlans(plansData.results || plansData || [])
       try {
@@ -64,6 +62,13 @@ export default function CompanySubscriptionPage() {
         setTransactions(txData.results || txData || [])
       } catch {
         setTransactions([])
+      }
+      // Load usage data separately — may 404 for super admins without a company
+      try {
+        const usageData = await subscriptionApi.getMyUsage()
+        setUsage(usageData || [])
+      } catch {
+        setUsage([])
       }
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to load data', 'error')
@@ -95,36 +100,30 @@ export default function CompanySubscriptionPage() {
 
   const handlePlanChange = (planId) => {
     setSelectedPlan(planId)
-    const plan = plans.find((p) => p.id === planId)
-    if (plan) {
-      const original = billingCycle === 'YEARLY' ? plan.yearly_price : plan.monthly_price
-      const discountNum = Number(discountValue) || 0
-      let final = Number(original) || 0
-      if (discountType === 'PERCENTAGE') {
-        final = original - (original * discountNum / 100)
-      } else if (discountType === 'FIXED') {
-        final = original - discountNum
-      }
-      setEffectivePrice(Math.max(final, 0))
-    }
   }
 
   const handleDiscountChange = (type) => {
     setDiscountType(type)
     if (type === 'NONE') setDiscountValue('')
-    const plan = plans.find((p) => p.id === selectedPlan)
-    if (plan) {
-      const original = billingCycle === 'YEARLY' ? plan.yearly_price : plan.monthly_price
-      const discountNum = Number(discountValue) || 0
-      let final = Number(original) || 0
-      if (type === 'PERCENTAGE') {
-        final = original - (original * discountNum / 100)
-      } else if (type === 'FIXED') {
-        final = original - discountNum
-      }
-      setEffectivePrice(Math.max(final, 0))
-    }
   }
+
+  useEffect(() => {
+    if (!selectedPlan) {
+      setEffectivePrice(0)
+      return
+    }
+    const plan = plans.find((p) => p.id === selectedPlan)
+    if (!plan) return
+    const original = billingCycle === 'YEARLY' ? Number(plan.yearly_price) : Number(plan.monthly_price)
+    const discountNum = Number(discountValue) || 0
+    let final = original || 0
+    if (discountType === 'PERCENTAGE') {
+      final = original - (original * discountNum / 100)
+    } else if (discountType === 'FIXED') {
+      final = original - discountNum
+    }
+    setEffectivePrice(Math.max(final, 0))
+  }, [selectedPlan, billingCycle, discountType, discountValue, plans])
 
   const handleToggleModule = async (moduleId) => {
     const mod = modules.find((m) => m.module === moduleId)

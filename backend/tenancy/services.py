@@ -22,7 +22,7 @@ from audit.services import audit_service
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
 from notifications.models import Notification
-from rbac.models import Role, UserRole
+from rbac.models import Role, RolePermission, UserRole
 from tenancy.models import CompanyModule, CompanySettings
 
 
@@ -53,6 +53,20 @@ class ClientPortalService:
         email = data.get('email')
         if User.objects.filter(email=email).exists():
             raise ValueError('A user with this email already exists.')
+
+        # TASK 7: Subscription Enforcement — verify employee limit.
+        from superadmin.models import CompanyPlan
+        current_plan = CompanyPlan.objects.filter(
+            company=company,
+            status__in=['ACTIVE', 'TRIAL'],
+        ).first()
+        if current_plan and current_plan.plan.max_employees > 0:
+            current_count = User.objects.filter(company=company).count()
+            if current_count >= current_plan.plan.max_employees:
+                raise ValueError(
+                    f'Employee limit of {current_plan.plan.max_employees} reached. '
+                    f'Please upgrade your plan to add more employees.'
+                )
 
         employee = User.objects.create(
             email=email.lower().strip(),
@@ -130,6 +144,15 @@ class ClientPortalService:
                 setattr(employee, field, data[field])
         employee.save(update_fields=['first_name', 'last_name', 'designation', 'department'])
 
+        # Handle role update if provided
+        role_id = data.get('role_id')
+        if role_id is not None:
+            role = self._validate_role(company=company, role_id=role_id)
+            # Replace all existing role assignments
+            UserRole.objects.filter(user=employee).delete()
+            if role:
+                UserRole.objects.create(user=employee, role=role)
+
         audit_service.log(
             module=AuditModule.EMPLOYEE,
             action=AuditAction.UPDATE,
@@ -184,10 +207,13 @@ class ClientPortalService:
     # ── Roles ─────────────────────────────────────────────────
 
     def list_assignable_roles(self, *, company):
-        """Global roles (company IS NULL) plus roles of the current company."""
-        return Role.objects.filter(
-            Q(company__isnull=True) | Q(company=company)
-        ).order_by('name')
+        """List roles assignable within a company's portal.
+
+        Returns company-specific roles only. System-level roles (Super Admin,
+        Company Admin) are excluded — only roles explicitly belonging to the
+        company are assignable by its admin when creating employees.
+        """
+        return Role.objects.filter(company=company).order_by('name')
 
     def _validate_role(self, *, company, role_id):
         """Return a role only if it is global or belongs to the company."""
@@ -317,6 +343,7 @@ class ClientPortalService:
     def get_client_context(self, *, user):
         company = getattr(user, 'company', None)
         modules = []
+        permissions = []
         if company:
             modules = list(
                 CompanyModule.objects.filter(company=company, enabled=True)
@@ -324,9 +351,33 @@ class ClientPortalService:
                 .values('module_id', 'module__code', 'module__name')
             )
         role_names = list(user.user_roles.values_list('role__name', flat=True))
+        # Collect permission codes granted to the user via their roles.
+        permissions = list(
+            RolePermission.objects.filter(
+                role__user_roles__user=user,
+            ).values_list('permission__code', flat=True).distinct()
+        )
+        # TASK 7: Employee limit info
+        employee_count = 0
+        plan_info = None
+        if company:
+            from superadmin.models import CompanyPlan
+            employee_count = User.objects.filter(company=company).count()
+            current_plan = CompanyPlan.objects.filter(
+                company=company,
+                status__in=['ACTIVE', 'TRIAL'],
+            ).first()
+            if current_plan:
+                plan_info = {
+                    'plan_name': current_plan.plan.name,
+                    'max_employees': current_plan.plan.max_employees,
+                    'employee_count': employee_count,
+                }
         return {
             'user': user,
             'company': company,
             'modules': modules,
             'roles': role_names,
+            'permissions': permissions,
+            'plan': plan_info,
         }

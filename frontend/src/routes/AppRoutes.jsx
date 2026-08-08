@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
+import ModuleProtectedRoute from './ModuleProtectedRoute.jsx'
 import PublicLayout from '../components/layout/PublicLayout.jsx'
 
 import LoginPage from '../pages/auth/LoginPage.jsx'
@@ -261,41 +262,41 @@ export default function AppRoutes() {
       <Route
         path="/app/invoice-reader"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
             <ClientInvoiceReaderPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/invoice-reader/:id"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
             <ClientInvoiceDetailPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/invoice-reader/:id/payload"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
             <ClientPayloadPreviewPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/ocr-jobs"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
             <ClientOcrJobsPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/ai-assistant"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="ai">
             <ClientAiAssistantPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
@@ -375,57 +376,57 @@ export default function AppRoutes() {
       <Route
         path="/app/bi"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
             <BIDashboardPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/bi/sales"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
             <BiSalesAnalyticsPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/bi/purchase"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
             <BiPurchaseAnalyticsPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/bi/customers"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
             <BiCustomerAnalyticsPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/bi/inventory"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
             <BiInventoryAnalyticsPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/bi/finance"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
             <BiFinanceAnalyticsPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
         path="/app/bi/insights"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute requiredRole="client" requiredModule="ai">
             <BiAiInsightsPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
 

@@ -11,10 +11,10 @@ User = get_user_model()
 
 
 class PlanSerializer(serializers.ModelSerializer):
-    enabled_models = serializers.SlugRelatedField(
+    enabled_models = serializers.PrimaryKeyRelatedField(
         many=True,
-        read_only=True,
-        slug_field='code',
+        queryset=Module.objects.all(),
+        required=False,
     )
 
     class Meta:
@@ -156,38 +156,10 @@ class CompanyPlanSummarySerializer(serializers.ModelSerializer):
 
 
 class CompanyDetailSerializer(serializers.ModelSerializer):
-    """Extended company serializer for the detail page.
-    Includes subscription plan, assigned modules, employee stats, and NetSuite connection status.
+    """DEPRECATED: This class is overwritten by the one below (line ~328).
+    Kept commented for traceability — the active class includes `transactions` + `admin_email`.
     """
-    user_count = serializers.SerializerMethodField()
-    module_count = serializers.SerializerMethodField()
-    active_user_count = serializers.SerializerMethodField()
-    current_plan = serializers.SerializerMethodField()
-    assigned_modules = serializers.SerializerMethodField()
-    netsuite_connected = serializers.SerializerMethodField()
-    netsuite_account_id = serializers.SerializerMethodField()
-    netsuite_environment = serializers.SerializerMethodField()
-    netsuite_last_sync = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Company
-        fields = [
-            'id', 'name', 'code', 'status', 'contact_email', 'contact_phone',
-            'country', 'created_at', 'updated_at',
-            'user_count', 'active_user_count', 'module_count',
-            'current_plan', 'assigned_modules',
-            'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
-        ]
-        read_only_fields = fields
-
-    def get_user_count(self, obj):
-        return obj.users.count()
-
-    def get_active_user_count(self, obj):
-        return obj.users.filter(is_active=True).count()
-
-    def get_module_count(self, obj):
-        return obj.company_modules.count()
+    pass
 
     def get_current_plan(self, obj):
         plan = obj.company_plans.filter(
@@ -329,6 +301,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
     active_user_count = serializers.SerializerMethodField()
     current_plan = serializers.SerializerMethodField()
     assigned_modules = serializers.SerializerMethodField()
+    admin_email = serializers.SerializerMethodField()
     netsuite_connected = serializers.SerializerMethodField()
     netsuite_account_id = serializers.SerializerMethodField()
     netsuite_environment = serializers.SerializerMethodField()
@@ -341,7 +314,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'id', 'name', 'code', 'status', 'contact_email', 'contact_phone',
             'country', 'created_at', 'updated_at',
             'user_count', 'active_user_count', 'module_count',
-            'current_plan', 'assigned_modules',
+            'current_plan', 'assigned_modules', 'admin_email',
             'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
             'transactions',
         ]
@@ -355,6 +328,12 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
 
     def get_module_count(self, obj):
         return obj.company_modules.count()
+
+    def get_admin_email(self, obj):
+        admin = obj.users.filter(user_roles__role__name='Company Admin').first()
+        if not admin:
+            admin = obj.users.first()
+        return admin.email if admin else None
 
     def get_current_plan(self, obj):
         plan = obj.company_plans.filter(

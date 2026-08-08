@@ -199,6 +199,14 @@ class DashboardAggregateService:
         # Storage used (approximate from media files)
         storage_used_mb = self._calculate_storage_used(company)
 
+        # AI / OCR credits from the active plan
+        ai_credits = subscription.plan.ai_credits if subscription else 0
+        ocr_credits = subscription.plan.ocr_credits if subscription else 0
+
+        # Modules enabled count
+        from tenancy.models import CompanyModule
+        modules_enabled = CompanyModule.objects.filter(company=company, enabled=True).count()
+
         return {
             'total_employees': total_employees,
             'active_employees': active_employees,
@@ -213,6 +221,9 @@ class DashboardAggregateService:
             'subscription_plan': subscription_plan,
             'plan_expiry': plan_expiry,
             'storage_used_mb': storage_used_mb,
+            'ai_credits': ai_credits,
+            'ocr_credits': ocr_credits,
+            'modules_enabled': modules_enabled,
         }
 
     def get_invoice_charts(self, *, user: User) -> dict:
@@ -423,4 +434,7 @@ class DashboardAggregateService:
             'subscription_plan': None,
             'plan_expiry': None,
             'storage_used_mb': None,
+            'ai_credits': 0,
+            'ocr_credits': 0,
+            'modules_enabled': 0,
         }

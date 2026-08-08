@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { authApi } from '../services/auth.js'
+import { clientApi } from '../services/client.js'
 import { setAccessToken, clearAccessToken } from '../utils/token.js'
 
 const AuthContext = createContext(null)
@@ -20,6 +21,22 @@ export function AuthProvider({ children }) {
       const data = await authApi.me()
       setUser(data)
       setNetSuiteConnected(Boolean(data.netsuite_connected))
+      // Fetch client context (modules + roles + permissions) for non-super-admin users
+      if (!data.is_superadmin && !data.is_staff) {
+        try {
+        const ctx = await clientApi.getMe()
+        setUser((prev) => ({
+          ...prev,
+          modules: ctx.modules || [],
+          roles: ctx.roles || [],
+          permissions: ctx.permissions || [],
+          company: ctx.company,
+          plan: ctx.plan,
+        }))
+        } catch {
+          // Non-client user (e.g., super admin) — no client context needed
+        }
+      }
     } catch {
       setUser(null)
     } finally {
@@ -43,8 +60,25 @@ export function AuthProvider({ children }) {
     // Store access token in memory (safe from XSS).
     if (res.access) setAccessToken(res.access)
     const { user: userData } = res
-    setUser(userData)
     setNetSuiteConnected(Boolean(userData.netsuite_connected))
+    // Fetch client context (modules + roles + permissions) for non-super-admin users
+    if (!userData.is_superadmin && !userData.is_staff) {
+      try {
+        const ctx = await clientApi.getMe()
+        setUser({
+          ...userData,
+          modules: ctx.modules || [],
+          roles: ctx.roles || [],
+          permissions: ctx.permissions || [],
+          company: ctx.company,
+          plan: ctx.plan,
+        })
+      } catch {
+        setUser(userData)
+      }
+    } else {
+      setUser(userData)
+    }
     return userData
   }
 

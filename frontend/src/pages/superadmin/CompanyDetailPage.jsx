@@ -117,6 +117,7 @@ export default function CompanyDetailPage() {
           title="Contact Information"
           items={[
             { label: 'Contact Email', value: company.contact_email || '—' },
+            { label: 'Admin User Email', value: company.admin_email || '—' },
             { label: 'Contact Phone', value: company.contact_phone || '—' },
             { label: 'Country', value: company.country || '—' },
           ]}

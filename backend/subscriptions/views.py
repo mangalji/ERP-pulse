@@ -9,17 +9,16 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
-from tenancy.models import Company, CompanyModule
+from tenancy.models import Company, CompanyModule, Module
 from subscriptions.permissions import IsSuperAdminOrCompanyAdmin
 from subscriptions.serializers import ModuleSerializer, PlanSerializer, SubscriptionSerializer, UsageSerializer
 from subscriptions.services import license_service, subscription_service
 from tenancy.models import Company
-
+from superadmin.models import Plan
 
 class SubscriptionViewSet(viewsets.ViewSet):
     """Subscription management for super admins and company admins."""

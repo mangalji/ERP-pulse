@@ -27,6 +27,8 @@ class Plan(BaseModel):
     enabled_models = models.ManyToManyField(Module, related_name='plans', blank=True)
     status = models.CharField(max_length=20, choices=PlanStatus.choices, default=PlanStatus.ACTIVE)
 
+    Status = PlanStatus
+
     class Meta:
         db_table = 'sa_plan'
         ordering = ['name']

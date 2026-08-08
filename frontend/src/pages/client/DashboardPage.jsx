@@ -83,23 +83,26 @@ export default function DashboardPage() {
 
   const kpis = useMemo(() => {
     if (!summary)
-      return Array.from({ length: 14 }, (_, i) => ({ id: `skeleton-${i}`, label: 'Loading...', value: '--' }))
+      return Array.from({ length: 16 }, (_, i) => ({ id: `skeleton-${i}`, label: 'Loading...', value: '--' }))
 
-    return [
-      { id: 'total_employees', label: 'Total Employees', value: summary.total_employees ?? 0 },
-      { id: 'active_employees', label: 'Active Employees', value: summary.active_employees ?? 0 },
-      { id: 'pending_invitations', label: 'Pending Invitations', value: summary.pending_invitations ?? 0 },
-      { id: 'connected_netsuite', label: 'Connected NetSuite Accounts', value: summary.connected_netsuite ?? 0 },
-      { id: 'invoices_uploaded', label: 'Invoices Uploaded', value: summary.invoices_uploaded ?? 0 },
-      { id: 'invoices_pending_review', label: 'Invoices Pending Review', value: summary.invoices_pending_review ?? 0 },
-      { id: 'approved_invoices', label: 'Approved Invoices', value: summary.approved_invoices ?? 0 },
-      { id: 'ocr_failed', label: 'OCR Failed', value: summary.ocr_failed ?? 0 },
-      { id: 'reports_generated', label: 'Reports Generated', value: summary.reports_generated ?? 0 },
-      { id: 'ai_requests', label: 'AI Requests', value: summary.ai_requests ?? 0 },
-      { id: 'subscription_plan', label: 'Subscription Plan', value: summary.subscription_plan ?? '--' },
-      { id: 'plan_expiry', label: 'Plan Expiry', value: summary.plan_expiry ? new Date(summary.plan_expiry).toLocaleDateString() : '--' },
-      { id: 'storage_used_mb', label: 'Storage Used', value: summary.storage_used_mb != null ? `${summary.storage_used_mb} MB` : '--' },
-    ]
+      return [
+        { id: 'total_employees', label: 'Total Employees', value: summary.total_employees ?? 0 },
+        { id: 'active_employees', label: 'Active Employees', value: summary.active_employees ?? 0 },
+        { id: 'pending_invitations', label: 'Pending Invitations', value: summary.pending_invitations ?? 0 },
+        { id: 'connected_netsuite', label: 'Connected NetSuite Accounts', value: summary.connected_netsuite ?? 0 },
+        { id: 'invoices_uploaded', label: 'Invoices Uploaded', value: summary.invoices_uploaded ?? 0 },
+        { id: 'invoices_pending_review', label: 'Invoices Pending Review', value: summary.invoices_pending_review ?? 0 },
+        { id: 'approved_invoices', label: 'Approved Invoices', value: summary.approved_invoices ?? 0 },
+        { id: 'ocr_failed', label: 'OCR Failed', value: summary.ocr_failed ?? 0 },
+        { id: 'reports_generated', label: 'Reports Generated', value: summary.reports_generated ?? 0 },
+        { id: 'ai_requests', label: 'AI Requests', value: summary.ai_requests ?? 0 },
+        { id: 'subscription_plan', label: 'Subscription Plan', value: summary.subscription_plan ?? '--' },
+        { id: 'plan_expiry', label: 'Plan Expiry', value: summary.plan_expiry ? new Date(summary.plan_expiry).toLocaleDateString() : '--' },
+        { id: 'storage_used_mb', label: 'Storage Used', value: summary.storage_used_mb != null ? `${summary.storage_used_mb} MB` : '--' },
+        { id: 'ai_credits', label: 'AI Credits', value: summary.ai_credits ?? 0 },
+        { id: 'ocr_credits', label: 'OCR Credits', value: summary.ocr_credits ?? 0 },
+        { id: 'modules_enabled', label: 'Modules Enabled', value: summary.modules_enabled ?? 0 },
+      ]
   }, [summary])
 
   const activityItems = useMemo(() => {
