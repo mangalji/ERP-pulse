@@ -432,7 +432,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def create_employee(self, request):
         email = request.data.get('email')
-        password = request.data.get('password')
         first_name = request.data.get('first_name', '')
         last_name = request.data.get('last_name', '')
         company_id = request.data.get('company_id')
@@ -447,7 +446,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         try:
             employee = superadmin_service.create_employee(
                 email=email,
-                password=password,
                 first_name=first_name,
                 last_name=last_name,
                 company_id=company_id,
@@ -456,7 +454,10 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             )
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return success_response(message='Employee created successfully.', data=UserSerializer(employee).data)
+        return success_response(
+            message='Employee created successfully.', 
+            data=UserSerializer(employee).data,
+            )
 
     @action(detail=True, methods=['post'])
     def deactivate(self, request, pk=None):

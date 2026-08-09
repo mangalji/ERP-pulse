@@ -496,9 +496,6 @@ class SuperAdminService:
             is_email_verified=True,
         )
 
-        if password:
-            user.set_password(password)
-            user.save(update_fields=["password"])
         ROLE_NAME_MAP = {
             "admin": "Company Admin",
             "employee": "Employee",
@@ -513,7 +510,7 @@ class SuperAdminService:
             if role_name is None:
                 raise ValueError(f"Invalid role: {role}")
             roles = Role.objects.filter(
-                name__iexact='Company Admin'
+                name__iexact=role_name
             )
         UserRole.objects.bulk_create(
             
