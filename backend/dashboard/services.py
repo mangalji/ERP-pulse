@@ -359,7 +359,7 @@ class DashboardAggregateService:
         # Determine whether the current user is a Company Admin.
         # ---------------------------------------------------------
 
-        user_role_names = set(
+        user_roles_names = set(
             user.user_roles
             .select_related('role')
             .values_list('role__name', flat=True)
