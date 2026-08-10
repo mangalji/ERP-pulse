@@ -64,8 +64,6 @@ class InvitationService:
                 expires_at=expires_at,
                 created_by=created_by,
             )
-            if send_email:
-                self._send_invitation_email(invitation)
 
             audit_service.log(
                 module=AuditModule.INVITATION,
@@ -82,7 +80,13 @@ class InvitationService:
                     'expires_at': invitation.expires_at.isoformat(),
                 },
             )
-        # Email is intentionally sent outside the database transaction.
+        # Email is intentionally sent outside the database transaction, so a
+        # slow/failed SMTP call never holds the DB transaction open, and a
+        # transaction rollback never leaves an email sent for a row that no
+        # longer exists. This is the ONLY send in this method — do not also
+        # send inside the transaction.atomic() block above; that previously
+        # caused every invitation created with send_email=True to be
+        # emailed twice.
         if send_email:
             self._send_invitation_email(invitation)
         return invitation
@@ -102,7 +106,6 @@ class InvitationService:
             raise ValueError('Invitation has expired.')
 
         sent = self._send_invitation_email(invitation)
-        # self._send_invitation_email(invitation)
 
         audit_service.log(
             module=AuditModule.INVITATION,
