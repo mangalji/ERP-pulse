@@ -8,7 +8,7 @@ reach data belonging to another company.
 """
 
 from rest_framework import permissions
-
+from rbac.permissions import HasPermission
 
 class IsCompanyUser(permissions.BasePermission):
     """
@@ -21,3 +21,6 @@ class IsCompanyUser(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         return bool(getattr(request.user, 'company', None))
+
+class CanManageEmployees(HasPermission):
+    codes = ['employee.manage']

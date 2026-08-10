@@ -51,6 +51,7 @@ const ACTIVITY_TONE = {
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const isCompanyAdmin = (user?.roles || []).includes('company_admin')
   const [summary, setSummary] = useState(null)
   const [charts, setCharts] = useState(null)
   const [activity, setActivity] = useState(null)
@@ -137,7 +138,9 @@ export default function DashboardPage() {
             Welcome back{user?.first_name ? `, ${user.first_name}` : ''}
           </h1>
           <p className="text-sm text-[var(--color-muted)]">
-            Executive overview of your company&apos;s employees, invoices, AI activity, and NetSuite integration.
+            {isCompanyAdmin
+              ? "Executive overview of your company's employees, invoices, AI activity, and NetSuite integration."
+              : 'Your personal workspace, activity, invoices, reports, and AI usage.'}
           </p>
         </div>
 
@@ -146,19 +149,56 @@ export default function DashboardPage() {
         ) : (
           <>
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {kpis.map((kpi) => (
-                <Card key={kpi.id} className="p-5">
-                  <p className="text-sm text-[var(--color-muted)]">{kpi.label}</p>
-                  {loading ? (
-                    <Skeleton className="mt-2 h-8 w-20" />
-                  ) : (
-                    <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">{kpi.value}</p>
-                  )}
+            {isCompanyAdmin ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {kpis.map((kpi) => (
+                  <Card key={kpi.id} className="p-5">
+                    <p className="text-sm text-[var(--color-muted)]">{kpi.label}</p>
+                
+                    {loading ? (
+                      <Skeleton className="mt-2 h-8 w-20" />
+                    ) : (
+                      <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">
+                        {kpi.value}
+                      </p>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <Card className="p-5">
+                  <p className="text-sm text-[var(--color-muted)]">Your Invoices</p>
+                  <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">
+                    {activity?.recent_invoices?.length ?? 0}
+                  </p>
                 </Card>
-              ))}
-            </div>
-
+            
+                <Card className="p-5">
+                  <p className="text-sm text-[var(--color-muted)]">Your OCR Jobs</p>
+                  <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">
+                    {activity?.recent_ocr_jobs?.length ?? 0}
+                  </p>
+                </Card>
+            
+                <Card className="p-5">
+                  <p className="text-sm text-[var(--color-muted)]">Your Reports</p>
+                  <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">
+                    {activity?.recent_reports?.length ?? 0}
+                  </p>
+                </Card>
+            
+                <Card className="p-5">
+                  <p className="text-sm text-[var(--color-muted)]">Your AI Activity</p>
+                  <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">
+                    {activity?.recent_ai_conversations?.length ?? 0}
+                  </p>
+                </Card>
+              </div>
+            )}
+            
+            {isCompanyAdmin && (
+              <>
             {/* Charts */}
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <Card className="p-5">
@@ -260,6 +300,8 @@ export default function DashboardPage() {
                 )}
               </Card>
             </div>
+            </>
+            )}
 
             {/* Recent Activity */}
             <Card className="p-5">
@@ -271,7 +313,12 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : activityItems.length === 0 ? (
-                <EmptyState title="No recent activity" description="Recent employees, invoices, and syncs will appear here." />
+                <EmptyState title="No recent activity" description= {
+                  isCompanyAdmin
+                    ? 'Recent company activity will appear here.'
+                    : 'Your recent activity will appear here.'
+                }
+                 />
               ) : (
                 <div className="flex flex-col gap-2">
                   {activityItems.map((item) => (

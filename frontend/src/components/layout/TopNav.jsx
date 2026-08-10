@@ -35,7 +35,7 @@ export default function TopNav({ title, onMenuClick }) {
   }, [])
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
+    <header className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
       <div className="flex items-center gap-3">
         <button
           onClick={onMenuClick}

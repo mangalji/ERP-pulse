@@ -26,6 +26,7 @@ from tenancy.serializers import (
     UpdateEmployeeSerializer,
 )
 from tenancy.services import ClientPortalService
+from tenancy.permissions import IsCompanyUser, CanManageEmployees
 
 client_portal_service = ClientPortalService()
 
@@ -70,7 +71,8 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
     supplied by the client is never trusted.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyUser]
+    permission_classes = [IsAuthenticated, IsCompanyUser, CanManageEmployees]
+    # required_permission = 'employee.manage'
 
     def _company(self, request):
         return request.user.company

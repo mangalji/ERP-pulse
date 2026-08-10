@@ -462,7 +462,7 @@ export default function EmployeesPage() {
                           : '—'}
                       </td>
                       <td className="py-3">
-                        <div className="flex items-center gap-1">
+                        <div className="flex flex-wrap items-center gap-1">
                           <button
                             onClick={() => handleView(employee)}
                             className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"

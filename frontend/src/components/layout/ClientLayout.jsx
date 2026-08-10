@@ -8,7 +8,7 @@ import { clientApi } from '../../services/client.js'
  * Items without a module_code are always shown (Dashboard, Profile, Notifications, Settings).
  */
 const ALL_NAV_ITEMS = [
-  { to: '/app', label: 'Dashboard', icon: DashboardIcon, end: true, module: 'dashboard' },
+  { to: '/app', label: 'Dashboard', icon: DashboardIcon, end: true, module: null },
   { to: '/app/invoice-reader', label: 'Invoice Reader', icon: InvoiceIcon, module: 'invoice_reader' },
   { to: '/app/ocr-jobs', label: 'OCR Jobs', icon: OcrIcon, module: 'ocr' },
   { to: '/app/ai-assistant', label: 'AI Assistant', icon: SparkleIcon, module: 'ai' },
@@ -38,13 +38,13 @@ const QUICK_ACTIONS = [
     module: 'employees',
     permission: 'employee.manage',
   },
-  {
-    to: '/app/employees',
-    label: 'Invite Employee',
-    icon: EmployeesIcon,
-    module: 'employees',
-    permission: 'employee.manage',
-  },
+  // {
+  //   to: '/app/employees',
+  //   label: 'Invite Employee',
+  //   icon: EmployeesIcon,
+  //   module: 'employees',
+  //   permission: 'employee.manage',
+  // },
   {
     to: '/app/integrations/netsuite',
     label: 'Connect NetSuite',
@@ -194,7 +194,34 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     return true
   })
 
-  const visibleQuickActions = QUICK_ACTIONS
+  const visibleQuickActions = QUICK_ACTIONS.filter((action) => {
+      // Company Admin can see all quick actions.
+      if (isCompanyAdmin) return true
+
+      // Employees must not see employee-management actions.
+      if (
+        action.label === 'Add Employee' ||
+        action.label === 'Invite Employee'
+      ) {
+        return false
+      }
+    
+      // For all other actions, respect the employee's
+      // module and permission assignments.
+      if (!action.module && !action.permission) return true
+    
+      const hasModule = userModules.some(
+        (m) => m.module_code === action.module,
+      )
+    
+      if (!hasModule) return false
+    
+      if (action.permission) {
+        return userPermissions.includes(action.permission)
+      }
+    
+      return true
+    })    
 
     return (
       <div className="flex min-h-screen bg-[var(--color-canvas)]">
@@ -212,7 +239,20 @@ export default function ClientLayout({ title, breadcrumb, children }) {
             transition-transform lg:static lg:translate-x-0
             ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
         >
-          <div className="mb-8 flex items-center gap-2 px-2">
+          <div className="mb-8 flex items-center gap-2 px-2"><NavLink
+  to="/app"
+  onClick={() => setSidebarOpen(false)}
+  className="mb-8 flex items-center gap-2 px-2"
+  aria-label="Go to Dashboard"
+>
+  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
+    E
+  </span>
+
+  <span className="font-[var(--font-display)] text-lg font-semibold text-white">
+    ERP Pulse
+  </span>
+</NavLink>
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
               E
             </span>
@@ -284,7 +324,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
         {/* Main column */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Top navbar */}
-          <header className="flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
+          <header className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
@@ -319,7 +359,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
                   )}
                 </button>
                 {notifOpen && (
-                  <div className="absolute right-0 mt-2 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+                  <div className="absolute right-0 mt-2 w-[calc(100vw-1.5rem)] max-w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
                     <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
                       <p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p>
                       <button
@@ -406,7 +446,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
             </nav>
           </div>
   
-          <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+          <main className="min-w-0 flex-1 px-3 py-4 sm:px-6 sm:py-6 lg:px-8">{children}</main>
         </div>
       </div>
     )

@@ -174,7 +174,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top navbar */}
-        <header className="flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
+        <header className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -219,7 +219,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
                 )}
               </button>
               {notifOpen && (
-                <div className="absolute right-0 mt-2 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+                <div className="absolute right-0 mt-2 w-[calc(100vw-1.5rem)] max-w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
                   <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
                     <p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p>
                     <button
@@ -306,7 +306,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
           </nav>
         </div>
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <main className="min-w-0 flex-1 px-3 py-4 sm:px-6 sm:py-6 lg:px-8">{children}</main>
       </div>
     </div>
   )

@@ -338,6 +338,7 @@ class DashboardAggregateService:
 
     def get_activity_feed(self, *, user: User, limit: int = 10) -> dict:
         company = getattr(user, 'company', None)
+
         if not company:
             return {
                 'recent_employees': [],
@@ -349,47 +350,183 @@ class DashboardAggregateService:
             }
 
         from accounts.models import User as UserModel
-        from invitations.models import Invitation
         from invoice.models import InvoiceBatch, InvoiceFile
         from ai.models import AIConversation
         from reports_engine.models import ReportHistory
         from netsuite.models import NetSuiteConnection
 
-        recent_employees = list(
-            UserModel.objects.filter(company=company)
-            .order_by('-created_at')[:5]
-            .values('id', 'email', 'first_name', 'last_name', 'created_at')
+        # ---------------------------------------------------------
+        # Determine whether the current user is a Company Admin.
+        # ---------------------------------------------------------
+
+        user_role_names = set(
+            user.user_roles
+            .select_related('role')
+            .values_list('role__name', flat=True)
         )
 
-        recent_invoices = list(
-            InvoiceFile.objects.filter(batch__company=company)
-            .order_by('-created_at')[:5]
-            .values('id', 'original_filename', 'status', 'created_at')
-        )
+        is_company_admin = 'Company Admin' in user_roles_names
 
-        recent_ocr_jobs = list(
-            InvoiceBatch.objects.filter(company=company)
-            .order_by('-created_at')[:5]
-            .values('id', 'total_files', 'processed_files', 'failed_files', 'status', 'created_at')
-        )
+        # ---------------------------------------------------------
+        # Company Admin:
+        #   Show company-wide activity.
+        #
+        # Employee:
+        #   Show only activity created/uploaded by this user.
+        # ---------------------------------------------------------
 
-        recent_reports = list(
-            ReportHistory.objects.filter(company=company)
-            .order_by('-generated_at')[:5]
-            .values('id', 'report_type', 'status', 'generated_at')
-        )
+        if is_company_admin:
+            recent_employees = list(
+                UserModel.objects.filter(company=company)
+                .order_by('-created_at')[:5]
+                .values(
+                    'id',
+                    'email',
+                    'first_name',
+                    'last_name',
+                    'created_at',
+                )
+            )
 
-        recent_ai_conversations = list(
-            AIConversation.objects.filter(user__company=company)
-            .order_by('-updated_at')[:5]
-            .values('id', 'title', 'updated_at')
-        )
+            recent_invoices = list(
+                InvoiceFile.objects.filter(
+                    batch__company=company
+                )
+                .order_by('-created_at')[:5]
+                .values(
+                    'id',
+                    'original_filename',
+                    'status',
+                    'created_at',
+                )
+            )
 
-        recent_netsuite_syncs = list(
-            NetSuiteConnection.objects.filter(company=company)
-            .order_by('-last_synced_at')[:5]
-            .values('id', 'client_name', 'status', 'last_synced_at')
-        )
+            recent_ocr_jobs = list(
+                InvoiceBatch.objects.filter(
+                    company=company
+                )
+                .order_by('-created_at')[:5]
+                .values(
+                    'id',
+                    'total_files',
+                    'processed_files',
+                    'failed_files',
+                    'status',
+                    'created_at',
+                )
+            )
+
+            recent_reports = list(
+                ReportHistory.objects.filter(
+                    company=company
+                )
+                .order_by('-generated_at')[:5]
+                .values(
+                    'id',
+                    'report_type',
+                    'status',
+                    'generated_at',
+                )
+            )
+
+            recent_ai_conversations = list(
+                AIConversation.objects.filter(
+                    user__company=company
+                )
+                .order_by('-updated_at')[:5]
+                .values(
+                    'id',
+                    'title',
+                    'updated_at',
+                )
+            )
+
+            recent_netsuite_syncs = list(
+                NetSuiteConnection.objects.filter(
+                    company=company
+                )
+                .order_by('-last_synced_at')[:5]
+                .values(
+                    'id',
+                    'client_name',
+                    'status',
+                    'last_synced_at',
+                )
+            )
+
+        else:
+            # -----------------------------------------------------
+            # Normal Employee:
+            # Only show activity belonging to the logged-in user.
+            # -----------------------------------------------------
+
+            recent_employees = []
+
+            recent_invoices = list(
+                InvoiceFile.objects.filter(
+                    batch__uploaded_by=user
+                )
+                .order_by('-created_at')[:5]
+                .values(
+                    'id',
+                    'original_filename',
+                    'status',
+                    'created_at',
+                )
+            )
+
+            recent_ocr_jobs = list(
+                InvoiceBatch.objects.filter(
+                    uploaded_by=user
+                )
+                .order_by('-created_at')[:5]
+                .values(
+                    'id',
+                    'total_files',
+                    'processed_files',
+                    'failed_files',
+                    'status',
+                    'created_at',
+                )
+            )
+
+            recent_reports = list(
+                ReportHistory.objects.filter(
+                    created_by=user
+                )
+                .order_by('-generated_at')[:5]
+                .values(
+                    'id',
+                    'report_type',
+                    'status',
+                    'generated_at',
+                )
+            )
+
+            recent_ai_conversations = list(
+                AIConversation.objects.filter(
+                    user=user
+                )
+                .order_by('-updated_at')[:5]
+                .values(
+                    'id',
+                    'title',
+                    'updated_at',
+                )
+            )
+
+            recent_netsuite_syncs = list(
+                NetSuiteConnection.objects.filter(
+                    user=user
+                )
+                .order_by('-last_synced_at')[:5]
+                .values(
+                    'id',
+                    'client_name',
+                    'status',
+                    'last_synced_at',
+                )
+            )
 
         return {
             'recent_employees': recent_employees,

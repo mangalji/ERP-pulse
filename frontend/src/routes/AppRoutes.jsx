@@ -302,9 +302,12 @@ export default function AppRoutes() {
       <Route
         path="/app/employees"
         element={
-          <ProtectedRoute requiredRole="client">
+          <ModuleProtectedRoute 
+          requiredRole="client"
+          requiredPermission="employee.manage"
+          >
             <ClientEmployeesPage />
-          </ProtectedRoute>
+          </ModuleProtectedRoute>
         }
       />
       <Route
