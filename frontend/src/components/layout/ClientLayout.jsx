@@ -23,6 +23,51 @@ const ALL_NAV_ITEMS = [
 /* Employee-only items that always show for any authenticated user */
 const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
 
+const QUICK_ACTIONS = [
+  {
+    to: '/app/invoice-reader',
+    label: 'Upload Invoice',
+    icon: InvoiceIcon,
+    module: 'invoice_reader',
+    permission: 'ocr.upload',
+  },
+  {
+    to: '/app/employees',
+    label: 'Add Employee',
+    icon: EmployeesIcon,
+    module: 'employees',
+    permission: 'employee.manage',
+  },
+  {
+    to: '/app/employees',
+    label: 'Invite Employee',
+    icon: EmployeesIcon,
+    module: 'employees',
+    permission: 'employee.manage',
+  },
+  {
+    to: '/app/integrations/netsuite',
+    label: 'Connect NetSuite',
+    icon: NetSuiteIcon,
+    module: null,
+    permission: null,
+  },
+  {
+    to: '/app/reports-engine/generate',
+    label: 'Generate Report',
+    icon: ReportEngineIcon,
+    module: 'reports',
+    permission: 'reports.view',
+  },
+  {
+    to: '/app/ai-assistant',
+    label: 'Open AI Assistant',
+    icon: SparkleIcon,
+    module: 'ai',
+    permission: 'ai.chat',
+  },
+]
+
 /**
  * Reusable Client Company Portal layout.
  * Top navbar + sidebar + breadcrumb + page header + profile menu + notifications.
@@ -149,201 +194,223 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     return true
   })
 
-  return (
-    <div className="flex min-h-screen bg-[var(--color-canvas)]">
-      {sidebarOpen && (
-        <button
-          aria-label="Close menu"
-          onClick={() => setSidebarOpen(false)}
-          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
-        />
-      )}
+  const visibleQuickActions = QUICK_ACTIONS
 
-      {/* Sidebar */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-[var(--color-sidebar)] px-4 py-6
-          transition-transform lg:static lg:translate-x-0
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
-      >
-        <div className="mb-8 flex items-center gap-2 px-2">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
-            E
-          </span>
-          <span className="font-[var(--font-display)] text-lg font-semibold text-white">ERP Pulse</span>
-        </div>
-
-        <nav className="flex flex-1 flex-col gap-1">
-          {visibleNav.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-[var(--color-sidebar-soft)] text-white'
-                    : 'text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white'
-                }`
-              }
-            >
-              <Icon className="h-4.5 w-4.5 shrink-0" />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="mt-4 flex flex-col gap-1">
-          <NavLink
-            to="/app/profile"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white"
-          >
-            <ProfileIcon className="h-4.5 w-4.5 shrink-0" />
-            Profile
-          </NavLink>
+    return (
+      <div className="flex min-h-screen bg-[var(--color-canvas)]">
+        {sidebarOpen && (
           <button
-            onClick={handleLogout}
-            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-negative)] hover:bg-[var(--color-sidebar-soft)]"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4.5 w-4.5 shrink-0">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-            </svg>
-            Logout
-          </button>
-        </div>
-      </aside>
-
-      {/* Main column */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top navbar */}
-        <header className="flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              aria-label="Open menu"
-              className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] lg:hidden"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-                <path d="M4 7h16M4 12h16M4 17h16" />
-              </svg>
-            </button>
-            <span className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-              {title}
+            aria-label="Close menu"
+            onClick={() => setSidebarOpen(false)}
+            className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+          />
+        )}
+  
+        {/* Sidebar */}
+        <aside
+          className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-[var(--color-sidebar)] px-4 py-6
+            transition-transform lg:static lg:translate-x-0
+            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        >
+          <div className="mb-8 flex items-center gap-2 px-2">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
+              E
             </span>
+            <span className="font-[var(--font-display)] text-lg font-semibold text-white">ERP Pulse</span>
           </div>
-
-          <div className="flex items-center gap-3">
-            {/* Notification bell */}
-            <div className="relative" ref={notifRef}>
+  
+          <nav className="flex flex-1 flex-col gap-1">
+            {visibleNav.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                onClick={() => setSidebarOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'bg-[var(--color-sidebar-soft)] text-white'
+                      : 'text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white'
+                  }`
+                }
+              >
+                <Icon className="h-4.5 w-4.5 shrink-0" />
+                {label}
+              </NavLink>
+            ))}
+                    {visibleQuickActions.length > 0 && (
+              <div className="mt-5 border-t border-[var(--color-sidebar-soft)] pt-4">
+                <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-sidebar-ink)]">
+                  Quick Actions
+                </p>
+                <div className="flex flex-col gap-1">
+                  {visibleQuickActions.map(({ to, label, icon: Icon }) => (
+                    <NavLink
+                      key={`${to}-${label}`}
+                      to={to}
+                      onClick={() => setSidebarOpen(false)}
+                      className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-sidebar-ink)] transition-colors hover:bg-[var(--color-sidebar-soft)] hover:text-white"
+                    >
+                      <Icon className="h-4.5 w-4.5 shrink-0" />
+                      {label}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            )}
+          </nav>
+  
+          <div className="mt-4 flex flex-col gap-1">
+            <NavLink
+              to="/app/profile"
+              onClick={() => setSidebarOpen(false)}
+              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white"
+            >
+              <ProfileIcon className="h-4.5 w-4.5 shrink-0" />
+              Profile
+            </NavLink>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-negative)] hover:bg-[var(--color-sidebar-soft)]"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4.5 w-4.5 shrink-0">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+              </svg>
+              Logout
+            </button>
+          </div>
+        </aside>
+  
+        {/* Main column */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Top navbar */}
+          <header className="flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6">
+            <div className="flex items-center gap-3">
               <button
-                onClick={handleNotifToggle}
-                aria-label="Notifications"
-                className="relative rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open menu"
+                className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] lg:hidden"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                  <path d="M4 7h16M4 12h16M4 17h16" />
                 </svg>
-                {unreadCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-negative)] px-1 text-[10px] font-bold text-white">
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </span>
-                )}
               </button>
-              {notifOpen && (
-                <div className="absolute right-0 mt-2 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
-                  <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
-                    <p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p>
-                    <button
-                      onClick={handleMarkAllRead}
-                      className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+              <span className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+                {title}
+              </span>
+            </div>
+  
+            <div className="flex items-center gap-3">
+              {/* Notification bell */}
+              <div className="relative" ref={notifRef}>
+                <button
+                  onClick={handleNotifToggle}
+                  aria-label="Notifications"
+                  className="relative rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                  </svg>
+                  {unreadCount > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-negative)] px-1 text-[10px] font-bold text-white">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+                {notifOpen && (
+                  <div className="absolute right-0 mt-2 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+                    <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
+                      <p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p>
+                      <button
+                        onClick={handleMarkAllRead}
+                        className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+                      >
+                        Mark all read
+                      </button>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <p className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">No notifications</p>
+                      ) : (
+                        notifications.map((n) => (
+                          <div
+                            key={n.id}
+                            className={`border-b border-[var(--color-border)] px-4 py-3 last:border-0 ${n.is_read ? '' : 'bg-[var(--color-primary-soft)]'}`}
+                          >
+                            <p className="text-sm font-medium text-[var(--color-ink)]">{n.title}</p>
+                            {n.message && <p className="mt-0.5 text-xs text-[var(--color-muted)]">{n.message}</p>}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <NavLink
+                      to="/app/notifications"
+                      onClick={() => setNotifOpen(false)}
+                      className="block border-t border-[var(--color-border)] px-4 py-2 text-center text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-canvas)]"
                     >
-                      Mark all read
+                      View all
+                    </NavLink>
+                  </div>
+                )}
+              </div>
+  
+              {/* User menu */}
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  onClick={() => setUserMenuOpen((prev) => !prev)}
+                  className="flex items-center gap-2 rounded-full bg-[var(--color-primary-soft)] px-2 py-1 pr-1 text-sm font-semibold text-[var(--color-primary-dark)] hover:bg-[var(--color-primary-soft)] transition-colors"
+                  aria-label="User menu"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">
+                    {initials}
+                  </span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3 w-3">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+                {userMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2 shadow-lg">
+                    <div className="px-4 py-3">
+                      <p className="text-sm font-semibold text-[var(--color-ink)]">
+                        {user ? `${user.first_name} ${user.last_name}`.trim() : 'User'}
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--color-muted)]">{user?.email || ''}</p>
+                    </div>
+                    <div className="border-t border-[var(--color-border)]" />
+                    <NavLink
+                      to="/app/profile"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="block w-full px-4 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]"
+                    >
+                      Profile
+                    </NavLink>
+                    <button
+                      onClick={handleLogout}
+                      className="block w-full px-4 py-2 text-left text-sm text-[var(--color-negative)] hover:bg-[var(--color-canvas)]"
+                    >
+                      Logout
                     </button>
                   </div>
-                  <div className="max-h-80 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <p className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">No notifications</p>
-                    ) : (
-                      notifications.map((n) => (
-                        <div
-                          key={n.id}
-                          className={`border-b border-[var(--color-border)] px-4 py-3 last:border-0 ${n.is_read ? '' : 'bg-[var(--color-primary-soft)]'}`}
-                        >
-                          <p className="text-sm font-medium text-[var(--color-ink)]">{n.title}</p>
-                          {n.message && <p className="mt-0.5 text-xs text-[var(--color-muted)]">{n.message}</p>}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <NavLink
-                    to="/app/notifications"
-                    onClick={() => setNotifOpen(false)}
-                    className="block border-t border-[var(--color-border)] px-4 py-2 text-center text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-canvas)]"
-                  >
-                    View all
-                  </NavLink>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-
-            {/* User menu */}
-            <div className="relative" ref={userMenuRef}>
-              <button
-                onClick={() => setUserMenuOpen((prev) => !prev)}
-                className="flex items-center gap-2 rounded-full bg-[var(--color-primary-soft)] px-2 py-1 pr-1 text-sm font-semibold text-[var(--color-primary-dark)] hover:bg-[var(--color-primary-soft)] transition-colors"
-                aria-label="User menu"
-              >
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">
-                  {initials}
-                </span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3 w-3">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-              {userMenuOpen && (
-                <div className="absolute right-0 mt-2 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2 shadow-lg">
-                  <div className="px-4 py-3">
-                    <p className="text-sm font-semibold text-[var(--color-ink)]">
-                      {user ? `${user.first_name} ${user.last_name}`.trim() : 'User'}
-                    </p>
-                    <p className="mt-0.5 text-xs text-[var(--color-muted)]">{user?.email || ''}</p>
-                  </div>
-                  <div className="border-t border-[var(--color-border)]" />
-                  <NavLink
-                    to="/app/profile"
-                    onClick={() => setUserMenuOpen(false)}
-                    className="block w-full px-4 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]"
-                  >
-                    Profile
-                  </NavLink>
-                  <button
-                    onClick={handleLogout}
-                    className="block w-full px-4 py-2 text-left text-sm text-[var(--color-negative)] hover:bg-[var(--color-canvas)]"
-                  >
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
+          </header>
+  
+          {/* Breadcrumb */}
+          <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:px-6">
+            <nav className="text-xs text-[var(--color-muted)]">
+              <span>Client Portal</span>
+              <span className="mx-1.5">/</span>
+              <span className="font-medium text-[var(--color-ink)]">{breadcrumb || activeNav?.label || title}</span>
+            </nav>
           </div>
-        </header>
-
-        {/* Breadcrumb */}
-        <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:px-6">
-          <nav className="text-xs text-[var(--color-muted)]">
-            <span>Client Portal</span>
-            <span className="mx-1.5">/</span>
-            <span className="font-medium text-[var(--color-ink)]">{breadcrumb || activeNav?.label || title}</span>
-          </nav>
+  
+          <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
         </div>
-
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
       </div>
-    </div>
-  )
-}
+    )
+  }
 
 function DashboardIcon(props) {
   return (
@@ -425,6 +492,20 @@ function GearIcon(props) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+    </svg>
+  )
+}
+function NetSuiteIcon(props) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      {...props}
+    >
+      <path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+      <path d="M9 8h6M9 12h6M9 16h3" />
     </svg>
   )
 }

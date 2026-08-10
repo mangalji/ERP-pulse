@@ -78,15 +78,14 @@ class ClientPortalService:
             is_active=False,
             is_email_verified=False,
         )
-        employee.set_password(User.objects.make_random_password())
+        employee.set_unusable_password()
         employee.save(update_fields=['password'])
 
         role_id = data.get('role_id')
-        Invitation.objects.create(
+        invitation = invitation_service.create_invitation(
             email=email.lower().strip(),
-            company=company,
+            company_id=company.id,
             role_id=role_id,
-            expires_at=timezone.now() + timedelta(days=7),
             created_by=acting_user,
         )
 
@@ -207,13 +206,26 @@ class ClientPortalService:
     # ── Roles ─────────────────────────────────────────────────
 
     def list_assignable_roles(self, *, company):
-        """List roles assignable within a company's portal.
-
-        Returns company-specific roles only. System-level roles (Super Admin,
-        Company Admin) are excluded — only roles explicitly belonging to the
-        company are assignable by its admin when creating employees.
         """
-        return Role.objects.filter(company=company).order_by('name')
+        List roles assignable within the current company.
+
+        Includes:
+        - Global roles (company IS NULL)
+        - Roles belonging to the current company
+
+        Never returns another company's roles.
+        """
+        return (
+        Role.objects
+        .filter(
+            Q(company=company)
+            | (
+                Q(company__isnull=True)
+                & ~Q(name__iexact='Super Admin')
+            )
+        )
+        .order_by('name')
+        )
 
     def _validate_role(self, *, company, role_id):
         """Return a role only if it is global or belongs to the company."""

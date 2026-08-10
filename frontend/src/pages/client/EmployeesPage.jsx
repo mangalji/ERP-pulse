@@ -73,6 +73,24 @@ export default function EmployeesPage() {
 
   const handleCreate = async (event) => {
     event.preventDefault()
+
+    if (!form.email.trim()) {
+      addToast('Email is required', 'error')
+      return
+    }
+    if (!form.first_name.trim()) {
+      addToast('First name is required', 'error')
+      return
+    }
+    if (!form.last_name.trim()) {
+      addToast('Last name is required', 'error')
+      return
+    }
+    if (!form.role_id) {
+      addToast('Please select a role', 'error')
+      return
+    }
+
     setCreating(true)
     try {
       await clientApi.createEmployee({
@@ -109,10 +127,10 @@ export default function EmployeesPage() {
     }
   }
 
-  const handleResetPassword = async (employee) => {
+  const handleResendInvitation = async (employee) => {
     try {
       await clientApi.resendEmployeeInvitation(employee.id)
-      addToast('Invitation resent — employee will receive a password setup link', 'success')
+      addToast('Invitation resent successfully', 'success')
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to resend invitation', 'error')
     }
@@ -199,7 +217,7 @@ export default function EmployeesPage() {
         {showCreate && (
           <Card className="p-6">
             <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-              Create Employee
+              Invite Employee
             </h2>
             <form onSubmit={handleCreate} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input
@@ -249,9 +267,9 @@ export default function EmployeesPage() {
               />
               <div className="flex gap-2 sm:col-span-2">
                 <Button type="submit" isLoading={creating}>
-                  Create Employee
+                  Send Invitation
                 </Button>
-                <Button intent="ghost" onClick={() => setShowCreate(false)}>
+                <Button type="button" intent="ghost" onClick={() => setShowCreate(false)}>
                   Cancel
                 </Button>
               </div>
@@ -316,7 +334,7 @@ export default function EmployeesPage() {
                 <Button type="submit" isLoading={editing}>
                   Save Changes
                 </Button>
-                <Button intent="ghost" onClick={() => setEditingEmployee(null)}>
+                <Button type="button" intent="ghost" onClick={() => setEditingEmployee(null)}>
                   Cancel
                 </Button>
               </div>
@@ -369,6 +387,14 @@ export default function EmployeesPage() {
                     </Badge>
                   </p>
                 </div>
+                <div>
+                  <span className="text-xs text-[var(--color-muted)]">Invitation</span>
+                  <p className="text-sm text-[var(--color-ink)] capitalize">
+                    {viewEmployee.invitation_status
+                      ? String(viewEmployee.invitation_status).replaceAll('_', ' ')
+                      : '—'}
+                  </p>
+                </div>
               </div>
               <div className="mt-6 flex justify-end gap-2">
                 <Button intent="ghost" onClick={closeView}>Close</Button>
@@ -412,6 +438,7 @@ export default function EmployeesPage() {
                     <th className="pb-2 pr-4 font-medium">Role</th>
                     <th className="pb-2 pr-4 font-medium">Department</th>
                     <th className="pb-2 pr-4 font-medium">Status</th>
+                    <th className="pb-2 pr-4 font-medium">Invitation</th>
                     <th className="pb-2 font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -429,6 +456,11 @@ export default function EmployeesPage() {
                           {employee.is_active ? 'Active' : 'Inactive'}
                         </Badge>
                       </td>
+                      <td className="py-3 pr-4 text-[var(--color-ink-soft)] capitalize">
+                        {employee.invitation_status
+                          ? String(employee.invitation_status).replaceAll('_', ' ')
+                          : '—'}
+                      </td>
                       <td className="py-3">
                         <div className="flex items-center gap-1">
                           <button
@@ -445,12 +477,14 @@ export default function EmployeesPage() {
                           >
                             Edit
                           </button>
-                          <button
-                            onClick={() => handleResetPassword(employee)}
-                            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
-                          >
-                            Reset Password
-                          </button>
+                          {!employee.is_active && (
+                            <button
+                              onClick={() => handleResendInvitation(employee)}
+                              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                            >
+                              Resend Invitation
+                            </button>
+                          )}
                           <Button size="sm" intent="secondary" onClick={() => handleToggleActive(employee)}>
                             {employee.is_active ? 'Deactivate' : 'Activate'}
                           </Button>

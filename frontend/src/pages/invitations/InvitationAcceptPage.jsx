@@ -93,23 +93,6 @@ export default function InvitationAcceptPage() {
       setIsSubmitting(false)
     }
   }
-  const handleResend = async () => {
-    try {
-      await invitationApi.publicResend(invitation?.email)
-
-      addToast(
-        'Invitation resent successfully.',
-        'success'
-      )
-    } catch (err) {
-      addToast(
-        err.payload?.message ||
-        err.message ||
-        'Failed to resend invitation.',
-        'error'
-      )
-    }
-  }
 
   if (status === 'loading') {
     return (
@@ -136,13 +119,7 @@ export default function InvitationAcceptPage() {
   if (status === 'expired' || invitation?.status !== 'PENDING') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-canvas)]">
-        <InvitationExpired
-          onResend={
-            invitation
-              ? handleResend
-              : undefined
-          }
-        />
+        <InvitationExpired />
         <Toast
           toasts={toasts}
           removeToast={removeToast}
@@ -158,7 +135,6 @@ export default function InvitationAcceptPage() {
           companyName={invitation?.company_name}
           email={invitation?.email}
           expiresAt={invitation?.expires_at}
-          onResend={handleResend}
         />
 
         <div className="mt-6">

@@ -18,7 +18,7 @@ import Badge from '../../components/ui/Badge.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
 import ErrorState from '../../components/ui/ErrorState.jsx'
 import EmptyState from '../../components/ui/EmptyState.jsx'
-import Button from '../../components/ui/Button.jsx'
+// import Button from '../../components/ui/Button.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
@@ -31,14 +31,14 @@ const CHART_COLORS = [
   'var(--color-muted)',
 ]
 
-const QUICK_ACTIONS = [
-  { label: 'Upload Invoice', href: '/app/invoice-reader', intent: 'primary' },
-  { label: 'Add Employee', href: '/app/employees', intent: 'secondary' },
-  { label: 'Invite Employee', href: '/app/employees', intent: 'secondary' },
-  { label: 'Connect NetSuite', href: '/app/integrations/netsuite', intent: 'secondary' },
-  { label: 'Generate Report', href: '/app/reports', intent: 'secondary' },
-  { label: 'Open AI Assistant', href: '/app/ai-assistant', intent: 'secondary' },
-]
+// const QUICK_ACTIONS = [
+//   { label: 'Upload Invoice', href: '/app/invoice-reader', intent: 'primary' },
+//   { label: 'Add Employee', href: '/app/employees', intent: 'secondary' },
+//   { label: 'Invite Employee', href: '/app/employees', intent: 'secondary' },
+//   { label: 'Connect NetSuite', href: '/app/integrations/netsuite', intent: 'secondary' },
+//   { label: 'Generate Report', href: '/app/reports', intent: 'secondary' },
+//   { label: 'Open AI Assistant', href: '/app/ai-assistant', intent: 'secondary' },
+// ]
 
 const ACTIVITY_TONE = {
   employee: 'primary',
@@ -291,7 +291,7 @@ export default function DashboardPage() {
             </Card>
 
             {/* Quick Actions */}
-            <Card className="p-5">
+            {/* <Card className="p-5">
               <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Quick Actions</h2>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 {QUICK_ACTIONS.map((action) => (
@@ -305,7 +305,7 @@ export default function DashboardPage() {
                   </Button>
                 ))}
               </div>
-            </Card>
+            </Card> */}
           </>
         )}
       </div>
