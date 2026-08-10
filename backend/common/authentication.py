@@ -68,8 +68,11 @@ class CookieJWTAuthentication(BaseAuthentication):
         except (InvalidToken, TokenError):
             logger.debug("Ignoring invalid access_token cookie.")
             return None
-
-        user = jwt_auth.get_user(validated_token)
+        try:
+            user = jwt_auth.get_user(validated_token)
+        except AuthenticationFailed:
+            logger.debug("Ignoring access_token cookie for inactive/invalid user.")
+            return None
         return user, validated_token
 
 
