@@ -26,6 +26,7 @@ from superadmin.serializers import (
     UserSerializer,
     SubscriptionHistorySerializer,
     TransactionSerializer,
+    SuperAdminEmployeeSerializer,
 )
 from superadmin.services import SuperAdminService
 from tenancy.models import Company, CompanyModule, Module
@@ -429,18 +430,37 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     ordering_fields = ['first_name', 'last_name', 'created_at']
     ordering = ['first_name', 'last_name']
 
+    def list(self,request,*args,**kwargs):
+        """Return paginated employees in the standard success envelope."""
+        queryset = self.filter_queryset(self.get_queryset())
+
+        offset = int(request.query_params.get('offset', 0))
+        limit = int(request.query_params.get('limit', 20))
+    
+        count = queryset.count()
+        page = queryset[offset:offset + limit]
+    
+        return paginated_response(
+            message='Employees fetched successfully.',
+            results=SuperAdminEmployeeSerializer(page, many=True).data,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
+        )
+
     @action(detail=False, methods=['post'])
     def create_employee(self, request):
         email = request.data.get('email')
         first_name = request.data.get('first_name', '')
         last_name = request.data.get('last_name', '')
         company_id = request.data.get('company_id')
-        role_ids = request.data.get('role_ids',[])
+        # role_ids = request.data.get('role_ids',[])
         role = request.data.get("role")
         if role not in ["admin","employee"]:
             raise ValidationError("Invalid role selected.")
-        if isinstance(role_ids, str):
-            role_ids = [role_ids]
+        # if isinstance(role_ids, str):
+        #     role_ids = [role_ids]
         if not email:
             return Response({'detail': 'email is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -449,20 +469,47 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 first_name=first_name,
                 last_name=last_name,
                 company_id=company_id,
-                role_ids=role_ids,
+                # role_ids=role_ids,
                 role=role,
+                acting_user=request.user,
             )
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return success_response(
-            message='Employee created successfully.', 
-            data=UserSerializer(employee).data,
+            message='Invitation send successfully.', 
+            data={
+                'user': UserSerializer(employee['user']).data,
+                'invitation_email_sent': employee['invitation_email_sent'],
+                }
             )
 
     @action(detail=True, methods=['post'])
     def deactivate(self, request, pk=None):
         employee = superadmin_service.deactivate_employee(employee_id=pk)
         return success_response(message='Employee deactivated successfully.', data=UserSerializer(employee).data)
+
+    @action(detail=True, methods=['post'])
+    def resend_invitation(self, request, pk=None):
+        try:
+            invitation = superadmin_service.resend_employee_invitation(
+                employee_id=pk,
+                acting_user=request.user,
+                request=request,
+            )
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    
+        return success_response(
+            message='Invitation resent successfully.',
+            data={
+                'invitation_id': str(invitation.id),
+                'email': invitation.email,
+                'expires_at': invitation.expires_at,
+            },
+        )
 
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):

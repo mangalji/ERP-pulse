@@ -20,6 +20,7 @@ from .serializers import (
     CreateInvitationSerializer,
     InvitationSerializer,
     InvitationValidateSerializer,
+    RequestInvitationOTPSerializer,
 )
 from .services import invitation_service
 
@@ -30,14 +31,14 @@ class InvitationViewSet(viewsets.ViewSet):
     """
 
     def get_permissions(self):
-        if self.action in ['validate', 'accept', 'resend_public']:
+        if self.action in ['validate', 'request_otp', 'accept', 'resend_public']:
             return [AllowAny()]
         if self.action in ['create_invitation', 'send', 'resend', 'list_invitations', 'retrieve_invitation']:
             return [IsSuperAdmin()]
         return [IsAuthenticated()]
 
     def get_throttles(self):
-        if self.action in ['create', 'accept', 'validate', 'resend_public']:
+        if self.action in ['create_invitation', 'request_otp' ,'accept', 'validate', 'resend_public']:
             return [RegisterOTPThrottle()]
         return super().get_throttles()
 
@@ -171,10 +172,40 @@ class InvitationViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @action(detail=False, methods=['post'], url_path='request-otp')
+    def request_otp(self,request):
+        """
+        POST /api/v1/invitations/request-otp/
+
+        Validate the invitation and send an invitation-specific OTP.
+        """
+        serializer = RequestInvitationOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            user = invitation_service.request_invitation_otp(
+                token=serializer.validated_data['token'],
+                password=serializer.validated_data['password'],
+            )
+
+            return success_response(
+                message='OTP sent successfully. Please check your email.',
+                data={
+                    'email': user.email,
+                },
+            )
+
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     @action(detail=False, methods=['post'])
     def accept(self, request):
         """
-        POST /api/v1/invitations/accept/ — public invitation acceptance.
+        POST /api/v1/invitations/accept/
+        Verify invitation OTP and complete account activation.
         """
         serializer = AcceptInvitationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -183,8 +214,9 @@ class InvitationViewSet(viewsets.ViewSet):
             user = invitation_service.accept_invitation(
                 token=serializer.validated_data['token'],
                 password=serializer.validated_data['password'],
-                first_name=serializer.validated_data['first_name'],
-                last_name=serializer.validated_data['last_name'],
+                otp=serializer.validated_data['otp'],
+                # first_name=serializer.validated_data['first_name'],
+                # last_name=serializer.validated_data['last_name'],
             )
             return success_response(
                 message='Invitation accepted successfully. You can now log in.',

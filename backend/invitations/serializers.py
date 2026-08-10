@@ -55,18 +55,30 @@ class CreateInvitationSerializer(serializers.Serializer):
         return value
 
 
-class AcceptInvitationSerializer(serializers.Serializer):
+class RequestInvitationOTPSerializer(serializers.Serializer):
     token = serializers.UUIDField()
-    password = serializers.CharField(write_only=True, max_length=128)
-    confirm_password = serializers.CharField(write_only=True, max_length=128)
-    first_name = serializers.CharField(max_length=150)
-    last_name = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True, min_length=8, max_length=128)
+    confirm_password = serializers.CharField(write_only=True, min_length=8, max_length=128)
+    # first_name = serializers.CharField(max_length=150)
+    # last_name = serializers.CharField(max_length=150)
 
     def validate(self, attrs):
         if attrs['password'] != attrs.pop('confirm_password'):
             raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
         return attrs
 
+class AcceptInvitationSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+    password = serializers.CharField(
+        write_only=True,
+        max_length=128,
+        min_length=8,
+    )
+    otp = serializers.CharField(
+        write_only=True,
+        min_length=6,
+        max_length=6,
+    )
 
 class InvitationValidateSerializer(serializers.Serializer):
     token = serializers.UUIDField()

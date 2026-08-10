@@ -164,6 +164,7 @@ export const INVITATION_ENDPOINTS = {
   list: '/invitations/list/',
   detail: (id) => `/invitations/${id}/detail/`,
   validate: '/invitations/validate/',
+  requestOtp: '/invitations/request-otp/',
   accept: '/invitations/accept/',
   send: (id) => `/invitations/${id}/send/`,
   resend: (id) => `/invitations/${id}/resend/`,

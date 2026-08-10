@@ -9,6 +9,7 @@ const STATUS_TONE = {
   TRIAL: 'primary',
   SUSPENDED: 'negative',
   EXPIRED: 'neutral',
+  PENDING: 'primary',
   CANCELLED: 'negative',
   INACTIVE: 'neutral',
   ARCHIVED: 'neutral',

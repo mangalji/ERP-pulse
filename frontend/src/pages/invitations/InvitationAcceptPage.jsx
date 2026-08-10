@@ -5,6 +5,8 @@ import InvitationCard from '../../components/invitations/InvitationCard.jsx'
 import PasswordSetupForm from '../../components/invitations/PasswordSetupForm.jsx'
 import InvitationExpired from '../../components/invitations/InvitationExpired.jsx'
 import InvitationSuccess from '../../components/invitations/InvitationSuccess.jsx'
+import Input from '../../components/ui/Input.jsx'
+import Button from '../../components/ui/Button.jsx'
 import { invitationApi } from '../../services/invitations.js'
 
 export default function InvitationAcceptPage() {
@@ -15,6 +17,9 @@ export default function InvitationAcceptPage() {
   const [invitation, setInvitation] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  const [password, setPassword] = useState('')
+  const [otp, setOtp] = useState('')
 
   useEffect(() => {
     if (!token) {
@@ -35,39 +40,83 @@ export default function InvitationAcceptPage() {
       })
   }, [token])
 
-  const handleAccept = async ({ password, confirm_password, first_name, last_name }) => {
+  const handleRequestOtp = async ({password: submittedPassword,confirm_password}) =>{
     setIsSubmitting(true)
     setError('')
-    try {
+    try{
+      await invitationApi.requestOtp({token, password: submittedPassword, confirm_password})
+      setPassword(submittedPassword)
+      setStatus('otp')
+      addToast(
+        'OTP sent successfully. Please check your email.',
+        'success'
+      )
+    }
+    catch (err){
+      setError(
+        err.payload?.message || err.message || 'Failed to send OTP.'
+      )
+      }
+     finally {
+      setIsSubmitting(false)
+    }
+  }
+  const handleVerifyOtp = async (e) => {
+    e.preventDefault()
+
+    setError('')
+
+    if (!otp || otp.length !== 6) {
+      setError('Please enter the 6-digit OTP.')
+      return
+    }
+
+    setIsSubmitting(true)
+     try {
       await invitationApi.accept({
         token,
         password,
-        confirm_password,
-        first_name,
-        last_name,
+        otp,
       })
       setStatus('success')
-      addToast('Account created successfully!', 'success')
-    } catch (err) {
-      setError(err.payload?.message || err.message || 'Failed to accept invitation.')
+      addToast(
+        'Account created successfully!',
+        'success'
+      )
+    } catch (err){
+      setError(
+        err.payload?.message ||
+        err.message ||
+        'Invalid OTP or failed to activate account.'
+      )
     } finally {
       setIsSubmitting(false)
     }
   }
-
   const handleResend = async () => {
     try {
       await invitationApi.publicResend(invitation?.email)
-      addToast('Invitation resent successfully.', 'success')
+
+      addToast(
+        'Invitation resent successfully.',
+        'success'
+      )
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to resend invitation.', 'error')
+      addToast(
+        err.payload?.message ||
+        err.message ||
+        'Failed to resend invitation.',
+        'error'
+      )
     }
   }
 
   if (status === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-canvas)]">
-        <p className="text-sm text-[var(--color-muted)]">Loading invitation...</p>
+        <p className="text-sm text-[var(--color-muted)]">
+          Loading invitation...
+        </p>
       </div>
     )
   }
@@ -76,7 +125,10 @@ export default function InvitationAcceptPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-canvas)]">
         <InvitationSuccess />
-        <Toast toasts={toasts} removeToast={removeToast} />
+        <Toast
+          toasts={toasts}
+          removeToast={removeToast}
+        />
       </div>
     )
   }
@@ -84,8 +136,17 @@ export default function InvitationAcceptPage() {
   if (status === 'expired' || invitation?.status !== 'PENDING') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-canvas)]">
-        <InvitationExpired onResend={invitation ? handleResend : undefined} />
-        <Toast toasts={toasts} removeToast={removeToast} />
+        <InvitationExpired
+          onResend={
+            invitation
+              ? handleResend
+              : undefined
+          }
+        />
+        <Toast
+          toasts={toasts}
+          removeToast={removeToast}
+        />
       </div>
     )
   }
@@ -99,21 +160,92 @@ export default function InvitationAcceptPage() {
           expiresAt={invitation?.expires_at}
           onResend={handleResend}
         />
+
         <div className="mt-6">
-          <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-            Set up your account
-          </h2>
-          <PasswordSetupForm onSubmit={handleAccept} isLoading={isSubmitting} />
-          {error && <p className="mt-2 text-sm text-[var(--color-negative)]">{error}</p>}
+          {status === 'valid' && (
+            <>
+              <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
+                Set up your account
+              </h2>
+
+              <PasswordSetupForm
+                onSubmit={handleRequestOtp}
+                isLoading={isSubmitting}
+              />
+            </>
+          )}
+
+          {status === 'otp' && (
+            <>
+              <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
+                Verify your email
+              </h2>
+
+              <p className="mb-4 text-sm text-[var(--color-muted)]">
+                We sent a 6-digit OTP to{' '}
+                <strong>{invitation?.email}</strong>.
+                Enter it below to activate your account.
+              </p>
+
+              <form
+                onSubmit={handleVerifyOtp}
+                className="flex flex-col gap-4"
+              >
+                <Input
+                  label="OTP"
+                  type="text"
+                  value={otp}
+                  onChange={(e) =>
+                    setOtp(
+                      e.target.value
+                        .replace(/\D/g, '')
+                        .slice(0, 6)
+                    )
+                  }
+                  inputMode="numeric"
+                  maxLength={6}
+                  required
+                />
+
+                {error && (
+                  <p className="text-sm text-[var(--color-negative)]">
+                    {error}
+                  </p>
+                )}
+
+                <Button
+                  type="submit"
+                  isLoading={isSubmitting}
+                  className="w-full"
+                >
+                  Verify OTP & Activate Account
+                </Button>
+              </form>
+            </>
+          )}
+
+          {status !== 'otp' && error && (
+            <p className="mt-2 text-sm text-[var(--color-negative)]">
+              {error}
+            </p>
+          )}
         </div>
+
         <p className="mt-4 text-center text-xs text-[var(--color-muted)]">
           Already have an account?{' '}
-          <Link to="/login" className="font-medium text-[var(--color-primary)] hover:underline">
+          <Link
+            to="/login"
+            className="font-medium text-[var(--color-primary)] hover:underline"
+          >
             Log in
           </Link>
         </p>
       </div>
-      <Toast toasts={toasts} removeToast={removeToast} />
+
+      <Toast
+        toasts={toasts}
+        removeToast={removeToast}
+      />
     </div>
   )
 }

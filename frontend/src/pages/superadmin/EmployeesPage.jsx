@@ -37,6 +37,7 @@ export default function EmployeesPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_EMPLOYEE)
   const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
   const navigate = useNavigate()
 
@@ -73,11 +74,39 @@ export default function EmployeesPage() {
 
   const openCreate = () => {
     setForm(EMPTY_EMPLOYEE)
+    setFormError('')
     setCreateOpen(true)
     loadCompanies()
   }
 
   const handleCreate = async () => {
+    setFormError('')
+    
+    if (!form.email.trim()){
+      setFormError('Email is required.')
+      return
+    }
+
+    if (!form.first_name.trim()) {
+    setFormError('First Name is required.')
+    return
+  }
+
+  if (!form.last_name.trim()) {
+    setFormError('Last Name is required.')
+    return
+  }
+
+  if (!form.company_id) {
+    setFormError('Please select a company.')
+    return
+  }
+
+  if (!form.role) {
+    setFormError('Please select a role.')
+    return
+  }
+
     setSaving(true)
     try {
       await superadminApi.createEmployee({
@@ -85,12 +114,21 @@ export default function EmployeesPage() {
         company_id: form.company_id || undefined,
         role: form.role,
       })
-      addToast('User created successfully')
+      addToast('Invitation sent successfully')
       setCreateOpen(false)
+      setForm(EMPTY_EMPLOYEE)
+      setFormError('')
       setOffset(0)
       load()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to create user', 'error')
+      const message = 
+        err.payload?.message || 
+        err.payload?.detail ||
+        err.message || 
+        'Failed to send Invitation.'
+
+      // addToast(err.payload?.message || err.message || 'Failed to create user', 'error')
+      setFormError(message)
     } finally {
       setSaving(false)
     }
@@ -126,6 +164,27 @@ export default function EmployeesPage() {
       setSaving(false)
     }
   }
+
+  const handleResendInvitation = async (employee) => {
+    setSaving(true)
+  
+    try {
+      await superadminApi.resendEmployeeInvitation(employee.id)
+  
+      addToast('Invitation resent successfully')
+      load()
+    } catch (err) {
+      addToast(
+        err.payload?.message ||
+        err.payload?.detail ||
+        err.message ||
+        'Failed to resend invitation',
+        'error'
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
   
 
   const totalPages = Math.ceil(count / PAGE_SIZE)
@@ -153,44 +212,94 @@ export default function EmployeesPage() {
       key: 'is_staff',
       header: 'Admin',
       render: (row) => (
-        <StatusBadge status={row.is_staff ? 'ACTIVE' : 'INACTIVE'} />
+        <StatusBadge status={row.is_staff ? 'ADMIN' : 'EMPLOYEE'} />
       ),
     },
     {
       key: 'is_active',
       header: 'Status',
-      render: (row) => <StatusBadge status={row.is_active ? 'ACTIVE' : 'INACTIVE'} />,
+      render: (row) => {
+        const status = row.invitation_status || (
+          row.is_active ? 'ACTIVE' : 'INACTIVE'
+          )
+        return <StatusBadge status={status} />
+      },
     },
     {
       key: 'actions',
       header: 'Actions',
-      render: (row) => (
-        <div className="flex items-center gap-1">
-          {!row.is_staff && (
-            <button
-              onClick={() => setConfirm({ employee: row, action: 'promote' })}
-              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
-            >
-              Promote Admin
-            </button>
-          )}
-          {row.is_active ? (
-            <button
-              onClick={() => setConfirm({ employee: row, action: 'deactivate' })}
-              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-netsuite)] hover:bg-[var(--color-netsuite-soft)]"
-            >
-              Deactivate
-            </button>
-          ) : (
-            <button
-              onClick={() => setConfirm({ employee: row, action: 'activate' })}
-              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
-            >
-              Activate
-            </button>
-          )}
-        </div>
-      ),
+      render: (row) => {
+  const invitationStatus = row.invitation_status?.toUpperCase()
+  const isPending =
+    invitationStatus === 'PENDING' ||
+    invitationStatus === 'INVITATION_PENDING'
+
+  const isExpired =
+    invitationStatus === 'EXPIRED' ||
+    invitationStatus === 'INVITATION_EXPIRED'
+
+  if (isPending || isExpired) {
+    return (
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() =>
+            setConfirm({
+              employee: row,
+              action: 'resend',
+            })
+          }
+          className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
+        >
+          Resend Invitation
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {!row.is_staff && (
+        <button
+          onClick={() =>
+            setConfirm({
+              employee: row,
+              action: 'promote',
+            })
+          }
+          className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
+        >
+          Promote Admin
+        </button>
+      )}
+
+      {row.is_active ? (
+        <button
+          onClick={() =>
+            setConfirm({
+              employee: row,
+              action: 'deactivate',
+            })
+          }
+          className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-netsuite)] hover:bg-[var(--color-netsuite-soft)]"
+        >
+          Deactivate
+        </button>
+      ) : (
+        <button
+          onClick={() =>
+            setConfirm({
+              employee: row,
+              action: 'activate',
+            })
+          }
+          className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
+        >
+          Activate
+        </button>
+      )}
+    </div>
+  )
+},
     },
   ]
 
@@ -251,7 +360,7 @@ export default function EmployeesPage() {
             <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
             <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">Create User</h3>
             <div className="mt-4 flex flex-col gap-4">
-              <Input label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              <Input label="Email" type="email" value={form.email} onChange={(e) => {setForm({ ...form, email: e.target.value }); setFormError('');}} />
               <div className="grid grid-cols-2 gap-4">
                 <Input label="First Name" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
                 <Input label="Last Name" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
@@ -269,48 +378,82 @@ export default function EmployeesPage() {
                     ))}
                   </select>
                 </label>
-              </div>
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-[var(--color-ink-soft)]">
                 Role
                 </span>
 
-                <select
-                  value={form.role}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      role: e.target.value,
-                    })
-                  }
+                <select value={form.role} onChange={(e) => setForm({...form, role: e.target.value})}
                   className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                >
+                  >
                   <option value="employee">
                       Employee
                   </option>
                 
-                  <option value="company_admin">
+                  <option value="admin">
                       Company Admin
                   </option>
                 
                 </select>
               </label>
-
+              {formError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+                  {formError}
+                </div>
+                )}
+              <div className="mt-6 flex justify-end gap-2">
+                <Button intent="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                <Button onClick={handleCreate} isLoading={saving}>Send Invitation</Button>
+              </div>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button intent="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button onClick={handleCreate} isLoading={saving}>Create</Button>
-            </div>
+          </div>
         </div>
       )}
 
       <ConfirmDialog
         open={!!confirm}
-        title={confirm ? `${confirm.action === 'activate' ? 'Activate' : 'Deactivate'} employee?` : ''}
-        message={confirm ? `Are you sure you want to ${confirm.action} ${confirm.employee.email}?` : ''}
-        confirmLabel={confirm?.action === 'activate' ? 'Activate' : 'Deactivate'}
+        title={
+          confirm
+            ? confirm.action === 'promote'
+              ? 'Promote to Admin?'
+              : confirm.action === 'resend'
+                ? 'Resend Invitation?'
+              : confirm.action === 'activate'
+                ? 'Activate employee?'
+                : 'Deactivate employee?'
+            : ''
+        }
+        message={
+          confirm
+            ? confirm.action === 'promote'
+              ? `Are you sure you want to promote ${confirm.employee.email} to Company Admin?`
+              // : `Are you sure you want to ${confirm.action} ${confirm.employee.email}?`
+              : confirm.action === 'resend'
+                ? `Resend the invitation to ${confirm.employee.email}?`
+                : `Are you sure you want to ${confirm.action} ${confirm.employee.email}?`
+            : ''
+        }
+        confirmLabel={
+          confirm?.action === 'promote'
+            ? 'Promote Admin'
+            : confirm?.action === 'resend'
+              ? 'Resend Invitation'
+            : confirm?.action === 'activate'
+              ? 'Activate'
+              : 'Deactivate'
+        }
         intent={confirm?.action === 'deactivate' ? 'primary' : 'primary'}
-        onConfirm={() => confirm && toggleActive(confirm.employee)}
+        onConfirm={() => {
+          if (!confirm) return 
+          if (confirm.action==='promote'){
+            handleToggleAdmin(confirm.employee)
+          } else if (confirm.action === 'resend'){
+            handleResendInvitation(confirm.employee)
+          } else {
+            toggleActive(confirm.employee)
+          }
+          setConfirm(null)
+        }}
         onCancel={() => setConfirm(null)}
         loading={saving}
       />

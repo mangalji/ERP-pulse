@@ -10,6 +10,8 @@ from django.utils import timezone
 from audit.models import AuditModule, AuditAction
 from audit.services import audit_service
 from common.services.email_service import send_email
+from accounts.models import OTP
+from accounts.services import OTPService
 
 from tenancy.models import Company
 from rbac.models import Role
@@ -23,6 +25,9 @@ logger = logging.getLogger(__name__)
 class InvitationService:
     """Business logic for invitation handling."""
 
+    def __init__(self):
+        self.otp_service=OTPService()
+
     @staticmethod
     def _audit_user(request=None):
         user = getattr(request, 'user', None) if request else None
@@ -30,9 +35,12 @@ class InvitationService:
             return user
         return None
 
-    def create_invitation(self, *, email, company_id, role_id=None, created_by=None, expires_in_days=7, request=None):
+    def create_invitation(self, *, email, company_id, role_id=None, created_by=None, expires_in_days=7, request=None, send_email=True):
         """
-        Create a new invitation and send it via email.
+        Create a new invitation
+        When send_email=False, only the invitation record is created.
+        The caller can send the email separately after its database
+        transaction has successfully completed.
         """
         company = Company.objects.get(pk=company_id)
         role = Role.objects.filter(pk=role_id).first() if role_id else None
@@ -56,8 +64,8 @@ class InvitationService:
                 expires_at=expires_at,
                 created_by=created_by,
             )
-
-            self._send_invitation_email(invitation)
+            if send_email:
+                self._send_invitation_email(invitation)
 
             audit_service.log(
                 module=AuditModule.INVITATION,
@@ -74,10 +82,12 @@ class InvitationService:
                     'expires_at': invitation.expires_at.isoformat(),
                 },
             )
-
+        # Email is intentionally sent outside the database transaction.
+        if send_email:
+            self._send_invitation_email(invitation)
         return invitation
 
-    def send_invitation(self, *, invitation_id, request=None):
+    def send_invitation(self, *, invitation_id, request=None, return_delivery_status=False):
         """
         Resend an existing invitation email.
         """
@@ -91,7 +101,8 @@ class InvitationService:
             invitation.save(update_fields=['status'])
             raise ValueError('Invitation has expired.')
 
-        self._send_invitation_email(invitation)
+        sent = self._send_invitation_email(invitation)
+        # self._send_invitation_email(invitation)
 
         audit_service.log(
             module=AuditModule.INVITATION,
@@ -100,10 +111,12 @@ class InvitationService:
             entity_id=str(invitation.id),
             company=invitation.company,
             user=self._audit_user(request),
-            old_value={'sent_count': 0},
-            new_value={'sent_count': 1},
+            old_value={'sent': False},
+            new_value={'sent': sent},
         )
-
+        if return_delivery_status:
+            return invitation, sent
+        
         return invitation
 
     def resend_invitation(self, *, invitation_id, request=None):
@@ -153,56 +166,160 @@ class InvitationService:
 
         return invitation
 
-    def accept_invitation(self, token, password, first_name, last_name):
+    # def accept_invitation(self, token, password, first_name, last_name):
+    #     """
+    #     Accept an invitation by creating a user account.
+    #     """
+    #     invitation = self.validate_token(token)
+
+    #     with transaction.atomic():
+    #         # Create or update user
+    #         user, created = User.objects.get_or_create(
+    #             email=invitation.email.lower().strip(),
+    #             defaults={
+    #                 'first_name': first_name,
+    #                 'last_name': last_name,
+    #                 'company': invitation.company,
+    #                 'is_active': True,
+    #                 'is_email_verified': True,
+    #             },
+    #         )
+
+    #         if not created:
+    #             user.first_name = first_name
+    #             user.last_name = last_name
+    #             user.company = invitation.company
+    #             user.is_active = True
+    #             user.is_email_verified = True
+
+    #         user.set_password(password)
+    #         user.save()
+
+    #         # Assign role if provided
+    #         if invitation.role:
+    #             from rbac.models import UserRole
+    #             UserRole.objects.get_or_create(user=user, role=invitation.role)
+
+    #         invitation.status = InvitationStatus.ACCEPTED
+    #         invitation.accepted_at = timezone.now()
+    #         invitation.save(update_fields=['status', 'accepted_at'])
+
+    #         audit_service.log(
+    #             module=AuditModule.INVITATION,
+    #             action=AuditAction.ACCEPT,
+    #             entity='Invitation',
+    #             entity_id=str(invitation.id),
+    #             company=invitation.company,
+    #             user=user,
+    #             old_value={'status': InvitationStatus.PENDING},
+    #             new_value={'status': InvitationStatus.ACCEPTED, 'user_id': str(user.id)},
+    #         )
+
+    #     return user
+
+    def request_invitation_otp(self,token,password):
         """
-        Accept an invitation by creating a user account.
+        Validate an invitation and send an OTP before activating
+        the pre-created user account.
+        """
+        invitation = self.validate_token(token)
+        try:
+            user = User.objects.get(
+                email__iexact=invitation.email,
+            )
+        except User.DoesNotExist:
+            raise ValueError("The user account associated with this invitation was not found.")
+        # The user must have been pre-created by Super Admin.
+        if user.company_id != invitation.company_id:
+            raise ValueError(
+                "The invited user does not belong to the invited company."
+            )
+        if user.is_active:
+            raise ValueError("This user account is already active.")
+
+        if user.has_usable_password():
+            raise ValueError("This user already has a password. Please use the normal login or password reset flow.")
+        
+        # Send a separate OTP for invitation/account activation.
+        self.otp_service.generate_and_send_otp(user=user,purpose=OTP.Purpose.INVITATION)
+        return user
+
+    def accept_invitation(self,token,password,otp):
+        """
+        Verify the invitation OTP and complete account activation.
         """
         invitation = self.validate_token(token)
 
-        with transaction.atomic():
-            # Create or update user
-            user, created = User.objects.get_or_create(
-                email=invitation.email.lower().strip(),
-                defaults={
-                    'first_name': first_name,
-                    'last_name': last_name,
-                    'company': invitation.company,
-                    'is_active': True,
-                    'is_email_verified': True,
-                },
+        try:
+            user = User.objects.get(
+                email__iexact=invitation.email
+            )
+        except User.DoesNotExist:
+            raise ValueError(
+            "The user account associated with this invitation was not found."
+        )
+        if user.company_id != invitation.company_id:
+            raise ValueError("The invited user does not belong to the invited company.")
+
+        if user.is_active:
+            raise ValueError(
+                "This user account is already active."
             )
 
-            if not created:
-                user.first_name = first_name
-                user.last_name = last_name
-                user.company = invitation.company
-                user.is_active = True
-                user.is_email_verified = True
+        # Verify the invitation-specific OTP.
+        self.otp_service.verify_otp(
+            user=user,
+            purpose=OTP.Purpose.INVITATION,
+            submitted_code=otp,
+        )
 
+        with transaction.atomic():
+            # Password is saved ONLY after successful OTP verification.
             user.set_password(password)
-            user.save()
+            user.is_active = True
+            user.is_email_verified = True
+            user.save(
+                update_fields=[
+                    "password",
+                    "is_active",
+                    "is_email_verified",
+                ]
+            )
 
-            # Assign role if provided
-            if invitation.role:
-                from rbac.models import UserRole
-                UserRole.objects.get_or_create(user=user, role=invitation.role)
-
+            # The role was already assigned when the Super Admin
+            # created the user. We do not create a duplicate role here.
+            
             invitation.status = InvitationStatus.ACCEPTED
             invitation.accepted_at = timezone.now()
-            invitation.save(update_fields=['status', 'accepted_at'])
+            invitation.save(
+            update_fields=[
+                "status",
+                "accepted_at",
+            ]
+        )
 
-            audit_service.log(
-                module=AuditModule.INVITATION,
-                action=AuditAction.ACCEPT,
-                entity='Invitation',
-                entity_id=str(invitation.id),
-                company=invitation.company,
-                user=user,
-                old_value={'status': InvitationStatus.PENDING},
-                new_value={'status': InvitationStatus.ACCEPTED, 'user_id': str(user.id)},
-            )
-
+        audit_service.log(
+            module=AuditModule.INVITATION,
+            action=AuditAction.ACCEPT,
+            entity="Invitation",
+            entity_id=str(invitation.id),
+            company=invitation.company,
+            user=user,
+            old_value={
+                "status": InvitationStatus.PENDING,
+                "is_active": False,
+                "is_email_verified": False,
+            },
+            new_value={
+                "status": InvitationStatus.ACCEPTED,
+                "user_id": str(user.id),
+                "is_active": True,
+                "is_email_verified": True,
+            },
+        )
         return user
+
+        
 
     def expire_old_tokens(self):
         """
@@ -225,6 +342,14 @@ class InvitationService:
         """
         frontend_url = settings.FRONTEND_URL.rstrip('/')
         invitation_link = f"{frontend_url}/invitation/{invitation.token}"
+        print("\n" + "=" * 70)
+        print("              AGSUITE INVITATION")
+        print("=" * 70)
+        print(f"Email:            {invitation.email}")
+        print(f"Company:          {invitation.company.name}")
+        print(f"Invitation Link:  {invitation_link}")
+        print(f"Expires At:       {invitation.expires_at}")
+        print("=" * 70 + "\n")
 
         subject = f"You've been invited to join {invitation.company.name}"
         message = (
@@ -243,12 +368,14 @@ class InvitationService:
                 subject=subject,
                 message=message,
                 recipient_list=[invitation.email],
-                fail_silently=True,
+                fail_silently=False,
             )
+            return True
         except Exception:
             logger.exception(
                 "Failed to send invitation email to %s", invitation.email
             )
+            return False
 
 
 invitation_service = InvitationService()

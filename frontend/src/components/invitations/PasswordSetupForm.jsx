@@ -5,8 +5,8 @@ import Button from '../ui/Button.jsx'
 export default function PasswordSetupForm({ onSubmit, isLoading }) {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
+  // const [firstName, setFirstName] = useState('')
+  // const [lastName, setLastName] = useState('')
   const [error, setError] = useState('')
 
   const handleSubmit = (e) => {
@@ -20,12 +20,12 @@ export default function PasswordSetupForm({ onSubmit, isLoading }) {
       setError('Password must be at least 8 characters.')
       return
     }
-    onSubmit({ password, confirm_password: confirmPassword, first_name: firstName, last_name: lastName })
+    onSubmit({ password, confirm_password: confirmPassword, })
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Input
+      {/* <Input
         label="First name"
         value={firstName}
         onChange={(e) => setFirstName(e.target.value)}
@@ -36,7 +36,7 @@ export default function PasswordSetupForm({ onSubmit, isLoading }) {
         value={lastName}
         onChange={(e) => setLastName(e.target.value)}
         required
-      />
+      /> */}
       <Input
         label="Password"
         type="password"
@@ -52,9 +52,13 @@ export default function PasswordSetupForm({ onSubmit, isLoading }) {
         onChange={(e) => setConfirmPassword(e.target.value)}
         required
       />
-      {error && <p className="text-sm text-[var(--color-negative)]">{error}</p>}
+      {error && (
+        <p className="text-sm text-[var(--color-negative)]">
+          {error}
+          </p>
+        )}
       <Button type="submit" isLoading={isLoading} className="w-full">
-        Set up account
+        Continue
       </Button>
     </form>
   )

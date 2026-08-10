@@ -8,6 +8,8 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from accounts.models import User
+from invitations.models import Invitation, InvitationStatus
+from invitations.services import invitation_service
 from notifications.models import Notification
 from rbac.models import Role, UserRole
 from superadmin.models import (
@@ -480,51 +482,94 @@ class SuperAdminService:
             qs = qs.filter(Q(reason__icontains=search) | Q(company__name__icontains=search))
         return list(qs.order_by('-started_at')[:50])
 
-    @transaction.atomic
-    def create_employee(self,*,email,password=None,first_name="",last_name="",company_id=None,role_ids=None,role=None):
-        if User.objects.filter(email=email).exists():
-            raise ValueError(
-                "Employee with this email already exists."
-            )
+    def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None):
+        """Create a pending company user and send the existing invitation flow."""
+        normalized_email = email.lower().strip()
+        if User.objects.filter(email__iexact=normalized_email).exists():
+            raise ValueError("A user with this email already exists.")
 
-        user = User.objects.create(
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            company_id=company_id,
-            is_active=True,
-            is_email_verified=True,
-        )
+        if not company_id:
+            raise ValueError("company_id is required.")
+        company = Company.objects.filter(pk=company_id).first()
+        if not company:
+            raise ValueError("Company not found.")
 
-        ROLE_NAME_MAP = {
+        role_name = {
             "admin": "Company Admin",
             "employee": "Employee",
-        }
-        if role_ids:
+        }.get(role)
+        if not role_name:
+            raise ValueError("Invalid role selected.")
 
-            roles = Role.objects.filter(
-                pk__in=role_ids
+        selected_role = Role.objects.filter(
+            name__iexact=role_name,
+            company__isnull=True,
+        ).first()
+        if not selected_role:
+            raise ValueError(f"Required role '{role_name}' is not configured.")
+
+        # User, RBAC assignment, and invitation must succeed or fail together.
+        with transaction.atomic():
+            user = User(
+                email=normalized_email,
+                first_name=first_name.strip(),
+                last_name=last_name.strip(),
+                company=company,
+                is_active=False,
+                is_email_verified=False,
             )
-        else:
-            role_name = ROLE_NAME_MAP.get(role)
-            if role_name is None:
-                raise ValueError(f"Invalid role: {role}")
-            roles = Role.objects.filter(
-                name__iexact=role_name
+            user.set_unusable_password()
+            user.save()
+            UserRole.objects.create(user=user, role=selected_role)
+
+            invitation = invitation_service.create_invitation(
+                email=normalized_email,
+                company_id=company.id,
+                role_id=selected_role.id,
+                created_by=acting_user,
+                request=request,
+                send_email=False,
             )
-        UserRole.objects.bulk_create(
-            
-            [
-                UserRole(
-                    user=user,
-                    role=role_obj,
-                )
-                for role_obj in roles
-            ],
-            ignore_conflicts=True,
+
+        # Delivery happens after the database transaction commits. A failed
+        # delivery leaves the pending user and invitation available to resend.
+        _, invitation_email_sent = invitation_service.send_invitation(
+            invitation_id=invitation.id,
+            request=request,
+            return_delivery_status=True,
         )
+        return {
+            "user": user,
+            "invitation": invitation,
+            "invitation_email_sent": invitation_email_sent,
+        }
 
-        return user
+    def resend_employee_invitation(self, *, employee_id, acting_user, request=None):
+        employee = User.objects.filter(pk=employee_id).select_related('company').first()
+    
+        if not employee:
+            raise ValueError("Employee not found.")
+    
+        invitation = (
+            Invitation.objects
+            .filter(
+                email__iexact=employee.email,
+                company=employee.company,
+                status=InvitationStatus.PENDING,
+            )
+            .order_by('-created_at')
+            .first()
+        )
+    
+        if not invitation:
+            raise ValueError("No pending invitation found for this user.")
+    
+        invitation_service.resend_invitation(
+            invitation_id=invitation.id,
+            request=request,
+        )
+    
+        return invitation
 
     def update_employee(self, *, employee_id, **data):
         user = get_object_or_404(User, pk=employee_id)

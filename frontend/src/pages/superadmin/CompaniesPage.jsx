@@ -22,9 +22,9 @@ const EMPTY_FORM = {
   contact_phone: '',
   country: '',
   status: 'TRIAL',
-  admin_first_name: '',
-  admin_last_name: '',
-  admin_email: '',
+  // admin_first_name: '',
+  // admin_last_name: '',
+  // admin_email: '',
 }
 
 export default function CompaniesPage() {
@@ -277,10 +277,10 @@ export default function CompaniesPage() {
               <Input label="Contact Email" type="email" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })} />
               <Input label="Contact Phone" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} />
               <Input label="Country" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} />
-              <h4 className="mt-2 text-sm font-medium text-[var(--color-ink-soft)]">Admin User</h4>
+              {/* <h4 className="mt-2 text-sm font-medium text-[var(--color-ink-soft)]">Admin User</h4>
               <Input label="First Name" value={form.admin_first_name} onChange={(e) => setForm({ ...form, admin_first_name: e.target.value })} />
               <Input label="Last Name" value={form.admin_last_name} onChange={(e) => setForm({ ...form, admin_last_name: e.target.value })} />
-              <Input label="Admin Email" type="email" value={form.admin_email} onChange={(e) => setForm({ ...form, admin_email: e.target.value })} required />
+              <Input label="Admin Email" type="email" value={form.admin_email} onChange={(e) => setForm({ ...form, admin_email: e.target.value })} required /> */}
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-[var(--color-ink-soft)]">Status</span>
                 <select

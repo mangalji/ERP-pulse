@@ -6,6 +6,7 @@ from .models import (
 )
 from tenancy.models import Company, CompanyModule, Module
 from django.contrib.auth import get_user_model
+from invitations.models import Invitation, InvitationStatus
 
 User = get_user_model()
 
@@ -66,11 +67,6 @@ class CompanySerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
-    admin_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    admin_email = serializers.EmailField(write_only=True, required=False, allow_null=True)
-    admin_first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    admin_last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
-
     class Meta:
         model = Company
 
@@ -82,25 +78,10 @@ class CompanySerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
-    def create(self, validated_data):
-        admin_email = validated_data.pop('admin_email', None)
-        admin_first_name = validated_data.pop('admin_first_name', None)
-        admin_last_name = validated_data.pop('admin_last_name', None)
-
-        company = super().create(validated_data)
-
-        if admin_email:
-            from invitations.services import invitation_service
-            from rbac.models import Role
-            admin_role = Role.objects.filter(name__iexact='Company Admin', company=None).first()
-            invitation_service.create_invitation(
-                email=admin_email,
-                company_id=company.id,
-                role_id=admin_role.id if admin_role else None,
-                created_by=None,
-            )
-
-        return company
+    # Legacy onboarding note: company creation previously accepted admin
+    # fields and sent an invitation here. User onboarding now belongs solely
+    # to SuperAdminService.create_employee(), so this serializer intentionally
+    # uses ModelSerializer's default company-only create behavior.
 
 
 class PlanDetailSerializer(serializers.ModelSerializer):
@@ -258,6 +239,75 @@ class UserSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
+class SuperAdminEmployeeSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(
+        source="get_full_name",
+        read_only=True,
+    )
+
+    company_name = serializers.CharField(
+        source="company.name",
+        read_only=True,
+    )
+
+    role = serializers.SerializerMethodField()
+    invitation_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "employee_id",
+            "designation",
+            "department",
+            "company",
+            "company_name",
+            "is_active",
+            "is_staff",
+            "is_email_verified",
+            "role",
+            "invitation_status",
+            "last_activity",
+        )
+        read_only_fields = fields
+
+    def get_role(self, obj):
+        user_role = (
+            obj.user_roles
+            .select_related("role")
+            .first()
+        )
+
+        if user_role:
+            return user_role.role.name
+
+        return None
+
+    def get_invitation_status(self, obj):
+        invitation = Invitation.objects.filter(email__iexact=obj.email,company=obj.company).order_by("-created_at").first()
+        
+        if not invitation:
+            return "ACTIVE" if obj.is_active else "INACTIVE"
+
+        if invitation.status == InvitationStatus.PENDING:
+            if invitation.is_expired():
+                return "EXPIRED"
+            return "PENDING"
+
+        if invitation.status == InvitationStatus.ACCEPTED:
+            return "ACTIVE" if obj.is_active else "INACTIVE"
+
+        if invitation.status == InvitationStatus.EXPIRED:
+            return "EXPIRED"
+
+        if invitation.status == InvitationStatus.CANCELLED:
+            return "CANCELLED"
+
+        return "INACTIVE"
 
 class SubscriptionHistorySerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.name', read_only=True)
@@ -331,8 +381,6 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
 
     def get_admin_email(self, obj):
         admin = obj.users.filter(user_roles__role__name='Company Admin').first()
-        if not admin:
-            admin = obj.users.first()
         return admin.email if admin else None
 
     def get_current_plan(self, obj):

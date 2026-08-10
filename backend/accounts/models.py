@@ -88,6 +88,7 @@ class OTP(models.Model):
         LOGIN = 'LOGIN', 'Login'
         PASSWORD_RESET = 'PASSWORD_RESET', 'Password Reset'
         PROFILE_UPDATE = 'PROFILE_UPDATE', 'Profile Update'
+        INVITATION = 'INVITATION', 'Invitation'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
