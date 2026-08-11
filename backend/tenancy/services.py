@@ -362,7 +362,11 @@ class ClientPortalService:
                 .select_related('module')
                 .values('module_id', 'module__code', 'module__name')
             )
-        role_names = list(user.user_roles.values_list('role__name', flat=True))
+        # role_names = list(user.user_roles.values_list('role__name', flat=True))
+        role_names= [
+            role_name.lower().replace(' ','_')
+            for role_name in user.user_roles.values_list('role__name',flat=True)
+        ]
         # Collect permission codes granted to the user via their roles.
         permissions = list(
             RolePermission.objects.filter(

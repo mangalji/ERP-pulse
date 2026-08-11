@@ -3,6 +3,7 @@ from django.core.validators import RegexValidator
 from rest_framework import serializers
 from common import constants
 from accounts.models import LoginActivity, User
+from rbac.models import UserRole
 
 otp_code_validator = RegexValidator(
     regex = r'^\d+$',
@@ -138,6 +139,7 @@ class UserSerializer(serializers.ModelSerializer):
     their own account than this via the API.
     """
     netsuite_connected = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
     is_superadmin = serializers.BooleanField(
         source='is_superuser',
         read_only=True,
@@ -157,7 +159,8 @@ class UserSerializer(serializers.ModelSerializer):
             'created_at',
             'is_staff',
             'is_superadmin',
-            'netsuite_connected'
+            'netsuite_connected',
+            'roles',
         ]
         read_only_fields = fields
 
@@ -165,6 +168,12 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.netsuite_connections.filter(
         is_active=True,
         ).exists()
+
+    def get_roles(self, obj):
+        return [
+            item['role__name'].lower().replace(' ','_')
+            for item in obj.user_roles.values('role__name')
+        ]
     
 
 class ForgotPasswordSerializer(serializers.Serializer):
