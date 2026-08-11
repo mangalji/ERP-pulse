@@ -82,10 +82,15 @@ class ClientPortalService:
         employee.save(update_fields=['password'])
 
         role_id = data.get('role_id')
+        role = self._validate_role(company=company,role_id=role_id)
+        UserRole.objects.create(
+            user=employee,
+            role=role,
+        )
         invitation = invitation_service.create_invitation(
             email=email.lower().strip(),
             company_id=company.id,
-            role_id=role_id,
+            role_id=role.id,
             created_by=acting_user,
         )
 
@@ -96,7 +101,10 @@ class ClientPortalService:
             entity_id=str(employee.id),
             company=company,
             user=acting_user,
-            new_value={'email': employee.email, 'role_id': role_id},
+            new_value={
+                        'email': employee.email, 
+                       'role_id': str(role_id) if role_id else None,
+                       },
         )
         return employee
 

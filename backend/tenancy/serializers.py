@@ -75,13 +75,13 @@ class CreateEmployeeSerializer(serializers.Serializer):
     last_name = serializers.CharField(required=False, allow_blank=True)
     designation = serializers.CharField(required=False, allow_blank=True)
     department = serializers.CharField(required=False, allow_blank=True)
-    role_id = serializers.IntegerField(required=False, allow_null=True)
+    role_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class UpdateEmployeeSerializer(serializers.ModelSerializer):
     """Validates PATCH input for updating a company employee."""
 
-    role_id = serializers.IntegerField(required=False, allow_null=True)
+    role_id = serializers.UUIDField(required=False, allow_null=True)
 
     class Meta:
         model = User
