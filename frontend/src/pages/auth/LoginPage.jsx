@@ -22,7 +22,7 @@ export default function LoginPage() {
       navigate('/otp-verification', { state: { purpose: 'login', email: result.email } })
     } catch (err) {
       setLocalError(err.payload?.message || err.message || 'Failed to send OTP')
-    } finally {
+    } finally { 
       setIsSubmitting(false)
     }
   }

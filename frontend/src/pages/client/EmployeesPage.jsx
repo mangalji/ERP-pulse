@@ -74,8 +74,19 @@ export default function EmployeesPage() {
   const handleCreate = async (event) => {
     event.preventDefault()
 
-    if (!form.email.trim()) {
+    const email = form.email.trim()
+
+    if (!email) {
       addToast('Email is required', 'error')
+      return
+    }
+    if (email.length > 40) {
+      addToast('Email must not exceed 40 characters.', 'error')
+      return
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      addToast('Please enter a valid email address.', 'error')
       return
     }
     if (!form.first_name.trim()) {

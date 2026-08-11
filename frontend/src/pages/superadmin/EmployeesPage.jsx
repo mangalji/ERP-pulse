@@ -81,9 +81,20 @@ export default function EmployeesPage() {
 
   const handleCreate = async () => {
     setFormError('')
-    
-    if (!form.email.trim()){
+    const email = form.email.trim()
+
+    if (!email){
       setFormError('Email is required.')
+      return
+    }
+
+    if (email.length > 40){
+      setFormError('Email must not exceed 40 characters.')
+      return 
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFormError('Please enter a valid email address.')
       return
     }
 
@@ -210,7 +221,7 @@ export default function EmployeesPage() {
     { key: 'department', header: 'Department', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.department || '—'}</span> },
     {
       key: 'is_staff',
-      header: 'Admin',
+      header: 'ROLE',
       render: (row) => (
         <StatusBadge status={row.is_staff ? 'ADMIN' : 'EMPLOYEE'} />
       ),
