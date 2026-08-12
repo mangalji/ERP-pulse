@@ -53,6 +53,13 @@ const QUICK_ACTIONS = [
     permission: null,
   },
   {
+  to: '/app/ocr-test',
+  label: 'OCR',
+  icon: OcrIcon,
+  module: null,
+  permission: null,
+},
+  {
     to: '/app/reports-engine/generate',
     label: 'Generate Report',
     icon: ReportEngineIcon,

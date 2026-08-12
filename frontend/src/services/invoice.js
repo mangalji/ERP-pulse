@@ -4,7 +4,7 @@ export const invoiceApi = {
   upload: (files) => {
     const formData = new FormData()
     files.forEach((file) => formData.append('files', file))
-    return apiClient.post('/api/v1/invoice/upload/', formData, {
+    return apiClient.post('/invoice/upload/', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then(unwrap)
   },

@@ -220,10 +220,10 @@ export default function EmployeesPage() {
     { key: 'designation', header: 'Designation', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.designation || '—'}</span> },
     { key: 'department', header: 'Department', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.department || '—'}</span> },
     {
-      key: 'is_staff',
+      key: 'role',
       header: 'ROLE',
       render: (row) => (
-        <StatusBadge status={row.is_staff ? 'ADMIN' : 'EMPLOYEE'} />
+        <StatusBadge status={row.role || (row.is_staff ? 'ADMIN' : 'EMPLOYEE')} />
       ),
     },
     {

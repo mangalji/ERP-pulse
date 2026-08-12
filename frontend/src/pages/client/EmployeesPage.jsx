@@ -108,7 +108,8 @@ export default function EmployeesPage() {
         email: form.email,
         first_name: form.first_name,
         last_name: form.last_name,
-        role_id: form.role_id ? Number(form.role_id) : undefined,
+        // role_id: form.role_id ? Number(form.role_id) : undefined,
+        role_id: form.role_id || undefined,
         designation: form.designation,
         department: form.department,
       })
@@ -169,7 +170,8 @@ export default function EmployeesPage() {
       await clientApi.updateEmployee(editingEmployee.id, {
         first_name: form.first_name,
         last_name: form.last_name,
-        role_id: form.role_id ? Number(form.role_id) : undefined,
+        // role_id: form.role_id ? Number(form.role_id) : undefined,
+        role_id: form.role_id || undefined,
         designation: form.designation,
         department: form.department,
       })

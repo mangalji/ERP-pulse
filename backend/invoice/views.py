@@ -19,7 +19,7 @@ from audit.models import AuditAction, AuditModule
 
 from invoice.services import invoice_service, start_background_processing
 from invoice.validators import InvoiceValidator
-from invoice.models import InvoiceBatch, InvoiceFile, ExtractedInvoice, InvoiceReviewHistory, InvoiceNetSuiteMapping, FileStatus, ExtractionStatus
+from invoice.models import InvoiceBatch, InvoiceFile, ExtractedInvoice, InvoiceReviewHistory, InvoiceNetSuiteMapping, FileStatus, ExtractionStatus, BatchStatus
 from invoice.serializers import InvoiceBatchSerializer, InvoiceFileSerializer, ExtractedInvoiceSerializer, InvoiceNetSuiteMappingSerializer
 
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
@@ -32,7 +32,7 @@ class InvoiceUploadView(views.APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        company = getattr(request, 'company', None)
+        company = getattr(request.user, 'company', None)
         if company is None:
             return Response({'detail': 'Company context required.'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -70,8 +70,9 @@ class InvoiceUploadView(views.APIView):
                     file_size=f.size,
                     status=FileStatus.UPLOADED,
                 )
-
-        start_background_processing(batch.id)
+        invoice_service.process_batch(str(batch.id))
+        batch.refresh_from_db()
+        # start_background_processing(batch.id)
         serializer = InvoiceBatchSerializer(batch)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 

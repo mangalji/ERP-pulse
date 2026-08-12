@@ -64,6 +64,7 @@ import GenerateReportPage from '../pages/reports-engine/GenerateReportPage.jsx'
 import ScheduledReportsPage from '../pages/reports-engine/ScheduledReportsPage.jsx'
 import ReportHistoryPage from '../pages/reports-engine/ReportHistoryPage.jsx'
 import TemplatesPage from '../pages/reports-engine/TemplatesPage.jsx'
+import OcrTestPage from '../pages/client/OcrTestPage.jsx'
 
 /* Legacy flat pages (DashboardLayout) — retained on disk per DEVELOPMENT_GUIDELINES.md.
  * These pages are NOT routed; their legacy URLs redirect to /app/* equivalents.
@@ -289,6 +290,15 @@ export default function AppRoutes() {
           <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
             <ClientOcrJobsPage />
           </ModuleProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/app/ocr-test"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <OcrTestPage />
+          </ProtectedRoute>
         }
       />
       <Route
