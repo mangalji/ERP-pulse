@@ -1,68 +1,125 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
+import apiClient from '../../services/apiClient.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
+import Button from '../../components/ui/Button.jsx'
 
 export default function OcrTestResultPage() {
   const navigate = useNavigate()
-  const [result, setResult] = useState(null)
+  const { documentId } = useParams()
+
+  const [text, setText] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    const storedResult = sessionStorage.getItem('ocr_test_result')
+    const loadResult = async () => {
+      if (!documentId) {
+        const result = sessionStorage.getItem('ocr_test_result')
 
-    if (!storedResult) {
-      navigate('/app/ocr-test', { replace: true })
-      return
+        if (!result) {
+          navigate('/app/ocr-test', { replace: true })
+          return
+        }
+
+        try {
+          const parsed = JSON.parse(result)
+          setText(JSON.stringify(parsed, null, 2))
+        } catch {
+          setText(result)
+        }
+
+        return
+      }
+
+      try {
+        setLoading(true)
+        setError('')
+
+        const response = await apiClient.get(
+          `/ocr/documents/${documentId}/history/`,
+        )
+
+        const responseData = response?.data?.data ?? response?.data ?? {}
+        const versions = responseData?.versions ?? []
+
+        if (!versions.length) {
+          throw new Error('No saved OCR version was found.')
+        }
+
+        const latest = [...versions].sort(
+          (a, b) => (b.version_number ?? 0) - (a.version_number ?? 0),
+        )[0]
+
+        const savedResult = {
+          status:
+            latest?.normalized_json?.status ||
+            (responseData.status === 'EXTRACTED'
+              ? 'COMPLETED'
+              : responseData.status || 'COMPLETED'),
+          upload_id: responseData.upload_id || null,
+          filename: responseData.filename || null,
+          data: latest.normalized_json ?? {},
+        }
+
+        setText(JSON.stringify(savedResult, null, 2))
+      } catch (err) {
+        console.error('Failed to load saved OCR result:', err)
+
+        setError(
+          err?.response?.data?.detail ||
+            err?.response?.data?.error ||
+            err?.message ||
+            'Failed to load saved OCR result.',
+        )
+      } finally {
+        setLoading(false)
+      }
     }
 
-    try {
-      const parsedResult = JSON.parse(storedResult)
-      setResult(parsedResult)
-    } catch (error) {
-      console.error('Failed to parse stored OCR result:', error)
-      sessionStorage.removeItem('ocr_test_result')
-      navigate('/app/ocr-test', { replace: true })
-    }
-  }, [navigate])
-
-  const handleBackToOCR = () => {
-    navigate('/app/ocr-test')
-  }
+    loadResult()
+  }, [documentId, navigate])
 
   return (
-    <ClientLayout
-      title="OCR Result"
-      breadcrumb="OCR Result"
-    >
+    <ClientLayout title="OCR Result" breadcrumb="OCR Result">
       <div className="mx-auto w-full max-w-5xl">
         <Card className="p-6">
-          <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
             <div>
               <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
                 OCR Result
               </h1>
 
               <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Structured data extracted from the uploaded file.
+                Saved OCR result.
               </p>
             </div>
 
-            <button
+            <Button
               type="button"
-              onClick={handleBackToOCR}
-              className="shrink-0 rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-ink)] transition hover:bg-[var(--color-canvas)]"
+              intent="secondary"
+              onClick={() => navigate('/app/ocr-test')}
             >
               Back to OCR
-            </button>
+            </Button>
           </div>
 
-          <div className="overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-5">
-            <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-6 text-[var(--color-ink)]">
-              {result !== null
-                ? JSON.stringify(result, null, 2)
-                : 'Loading result...'}
-            </pre>
-          </div>
+          {loading ? (
+            <div className="rounded-lg border border-[var(--color-border)] p-6 text-sm text-[var(--color-muted)]">
+              Loading saved OCR result...
+            </div>
+          ) : error ? (
+            <div className="rounded-lg border border-[var(--color-negative)] p-6 text-sm text-[var(--color-negative)]">
+              {error}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-5">
+              <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-6 text-[var(--color-ink)]">
+                {text}
+              </pre>
+            </div>
+          )}
         </Card>
       </div>
     </ClientLayout>

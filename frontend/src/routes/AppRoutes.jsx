@@ -309,6 +309,10 @@ export default function AppRoutes() {
     </ProtectedRoute>
   }
 />
+{/* <Route path="/app/ocr-test" element={<OcrTestPage />} />
+<Route path="/app/ocr-test/result" element={<OcrTestResultPage />} /> */}
+<Route path="/app/ocr-test/history/:documentId" element={<OcrTestResultPage />} />
+
       <Route
         path="/app/ai-assistant"
         element={

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../../services/apiClient.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
@@ -19,6 +19,38 @@ export default function OcrTestPage() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [history, setHistory] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState('')
+
+  const loadHistory = useCallback(async () => {
+    try {
+      setHistoryLoading(true)
+      setHistoryError('')
+
+      const response = await apiClient.get('/ocr/history/')
+      const data = response?.data?.data ?? response?.data ?? {}
+      const results = Array.isArray(data)
+        ? data
+        : data?.results ?? data?.items ?? []
+
+      setHistory(Array.isArray(results) ? results : [])
+    } catch (err) {
+      console.error('Failed to load OCR history:', err)
+      setHistoryError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Failed to load OCR history.',
+      )
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadHistory()
+  }, [loadHistory])
 
   const handleFileChange = (event) => {
     const file = event.target.files?.[0]
@@ -105,9 +137,23 @@ export default function OcrTestPage() {
     }
   }
 
+  const formatDate = (value) => {
+    if (!value) return '--'
+
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '--'
+
+    return date.toLocaleString()
+  }
+
+  const statusLabel = (status) => {
+    if (!status) return 'Unknown'
+    return String(status).replaceAll('_', ' ')
+  }
+
   return (
     <ClientLayout title="OCR Test" breadcrumb="OCR Test">
-      <div className="mx-auto w-full max-w-3xl">
+      <div className="mx-auto w-full max-w-5xl space-y-6">
         <Card className="p-6">
           <div className="mb-6">
             <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
@@ -164,6 +210,86 @@ export default function OcrTestPage() {
               </Button>
             </div>
           </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="mb-5 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+                Recent OCR History
+              </h2>
+              <p className="mt-1 text-sm text-[var(--color-muted)]">
+                Previously processed files saved to your OCR history.
+              </p>
+            </div>
+
+            <Button
+              type="button"
+              intent="secondary"
+              onClick={loadHistory}
+              disabled={historyLoading}
+            >
+              {historyLoading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+
+          {historyError && (
+            <p className="mb-4 text-sm text-[var(--color-negative)]">
+              {historyError}
+            </p>
+          )}
+
+          {historyLoading ? (
+            <div className="rounded-lg border border-[var(--color-border)] p-5 text-sm text-[var(--color-muted)]">
+              Loading OCR history...
+            </div>
+          ) : history.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
+              <p className="text-sm font-medium text-[var(--color-ink)]">
+                No OCR history yet
+              </p>
+              <p className="mt-1 text-sm text-[var(--color-muted)]">
+                Your processed PDF and image files will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+              {history.map((item) => (
+                <button
+                  key={item.upload_id}
+                  type="button"
+                  onClick={() =>
+                    item.document_id &&
+                    navigate(`/app/ocr-test/history/${item.document_id}`)
+                  }
+                  disabled={!item.document_id}
+                  className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-[var(--color-canvas)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <div className="min-w-0">
+                    <p className="break-all text-sm font-medium text-[var(--color-ink)]">
+                      {item.filename || 'Unnamed file'}
+                    </p>
+
+                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                      {formatDate(item.created_at)}
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 text-right">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                      {statusLabel(item.status)}
+                    </p>
+
+                    {item.document_type && (
+                      <p className="mt-1 text-xs text-[var(--color-muted)]">
+                        {statusLabel(item.document_type)}
+                      </p>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </Card>
       </div>
     </ClientLayout>
