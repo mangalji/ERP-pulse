@@ -9,13 +9,11 @@ const ALLOWED_TYPES = [
   'application/pdf',
   'image/png',
   'image/jpeg',
-  'image/webp',
 ]
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024
 
 export default function OcrTestPage() {
   const navigate = useNavigate()
+
   const [selectedFile, setSelectedFile] = useState(null)
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
@@ -26,22 +24,14 @@ export default function OcrTestPage() {
     setError('')
     setSelectedFile(null)
 
-    if (!file) return
+    if (!file) {
+      return
+    }
 
     if (!ALLOWED_TYPES.includes(file.type)) {
-      setError('Please select a PDF, PNG, JPG, JPEG or WEBP file.')
-      event.target.value = ''
-      return
-    }
-
-    if (file.size <= 0) {
-      setError('The selected file is empty.')
-      event.target.value = ''
-      return
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      setError('File size cannot exceed 10 MB.')
+      setError(
+        'Please select a PDF, PNG, JPG or JPEG file.'
+      )
       event.target.value = ''
       return
     }
@@ -50,8 +40,8 @@ export default function OcrTestPage() {
   }
 
   const handleExtract = async () => {
-    if (!selectedFile || processing) {
-      if (!selectedFile) setError('Please select a PDF or image first.')
+    if (!selectedFile) {
+      setError('Please select a PDF or image first.')
       return
     }
 
@@ -69,64 +59,60 @@ export default function OcrTestPage() {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
-        },
+        }
       )
 
-      const responseData = response?.data ?? {}
-      const result = responseData?.data ?? responseData
-
-      if (!result || typeof result !== 'object') {
-        throw new Error('OCR returned an invalid JSON response.')
-      }
+      const extractedText = response.data
 
       sessionStorage.setItem(
         'ocr_test_result',
-        JSON.stringify({
-          status: responseData.status || 'COMPLETED',
-          upload_id: responseData.upload_id || null,
-          filename: responseData.filename || selectedFile.name,
-          data: result,
-        }),
+        extractedText
       )
 
       navigate('/app/ocr-test/result')
+
     } catch (err) {
       console.error('OCR test failed:', err)
 
       const detail =
         err?.response?.data?.detail ||
-        err?.response?.data?.error ||
         err?.message ||
         'OCR extraction failed.'
 
       setError(detail)
+
     } finally {
       setProcessing(false)
     }
   }
 
   return (
-    <ClientLayout title="OCR Test" breadcrumb="OCR Test">
+    <ClientLayout
+      title="OCR Test"
+      breadcrumb="OCR Test"
+    >
       <div className="mx-auto w-full max-w-3xl">
         <Card className="p-6">
+
           <div className="mb-6">
             <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
               OCR Test
             </h1>
 
             <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Upload a PDF or image and extract structured data using the approved document extraction pipeline.
+              Upload a PDF or image and extract its complete text.
             </p>
           </div>
 
           <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6">
+
             <label className="block text-sm font-medium text-[var(--color-ink)]">
               Upload PDF / Image
             </label>
 
             <input
               type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
+              accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
               onChange={handleFileChange}
               disabled={processing}
               className="mt-3 block w-full text-sm text-[var(--color-muted)]"
@@ -160,9 +146,12 @@ export default function OcrTestPage() {
                 onClick={handleExtract}
                 disabled={processing}
               >
-                {processing ? 'Extracting...' : 'Extract Data'}
+                {processing
+                  ? 'Extracting...'
+                  : 'Extract Data'}
               </Button>
             </div>
+
           </div>
         </Card>
       </div>

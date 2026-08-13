@@ -65,7 +65,7 @@ import ScheduledReportsPage from '../pages/reports-engine/ScheduledReportsPage.j
 import ReportHistoryPage from '../pages/reports-engine/ReportHistoryPage.jsx'
 import TemplatesPage from '../pages/reports-engine/TemplatesPage.jsx'
 import OcrTestPage from '../pages/client/OcrTestPage.jsx'
-
+import OcrTestResultPage from '../pages/client/OcrTestResultPage.jsx'
 /* Legacy flat pages (DashboardLayout) — retained on disk per DEVELOPMENT_GUIDELINES.md.
  * These pages are NOT routed; their legacy URLs redirect to /app/* equivalents.
  * Commented imports kept for traceability. Do not delete files.
@@ -301,6 +301,14 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route
+  path="/app/ocr-test/result"
+  element={
+    <ProtectedRoute requiredRole="client">
+      <OcrTestResultPage />
+    </ProtectedRoute>
+  }
+/>
       <Route
         path="/app/ai-assistant"
         element={
