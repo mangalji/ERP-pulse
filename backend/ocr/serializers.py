@@ -102,3 +102,62 @@ class UploadResponseSerializer(serializers.Serializer):
     size = serializers.IntegerField(source='file_size')
     extension = serializers.CharField()
     file_hash = serializers.CharField()
+
+class OCRLineItemHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = __import__('ocr.models', fromlist=['OCRLineItem']).OCRLineItem
+        fields = [
+            'id',
+            'line_number',
+            'description',
+            'quantity',
+            'unit_price',
+            'amount',
+        ]
+
+
+class OCRHistoryVersionSerializer(serializers.ModelSerializer):
+    line_items = OCRLineItemHistorySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = __import__('ocr.models', fromlist=['OCRDocumentVersion']).OCRDocumentVersion
+        fields = [
+            'id',
+            'version_number',
+            'invoice_number',
+            'invoice_date',
+            'due_date',
+            'vendor_name',
+            'customer_name',
+            'subsidiary',
+            'currency',
+            'subtotal',
+            'tax_amount',
+            'tax_rate',
+            'total_amount',
+            'payment_terms',
+            'line_items',
+            'normalized_json',
+            'created_at',
+        ]
+
+
+class OCRDocumentHistorySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    upload_id = serializers.UUIDField(allow_null=True)
+    filename = serializers.CharField(allow_null=True, allow_blank=True)
+    document_type = serializers.CharField()
+    status = serializers.CharField()
+    current_version = serializers.IntegerField()
+    overall_confidence = serializers.FloatField(allow_null=True)
+    processing_metadata = serializers.JSONField()
+    versions = OCRHistoryVersionSerializer(many=True)
+
+
+class OCRHistoryListSerializer(serializers.Serializer):
+    upload_id = serializers.UUIDField()
+    document_id = serializers.UUIDField(allow_null=True)
+    filename = serializers.CharField()
+    status = serializers.CharField()
+    document_type = serializers.CharField(allow_null=True, allow_blank=True)
+    created_at = serializers.DateTimeField()

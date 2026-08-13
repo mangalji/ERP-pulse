@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from ocr.services.ocr_service import ocr_service
 from ocr.notebook_extraction_service import notebook_gemini_extractor
+from ocr.services.extraction_persistence import persist_extraction
 from ocr.utils import logger
 
 
@@ -60,10 +61,19 @@ class OCRTestExtractView(APIView):
                 ]
             )
 
+            document, version = persist_extraction(
+                upload=upload,
+                user=request.user,
+                result=result,
+            )
+
             return Response(
                 {
                     "status": "COMPLETED",
                     "upload_id": str(upload.id),
+                    "document_id": str(document.id),
+                    "version_id": str(version.id),
+                    "version_number": version.version_number,
                     "filename": upload.original_filename,
                     "data": result,
                 },

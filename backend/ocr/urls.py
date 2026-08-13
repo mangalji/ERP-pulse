@@ -10,12 +10,14 @@ from django.urls import path
 from ocr.views import (
     DocumentHistoryView,
     DocumentVersionView,
+    OCRHistoryListView,
     UploadView,
 )
 from .test_ocr_view import OCRTestExtractView
 
 urlpatterns = [
     path('upload/', UploadView.as_view(), name='ocr-upload'),
+    path('history/', OCRHistoryListView.as_view(), name='ocr-history'),
     path('documents/<uuid:document_id>/history/',DocumentHistoryView.as_view(),name='ocr-document-history'),
     path('documents/<uuid:document_id>/history/<int:version>/',DocumentVersionView.as_view(),name='ocr-document-version'),
     path("test-extract/",OCRTestExtractView.as_view(),name="ocr-test"),

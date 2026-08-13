@@ -283,9 +283,62 @@ class OCRDocumentVersion(models.Model):
             ),
         ]
 
+    # Structured extraction fields returned by the approved Gemini notebook schema.
+    # Nullable because a document may legitimately omit any of these values.
+    invoice_number = models.CharField(max_length=255, null=True, blank=True)
+    invoice_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    vendor_name = models.CharField(max_length=255, null=True, blank=True)
+    customer_name = models.CharField(max_length=255, null=True, blank=True)
+    subsidiary = models.CharField(max_length=255, null=True, blank=True)
+    currency = models.CharField(max_length=16, null=True, blank=True)
+    subtotal = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    tax_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    payment_terms = models.CharField(max_length=255, null=True, blank=True)
+
+
     def __str__(self) -> str:
         return f'{self.document_id} v{self.version_number}'
 
+class OCRLineItem(models.Model):
+    """
+    Structured line-item fields returned by the approved extraction schema.
+
+    One row is stored for every line item returned by Gemini. Missing values
+    are kept as NULL. ``normalized_json`` on the parent version remains the
+    source-of-truth snapshot for the complete model response.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    version = models.ForeignKey(
+        OCRDocumentVersion,
+        on_delete=models.CASCADE,
+        related_name='line_items',
+    )
+    line_number = models.PositiveIntegerField()
+    description = models.TextField(null=True, blank=True)
+    quantity = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    unit_price = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ocr_line_item'
+        ordering = ['line_number']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['version', 'line_number'],
+                name='unique_ocr_line_item_number',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['version', 'line_number'], name='ocr_line_item_version_idx'),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.version_id} line {self.line_number}'
 
 class OCRQualityMetric(models.Model):
     """
