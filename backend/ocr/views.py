@@ -15,6 +15,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from common.utils.response import success_response
+from rest_framework.response import Response
 from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch
 from ocr.serializers import (
     DocumentHistorySerializer,
@@ -160,161 +161,161 @@ class UploadView(APIView):
             status_code=status.HTTP_201_CREATED,
         ) 
 
-class OCRBatchHistoryView(APIView):
-    """
-    GET /api/v1/ocr/history/
+# class OCRBatchHistoryView(APIView):
+#     """
+#     GET /api/v1/ocr/history/
 
-    Employee:
-        own individual uploads and own batches.
+#     Employee:
+#         own individual uploads and own batches.
 
-    Company Admin:
-        all company batches/uploads.
+#     Company Admin:
+#         all company batches/uploads.
 
-    A batch with >1 files becomes one top-level history entry.
-    A one-file batch is shown as a normal single-file entry.
-    """
-    permission_classes = [IsAuthenticated]
+#     A batch with >1 files becomes one top-level history entry.
+#     A one-file batch is shown as a normal single-file entry.
+#     """
+#     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        batch_qs = (
-            _visible_batch_queryset(request.user)
-            .select_related('user', 'company')
-            .annotate(file_count=Count("uploads", distinct=True))
-            .order_by('-created_at')
-        )
-        batches = list(batch_qs[:100])
+#     def get(self, request):
+#         batch_qs = (
+#             _visible_batch_queryset(request.user)
+#             .select_related('user', 'company')
+#             .annotate(file_count=Count("uploads", distinct=True))
+#             .order_by('-created_at')
+#         )
+#         batches = list(batch_qs[:100])
 
-        results = []
-        represented_upload_ids = set()
+#         results = []
+#         represented_upload_ids = set()
 
-        for batch in batches:
-            uploads = list(batch.uploads.all().select_related("document").order_by('created_at'))
+#         for batch in batches:
+#             uploads = list(batch.uploads.all().select_related("document").order_by('created_at'))
 
-            for upload in uploads:
-                represented_upload_ids.add(upload.id)
+#             for upload in uploads:
+#                 represented_upload_ids.add(upload.id)
 
-            if len(uploads) > 1:
+#             if len(uploads) > 1:
 
 
-            # files = [
-            #     {
-            #         'upload_id': upload.id,
-            #         'filename': upload.original_filename,
-            #         'status': upload.status,
-            #         'document_id': (
-            #             upload.document.id if hasattr(upload, 'document') else None
-            #         ),
-            #         'created_at': upload.created_at,
-            #     }
+#             # files = [
+#             #     {
+#             #         'upload_id': upload.id,
+#             #         'filename': upload.original_filename,
+#             #         'status': upload.status,
+#             #         'document_id': (
+#             #             upload.document.id if hasattr(upload, 'document') else None
+#             #         ),
+#             #         'created_at': upload.created_at,
+#             #     }
                 
-            # ]
-                results.append(
-                    {
+#             # ]
+#                 results.append(
+#                     {
 
-                        "type": "batch",
-                        "batch_id": batch.id,
-                        "document_id": None,
-                        "upload_id": None,
-                        "filename": batch.original_filename,
-                        "file_count": len(uploads),
-                        "status": batch.status,
-                        "source_type": batch.source_type,
-                        "created_at": batch.created_at,
-                        "owner_id": str(batch.user_id),
-                        "owner_name": _user_display_name(batch.user),
-                        # 'batch_id': batch.id,
-                        # 'source_type': batch.source_type,
-                        # 'original_filename': batch.original_filename,
-                        # 'status': batch.status,
-                        # 'file_count': len(files),
-                        # 'created_at': batch.created_at,
-                        # 'started_at': batch.started_at,
-                        # 'completed_at': batch.completed_at,
-                        # 'files': files,
-                    }
-                )
-            elif len(uploads) == 1:
-                upload = uploads[0]
-                results.append(
-                    {
-                        "type": "single",
-                        "batch_id": batch.id,
-                        "document_id": (
-                            upload.document_id
-                            if hasattr(upload, "document_id")
-                            else (
-                                upload.document.id
-                                if getattr(upload, "document", None)
-                                else None
-                            )
-                        ),
-                        "upload_id": upload.id,
-                        "filename": upload.original_filename,
-                        "file_count": 1,
-                        "status": upload.status,
-                        "source_type": batch.source_type,
-                        "created_at": batch.created_at,
-                        "owner_id": str(batch.user_id),
-                        "owner_name": _user_display_name(batch.user),
-                    }
-                )
+#                         "type": "batch",
+#                         "batch_id": batch.id,
+#                         "document_id": None,
+#                         "upload_id": None,
+#                         "filename": batch.original_filename,
+#                         "file_count": len(uploads),
+#                         "status": batch.status,
+#                         "source_type": batch.source_type,
+#                         "created_at": batch.created_at,
+#                         "owner_id": str(batch.user_id),
+#                         "owner_name": _user_display_name(batch.user),
+#                         # 'batch_id': batch.id,
+#                         # 'source_type': batch.source_type,
+#                         # 'original_filename': batch.original_filename,
+#                         # 'status': batch.status,
+#                         # 'file_count': len(files),
+#                         # 'created_at': batch.created_at,
+#                         # 'started_at': batch.started_at,
+#                         # 'completed_at': batch.completed_at,
+#                         # 'files': files,
+#                     }
+#                 )
+#             elif len(uploads) == 1:
+#                 upload = uploads[0]
+#                 results.append(
+#                     {
+#                         "type": "single",
+#                         "batch_id": batch.id,
+#                         "document_id": (
+#                             upload.document_id
+#                             if hasattr(upload, "document_id")
+#                             else (
+#                                 upload.document.id
+#                                 if getattr(upload, "document", None)
+#                                 else None
+#                             )
+#                         ),
+#                         "upload_id": upload.id,
+#                         "filename": upload.original_filename,
+#                         "file_count": 1,
+#                         "status": upload.status,
+#                         "source_type": batch.source_type,
+#                         "created_at": batch.created_at,
+#                         "owner_id": str(batch.user_id),
+#                         "owner_name": _user_display_name(batch.user),
+#                     }
+#                 )
 
-        # Legacy uploads with no batch are kept visible according to the same
-        # user/company ownership rule.
-        legacy_qs = OCRUpload.objects.filter(
-            batch__isnull=True,
-        ).select_related("user", "document")
+#         # Legacy uploads with no batch are kept visible according to the same
+#         # user/company ownership rule.
+#         legacy_qs = OCRUpload.objects.filter(
+#             batch__isnull=True,
+#         ).select_related("user", "document")
 
-        if _is_company_admin(request.user):
-            legacy_qs = legacy_qs.filter(
-                user__company=request.user.company,
-            )
-        else:
-            legacy_qs = legacy_qs.filter(
-                user=request.user,
-            )
+#         if _is_company_admin(request.user):
+#             legacy_qs = legacy_qs.filter(
+#                 user__company=request.user.company,
+#             )
+#         else:
+#             legacy_qs = legacy_qs.filter(
+#                 user=request.user,
+#             )
 
-        for upload in legacy_qs.order_by("-created_at")[:100]:
-            if upload.id in represented_upload_ids:
-                continue
+#         for upload in legacy_qs.order_by("-created_at")[:100]:
+#             if upload.id in represented_upload_ids:
+#                 continue
 
-            document = getattr(upload, "document", None)
+#             document = getattr(upload, "document", None)
 
-            results.append(
-                {
-                    "type": "single",
-                    "batch_id": None,
-                    "document_id": document.id if document else None,
-                    "upload_id": upload.id,
-                    "filename": upload.original_filename,
-                    "file_count": 1,
-                    "status": upload.status,
-                    "source_type": None,
-                    "created_at": upload.created_at,
-                    "owner_id": str(upload.user_id),
-                    "owner_name": _user_display_name(upload.user),
-                }
-            )
+#             results.append(
+#                 {
+#                     "type": "single",
+#                     "batch_id": None,
+#                     "document_id": document.id if document else None,
+#                     "upload_id": upload.id,
+#                     "filename": upload.original_filename,
+#                     "file_count": 1,
+#                     "status": upload.status,
+#                     "source_type": None,
+#                     "created_at": upload.created_at,
+#                     "owner_id": str(upload.user_id),
+#                     "owner_name": _user_display_name(upload.user),
+#                 }
+#             )
 
-        results.sort(
-            key=lambda item: item["created_at"],
-            reverse=True,
-        )
+#         results.sort(
+#             key=lambda item: item["created_at"],
+#             reverse=True,
+#         )
 
-        # serializer = OCRBatchHistorySerializer(results, many=True)
-        # return success_response(
-        #     message='OCR history fetched successfully.',
-        #     data=serializer.data,
-        # )
-        serializer = OCRHistoryEntrySerializer(results[:100], many=True)
+#         # serializer = OCRBatchHistorySerializer(results, many=True)
+#         # return success_response(
+#         #     message='OCR history fetched successfully.',
+#         #     data=serializer.data,
+#         # )
+#         serializer = OCRHistoryEntrySerializer(results[:100], many=True)
 
-        return success_response(
-            message="OCR history fetched successfully.",
-            data={
-                "results": serializer.data,
-                "count": len(serializer.data),
-            },
-        )
+#         return success_response(
+#             message="OCR history fetched successfully.",
+#             data={
+#                 "results": serializer.data,
+#                 "count": len(serializer.data),
+#             },
+#         )
 
 def _build_upload_result(upload):
     document = getattr(upload, "document", None)
@@ -483,32 +484,188 @@ class OCRHistoryListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        uploads = (
-            OCRUpload.objects
-            .filter(user=request.user)
-            .select_related('document')
-            .order_by('-created_at')[:100]
+        try:
+            offset = max(
+                0,
+                int(request.query_params.get("offset", 0)),
+            )
+
+            limit = min(
+                max(
+                    1,
+                    int(
+                        request.query_params.get(
+                            "limit",
+                            10,
+                        )
+                    ),
+                ),
+                10,
+            )
+
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    "detail": (
+                        "offset and limit must be "
+                        "valid integers."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = (
+            _visible_batch_queryset(request.user)
+            .select_related("user", "company")
+            .prefetch_related(
+                "uploads__document"
+            )
+            .order_by("-created_at")
         )
 
         results = []
-        for upload in uploads:
-            document = getattr(upload, 'document', None)
-            results.append(
-                {
-                    'upload_id': upload.id,
-                    'document_id': document.id if document else None,
-                    'filename': upload.original_filename,
-                    'status': upload.status,
-                    'document_type': document.document_type if document else None,
-                    'created_at': upload.created_at,
-                }
+
+        for batch in queryset:
+            uploads = list(
+                batch.uploads
+                .all()
+                .select_related("document")
+                .order_by("created_at")
             )
 
-        serializer = OCRHistoryListSerializer(results, many=True)
-        return success_response(
-            message='OCR history fetched successfully.',
-            data=serializer.data,
+            if not uploads:
+                continue
+
+            if len(uploads) > 1:
+                results.append(
+                    {
+                        "type": "batch",
+                        "batch_id": str(batch.id),
+                        "document_id": None,
+                        "upload_id": None,
+                        "filename": (
+                            batch.original_filename
+                            or f"{len(uploads)} files"
+                        ),
+                        "file_count": len(uploads),
+                        "status": batch.status,
+                        "source_type": batch.source_type,
+                        "created_at": batch.created_at,
+                        "owner_id": str(
+                            batch.user_id
+                        ),
+                        "owner_name": (
+                            _user_display_name(
+                                batch.user
+                            )
+                        ),
+                    }
+                )
+
+            else:
+                upload = uploads[0]
+                document = getattr(
+                    upload,
+                    "document",
+                    None,
+                )
+
+                results.append(
+                    {
+                        "type": "single",
+                        "batch_id": str(batch.id),
+                        "document_id": (
+                            str(document.id)
+                            if document
+                            else None
+                        ),
+                        "upload_id": str(
+                            upload.id
+                        ),
+                        "filename": (
+                            upload.original_filename
+                        ),
+                        "file_count": 1,
+                        "status": upload.status,
+                        "source_type": batch.source_type,
+                        "created_at": batch.created_at,
+                        "owner_id": str(
+                            batch.user_id
+                        ),
+                        "owner_name": (
+                            _user_display_name(
+                                batch.user
+                            )
+                        ),
+                    }
+                )
+
+        results.sort(
+            key=lambda item: item["created_at"],
+            reverse=True,
         )
+
+        total = len(results)
+
+        page_results = results[
+            offset : offset + limit
+        ]
+
+        serializer = OCRHistoryEntrySerializer(
+            page_results,
+            many=True,
+        )
+
+        return success_response(
+            message="OCR history fetched successfully.",
+            data={
+                "results": serializer.data,
+                "count": total,
+                "offset": offset,
+                "limit": limit,
+                "next_offset": (
+                    offset + limit
+                    if offset + limit < total
+                    else None
+                ),
+                "previous_offset": (
+                    max(
+                        0,
+                        offset - limit,
+                    )
+                    if offset > 0
+                    else None
+                ),
+            },
+        )
+
+    # def get(self, request):
+    #     uploads = (
+    #         OCRUpload.objects
+    #         .filter(user=request.user)
+    #         .select_related('document')
+    #         .order_by('-created_at')[:100]
+    #     )
+
+    #     results = []
+    #     for upload in uploads:
+    #         document = getattr(upload, 'document', None)
+    #         results.append(
+    #             {
+    #                 'upload_id': upload.id,
+    #                 'document_id': document.id if document else None,
+    #                 'filename': upload.original_filename,
+    #                 'status': upload.status,
+    #                 'document_type': document.document_type if document else None,
+    #                 'created_at': upload.created_at,
+    #             }
+    #         )
+
+    #     serializer = OCRHistoryListSerializer(results, many=True)
+    #     return success_response(
+    #         message='OCR history fetched successfully.',
+    #         data=serializer.data,
+    #     )
 
 
 class DocumentHistoryView(APIView):

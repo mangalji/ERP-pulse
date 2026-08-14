@@ -53,23 +53,34 @@ export default function OcrTestPage() {
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState('')
+  const [historyOffset, setHistoryOffset] = useState(0)
+  const [historyCount, setHistoryCount] = useState(0)
+  const HISTORY_PAGE_SIZE = 10
 
   const [dragActive, setDragActive] = useState(false)
+  const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
+  const [previewError, setPreviewError] = useState('')
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (offset = 0) => {
     try {
       setHistoryLoading(true)
       setHistoryError('')
 
-      const response = await apiClient.get('/ocr/history/')
-      const data = response?.data?.data ?? response?.data ?? {}
-      const items = Array.isArray(data)
-        ? data
-        : data?.results ?? data?.items ?? []
+      const response = await apiClient.get(
+        `/ocr/history/?offset=${offset}&limit=${HISTORY_PAGE_SIZE}`,
+      )
+
+      const payload = response?.data?.data ?? response?.data ?? {}
+      const items = Array.isArray(payload)
+        ? payload
+        : payload?.results ?? payload?.items ?? []
 
       setHistory(Array.isArray(items) ? items : [])
+      setHistoryCount(Number(payload?.count ?? items.length))
+      setHistoryOffset(offset)
     } catch (err) {
       console.error('Failed to load OCR history:', err)
+
       setHistoryError(
         err?.response?.data?.detail ||
           err?.response?.data?.error ||
@@ -308,10 +319,31 @@ export default function OcrTestPage() {
           : []
 
         setResults(files)
+        sessionStorage.setItem(
+          `ocr_test_live_results_${batchId}`,
+          JSON.stringify(files),
+          )
         setActiveIndex((current) => {
           if (!files.length) return 0
           return Math.min(current, files.length - 1)
         })
+
+        const completedOrFailed = files.some((item) => 
+          ['COMPLETED', 'FAILED'].includes(
+              item.status,
+            ),
+          )
+
+        if (completedOrFailed) {
+          sessionStorage.setItem(
+        `ocr_test_result`,
+        JSON.stringify({
+          status: batch?.status ?? 'PROCESSING',
+          batch_id: batchId,
+          files,
+          }),
+        )
+      }
 
         const allTerminal =
           files.length > 0 &&
@@ -356,7 +388,64 @@ export default function OcrTestPage() {
     )
   })
 
-  const activeFile = activeSelectedItem?.file ?? selectedFiles[activeIndex]?.file ?? null
+  const activeFile =
+    results.length > 0
+      ? activeSelectedItem?.file ?? null
+      : selectedFiles[activeIndex]?.file ?? null
+
+  const activePreviewUrl =
+    remotePreviewUrl ??
+    activeSelectedItem?.previewUrl ??
+    selectedFiles[activeIndex]?.previewUrl ??
+    null
+
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl = null
+
+    const loadRemotePreview = async () => {
+      setPreviewError('')
+      setRemotePreviewUrl(null)
+
+      if (!activeResult?.preview_url) {
+        return
+      }
+
+      try {
+        const response = await apiClient.get(
+          activeResult.preview_url,
+          { responseType: 'blob' },
+        )
+
+        if (cancelled) {
+          return
+        }
+
+        objectUrl = URL.createObjectURL(response.data)
+        setRemotePreviewUrl(objectUrl)
+      } catch (err) {
+        console.error('Failed to load OCR file preview:', err)
+
+        if (!cancelled) {
+          setPreviewError(
+            err?.response?.data?.detail ||
+              err?.message ||
+              'Unable to load file preview.',
+          )
+        }
+      }
+    }
+
+    loadRemotePreview()
+
+    return () => {
+      cancelled = true
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [activeResult?.preview_url])
 
   const activeOutput = useMemo(() => {
     if (!activeResult) return ''
@@ -569,7 +658,9 @@ export default function OcrTestPage() {
                   </p>
 
                   <p className="mt-1 truncate text-sm font-semibold text-[var(--color-ink)]">
-                    {activeFile?.name || 'Select a file'}
+                    {activeResult?.filename ||
+                      activeFile?.name ||
+                      'Select a file'}
                   </p>
                 </div>
 
@@ -583,63 +674,104 @@ export default function OcrTestPage() {
               </div>
 
               <div className="flex min-h-0 flex-1 items-center justify-center bg-[var(--color-canvas)] p-4">
-                {activeResult?.filename && !activeFile && (
-                  <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
-                    <p className="text-sm font-semibold text-[var(--color-ink)]">
-                      {activeResult.filename}
-                    </p>
-                    <p className="mt-2 text-sm text-[var(--color-muted)]">
-                      This file came from a ZIP archive. The OCR result is available,
-                      but a local browser preview is not available for the extracted
-                      child file yet.
-                    </p>
+                {previewError && (
+                  <div className="max-w-md rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+                    {previewError}
                   </div>
                 )}
 
-                {activeFile && isZip(activeFile) && (
-                  <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
-                    <p className="text-sm font-semibold text-[var(--color-ink)]">
-                      {activeFile.name}
-                    </p>
-                    <p className="mt-2 text-sm text-[var(--color-muted)]">
-                      ZIP archive uploaded. After extraction, use Next / Previous
-                      to review each processed child file.
-                    </p>
-                  </div>
-                )}
+                {!previewError &&
+                  activeResult?.filename &&
+                  activePreviewUrl &&
+                  isPdf({
+                    type: 'application/pdf',
+                    name: activeResult.filename,
+                  }) && (
+                    <div className="flex h-full w-full flex-col gap-3">
+                      <iframe
+                        title={activeResult.filename}
+                        src={activePreviewUrl}
+                        className="min-h-[420px] w-full rounded-lg border border-[var(--color-border)] bg-white"
+                      />
 
-                {activeFile && isImage(activeFile) && (
-                  <img
-                    src={activeSelectedItem?.previewUrl || selectedFiles[activeIndex]?.previewUrl}
-                    alt={activeFile.name}
-                    className="max-h-[430px] max-w-full rounded-lg object-contain shadow-sm"
-                  />
-                )}
+                      <a
+                        href={activePreviewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-center text-sm font-medium text-[var(--color-primary)] hover:underline"
+                      >
+                        Open PDF in new tab
+                      </a>
+                    </div>
+                  )}
 
-                {activeFile && isPdf(activeFile) && (
-                  <div className="flex h-full w-full flex-col gap-3">
-                    <iframe
-                      title={activeFile.name}
-                      src={selectedFiles[activeIndex]?.previewUrl}
-                      className="min-h-[420px] w-full rounded-lg border border-[var(--color-border)] bg-white"
+                {!previewError &&
+                  activeResult?.filename &&
+                  activePreviewUrl &&
+                  !/\.pdf$/i.test(activeResult.filename) && (
+                    <img
+                      src={activePreviewUrl}
+                      alt={activeResult.filename}
+                      className="max-h-[430px] max-w-full rounded-lg object-contain shadow-sm"
                     />
+                  )}
 
-                    <a
-                      href={selectedFiles[activeIndex]?.previewUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-center text-sm font-medium text-[var(--color-primary)] hover:underline"
-                    >
-                      Open PDF in new tab
-                    </a>
-                  </div>
-                )}
+                {!previewError &&
+                  !activeResult?.preview_url &&
+                  activeFile &&
+                  isZip(activeFile) && (
+                    <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
+                      <p className="text-sm font-semibold text-[var(--color-ink)]">
+                        {activeFile.name}
+                      </p>
+                      <p className="mt-2 text-sm text-[var(--color-muted)]">
+                        ZIP archive uploaded. Extract the files to review their
+                        individual previews.
+                      </p>
+                    </div>
+                  )}
 
-                {!activeFile && (
-                  <p className="text-sm text-[var(--color-muted)]">
-                    Select a file to preview it.
-                  </p>
-                )}
+                {!previewError &&
+                  !activeResult?.preview_url &&
+                  activeFile &&
+                  isImage(activeFile) && (
+                    <img
+                      src={activePreviewUrl}
+                      alt={activeFile.name}
+                      className="max-h-[430px] max-w-full rounded-lg object-contain shadow-sm"
+                    />
+                  )}
+
+                {!previewError &&
+                  !activeResult?.preview_url &&
+                  activeFile &&
+                  isPdf(activeFile) && (
+                    <div className="flex h-full w-full flex-col gap-3">
+                      <iframe
+                        title={activeFile.name}
+                        src={activePreviewUrl}
+                        className="min-h-[420px] w-full rounded-lg border border-[var(--color-border)] bg-white"
+                      />
+
+                      <a
+                        href={activePreviewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-center text-sm font-medium text-[var(--color-primary)] hover:underline"
+                      >
+                        Open PDF in new tab
+                      </a>
+                    </div>
+                  )}
+
+                {!previewError &&
+                  !activeFile &&
+                  !activeResult?.preview_url && (
+                    <p className="text-sm text-[var(--color-muted)]">
+                      Select a file to preview it.
+                    </p>
+                  )}
+
               </div>
 
               <div className="flex items-center justify-between border-t border-[var(--color-border)] p-4">
@@ -784,57 +916,121 @@ export default function OcrTestPage() {
                 Processed files will appear here.
               </p>
             </div>
-          ) : (
-            <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
-              {history.map((item) => (
-                <button
-                  key={item.batch_id || item.upload_id}
-                  type="button"
-                  onClick={() => {
-                    if (item.batch_id && item.file_count > 1) {
-                      navigate(`/app/ocr-test/history/batch/${item.batch_id}`)
-                      return
-                    }
+                    ) : (
+                        <>
+              <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+                {history.map((item) => (
+                  <button
+                    key={item.batch_id || item.upload_id}
+                    type="button"
+                    onClick={() => {
+                      if (
+                        item.batch_id &&
+                        item.file_count > 1
+                      ) {
+                        navigate(
+                          `/app/ocr-test/history/batch/${item.batch_id}`,
+                        )
+                        return
+                      }
 
-                    if (item.document_id) {
-                      navigate(
-                        `/app/ocr-test/history/${item.document_id}`,
+                      if (item.document_id) {
+                        navigate(
+                          `/app/ocr-test/history/${item.document_id}`,
+                        )
+                      }
+                    }}
+                    className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-[var(--color-canvas)]"
+                  >
+                    <div className="min-w-0">
+                      <p className="break-all text-sm font-medium text-[var(--color-ink)]">
+                        {item.file_count > 1
+                          ? `${item.file_count} files`
+                          : item.filename || 'Unnamed file'}
+                      </p>
+
+                      <p className="mt-1 text-xs text-[var(--color-muted)]">
+                        {formatDate(item.created_at)}
+                      </p>
+                    </div>
+
+                    <div className="shrink-0 text-right">
+                      <p
+                        className={`text-xs font-semibold uppercase tracking-wide ${statusClass(item.status)}`}
+                      >
+                        {statusLabel(item.status)}
+                      </p>
+
+                      {item.file_count > 1 && (
+                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                          Batch
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {historyCount > HISTORY_PAGE_SIZE && (
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <Button
+                    type="button"
+                    intent="secondary"
+                    onClick={() =>
+                      loadHistory(
+                        Math.max(
+                          0,
+                          historyOffset - HISTORY_PAGE_SIZE,
+                        ),
                       )
                     }
-                  }}
-                  className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-[var(--color-canvas)]"
-                >
-                  <div className="min-w-0">
-                    <p className="break-all text-sm font-medium text-[var(--color-ink)]">
-                      {item.file_count > 1
-                        ? `${item.file_count} files`
-                        : item.filename || 'Unnamed file'}
-                    </p>
+                    disabled={
+                      historyLoading ||
+                      historyOffset === 0
+                    }
+                  >
+                    ← Previous
+                  </Button>
 
-                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      {formatDate(item.created_at)}
-                    </p>
-                  </div>
-
-                  <div className="shrink-0 text-right">
-                    <p
-                      className={`text-xs font-semibold uppercase tracking-wide ${statusClass(item.status)}`}
-                    >
-                      {statusLabel(item.status)}
-                    </p>
-
-                    {item.file_count > 1 && (
-                      <p className="mt-1 text-xs text-[var(--color-muted)]">
-                        Batch
-                      </p>
+                  <span className="text-xs text-[var(--color-muted)]">
+                    Page{' '}
+                    {Math.floor(
+                      historyOffset / HISTORY_PAGE_SIZE,
+                    ) + 1}{' '}
+                    of{' '}
+                    {Math.max(
+                      1,
+                      Math.ceil(
+                        historyCount / HISTORY_PAGE_SIZE,
+                      ),
                     )}
-                  </div>
-                </button>
-              ))}
-            </div>
+                  </span>
+
+                  <Button
+                    type="button"
+                    intent="secondary"
+                    onClick={() => {
+                      const nextOffset =
+                        historyOffset + HISTORY_PAGE_SIZE
+
+                      if (nextOffset < historyCount) {
+                        loadHistory(nextOffset)
+                      }
+                    }}
+                    disabled={
+                      historyLoading ||
+                      historyOffset + HISTORY_PAGE_SIZE >=
+                        historyCount
+                    }
+                  >
+                    Next →
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </Card>
-      </div>
-    </ClientLayout>
-  )
-}
+        </div>
+        </ClientLayout>
+      )
+    }

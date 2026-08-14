@@ -22,7 +22,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 LOCAL_DATABASE = {
     "ENGINE": "django.db.backends.sqlite3",
-    "NAME": config("LOCAL_DB_NAME", default="db.sqlite3"),
+    "NAME": config(
+        "LOCAL_DB_NAME",
+        default=str(BASE_DIR / "db.sqlite3"),
+    ),
+    "OPTIONS": {
+        "timeout": 30,
+    },
 }
 
 # ------------------------------------------------------------
@@ -31,7 +37,13 @@ LOCAL_DATABASE = {
 
 TEST_DATABASE = {
     "ENGINE": "django.db.backends.sqlite3",
-    "NAME": config("TEST_DB_NAME", default="test_db.sqlite3"),
+    "NAME": config(
+        "LOCAL_DB_NAME",
+        default=str(BASE_DIR / "db.sqlite3"),
+    ),
+    "OPTIONS": {
+        "timeout": 30,
+    },
 }
 
 # ------------------------------------------------------------

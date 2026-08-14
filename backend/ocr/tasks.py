@@ -8,10 +8,12 @@ Redis quota limiting, and per-file persistence.
 
 from __future__ import annotations
 
+import json
 import logging
 import random
-
+import redis
 from django.utils import timezone
+from django.conf import settings
 
 from ocr.exceptions import (
     GeminiConnectionException,
@@ -26,6 +28,135 @@ from ocr.services.pipeline_service import idp_pipeline_service
 
 logger = logging.getLogger(__name__)
 
+_LIVE_RESULT_TTL_SECONDS = 24 * 60 * 60
+
+OCR_EXTRACTION_CACHE_VERSION = "v2"
+
+def _live_result_key(upload_id: str) -> str:
+    return (
+        f"erp-pulse:ocr:live"
+        f"{upload_id}"
+        )
+
+
+def _file_result_cache_key(file_hash: str) -> str:
+    return (
+        f"erp-pulse:ocr:file-result:"
+        f"{OCR_EXTRACTION_CACHE_VERSION}:"
+        f"{file_hash}"
+    )
+
+
+def _redis_client():
+    return redis.Redis.from_url(
+        settings.CELERY_BROKER_URL,
+        decode_responses=True,
+    )
+
+
+
+def _is_valid_cached_result(result) -> bool:
+    if not isinstance(result, dict):
+        return False
+
+    required = {
+        "invoice_number",
+        "invoice_date",
+        "due_date",
+        "vendor_name",
+        "customer_name",
+        "subsidiary",
+        "currency",
+        "subtotal",
+        "tax_amount",
+        "tax_rate",
+        "total_amount",
+        "payment_terms",
+        "line_items",
+    }
+
+    if not required.issubset(result.keys()):
+        return False
+
+    if not isinstance(result.get("line_items"), list):
+        return False
+
+    return True
+
+
+def _read_cached_result(file_hash: str):
+
+    try:
+        cached = _redis_client().get(
+            _file_result_cache_key(file_hash)
+        )
+
+        if not cached:
+            return None
+
+        result = json.loads(cached)
+
+        if not _is_valid_cached_result(result):
+            logger.warning(
+                "Ignoring invalid OCR cache — file_hash=%s",
+                file_hash,
+                )
+            return None
+        return result
+
+    except Exception:
+        logger.exception(
+            "OCR result cache read failed — file_hash=%s",
+            file_hash,
+        )
+        return None
+
+def _write_cached_result(file_hash: str, result: dict) -> None:
+    try:
+        _redis_client().setex(
+            _file_result_cache_key(file_hash),
+            _LIVE_RESULT_TTL_SECONDS,
+            json.dumps(
+                result,
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "OCR result cache write failed — file_hash=%s",
+            file_hash,
+        )
+
+
+def _write_live_result(upload_id: str, result: dict) -> None:
+    try:
+        _redis_client().setex(
+            _live_result_key(upload_id),
+            _LIVE_RESULT_TTL_SECONDS,
+            json.dumps(
+                result,
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "OCR live-result cache write failed — upload_id=%s",
+            upload_id,
+        )
+
+
+def _sync_raw_result_snapshot(version, result: dict) -> None:
+    version.raw_ocr = result
+    version.normalized_json = result
+
+    version.save(
+        update_fields=[
+            "raw_ocr",
+            "normalized_json",
+        ]
+    )
 
 def _refresh_batch_status(batch_id):
     """Reconcile one batch from its child upload states."""
@@ -142,15 +273,57 @@ try:
                 request_id=f"{upload.id}:{self.request.id}"
             )
 
-            result = notebook_gemini_extractor.extract(
-                file_path=upload.file.path,
-                mime_type=upload.mime_type,
-            )
+            # result = notebook_gemini_extractor.extract(
+            #     file_path=upload.file.path,
+            #     mime_type=upload.mime_type,
+            # )
 
+            # document, version = persist_extraction(
+            #     upload=upload,
+            #     user=upload.user,
+            #     result=result,
+            # )
+
+            result = _read_cached_result(upload.file_hash)
+
+            if result is None:
+                result = notebook_gemini_extractor.extract(
+                    file_path=upload.file.path,
+                    mime_type=upload.mime_type,
+                )
+                if not isinstance(result,dict):
+                    raise ValueError(
+                        "OCR extractor returned an invalid result shape."
+                        )
+                if not isinstance(result.get("line_items"), list):
+                    raise ValueError(
+                        "OCR extractor returned invalid line_items."
+                        )
+
+                _write_cached_result(
+                    upload.file_hash,
+                    result,
+                )
+            else:
+                logger.info(
+                    "OCR result cache hit — upload=%s file_hash=%s",
+                    upload.id,
+                    upload.file_hash,
+                )
+            _write_live_result(
+                str(upload.id),
+                result,
+            )
+            
             document, version = persist_extraction(
                 upload=upload,
                 user=upload.user,
                 result=result,
+            )
+            
+            _sync_raw_result_snapshot(
+                version,
+                result,
             )
 
             completed_at = timezone.now()

@@ -70,7 +70,7 @@ OCR_SHARPEN_STRENGTH: float = config('OCR_SHARPEN_STRENGTH', default=0.5, cast=f
 OCR_GEMINI_MODEL: str = config('OCR_GEMINI_MODEL', default='gemini-2.5-flash')
 
 #: Request timeout in seconds for Gemini API calls.
-OCR_TIMEOUT: int = config('OCR_TIMEOUT', default=60, cast=int)
+OCR_TIMEOUT: int = config('OCR_TIMEOUT', default=180, cast=int)
 
 #: Maximum number of retry attempts on failure.
 OCR_MAX_RETRIES: int = config('OCR_MAX_RETRIES', default=3, cast=int)
