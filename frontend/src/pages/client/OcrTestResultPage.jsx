@@ -23,13 +23,7 @@ export default function OcrTestResultPage() {
           return
         }
 
-        try {
-          const parsed = JSON.parse(result)
-          setText(JSON.stringify(parsed, null, 2))
-        } catch {
-          setText(result)
-        }
-
+        setText(result)
         return
       }
 
@@ -41,25 +35,26 @@ export default function OcrTestResultPage() {
           `/ocr/documents/${documentId}/history/`,
         )
 
-        const responseData = response?.data?.data ?? response?.data ?? {}
-        const versions = responseData?.versions ?? []
+        const payload = response?.data?.data ?? response?.data ?? {}
+        const versions = payload?.versions ?? []
 
         if (!versions.length) {
           throw new Error('No saved OCR version was found.')
         }
 
         const latest = [...versions].sort(
-          (a, b) => (b.version_number ?? 0) - (a.version_number ?? 0),
+          (a, b) =>
+            (b.version_number ?? 0) - (a.version_number ?? 0),
         )[0]
 
         const savedResult = {
           status:
             latest?.normalized_json?.status ||
-            (responseData.status === 'EXTRACTED'
+            (payload.status === 'EXTRACTED'
               ? 'COMPLETED'
-              : responseData.status || 'COMPLETED'),
-          upload_id: responseData.upload_id || null,
-          filename: responseData.filename || null,
+              : payload.status || 'COMPLETED'),
+          upload_id: payload.upload_id || null,
+          filename: payload.filename || null,
           data: latest.normalized_json ?? {},
         }
 
@@ -110,7 +105,7 @@ export default function OcrTestResultPage() {
               Loading saved OCR result...
             </div>
           ) : error ? (
-            <div className="rounded-lg border border-[var(--color-negative)] p-6 text-sm text-[var(--color-negative)]">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700">
               {error}
             </div>
           ) : (

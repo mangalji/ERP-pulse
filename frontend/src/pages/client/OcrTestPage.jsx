@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../../services/apiClient.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
@@ -10,18 +10,51 @@ const ALLOWED_TYPES = [
   'image/png',
   'image/jpeg',
   'image/webp',
+  'application/zip',
+  'application/x-zip-compressed',
 ]
 
+const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.zip,application/pdf,image/png,image/jpeg,image/webp,application/zip,application/x-zip-compressed'
 const MAX_FILE_SIZE = 10 * 1024 * 1024
+const MAX_FILES = 20
+
+function createPreview(file) {
+  if (!file) return null
+  return URL.createObjectURL(file)
+}
+
+function isImage(file) {
+  return file?.type?.startsWith('image/')
+}
+
+function isPdf(file) {
+  return file?.type === 'application/pdf' || /\.pdf$/i.test(file?.name || '')
+}
+
+
+function isZip(file) {
+  return (
+    file?.type === 'application/zip' ||
+    file?.type === 'application/x-zip-compressed' ||
+    /\.zip$/i.test(file?.name || '')
+  )
+}
 
 export default function OcrTestPage() {
   const navigate = useNavigate()
-  const [selectedFile, setSelectedFile] = useState(null)
+  const inputRef = useRef(null)
+
+  const [selectedFiles, setSelectedFiles] = useState([])
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [results, setResults] = useState([])
+  const [activeIndex, setActiveIndex] = useState(0)
+
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState('')
+
+  const [dragActive, setDragActive] = useState(false)
 
   const loadHistory = useCallback(async () => {
     try {
@@ -30,11 +63,11 @@ export default function OcrTestPage() {
 
       const response = await apiClient.get('/ocr/history/')
       const data = response?.data?.data ?? response?.data ?? {}
-      const results = Array.isArray(data)
+      const items = Array.isArray(data)
         ? data
         : data?.results ?? data?.items ?? []
 
-      setHistory(Array.isArray(results) ? results : [])
+      setHistory(Array.isArray(items) ? items : [])
     } catch (err) {
       console.error('Failed to load OCR history:', err)
       setHistoryError(
@@ -52,47 +85,179 @@ export default function OcrTestPage() {
     loadHistory()
   }, [loadHistory])
 
+  useEffect(() => {
+    return () => {
+      selectedFiles.forEach(({ file }) => {
+        if (file) {
+          try {
+            URL.revokeObjectURL(file.previewUrl)
+          } catch {
+            // Ignore cleanup errors.
+          }
+        }
+      })
+    }
+  }, [selectedFiles])
+
+  const validateFiles = useCallback((files) => {
+    const incoming = Array.from(files || [])
+
+    if (!incoming.length) {
+      return { files: [], error: 'Please select at least one PDF or image.' }
+    }
+
+    if (incoming.length > MAX_FILES) {
+      return {
+        files: [],
+        error: `You can upload a maximum of ${MAX_FILES} files at once.`,
+      }
+    }
+
+    const validated = []
+
+    for (const file of incoming) {
+      const fileIsZip = isZip(file)
+
+      if (!ALLOWED_TYPES.includes(file.type) && !fileIsZip) {
+        return {
+          files: [],
+          error: `${file.name}: unsupported file type.`,
+        }
+      }
+
+      if (file.size <= 0) {
+        return {
+          files: [],
+          error: `${file.name}: file is empty.`,
+        }
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        return {
+          files: [],
+          error: `${file.name}: file size exceeds 10 MB.`,
+        }
+      }
+
+      validated.push({
+        id: `${file.name}-${file.lastModified}-${Math.random()}`,
+        file,
+        previewUrl: createPreview(file),
+      })
+    }
+
+    return { files: validated, error: '' }
+  }, [])
+
+  const addFiles = useCallback(
+    (fileList) => {
+      const incoming = Array.from(fileList || [])
+      if (!incoming.length) return
+
+      const remainingSlots = MAX_FILES - selectedFiles.length
+
+      if (remainingSlots <= 0) {
+        setError(`You can upload a maximum of ${MAX_FILES} files at once.`)
+        return
+      }
+
+      const limitedIncoming = incoming.slice(0, remainingSlots)
+      const { files, error: validationError } = validateFiles(limitedIncoming)
+
+      if (validationError) {
+        setError(validationError)
+        return
+      }
+
+      setError('')
+      setSelectedFiles((current) => {
+        const existingKeys = new Set(
+          current.map(
+            ({ file }) => `${file.name}-${file.size}-${file.lastModified}`,
+          ),
+        )
+
+        const merged = [...current]
+
+        for (const item of files) {
+          const key = `${item.file.name}-${item.file.size}-${item.file.lastModified}`
+
+          if (!existingKeys.has(key)) {
+            merged.push(item)
+            existingKeys.add(key)
+          } else {
+            URL.revokeObjectURL(item.previewUrl)
+          }
+        }
+
+        return merged
+      })
+
+      setResults([])
+      setActiveIndex(0)
+    },
+    [selectedFiles.length, validateFiles],
+  )
+
   const handleFileChange = (event) => {
-    const file = event.target.files?.[0]
+    addFiles(event.target.files)
+    event.target.value = ''
+  }
 
+  const handleDrop = (event) => {
+    event.preventDefault()
+    setDragActive(false)
+    addFiles(event.dataTransfer.files)
+  }
+
+  const removeSelectedFile = (index) => {
+    setSelectedFiles((current) => {
+      const target = current[index]
+
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl)
+      }
+
+      return current.filter((_, itemIndex) => itemIndex !== index)
+    })
+
+    setResults([])
+    setActiveIndex(0)
     setError('')
-    setSelectedFile(null)
+  }
 
-    if (!file) return
+  const clearSelection = () => {
+    selectedFiles.forEach(({ previewUrl }) => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl)
+      }
+    })
 
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      setError('Please select a PDF, PNG, JPG, JPEG or WEBP file.')
-      event.target.value = ''
-      return
-    }
-
-    if (file.size <= 0) {
-      setError('The selected file is empty.')
-      event.target.value = ''
-      return
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      setError('File size cannot exceed 10 MB.')
-      event.target.value = ''
-      return
-    }
-
-    setSelectedFile(file)
+    setSelectedFiles([])
+    setResults([])
+    setActiveIndex(0)
+    setError('')
   }
 
   const handleExtract = async () => {
-    if (!selectedFile || processing) {
-      if (!selectedFile) setError('Please select a PDF or image first.')
+    if (!selectedFiles.length || processing) {
+      if (!selectedFiles.length) {
+        setError('Please select at least one PDF, image, or ZIP file first.')
+      }
       return
     }
 
     try {
       setError('')
       setProcessing(true)
+      setResults([])
+      setActiveIndex(0)
 
       const formData = new FormData()
-      formData.append('file', selectedFile)
+
+      selectedFiles.forEach(({ file }) => {
+        formData.append('files', file)
+      })
 
       const response = await apiClient.post(
         '/ocr/test-extract/',
@@ -104,37 +269,117 @@ export default function OcrTestPage() {
         },
       )
 
-      const responseData = response?.data ?? {}
-      const result = responseData?.data ?? responseData
+      const payload = response?.data ?? {}
+      const batchId = payload?.batch_id
 
-      if (!result || typeof result !== 'object') {
-        throw new Error('OCR returned an invalid JSON response.')
+      if (!batchId) {
+        throw new Error('OCR batch was created without a batch ID.')
       }
 
-      sessionStorage.setItem(
-        'ocr_test_result',
-        JSON.stringify({
-          status: responseData.status || 'COMPLETED',
-          upload_id: responseData.upload_id || null,
-          filename: responseData.filename || selectedFile.name,
-          data: result,
-        }),
-      )
+      const initialFiles = Array.isArray(payload.files)
+        ? payload.files.map((item) => ({
+            status: item.status || 'UPLOADED',
+            upload_id: item.upload_id || null,
+            filename: item.filename || null,
+            data: null,
+            error: null,
+          }))
+        : []
 
-      navigate('/app/ocr-test/result')
+      setResults(initialFiles)
+
+      const terminalStatuses = new Set([
+        'COMPLETED',
+        'PARTIAL',
+        'FAILED',
+      ])
+
+      const startedAt = Date.now()
+      const maxPollingMs = 30 * 60 * 1000
+
+      while (Date.now() - startedAt < maxPollingMs) {
+        const statusResponse = await apiClient.get(
+          `/ocr/test-extract/batches/${batchId}/`,
+        )
+
+        const batch = statusResponse?.data ?? {}
+        const files = Array.isArray(batch?.files)
+          ? batch.files
+          : []
+
+        setResults(files)
+        setActiveIndex((current) => {
+          if (!files.length) return 0
+          return Math.min(current, files.length - 1)
+        })
+
+        const allTerminal =
+          files.length > 0 &&
+          files.every((item) =>
+            ['COMPLETED', 'FAILED'].includes(item.status),
+          )
+
+        if (
+          allTerminal ||
+          terminalStatuses.has(batch?.status)
+        ) {
+          break
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+      }
+
+      await loadHistory()
     } catch (err) {
-      console.error('OCR test failed:', err)
+      console.error('OCR batch submission failed:', err)
 
       const detail =
         err?.response?.data?.detail ||
         err?.response?.data?.error ||
         err?.message ||
-        'OCR extraction failed.'
+        'OCR batch processing failed.'
 
       setError(detail)
     } finally {
       setProcessing(false)
     }
+  }
+
+  const activeResult = results[activeIndex] ?? null
+
+  const activeSelectedItem = selectedFiles.find(({ file }) => {
+    if (!activeResult?.filename) return false
+
+    return (
+      file?.name === activeResult.filename ||
+      file?.name?.toLowerCase() === activeResult.filename?.toLowerCase()
+    )
+  })
+
+  const activeFile = activeSelectedItem?.file ?? selectedFiles[activeIndex]?.file ?? null
+
+  const activeOutput = useMemo(() => {
+    if (!activeResult) return ''
+
+    return JSON.stringify(activeResult, null, 2)
+  }, [activeResult])
+
+  const canSlide = results.length > 1
+
+  const goPrevious = () => {
+    if (!results.length) return
+
+    setActiveIndex((current) =>
+      current <= 0 ? results.length - 1 : current - 1,
+    )
+  }
+
+  const goNext = () => {
+    if (!results.length) return
+
+    setActiveIndex((current) =>
+      current >= results.length - 1 ? 0 : current + 1,
+    )
   }
 
   const formatDate = (value) => {
@@ -151,75 +396,361 @@ export default function OcrTestPage() {
     return String(status).replaceAll('_', ' ')
   }
 
+  const statusClass = (status) => {
+    switch (status) {
+      case 'COMPLETED':
+        return 'text-emerald-600'
+      case 'FAILED':
+        return 'text-red-600'
+      case 'PROCESSING':
+        return 'text-amber-600'
+      default:
+        return 'text-[var(--color-muted)]'
+    }
+  }
+
   return (
-    <ClientLayout title="OCR Test" breadcrumb="OCR Test">
-      <div className="mx-auto w-full max-w-5xl space-y-6">
-        <Card className="p-6">
-          <div className="mb-6">
-            <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
-              OCR Test
-            </h1>
+    <ClientLayout title="OCR" breadcrumb="OCR">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+        {/* Upload / actions */}
+        <Card className="p-5 sm:p-6">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-1">
+              <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">
+                OCR
+              </h1>
 
-            <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Upload a PDF or image and extract structured data using the approved document extraction pipeline.
-            </p>
-          </div>
+              <p className="text-sm text-[var(--color-muted)]">
+                Upload one or multiple PDF/image files and extract structured
+                document data.
+              </p>
+            </div>
 
-          <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6">
-            <label className="block text-sm font-medium text-[var(--color-ink)]">
-              Upload PDF / Image
-            </label>
+            <div
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setDragActive(true)
+              }}
+              onDragOver={(event) => {
+                event.preventDefault()
+                setDragActive(true)
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault()
+                setDragActive(false)
+              }}
+              onDrop={handleDrop}
+              className={`rounded-2xl border-2 border-dashed p-5 transition sm:p-7 ${
+                dragActive
+                  ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+              }`}
+            >
+              <div className="flex flex-col items-center justify-center text-center">
+                <div className="mb-3 rounded-full bg-[var(--color-canvas)] px-4 py-2 text-sm font-medium text-[var(--color-ink)]">
+                  Drag & drop files or a ZIP here
+                </div>
 
-            <input
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
-              onChange={handleFileChange}
-              disabled={processing}
-              className="mt-3 block w-full text-sm text-[var(--color-muted)]"
-            />
+                <p className="text-sm text-[var(--color-muted)]">
+                  PDF, PNG, JPG, JPEG, WEBP or ZIP · up to {MAX_FILES} inputs · max
+                  10 MB per direct file
+                </p>
+
+                <input
+                  ref={inputRef}
+                  type="file"
+                  multiple
+                  accept={ACCEPT}
+                  onChange={handleFileChange}
+                  disabled={processing}
+                  className="hidden"
+                />
+
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => inputRef.current?.click()}
+                    disabled={processing}
+                  >
+                    Choose Files
+                  </Button>
+
+                  <Button
+                    type="button"
+                    intent="secondary"
+                    onClick={clearSelection}
+                    disabled={processing || !selectedFiles.length}
+                  >
+                    Clear
+                  </Button>
+
+                  <Button
+                    type="button"
+                    onClick={handleExtract}
+                    disabled={processing || !selectedFiles.length}
+                  >
+                    {processing ? 'Processing...' : 'Extract Data'}
+                  </Button>
+                </div>
+              </div>
+            </div>
 
             {error && (
-              <p className="mt-3 text-sm text-[var(--color-negative)]">
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}
-              </p>
-            )}
-
-            {selectedFile && (
-              <div className="mt-4 rounded-md bg-[var(--color-canvas)] p-4">
-                <p className="text-xs text-[var(--color-muted)]">
-                  Selected file
-                </p>
-
-                <p className="mt-1 break-all text-sm font-medium text-[var(--color-ink)]">
-                  {selectedFile.name}
-                </p>
-
-                <p className="mt-1 text-xs text-[var(--color-muted)]">
-                  {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                </p>
               </div>
             )}
 
-            <div className="mt-5 flex justify-end">
-              <Button
-                type="button"
-                onClick={handleExtract}
-                disabled={processing}
-              >
-                {processing ? 'Extracting...' : 'Extract Data'}
-              </Button>
-            </div>
+            {!!selectedFiles.length && (
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--color-ink)]">
+                      Selected files ({selectedFiles.length})
+                    </p>
+
+                    <p className="text-xs text-[var(--color-muted)]">
+                      Files will be processed independently in one OCR batch.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {selectedFiles.map((item, index) => (
+                    <div
+                      key={item.id}
+                      className={`flex items-center gap-3 rounded-xl border p-3 ${
+                        index === activeIndex
+                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)]'
+                          : 'border-[var(--color-border)]'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveIndex(index)}
+                        className="min-w-0 flex-1 text-left"
+                        disabled={processing}
+                      >
+                        <p className="truncate text-sm font-medium text-[var(--color-ink)]">
+                          {item.file.name}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                          {(item.file.size / 1024 / 1024).toFixed(2)} MB
+                          {isZip(item.file) ? ' · ZIP archive' : ''}
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => removeSelectedFile(index)}
+                        disabled={processing}
+                        className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                        aria-label={`Remove ${item.file.name}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </Card>
 
-        <Card className="p-6">
-          <div className="mb-5 flex items-center justify-between gap-4">
+        {/* Result workspace */}
+        {(selectedFiles.length > 0 || results.length > 0) && (
+          <div className="grid min-h-[560px] gap-6 lg:grid-cols-2">
+            {/* Left: preview */}
+            <Card className="flex min-h-[520px] flex-col overflow-hidden">
+              <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                    File Preview
+                  </p>
+
+                  <p className="mt-1 truncate text-sm font-semibold text-[var(--color-ink)]">
+                    {activeFile?.name || 'Select a file'}
+                  </p>
+                </div>
+
+                <div className="shrink-0 text-xs font-medium text-[var(--color-muted)]">
+                  {results.length
+                    ? `${activeIndex + 1} / ${results.length}`
+                    : selectedFiles.length
+                      ? `${activeIndex + 1} / ${selectedFiles.length}`
+                      : '0 / 0'}
+                </div>
+              </div>
+
+              <div className="flex min-h-0 flex-1 items-center justify-center bg-[var(--color-canvas)] p-4">
+                {activeResult?.filename && !activeFile && (
+                  <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
+                    <p className="text-sm font-semibold text-[var(--color-ink)]">
+                      {activeResult.filename}
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--color-muted)]">
+                      This file came from a ZIP archive. The OCR result is available,
+                      but a local browser preview is not available for the extracted
+                      child file yet.
+                    </p>
+                  </div>
+                )}
+
+                {activeFile && isZip(activeFile) && (
+                  <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
+                    <p className="text-sm font-semibold text-[var(--color-ink)]">
+                      {activeFile.name}
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--color-muted)]">
+                      ZIP archive uploaded. After extraction, use Next / Previous
+                      to review each processed child file.
+                    </p>
+                  </div>
+                )}
+
+                {activeFile && isImage(activeFile) && (
+                  <img
+                    src={activeSelectedItem?.previewUrl || selectedFiles[activeIndex]?.previewUrl}
+                    alt={activeFile.name}
+                    className="max-h-[430px] max-w-full rounded-lg object-contain shadow-sm"
+                  />
+                )}
+
+                {activeFile && isPdf(activeFile) && (
+                  <div className="flex h-full w-full flex-col gap-3">
+                    <iframe
+                      title={activeFile.name}
+                      src={selectedFiles[activeIndex]?.previewUrl}
+                      className="min-h-[420px] w-full rounded-lg border border-[var(--color-border)] bg-white"
+                    />
+
+                    <a
+                      href={selectedFiles[activeIndex]?.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-center text-sm font-medium text-[var(--color-primary)] hover:underline"
+                    >
+                      Open PDF in new tab
+                    </a>
+                  </div>
+                )}
+
+                {!activeFile && (
+                  <p className="text-sm text-[var(--color-muted)]">
+                    Select a file to preview it.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--color-border)] p-4">
+                <Button
+                  type="button"
+                  intent="secondary"
+                  onClick={goPrevious}
+                  disabled={!canSlide}
+                >
+                  ← Previous
+                </Button>
+
+                <span className="text-xs text-[var(--color-muted)]">
+                  {canSlide ? 'Switch file' : 'Single file'}
+                </span>
+
+                <Button
+                  type="button"
+                  intent="secondary"
+                  onClick={goNext}
+                  disabled={!canSlide}
+                >
+                  Next →
+                </Button>
+              </div>
+            </Card>
+
+            {/* Right: output */}
+            <Card className="flex min-h-[520px] flex-col overflow-hidden">
+              <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                    OCR Output
+                  </p>
+
+                  <p className="mt-1 truncate text-sm font-semibold text-[var(--color-ink)]">
+                    {activeResult?.filename || activeFile?.name || 'Waiting for extraction'}
+                  </p>
+                </div>
+
+                {activeResult?.status && (
+                  <span
+                    className={`shrink-0 text-xs font-semibold uppercase tracking-wide ${statusClass(activeResult.status)}`}
+                  >
+                    {statusLabel(activeResult.status)}
+                  </span>
+                )}
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto bg-[var(--color-surface)] p-4">
+                {activeResult?.status === 'FAILED' ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    {activeResult.error || 'OCR extraction failed for this file.'}
+                  </div>
+                ) : activeResult ? (
+                  <pre className="whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
+                    {activeOutput}
+                  </pre>
+                ) : (
+                  <div className="flex min-h-[400px] items-center justify-center text-center">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--color-ink)]">
+                        Upload files and click Extract Data
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--color-muted)]">
+                        The result for the active file will appear here.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--color-border)] p-4">
+                <Button
+                  type="button"
+                  intent="secondary"
+                  onClick={goPrevious}
+                  disabled={!canSlide}
+                >
+                  ← Previous
+                </Button>
+
+                <span className="text-xs text-[var(--color-muted)]">
+                  {results.length
+                    ? `${activeIndex + 1} / ${results.length} result`
+                    : 'No result yet'}
+                </span>
+
+                <Button
+                  type="button"
+                  intent="secondary"
+                  onClick={goNext}
+                  disabled={!canSlide}
+                >
+                  Next →
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* History */}
+        <Card className="p-5 sm:p-6">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
                 Recent OCR History
               </h2>
+
               <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Previously processed files saved to your OCR history.
+                Previously processed files and batches.
               </p>
             </div>
 
@@ -234,7 +765,7 @@ export default function OcrTestPage() {
           </div>
 
           {historyError && (
-            <p className="mb-4 text-sm text-[var(--color-negative)]">
+            <p className="mb-4 text-sm text-red-600">
               {historyError}
             </p>
           )}
@@ -248,26 +779,36 @@ export default function OcrTestPage() {
               <p className="text-sm font-medium text-[var(--color-ink)]">
                 No OCR history yet
               </p>
+
               <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Your processed PDF and image files will appear here.
+                Processed files will appear here.
               </p>
             </div>
           ) : (
             <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
               {history.map((item) => (
                 <button
-                  key={item.upload_id}
+                  key={item.batch_id || item.upload_id}
                   type="button"
-                  onClick={() =>
-                    item.document_id &&
-                    navigate(`/app/ocr-test/history/${item.document_id}`)
-                  }
-                  disabled={!item.document_id}
-                  className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-[var(--color-canvas)] disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => {
+                    if (item.batch_id && item.file_count > 1) {
+                      navigate(`/app/ocr-test/history/batch/${item.batch_id}`)
+                      return
+                    }
+
+                    if (item.document_id) {
+                      navigate(
+                        `/app/ocr-test/history/${item.document_id}`,
+                      )
+                    }
+                  }}
+                  className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-[var(--color-canvas)]"
                 >
                   <div className="min-w-0">
                     <p className="break-all text-sm font-medium text-[var(--color-ink)]">
-                      {item.filename || 'Unnamed file'}
+                      {item.file_count > 1
+                        ? `${item.file_count} files`
+                        : item.filename || 'Unnamed file'}
                     </p>
 
                     <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -276,13 +817,15 @@ export default function OcrTestPage() {
                   </div>
 
                   <div className="shrink-0 text-right">
-                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                    <p
+                      className={`text-xs font-semibold uppercase tracking-wide ${statusClass(item.status)}`}
+                    >
                       {statusLabel(item.status)}
                     </p>
 
-                    {item.document_type && (
+                    {item.file_count > 1 && (
                       <p className="mt-1 text-xs text-[var(--color-muted)]">
-                        {statusLabel(item.document_type)}
+                        Batch
                       </p>
                     )}
                   </div>
