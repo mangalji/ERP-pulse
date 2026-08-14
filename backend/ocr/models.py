@@ -13,6 +13,83 @@ import uuid
 from django.conf import settings
 from django.db import models
 
+class OCRBatch(models.Model):
+    """
+    Groups all OCR uploads created by one user action.
+
+    A batch is owned by both the initiating user and that user's company.
+    Employee users may access only their own batches; company admins may
+    access all batches belonging to their company.
+    """
+
+    class SourceType(models.TextChoices):
+        DIRECT = 'DIRECT', 'Direct Upload'
+        ZIP = 'ZIP', 'ZIP Archive'
+
+    class Status(models.TextChoices):
+        CREATED = 'CREATED', 'Created'
+        PROCESSING = 'PROCESSING', 'Processing'
+        PARTIAL = 'PARTIAL', 'Partial'
+        COMPLETED = 'COMPLETED', 'Completed'
+        FAILED = 'FAILED', 'Failed'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # batch = models.ForeignKey(
+    #     'OCRBatch',
+    #     on_delete=models.SET_NULL,
+    #     related_name='uploads',
+    #     null=True,
+    #     blank=True,
+    # )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='ocr_batches',
+    )
+    company = models.ForeignKey(
+        'tenancy.Company',
+        on_delete=models.CASCADE,
+        related_name='ocr_batches',
+        null=True,
+        blank=True,
+    )
+
+    source_type = models.CharField(
+        max_length=20,
+        choices=SourceType.choices,
+        default=SourceType.DIRECT,
+    )
+    original_filename = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text='Original ZIP filename when source_type=ZIP.',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.CREATED,
+        db_index=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'ocr_batch'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at'], name='ocr_batch_user_recent_idx'),
+            models.Index(fields=['company', '-created_at'], name='ocr_batch_company_recent_idx'),
+            models.Index(fields=['status'], name='ocr_batch_status_idx'),
+        ]
+
+    def __str__(self):
+        return f'OCRBatch {self.id} ({self.status})'
+
 
 class OCRUpload(models.Model):
     """
@@ -42,6 +119,14 @@ class OCRUpload(models.Model):
         primary_key=True,
         default=uuid.uuid4,
         editable=False,
+    )
+
+    batch = models.ForeignKey(
+        OCRBatch,
+        on_delete=models.SET_NULL,
+        related_name='uploads',
+        null=True,
+        blank=True,
     )
 
     user = models.ForeignKey(

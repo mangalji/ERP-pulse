@@ -11,6 +11,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from ocr.exceptions import InvalidFileException
+# from ocr.models import OCRBatch, OCRUpload
 from ocr.validators import validate_extension, validate_file_size, validate_mime_type
 
 
@@ -102,6 +103,62 @@ class UploadResponseSerializer(serializers.Serializer):
     size = serializers.IntegerField(source='file_size')
     extension = serializers.CharField()
     file_hash = serializers.CharField()
+
+class OCRBatchHistoryItemSerializer(serializers.Serializer):
+    upload_id = serializers.UUIDField()
+    filename = serializers.CharField()
+    status = serializers.CharField()
+    document_id = serializers.UUIDField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+class OCRHistoryFileSerializer(serializers.Serializer):
+    """One file entry exposed from a single file or an OCR batch."""
+
+    upload_id = serializers.UUIDField()
+    document_id = serializers.UUIDField(allow_null=True)
+    version_id = serializers.UUIDField(allow_null=True)
+    version_number = serializers.IntegerField(allow_null=True)
+    filename = serializers.CharField()
+    status = serializers.CharField()
+    data = serializers.JSONField(allow_null=True)
+    error = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class OCRHistoryEntrySerializer(serializers.Serializer):
+    """One top-level entry in the user's/company admin history."""
+
+    type = serializers.ChoiceField(choices=("single", "batch"))
+    batch_id = serializers.UUIDField(allow_null=True)
+    document_id = serializers.UUIDField(allow_null=True)
+    upload_id = serializers.UUIDField(allow_null=True)
+    filename = serializers.CharField(allow_null=True, allow_blank=True)
+    file_count = serializers.IntegerField()
+    status = serializers.CharField()
+    source_type = serializers.CharField(allow_null=True, allow_blank=True)
+    created_at = serializers.DateTimeField()
+    owner_id = serializers.CharField(allow_null=True, allow_blank=True)
+    owner_name = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+
+class OCRBatchHistorySerializer(serializers.Serializer):
+    """Detailed view of one OCR batch."""
+
+    batch_id = serializers.UUIDField()
+    status = serializers.CharField()
+    source_type = serializers.CharField()
+    source_filename = serializers.CharField(allow_null=True, allow_blank=True)
+    created_at = serializers.DateTimeField()
+    started_at = serializers.DateTimeField(allow_null=True)
+    completed_at = serializers.DateTimeField(allow_null=True)
+    total_files = serializers.IntegerField()
+    queued_files = serializers.IntegerField()
+    processing_files = serializers.IntegerField()
+    completed_files = serializers.IntegerField()
+    failed_files = serializers.IntegerField()
+    owner_id = serializers.CharField(allow_null=True, allow_blank=True)
+    owner_name = serializers.CharField(allow_null=True, allow_blank=True)
+    files = OCRHistoryFileSerializer(many=True)
 
 class OCRLineItemHistorySerializer(serializers.ModelSerializer):
     class Meta:

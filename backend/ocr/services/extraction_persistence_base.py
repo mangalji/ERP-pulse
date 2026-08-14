@@ -142,13 +142,6 @@ def persist_extraction(*, upload, user, result: dict):
     if document.user_id != user.id:
         raise PermissionError('OCR document belongs to a different user.')
 
-    if company is not None:
-        if document.company_id is not None and document.company_id != company.id:
-            raise PermissionError('OCR document belongs to a different company.')
-        if document.company_id is None:
-            document.company = company
-            document.save(update_fields=['company', 'updated_at'])
-
     version_number = (
         OCRDocumentVersion.objects
         .filter(document=document)

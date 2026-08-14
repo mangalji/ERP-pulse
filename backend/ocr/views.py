@@ -8,12 +8,14 @@ logic lives here.
 
 from __future__ import annotations
 
+from django.db.models import Q,Count
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from common.utils.response import success_response
-from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload
+from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch
 from ocr.serializers import (
     DocumentHistorySerializer,
     DocumentVersionSerializer,
@@ -22,10 +24,76 @@ from ocr.serializers import (
     OCRDocumentHistorySerializer,
     OCRHistoryListSerializer,
     OCRHistoryVersionSerializer,
+    OCRBatchHistorySerializer,
+    OCRBatchHistoryItemSerializer,
+    OCRHistoryEntrySerializer,
+    OCRHistoryFileSerializer,
 )
 from ocr.services import ocr_service
 from ocr.tasks import process_document_task
 from ocr.utils import logger
+
+
+def _is_company_admin(user) -> bool:
+    """Company Admin role can see all OCR records belonging to the user's company."""
+
+    if getattr(user, "is_superuser", False):
+        return True
+
+    if not getattr(user, "company_id", None):
+        return False
+
+    if getattr(user, "is_staff", False):
+        return True
+    return user.user_roles.filter(
+        role__name__iexact='Company Admin',
+    ).exists()
+
+def _visible_batch_queryset(user):
+    qs = OCRBatch.objects.all()
+
+    if _is_company_admin(user):
+        return qs.filter(company=user.company)
+
+    return qs.filter(
+        user=user,
+        company=user.company,
+    )
+
+
+def _visible_document_queryset(user):
+    qs = OCRDocument.objects.all()
+
+    if _is_company_admin(user):
+        return qs.filter(company=user.company)
+
+    return qs.filter(
+        user=user,
+        company=user.company,
+    )
+
+
+def _user_display_name(user):
+    if not user:
+        return None
+    full_name = " ".join(
+        part for part in [
+            getattr(user, "first_name", ""),
+            getattr(user, "last_name", ""),
+        ]
+        if part
+    ).strip()
+    return full_name or getattr(user, "email", None)
+
+
+def _batch_scope(user):
+    """
+    Employee: own batches only.
+    Company Admin: all batches in the same company.
+    """
+    if _is_company_admin(user):
+        return OCRBatch.objects.filter(company_id=user.company_id)
+    return OCRBatch.objects.filter(user_id=user.id)
 
 
 class UploadView(APIView):
@@ -51,30 +119,357 @@ class UploadView(APIView):
             user=request.user,
         )
 
-        # Dispatch the async pipeline — never run synchronously.
-        if hasattr(process_document_task, 'delay'):
-            task = process_document_task.delay(upload.id, request.user.id)
-            logger.info(
-                'OCR task dispatched — upload_id=%s user=%s task=%s',
-                upload.id, request.user.id, task.id,
-            )
-        else:
-            logger.warning(
-                'Celery not available; running OCR synchronously for upload_id=%s user=%s',
-                upload.id, request.user.id,
-            )
-            process_document_task(upload.id, request.user.id)
+        # # Dispatch the async pipeline — never run synchronously.
+        # if hasattr(process_document_task, 'delay'):
+        #     task = process_document_task.delay(upload.id, request.user.id)
+        #     logger.info(
+        #         'OCR task dispatched — upload_id=%s user=%s task=%s',
+        #         upload.id, request.user.id, task.id,
+        #     )
+        # else:
+        #     logger.warning(
+        #         'Celery not available; running OCR synchronously for upload_id=%s user=%s',
+        #         upload.id, request.user.id,
+        #     )
+        #     process_document_task(upload.id, request.user.id)
 
-        response_serializer = UploadResponseSerializer(upload)
-        data = response_serializer.data
-        data['processing_status'] = OCRUpload.Status.PROCESSING
-        data['task_state'] = 'PENDING'
+        # response_serializer = UploadResponseSerializer(upload)
+        # data = response_serializer.data
+        # data['processing_status'] = OCRUpload.Status.PROCESSING
+        # data['task_state'] = 'PENDING'
+
+        # return success_response(
+        #     message='Upload accepted. Processing has been queued.',
+        #     data=data,
+        #     status_code=status.HTTP_201_CREATED,
+        # )
+
+        task = getattr(process_document_task, "delay", None)
+        if task is not None:
+            task(upload.id,request.user.id)
+        else:
+            process_document_task(upload.id,request.user.id)
+
+        data = UploadResponseSerializer(upload).data
+        data["processing_status"] = OCRUpload.Status.PROCESSING
+        data["task_state"] = "PENDING"
 
         return success_response(
             message='Upload accepted. Processing has been queued.',
             data=data,
             status_code=status.HTTP_201_CREATED,
+        ) 
+
+class OCRBatchHistoryView(APIView):
+    """
+    GET /api/v1/ocr/history/
+
+    Employee:
+        own individual uploads and own batches.
+
+    Company Admin:
+        all company batches/uploads.
+
+    A batch with >1 files becomes one top-level history entry.
+    A one-file batch is shown as a normal single-file entry.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        batch_qs = (
+            _visible_batch_queryset(request.user)
+            .select_related('user', 'company')
+            .annotate(file_count=Count("uploads", distinct=True))
+            .order_by('-created_at')
         )
+        batches = list(batch_qs[:100])
+
+        results = []
+        represented_upload_ids = set()
+
+        for batch in batches:
+            uploads = list(batch.uploads.all().select_related("document").order_by('created_at'))
+
+            for upload in uploads:
+                represented_upload_ids.add(upload.id)
+
+            if len(uploads) > 1:
+
+
+            # files = [
+            #     {
+            #         'upload_id': upload.id,
+            #         'filename': upload.original_filename,
+            #         'status': upload.status,
+            #         'document_id': (
+            #             upload.document.id if hasattr(upload, 'document') else None
+            #         ),
+            #         'created_at': upload.created_at,
+            #     }
+                
+            # ]
+                results.append(
+                    {
+
+                        "type": "batch",
+                        "batch_id": batch.id,
+                        "document_id": None,
+                        "upload_id": None,
+                        "filename": batch.original_filename,
+                        "file_count": len(uploads),
+                        "status": batch.status,
+                        "source_type": batch.source_type,
+                        "created_at": batch.created_at,
+                        "owner_id": str(batch.user_id),
+                        "owner_name": _user_display_name(batch.user),
+                        # 'batch_id': batch.id,
+                        # 'source_type': batch.source_type,
+                        # 'original_filename': batch.original_filename,
+                        # 'status': batch.status,
+                        # 'file_count': len(files),
+                        # 'created_at': batch.created_at,
+                        # 'started_at': batch.started_at,
+                        # 'completed_at': batch.completed_at,
+                        # 'files': files,
+                    }
+                )
+            elif len(uploads) == 1:
+                upload = uploads[0]
+                results.append(
+                    {
+                        "type": "single",
+                        "batch_id": batch.id,
+                        "document_id": (
+                            upload.document_id
+                            if hasattr(upload, "document_id")
+                            else (
+                                upload.document.id
+                                if getattr(upload, "document", None)
+                                else None
+                            )
+                        ),
+                        "upload_id": upload.id,
+                        "filename": upload.original_filename,
+                        "file_count": 1,
+                        "status": upload.status,
+                        "source_type": batch.source_type,
+                        "created_at": batch.created_at,
+                        "owner_id": str(batch.user_id),
+                        "owner_name": _user_display_name(batch.user),
+                    }
+                )
+
+        # Legacy uploads with no batch are kept visible according to the same
+        # user/company ownership rule.
+        legacy_qs = OCRUpload.objects.filter(
+            batch__isnull=True,
+        ).select_related("user", "document")
+
+        if _is_company_admin(request.user):
+            legacy_qs = legacy_qs.filter(
+                user__company=request.user.company,
+            )
+        else:
+            legacy_qs = legacy_qs.filter(
+                user=request.user,
+            )
+
+        for upload in legacy_qs.order_by("-created_at")[:100]:
+            if upload.id in represented_upload_ids:
+                continue
+
+            document = getattr(upload, "document", None)
+
+            results.append(
+                {
+                    "type": "single",
+                    "batch_id": None,
+                    "document_id": document.id if document else None,
+                    "upload_id": upload.id,
+                    "filename": upload.original_filename,
+                    "file_count": 1,
+                    "status": upload.status,
+                    "source_type": None,
+                    "created_at": upload.created_at,
+                    "owner_id": str(upload.user_id),
+                    "owner_name": _user_display_name(upload.user),
+                }
+            )
+
+        results.sort(
+            key=lambda item: item["created_at"],
+            reverse=True,
+        )
+
+        # serializer = OCRBatchHistorySerializer(results, many=True)
+        # return success_response(
+        #     message='OCR history fetched successfully.',
+        #     data=serializer.data,
+        # )
+        serializer = OCRHistoryEntrySerializer(results[:100], many=True)
+
+        return success_response(
+            message="OCR history fetched successfully.",
+            data={
+                "results": serializer.data,
+                "count": len(serializer.data),
+            },
+        )
+
+def _build_upload_result(upload):
+    document = getattr(upload, "document", None)
+    version = None
+
+    if document is not None:
+        version = document.versions.order_by(
+            "-version_number"
+        ).first()
+
+    return {
+        "upload_id": upload.id,
+        "document_id": document.id if document else None,
+        "version_id": version.id if version else None,
+        "version_number": (
+            version.version_number if version else None
+        ),
+        "filename": upload.original_filename,
+        "status": upload.status,
+        "data": (
+            version.normalized_json if version else None
+        ),
+        "error": (
+            upload.failure_reason
+            if upload.status == OCRUpload.Status.FAILED
+            else None
+        ),
+    }
+
+class OCRBatchHistoryView(APIView):
+    """
+    GET /api/v1/ocr/history/batches/<batch_id>/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, batch_id):
+        try:
+            batch = (
+                _visible_batch_queryset(request.user)
+                .select_related("user", "company")
+                .prefetch_related(
+                    "uploads__document__versions",
+                )
+                .get(pk=batch_id)
+            )
+        except OCRBatch.DoesNotExist as exc:
+            raise NotFound("OCR batch not found.") from exc
+
+        uploads = list(batch.uploads.all().order_by("created_at"))
+
+        files = [
+            _build_upload_result(upload)
+            for upload in uploads
+        ]
+
+        completed = sum(
+            1
+            for upload in uploads
+            if upload.status == OCRUpload.Status.COMPLETED
+        )
+        failed = sum(
+            1
+            for upload in uploads
+            if upload.status == OCRUpload.Status.FAILED
+        )
+        processing = sum(
+            1
+            for upload in uploads
+            if upload.status == OCRUpload.Status.PROCESSING
+        )
+        queued = sum(
+            1
+            for upload in uploads
+            if upload.status == OCRUpload.Status.UPLOADED
+        )
+
+        serializer = OCRBatchHistorySerializer(
+            {
+                "batch_id": batch.id,
+                "status": batch.status,
+                "source_type": batch.source_type,
+                "source_filename": batch.original_filename,
+                "created_at": batch.created_at,
+                "started_at": batch.started_at,
+                "completed_at": batch.completed_at,
+                "total_files": len(uploads),
+                "queued_files": queued,
+                "processing_files": processing,
+                "completed_files": completed,
+                "failed_files": failed,
+                "owner_id": str(batch.user_id),
+                "owner_name": _user_display_name(batch.user),
+                "files": files,
+            }
+        )
+
+        return success_response(
+            message="OCR batch history fetched successfully.",
+            data=serializer.data,
+        )
+
+
+
+# class OCRBatchDetailView(APIView):
+#     """
+#     GET /api/v1/ocr/batches/<batch_id>/
+
+#     Returns all files belonging to one batch using the same employee/admin
+#     visibility rules.
+#     """
+#     permission_classes = [IsAuthenticated]
+
+#     def get(self, request, batch_id):
+#         batch_qs = (
+#             _batch_scope(request.user)
+#             .select_related('user', 'company')
+#             .prefetch_related('uploads__document')
+#         )
+#         try:
+#             batch = batch_qs.get(pk=batch_id)
+#         except OCRBatch.DoesNotExist as exc:
+#             raise NotFound('OCR batch not found.') from exc
+
+#         uploads = list(batch.uploads.all().order_by('created_at'))
+#         files = [
+#             {
+#                 'upload_id': upload.id,
+#                 'filename': upload.original_filename,
+#                 'status': upload.status,
+#                 'document_id': (
+#                     upload.document.id if hasattr(upload, 'document') else None
+#                 ),
+#                 'created_at': upload.created_at,
+#             }
+#             for upload in uploads
+#         ]
+
+#         serializer = OCRBatchHistorySerializer(
+#             {
+#                 'batch_id': batch.id,
+#                 'source_type': batch.source_type,
+#                 'original_filename': batch.original_filename,
+#                 'status': batch.status,
+#                 'file_count': len(files),
+#                 'created_at': batch.created_at,
+#                 'started_at': batch.started_at,
+#                 'completed_at': batch.completed_at,
+#                 'files': files,
+#             }
+#         )
+#         return success_response(
+#             message='OCR batch fetched successfully.',
+#             data=serializer.data,
+#         )
 
 
 class OCRHistoryListView(APIView):
@@ -126,38 +521,67 @@ class DocumentHistoryView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    # def get(self, request, document_id):
+    #     try:
+    #         document = (
+    #             OCRDocument.objects
+    #             .select_related('upload')
+    #             .prefetch_related('versions__line_items')
+    #             .filter(pk=document_id)
+    #             .filter(
+    #                 Q(user=request.user)
+    #                 | (
+    #                     Q(company_id=getattr(request.user, 'company_id', None))
+    #                     | Q(upload__user__company_id=getattr(request.user, 'company_id', None))
+    #                 )
+    #                 if _is_company_admin(request.user)
+    #                 else Q(user=request.user)
+    #             )
+    #             .get()
+    #         )
+    #     except OCRDocument.DoesNotExist as exc:
+    #         raise NotFound('Document not found.') from exc
+
+    #     versions = list(document.versions.all().order_by('version_number'))
+    #     serializer = DocumentHistorySerializer({
+    #         'id': document.id,
+    #         'document_type': document.document_type,
+    #         'status': document.status,
+    #         'current_version': document.current_version,
+    #         'overall_confidence': document.overall_confidence,
+    #         'processing_metadata': document.processing_metadata,
+    #         'versions': versions,
+    #     })
+    #     return success_response(
+    #         message='Document history fetched successfully.',
+    #         data=serializer.data,
+    #     )
+
     def get(self, request, document_id):
         try:
             document = (
-                OCRDocument.objects
-                .select_related('upload')
-                .prefetch_related('versions__line_items')
-                .get(pk=document_id, user=request.user)
+                _visible_document_queryset(request.user)
+                .prefetch_related("versions")
+                .get(pk=document_id)
             )
         except OCRDocument.DoesNotExist as exc:
-            raise NotFound('Document not found.') from exc
-
-        versions = list(document.versions.all().order_by('version_number'))
-        serializer = OCRDocumentHistorySerializer(
-        {
-            'id': document.id,
-            'upload_id': document.upload_id,
-            'filename': (
-                document.upload.original_filename
-                if document.upload_id and document.upload
-                else None
-            ),
-            'document_type': document.document_type,
-            'status': document.status,
-            'current_version': document.current_version,
-            'overall_confidence': document.overall_confidence,
-            'processing_metadata': document.processing_metadata,
-            'versions': versions,
-        }
-    )
-
+            raise NotFound("Document not found.") from exc
+        versions = list(
+            document.versions.all().order_by("version_number")
+        )
+        serializer = DocumentHistorySerializer(
+            {
+                "id": document.id,
+                "document_type": document.document_type,
+                "status": document.status,
+                "current_version": document.current_version,
+                "overall_confidence": document.overall_confidence,
+                "processing_metadata": document.processing_metadata,
+                "versions": versions,
+            }
+        )
         return success_response(
-            message='Document history fetched successfully.',
+            message="Document history fetched successfully.",
             data=serializer.data,
         )
 
@@ -172,56 +596,26 @@ class DocumentVersionView(APIView):
 
     def get(self, request, document_id, version):
         try:
-            document = (
-                OCRDocument.objects
-                .select_related('upload')
-                .get(pk=document_id, user=request.user)
-            )
+            document = _visible_document_queryset(
+                request.user
+            ).get(pk=document_id)
         except OCRDocument.DoesNotExist as exc:
-            raise NotFound('Document not found.') from exc
+            raise NotFound("Document not found.") from exc
 
         try:
-            version_obj = (
-                document.versions
-                .prefetch_related('line_items')
-                .get(version_number=version)
+            version_obj = document.versions.get(
+                version_number=version
             )
         except OCRDocumentVersion.DoesNotExist as exc:
-            raise NotFound('Document version not found.') from exc
+            raise NotFound(
+                "Document version not found."
+            ) from exc
 
-        payload = {
-            'id': version_obj.id,
-            'version_number': version_obj.version_number,
-            'invoice_number': version_obj.invoice_number,
-            'invoice_date': version_obj.invoice_date,
-            'due_date': version_obj.due_date,
-            'vendor_name': version_obj.vendor_name,
-            'customer_name': version_obj.customer_name,
-            'subsidiary': version_obj.subsidiary,
-            'currency': version_obj.currency,
-            'subtotal': version_obj.subtotal,
-            'tax_amount': version_obj.tax_amount,
-            'tax_rate': version_obj.tax_rate,
-            'total_amount': version_obj.total_amount,
-            'payment_terms': version_obj.payment_terms,
-            'line_items': version_obj.line_items.all().order_by('line_number'),
-            'normalized_json': version_obj.normalized_json,
-            'created_at': version_obj.created_at,
-        }
-
-        serializer = OCRHistoryVersionSerializer(payload)
-
-        data = serializer.data
-        data['upload_id'] = str(document.upload_id) if document.upload_id else None
-        data['filename'] = (
-            document.upload.original_filename
-            if document.upload_id and document.upload
-            else None
-        )
-        data['document_status'] = document.status
+        serializer = DocumentVersionSerializer(version_obj)
 
         return success_response(
-            message='Document version fetched successfully.',
-            data=data,
+            message="Document version fetched successfully.",
+            data=serializer.data,
         )
+
         

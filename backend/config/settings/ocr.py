@@ -86,3 +86,49 @@ OCR_CONFIDENCE_THRESHOLD: float = config('OCR_CONFIDENCE_THRESHOLD', default=0.5
 
 #: Master switch to enable/disable Gemini extraction.
 OCR_ENABLE_GEMINI: bool = config('OCR_ENABLE_GEMINI', default=False, cast=bool)
+
+OCR_MAX_UPLOAD_SIZE_MB: int = config(
+    'OCR_MAX_UPLOAD_SIZE_MB',
+    default=10,
+    cast=int,
+)
+
+OCR_MAX_ZIP_FILES: int = config(
+    'OCR_MAX_ZIP_FILES',
+    default=20,
+    cast=int,
+)
+
+OCR_MAX_ZIP_SIZE_MB: int = config(
+    'OCR_MAX_ZIP_SIZE_MB',
+    default=50,
+    cast=int,
+)
+
+OCR_MAX_ZIP_UNCOMPRESSED_MB: int = config(
+    'OCR_MAX_ZIP_UNCOMPRESSED_MB',
+    default=100,
+    cast=int,
+)
+
+# Maximum number of Gemini calls that may be active across all workers.
+OCR_GEMINI_MAX_CONCURRENCY: int = config(
+    'OCR_GEMINI_MAX_CONCURRENCY',
+    default=2,
+    cast=int,
+)
+
+# Application-side rolling requests-per-minute ceiling.
+# Keep this BELOW your actual Gemini project quota.
+OCR_GEMINI_TARGET_RPM: int = config(
+    'OCR_GEMINI_TARGET_RPM',
+    default=8,
+    cast=int,
+)
+
+# Lease for the distributed concurrency slot.
+OCR_GEMINI_CONCURRENCY_LEASE_SECONDS: int = config(
+    'OCR_GEMINI_CONCURRENCY_LEASE_SECONDS',
+    default=180,
+    cast=int,
+)
