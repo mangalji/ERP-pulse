@@ -273,17 +273,6 @@ try:
                 request_id=f"{upload.id}:{self.request.id}"
             )
 
-            # result = notebook_gemini_extractor.extract(
-            #     file_path=upload.file.path,
-            #     mime_type=upload.mime_type,
-            # )
-
-            # document, version = persist_extraction(
-            #     upload=upload,
-            #     user=upload.user,
-            #     result=result,
-            # )
-
             result = _read_cached_result(upload.file_hash)
 
             if result is None:

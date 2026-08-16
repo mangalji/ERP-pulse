@@ -350,60 +350,6 @@ def _merge_corrected_result(
     return _normalize_result(merged)
 
 
-
-# def build_prompt() -> str:
-#     """Build the extraction prompt using the notebook's field definitions."""
-#     field_lines = "\n".join(
-#         f'- "{key}": {description}'
-#         for key, description in FIELD_DESCRIPTIONS.items()
-#     )
-#     item_lines = "\n".join(
-#         f'  - "{key}": {description}'
-#         for key, description in LINE_ITEM_FIELDS.items()
-#     )
-
-#     return f"""You are an accounting data-extraction assistant. Read the attached document
-# (it may be an invoice, receipt, purchase order, or similar business document; layout and
-# format may vary widely) and extract the following fields.
-
-# Top-level fields:
-# {field_lines}
-
-# Also extract a "line_items" list, where each item has:
-# {item_lines}
-
-# Rules:
-# - Respond with ONLY a single valid JSON object, no markdown fences, no commentary.
-# - If a field is not present in the document, use null (do not guess).
-# - Numbers must be plain numbers (no currency symbols or thousands separators).
-# - For line_items, extract EVERY clearly separated line, row, item, expense, account row, or service row that belongs to the document's itemized/table section.
-# - Preserve each source row as a separate line_item. Never omit, merge, combine, collapse, or summarize multiple source rows into one line_item.
-# - Preserve the original order of the source rows.
-# - Preserve the COMPLETE information belonging to each source row. Do NOT shorten, paraphrase, summarize, truncate, normalize, or rewrite the row description. The line_item "description" must contain all relevant text visible in that row, including account names, references, memos, identifiers, tax references, names, and other descriptive text that belongs to the row.
-# - If the row contains information that does not have a dedicated output field, keep that information inside "description" rather than dropping it.
-# - Use null only when a requested field is genuinely absent or cannot be determined from the document. Do not use null when the value is visibly present elsewhere on the page or can be directly associated with the field.
-# - For top-level fields, inspect the ENTIRE document, including the header, company block, metadata area, totals, and tables. If a value is explicitly present, extract it even if the document is not technically an invoice.
-# - For vendor_name, use the explicitly identified vendor/supplier/payee/issuer when the document identifies one. Do not leave it null merely because the document is a voucher or other business document.
-# - For subsidiary, use the explicitly stated subsidiary/business entity when present. If the document contains the company name and identifies it as the subsidiary/entity, preserve that value.
-# - For tabular documents, use the visible row boundaries and column structure when determining line_items; do not infer a reduced number of rows from totals, semantic similarity, or arithmetic relationships.
-# - Before returning the JSON, perform a final completeness check:
-#   1. Count the clearly separated source rows in the itemized/table section.
-#   2. Ensure the number of line_items matches that row count whenever a clear table exists.
-#   3. Ensure every line_item description contains the complete relevant text from its corresponding source row.
-#   4. Ensure no visible top-level value has been unnecessarily returned as null.
-# - These rules improve extraction completeness only. Keep the existing JSON fields, field names, data types, and overall response structure unchanged.
-# - If there are no clearly separated line items, return line_items as an empty list.
-# - JSON shape exactly:
-# {{
-#   "invoice_number": ..., "invoice_date": ..., "due_date": ..., "vendor_name": ...,
-#   "customer_name": ..., "subsidiary": ..., "currency": ..., "subtotal": ...,
-#   "tax_amount": ..., "tax_rate": ..., "total_amount": ..., "payment_terms": ...,
-#   "line_items": [{{"description": ..., "quantity": ..., "unit_price": ..., "amount": ...}}]
-# }}
-# """
-
-# EXTRACTION_PROMPT = build_prompt()
-
 def build_prompt() -> str:
     """Build the extraction prompt using the notebook's field definitions."""
     field_lines = "\n".join(
