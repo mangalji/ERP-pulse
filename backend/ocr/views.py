@@ -8,6 +8,10 @@ logic lives here.
 
 from __future__ import annotations
 
+import json
+import redis 
+from django.conf import settings
+
 from django.db.models import Q,Count
 from django.utils import timezone
 from rest_framework import status
@@ -16,7 +20,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from common.utils.response import success_response
 from rest_framework.response import Response
-from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch
+from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRDocumentStatus
 from ocr.serializers import (
     DocumentHistorySerializer,
     DocumentVersionSerializer,
@@ -29,8 +33,10 @@ from ocr.serializers import (
     OCRBatchHistoryItemSerializer,
     OCRHistoryEntrySerializer,
     OCRHistoryFileSerializer,
+    OCRSaveRequestSerializer,
 )
 from ocr.services import ocr_service
+from ocr.services.extraction_persistence import persist_extraction
 from ocr.tasks import process_document_task
 from ocr.utils import logger
 
@@ -72,6 +78,37 @@ def _visible_document_queryset(user):
         user=user,
         company=user.company,
     )
+
+
+def _get_live_ocr_result(upload_id):
+    """
+    Read the unsaved AI extraction result from Redis.
+    """
+    try:
+        client = redis.Redis.from_url(
+            settings.CELERY_BROKER_URL,
+            decode_responses=True,
+        )
+
+        key = f"erp-pulse:ocr:live:{upload_id}"
+        cached = client.get(key)
+
+        if not cached:
+            return None
+
+        result = json.loads(cached)
+
+        if not isinstance(result, dict):
+            return None
+
+        return result
+
+    except Exception:
+        logger.exception(
+            "Failed to read live OCR result during save — upload_id=%s",
+            upload_id,
+        )
+        return None
 
 
 def _user_display_name(user):
@@ -331,11 +368,10 @@ class OCRHistoryListView(APIView):
 
             else:
                 upload = uploads[0]
-                document = getattr(
-                    upload,
-                    "document",
-                    None,
-                )
+                document = getattr(upload,"document",None)
+
+                if document is None:
+                    continue
 
                 results.append(
                     {
@@ -433,6 +469,8 @@ class DocumentHistoryView(APIView):
         serializer = DocumentHistorySerializer(
             {
                 "id": document.id,
+                "upload_id": (document.upload_id if document.upload_id else None),
+                "filename": ( document.upload.original_filename if document.upload_id and document.upload else None),
                 "document_type": document.document_type,
                 "status": document.status,
                 "current_version": document.current_version,
@@ -477,4 +515,177 @@ class DocumentVersionView(APIView):
         return success_response(
             message="Document version fetched successfully.",
             data=serializer.data,
+        )
+
+
+class OCRReviewSaveView(APIView):
+    """
+    Save a user-reviewed OCR result.
+
+    New extraction:
+        upload_id -> live Redis result is the original AI result.
+
+    Existing document:
+        document_id -> latest saved version is the original result.
+
+    The submitted `data` is always treated as the user's reviewed result.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = OCRSaveRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        upload_id = serializer.validated_data.get("upload_id")
+        document_id = serializer.validated_data.get("document_id")
+        reviewed_result = serializer.validated_data["data"]
+
+        try:
+            if upload_id:
+                return self._save_new_extraction(
+                    request.user,
+                    upload_id,
+                    reviewed_result,
+                )
+
+            return self._save_existing_document(
+                request.user,
+                document_id,
+                reviewed_result,
+            )
+
+        except PermissionError as exc:
+            logger.warning(
+                "OCR save permission denied — user=%s upload=%s document=%s",
+                request.user.id,
+                upload_id,
+                document_id,
+            )
+
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        except OCRUpload.DoesNotExist:
+            return Response(
+                {"detail": "OCR upload not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except OCRDocument.DoesNotExist:
+            return Response(
+                {"detail": "OCR document not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except ValueError as exc:
+            logger.warning(
+                "OCR save validation failed — user=%s error=%s",
+                request.user.id,
+                exc,
+            )
+
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "OCR save failed — user=%s upload=%s document=%s",
+                request.user.id,
+                upload_id,
+                document_id,
+            )
+
+            return Response(
+                {
+                    "detail": "Unable to save OCR result.",
+                    "error": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def _save_new_extraction(self, user, upload_id, reviewed_result):
+        upload = OCRUpload.objects.select_related(
+            "user",
+            "batch",
+        ).get(pk=upload_id)
+
+        if upload.user_id != user.id:
+            raise PermissionError(
+                "You do not have permission to save this OCR result."
+            )
+
+        original_result = _get_live_ocr_result(upload_id)
+
+        if original_result is None:
+            raise ValueError(
+                "The live OCR result is no longer available. "
+                "Please re-run OCR before saving."
+            )
+
+        document, version = persist_extraction(
+            upload=upload,
+            user=user,
+            result=original_result,
+            reviewed_result=reviewed_result,
+        )
+
+        return success_response(
+            message="OCR result saved successfully.",
+            data={
+                "document_id": str(document.id),
+                "version_id": str(version.id),
+                "version_number": version.version_number,
+                "status": document.status,
+                "data": reviewed_result,
+            },
+            status_code=status.HTTP_200_OK,
+        )
+
+    def _save_existing_document(self, user, document_id, reviewed_result):
+        document = _visible_document_queryset(user).get(
+            pk=document_id,
+        )
+
+        latest = (
+            document.versions
+            .order_by("-version_number")
+            .first()
+        )
+
+        if latest is None:
+            raise ValueError(
+                "No saved OCR version exists for this document."
+            )
+
+        original_result = latest.normalized_json
+
+        upload = document.upload
+
+        if upload is None:
+            raise ValueError(
+                "The OCR document is not linked to its original upload."
+            )
+
+        document, version = persist_extraction(
+            upload=upload,
+            user=user,
+            result=original_result,
+            reviewed_result=reviewed_result,
+        )
+
+        return success_response(
+            message="OCR result updated successfully.",
+            data={
+                "document_id": str(document.id),
+                "version_id": str(version.id),
+                "version_number": version.version_number,
+                "status": document.status,
+                "data": reviewed_result,
+            },
+            status_code=status.HTTP_200_OK,
         )

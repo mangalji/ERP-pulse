@@ -4,6 +4,7 @@ import apiClient from '../../services/apiClient.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
+import OcrReviewWorkspace from '../../components/ocr/OcrReviewWorkspace.jsx'
 
 const ALLOWED_TYPES = [
   'application/pdf',
@@ -447,11 +448,11 @@ export default function OcrTestPage() {
     }
   }, [activeResult?.preview_url])
 
-  const activeOutput = useMemo(() => {
-    if (!activeResult) return ''
+  // const activeOutput = useMemo(() => {
+  //   if (!activeResult) return ''
 
-    return JSON.stringify(activeResult, null, 2)
-  }, [activeResult])
+  //   return JSON.stringify(activeResult, null, 2)
+  // }, [activeResult])
 
   const canSlide = results.length > 1
 
@@ -827,9 +828,22 @@ export default function OcrTestPage() {
                     {activeResult.error || 'OCR extraction failed for this file.'}
                   </div>
                 ) : activeResult ? (
-                  <pre className="whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
-                    {activeOutput}
-                  </pre>
+                  // <pre className="whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
+                  //   {activeOutput}
+                  // </pre>
+                  <OcrReviewWorkspace
+                    result={activeResult}
+                    onSaved={(savedResult) => {
+                      setResults((current) =>
+                        current.map((item, index) =>
+                          index === activeIndex
+                            ? { ...item, ...savedResult }
+                            : item,
+                        ),
+                      )
+                      loadHistory()
+                    }}
+                  />
                 ) : (
                   <div className="flex min-h-[400px] items-center justify-center text-center">
                     <div>
@@ -889,7 +903,7 @@ export default function OcrTestPage() {
             <Button
               type="button"
               intent="secondary"
-              onClick={loadHistory}
+              onClick={ () => loadHistory(0)}
               disabled={historyLoading}
             >
               {historyLoading ? 'Refreshing...' : 'Refresh'}

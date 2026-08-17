@@ -22,7 +22,7 @@ from ocr.exceptions import (
 )
 from ocr.models import OCRBatch, OCRDocument, OCRUpload
 from ocr.notebook_extraction_service import notebook_gemini_extractor
-from ocr.services.extraction_persistence import persist_extraction
+# from ocr.services.extraction_persistence import persist_extraction
 from ocr.services.gemini_quota_limiter import GeminiQuotaLimiter
 from ocr.services.pipeline_service import idp_pipeline_service
 
@@ -30,12 +30,11 @@ logger = logging.getLogger(__name__)
 
 _LIVE_RESULT_TTL_SECONDS = 24 * 60 * 60
 
-OCR_EXTRACTION_CACHE_VERSION = "v2"
+OCR_EXTRACTION_CACHE_VERSION = "v3"
 
 def _live_result_key(upload_id: str) -> str:
     return (
-        f"erp-pulse:ocr:live"
-        f"{upload_id}"
+        f"erp-pulse:ocr:live:{upload_id}"
         )
 
 
@@ -303,17 +302,20 @@ try:
                 str(upload.id),
                 result,
             )
+            # IMPORTANT: AI extraction is now a review-stage result.
+            # Do not persist it to the OCR document tables here. The user must
+            # review/edit the result and explicitly click Save before a
+            # database version is created.
+            # document, version = persist_extraction(
+            #     upload=upload,
+            #     user=upload.user,
+            #     result=result,
+            # )
             
-            document, version = persist_extraction(
-                upload=upload,
-                user=upload.user,
-                result=result,
-            )
-            
-            _sync_raw_result_snapshot(
-                version,
-                result,
-            )
+            # _sync_raw_result_snapshot(
+            #     version,
+            #     result,
+            # )
 
             completed_at = timezone.now()
             upload.status = OCRUpload.Status.COMPLETED
@@ -336,10 +338,8 @@ try:
             )
 
             logger.info(
-                "Test OCR completed — upload=%s document=%s version=%s",
+                "Test OCR extraction completed — upload=%s; result is awaiting user review/save",
                 upload_id,
-                document.id,
-                version.version_number,
             )
 
             _refresh_batch_status(upload.batch_id)

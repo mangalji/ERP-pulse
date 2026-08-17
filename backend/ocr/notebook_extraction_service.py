@@ -514,7 +514,7 @@ class NotebookGeminiExtractor:
                         candidate=result,
                         request_id=request_id,
                         )
-                    if audit is None:
+                    if audit is not None:
                         result = _merge_corrected_result(
                             result,audit,
                             )

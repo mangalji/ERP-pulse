@@ -115,17 +115,32 @@ def normalize_line_items(result: dict) -> list[dict]:
 
 
 @transaction.atomic
-def persist_extraction(*, upload, user, result: dict):
+def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | None = None,allow_company_admin=False):
     """Persist one extraction as an immutable OCR document version.
 
-    The complete Gemini JSON is retained in ``normalized_json``. The fields
-    explicitly defined by the approved extraction schema are additionally
-    materialized into DB columns so every known field has a stable column even
-    when its value is NULL. Line items are stored in a separate table because
-    their count is variable.
+    The complete original AI JSON is retained in ``normalized_json``.
+    When ``reviewed_result`` is provided, the user-approved/edited JSON is
+    stored in ``reviewed_json`` and its normalized fields are materialized into
+    the version columns and line-item table. This lets the application preserve
+    the original AI extraction while making the reviewed result the current
+    business data.
+
+    The function creates an immutable version, so editing an existing saved
+    document later creates a new version instead of destroying the previous
+    snapshot.
     """
-    normalized = normalize_extraction_payload(result)
-    line_items = normalize_line_items(result)
+
+    if reviewed_result is not None and not isinstance(reviewed_result, dict):
+        raise ValueError('Reviewed OCR result must be a JSON object.')
+
+    # ``result`` is the original AI extraction snapshot. ``reviewed_result``
+    # is the final user-reviewed version that should become the current
+    # business data. For an unedited save, callers may simply pass the same
+    # object for both arguments.
+    effective_result = reviewed_result if reviewed_result is not None else result
+
+    normalized = normalize_extraction_payload(effective_result)
+    line_items = normalize_line_items(effective_result)
 
     company = getattr(user, 'company', None)
 
@@ -140,7 +155,15 @@ def persist_extraction(*, upload, user, result: dict):
     )
 
     if document.user_id != user.id:
-        raise PermissionError('OCR document belongs to a different user.')
+        is_company_admin = (
+            getattr(user, "is_superuser", False)
+            or getattr(user,"is_staff", False)
+            or user.user_roles.filter(
+                role__name__iexact="Company Admin"
+            ).exists()
+        )
+        if not (allow_company_admin and is_company_admin):
+            raise PermissionError('OCR document belongs to a different user.')
 
     if company is not None:
         if document.company_id is not None and document.company_id != company.id:
@@ -163,7 +186,9 @@ def persist_extraction(*, upload, user, result: dict):
         version_number=version_number,
         raw_ocr=result,
         normalized_json=result,
-        reviewed_json={},
+        reviewed_json=(
+            reviewed_result if reviewed_result is not None else {}
+        ),
         confidence={},
         validation_errors=[],
         created_by=user,
@@ -180,7 +205,10 @@ def persist_extraction(*, upload, user, result: dict):
     ])
 
     document.current_version = version_number
-    document.status = OCRDocumentStatus.EXTRACTED
+    # document.status = OCRDocumentStatus.EXTRACTED
+    document.status = (
+        OCRDocumentStatus.APPROVED if reviewed_result is not None else OCRDocumentStatus.EXTRACTED
+    )
     document.processing_completed_at = upload.processing_completed_at
     document.processing_duration_ms = upload.processing_duration_ms
     document.failure_reason = None

@@ -49,6 +49,33 @@ class UploadSerializer(serializers.Serializer):
         return value
 
 
+class OCRSaveRequestSerializer(serializers.Serializer):
+    """
+    Save user-reviewed OCR data.
+
+    Exactly one target is required:
+    - upload_id: for a freshly extracted result that has not yet been saved.
+    - document_id: for an existing saved OCR document.
+    """
+
+    upload_id = serializers.UUIDField(required=False, allow_null=True)
+    document_id = serializers.UUIDField(required=False, allow_null=True)
+    data = serializers.JSONField()
+
+    def validate(self, attrs):
+        upload_id = attrs.get('upload_id')
+        document_id = attrs.get('document_id')
+
+        if bool(upload_id) == bool(document_id):
+            raise serializers.ValidationError(
+                "Provide exactly one of upload_id or document_id."
+            )
+        
+        if not isinstance(attrs.get('data'), dict):
+            raise serializers.ValidationError("Data must be a JSON object.")
+
+        return attrs
+
 class DocumentVersionSerializer(serializers.Serializer):
     """
     Serializes a single immutable version snapshot of a document.
@@ -76,6 +103,8 @@ class DocumentHistorySerializer(serializers.Serializer):
     """
 
     id = serializers.UUIDField()
+    upload_id = serializers.UUIDField(allow_null=True)
+    filename = serializers.CharField(allow_null=True, allow_blank=True)
     document_type = serializers.CharField()
     status = serializers.CharField()
     current_version = serializers.IntegerField()
