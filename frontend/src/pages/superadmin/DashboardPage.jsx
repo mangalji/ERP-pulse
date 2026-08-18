@@ -106,8 +106,6 @@ export default function DashboardPage() {
     ]
   }, [summary])
 
-  // const recentCompanies = summary?.recent_company_registrations || []
-
   return (
     <AdminLayout title="Dashboard" breadcrumb="Dashboard">
       <div className="flex flex-col gap-6">

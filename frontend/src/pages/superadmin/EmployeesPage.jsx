@@ -11,6 +11,7 @@ import Card from '../../components/ui/Card.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
+import {COUNTRY_OPTIONS, NAME_MAX_LENGTH, EMAIL_MAX_LENGTH, getCountryRule, validateEmail, validateName, validatePhone, validateGender} from '../../utils/formValidation.js'
 
 const PAGE_SIZE = 10
 
@@ -18,8 +19,11 @@ const EMPTY_EMPLOYEE = {
   first_name: '',
   last_name: '',
   email: '',
+  mobile_number: '',
+  country: 'IN',
+  phone_country_code: '+91',
+  gender: '',
   role:'admin',
-  // password: '',
   company_id: '',
 }
 
@@ -36,6 +40,8 @@ export default function EmployeesPage() {
   const [companies, setCompanies] = useState([])
   const [createOpen, setCreateOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_EMPLOYEE)
+  const [touched, setTouched] = useState({})
+  const [fieldErrors, setFieldErrors] = useState({})
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
@@ -72,6 +78,30 @@ export default function EmployeesPage() {
     }
   }
 
+  const handleCountryChange = (country) => {
+  const selected = COUNTRY_OPTIONS.find((item) => item.value === country)
+
+  setForm((prev) => ({
+    ...prev,
+    country,
+    phone_country_code: selected?.dialCode || '',
+  }))
+
+  const phoneError = validatePhone(form.mobile_number, country)
+
+  setTouched((prev) => ({
+    ...prev,
+    country: true,
+    mobile_number: true,
+  }))
+
+  setFieldErrors((prev) => ({
+    ...prev,
+    country: country ? '' : 'Please select a country.',
+    mobile_number: phoneError,
+  }))
+}
+
   const openCreate = () => {
     setForm(EMPTY_EMPLOYEE)
     setFormError('')
@@ -79,34 +109,75 @@ export default function EmployeesPage() {
     loadCompanies()
   }
 
+  const updateField = (field, value) => {
+  setForm((prev) => ({
+    ...prev,
+    [field]: value,
+  }))
+
+  setTouched((prev) => ({
+    ...prev,
+    [field]: true,
+  }))
+
+  let error = ''
+
+  if (field === 'email') {
+    error = validateEmail(value)
+  }
+
+  if (field === 'first_name') {
+    error = validateName(value, 'First Name')
+  }
+
+  if (field === 'last_name') {
+    error = validateName(value, 'Last Name')
+  }
+
+  if (field === 'mobile_number') {
+    error = validatePhone(value, form.country)
+  }
+
+  if (field === 'gender') {
+    error = validateGender(value)
+  }
+
+  setFieldErrors((prev) => ({
+    ...prev,
+    [field]: error,
+  }))
+}
+
+const isFormValid = () => {
+  const errors = {
+    email: validateEmail(form.email),
+    first_name: validateName(form.first_name, 'First Name'),
+    last_name: validateName(form.last_name, 'Last Name'),
+    mobile_number: validatePhone(form.mobile_number, form.country),
+    gender: validateGender(form.gender),
+    country: form.country ? '' : 'Please select a country.',
+  }
+
+  setTouched({
+    email: true,
+    first_name: true,
+    last_name: true,
+    mobile_number: true,
+    gender: true,
+    country: true,
+  })
+
+  setFieldErrors(errors)
+
+  return !Object.values(errors).some(Boolean)
+}
+
   const handleCreate = async () => {
     setFormError('')
-    const email = form.email.trim()
 
-    if (!email){
-      setFormError('Email is required.')
-      return
-    }
-
-    if (email.length > 40){
-      setFormError('Email must not exceed 40 characters.')
-      return 
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setFormError('Please enter a valid email address.')
-      return
-    }
-
-    if (!form.first_name.trim()) {
-    setFormError('First Name is required.')
-    return
-  }
-
-  if (!form.last_name.trim()) {
-    setFormError('Last Name is required.')
-    return
-  }
+    if (!isFormValid()) {
+  return
+}
 
   if (!form.company_id) {
     setFormError('Please select a company.')
@@ -137,8 +208,6 @@ export default function EmployeesPage() {
         err.payload?.detail ||
         err.message || 
         'Failed to send Invitation.'
-
-      // addToast(err.payload?.message || err.message || 'Failed to create user', 'error')
       setFormError(message)
     } finally {
       setSaving(false)
@@ -371,10 +440,109 @@ export default function EmployeesPage() {
             <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
             <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">Create User</h3>
             <div className="mt-4 flex flex-col gap-4">
-              <Input label="Email" type="email" value={form.email} onChange={(e) => {setForm({ ...form, email: e.target.value }); setFormError('');}} />
+              {/* <Input label="Email" type="email" value={form.email} onChange={(e) => {setForm({ ...form, email: e.target.value }); setFormError('');}} /> */}
+              <Input label="Email" type="email" maxLength={EMAIL_MAX_LENGTH} value={form.email} onChange={(e) => updateField('email', e.target.value)} />
+                {touched.email && (
+                  <p className={`text-xs ${fieldErrors.email ? 'text-red-600' : 'text-green-600'}`}>
+                    {fieldErrors.email || '✓ Valid email address.'}
+                  </p>
+                )}
               <div className="grid grid-cols-2 gap-4">
-                <Input label="First Name" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
-                <Input label="Last Name" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+                <Input
+  label="First Name"
+  maxLength={NAME_MAX_LENGTH}
+  value={form.first_name}
+  onChange={(e) => updateField('first_name', e.target.value)}
+/>
+{touched.first_name && (
+  <p className={`text-xs ${fieldErrors.first_name ? 'text-red-600' : 'text-green-600'}`}>
+    {fieldErrors.first_name || '✓ Valid first name.'}
+  </p>
+)}
+                {/* <Input label="First Name" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /> */}
+                <Input
+  label="Last Name"
+  maxLength={NAME_MAX_LENGTH}
+  value={form.last_name}
+  onChange={(e) => updateField('last_name', e.target.value)}
+/>
+{touched.last_name && (
+  <p className={`text-xs ${fieldErrors.last_name ? 'text-red-600' : 'text-green-600'}`}>
+    {fieldErrors.last_name || '✓ Valid last name.'}
+  </p>
+)}
+                {/* <Input label="Last Name" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /> */}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                    Country
+                  </span>
+                    
+                  <select
+                    value={form.country}
+                    onChange={(e) => handleCountryChange(e.target.value)}
+                    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                  >
+                    <option value="">Select country</option>
+                    
+                    {COUNTRY_OPTIONS.map((country) => (
+                      <option key={country.value} value={country.value}>
+                        {country.label} ({country.dialCode})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                  Gender
+                </span>
+                  
+                <select
+                  value={form.gender}
+                  onChange={(e) =>
+                    updateField('gender', e.target.value 
+                    )
+                  }
+                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                >
+                  <option value="">Select gender</option>
+                  <option value="MALE">Male</option>
+                  <option value="FEMALE">Female</option>
+                  <option value="OTHER">Other</option>
+                  <option value="PREFER_NOT_TO_SAY">Prefer not to say</option>
+                </select>
+                {touched.gender && (
+  <p className={`text-xs ${fieldErrors.gender ? 'text-red-600' : 'text-green-600'}`}>
+    {fieldErrors.gender || '✓ Gender selected.'}
+  </p>
+)}
+              </label>
+              <div className="grid grid-cols-[100px_1fr] gap-2">
+                <Input
+                  label="Code"
+                  value={form.phone_country_code}
+                  readOnly
+                  className="bg-[var(--color-canvas)]"
+                />
+                <Input
+                  label="Mobile Number"
+                  type="tel"
+                  maxLength={getCountryRule(form.country)?.maxDigits || 15}
+                  value={form.mobile_number}
+                  onChange={(e) =>
+                    updateField(
+                      'mobile_number',
+                      e.target.value.replace(/\D/g, ''),
+                    )
+                  }
+                />
+                {touched.mobile_number && (
+                  <p className={`text-xs ${fieldErrors.mobile_number ? 'text-red-600' : 'text-green-600'}`}>
+                    {fieldErrors.mobile_number || '✓ Valid mobile number.'}
+                  </p>
+                )}
               </div>
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-[var(--color-ink-soft)]">Company</span>

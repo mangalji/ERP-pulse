@@ -457,12 +457,14 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         first_name = request.data.get('first_name', '')
         last_name = request.data.get('last_name', '')
         company_id = request.data.get('company_id')
-        # role_ids = request.data.get('role_ids',[])
+        mobile_number = request.data.get('mobile_number')
+        country = request.data.get('country')
+        gender = request.data.get('gender')
         role = request.data.get("role")
+
         if role not in ["admin","employee"]:
             raise ValidationError("Invalid role selected.")
-        # if isinstance(role_ids, str):
-        #     role_ids = [role_ids]
+
         if not email:
             return Response({'detail': 'email is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -474,6 +476,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 # role_ids=role_ids,
                 role=role,
                 acting_user=request.user,
+                mobile_number=mobile_number,
+                country=country,
+                gender=gender,
             )
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)

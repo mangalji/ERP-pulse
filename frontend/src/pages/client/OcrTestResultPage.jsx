@@ -14,9 +14,6 @@ export default function OcrTestResultPage() {
   const navigate = useNavigate()
   const { documentId } = useParams()
 
-  // const [text, setText] = useState('')
-  // const [loading, setLoading] = useState(false)
-  // const [error, setError] = useState('')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -27,8 +24,6 @@ export default function OcrTestResultPage() {
     const loadResult = async () => {
       if (!documentId) {
         const result = sessionStorage.getItem('ocr_test_result')
-
-        // if (!result) {
         if (!saved) {
           navigate('/app/ocr-test', { replace: true })
           return
@@ -42,8 +37,6 @@ export default function OcrTestResultPage() {
           console.error('Failed to load live OCR result:', err)
           setError('Failed to load OCR result from the current session.')
         }
-
-        // setText(result)
         return
       }
 
@@ -69,17 +62,6 @@ export default function OcrTestResultPage() {
 
         const reviewedData = latest?.reviewed_json && typeof latest.reviewed_json === 'object' && Object.keys(latest.reviewed_json).length ? latest.reviewed_json : latest?.normalized_json ?? {}
 
-        // const savedResult = {
-        //   status:
-        //     latest?.normalized_json?.status ||
-        //     (payload.status === 'EXTRACTED'
-        //       ? 'COMPLETED'
-        //       : payload.status || 'COMPLETED'),
-        //   upload_id: payload.upload_id || null,
-        //   filename: payload.filename || null,
-        //   data: latest.normalized_json ?? {},
-        // }
-
         setResult({
           status: payload.status || 'APPROVED',
           upload_id: payload.upload_id || null,
@@ -92,8 +74,6 @@ export default function OcrTestResultPage() {
             : null,
           data: reviewedData,
         })
-
-        // setText(JSON.stringify(savedResult, null, 2))
       } catch (err) {
         console.error('Failed to load saved OCR result:', err)
 
@@ -164,51 +144,6 @@ export default function OcrTestResultPage() {
 
   const previewIsPdf = isPdf(result?.filename)
 
-
-//   return (
-//     <ClientLayout title="OCR Result" breadcrumb="OCR Result">
-//       <div className="mx-auto w-full max-w-7xl space-y-6">
-//         <Card className="p-6">
-//           <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-//             <div>
-//               <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
-//                 OCR Result
-//               </h1>
-
-//               <p className="mt-1 text-sm text-[var(--color-muted)]">
-//                 Saved OCR result.
-//               </p>
-//             </div>
-
-//             <Button
-//               type="button"
-//               intent="secondary"
-//               onClick={() => navigate('/app/ocr-test')}
-//             >
-//               Back to OCR
-//             </Button>
-//           </div>
-
-//           {loading ? (
-//             <div className="rounded-lg border border-[var(--color-border)] p-6 text-sm text-[var(--color-muted)]">
-//               Loading saved OCR result...
-//             </div>
-//           ) : error ? (
-//             <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700">
-//               {error}
-//             </div>
-//           ) : (
-//             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-5">
-//               <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-6 text-[var(--color-ink)]">
-//                 {text}
-//               </pre>
-//             </div>
-//           )}
-//         </Card>
-//       </div>
-//     </ClientLayout>
-//   )
-// }
   return (
     <ClientLayout title="OCR Result" breadcrumb="OCR Result">
       <div className="mx-auto w-full max-w-7xl space-y-6">

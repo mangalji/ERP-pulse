@@ -82,14 +82,6 @@ def resolve_user_id_from_state(state: str) -> tuple[str,str]:
     if not state:
         raise NetSuiteStateMismatchException('Missing OAuth state parameter.')
 
-    # try:
-    #     return _state_signer.unsign(state, max_age=STATE_MAX_AGE_SECONDS)
-    # except signing.SignatureExpired as exc:
-    #     raise NetSuiteStateMismatchException(
-    #         'OAuth state has expired. Please try connecting again.'
-    #     ) from exc
-    # except signing.BadSignature as exc:
-    #     raise NetSuiteStateMismatchException('Invalid OAuth state parameter.') from exc
     try: 
         payload = _state_signer.unsign(
             state,

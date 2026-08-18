@@ -8,6 +8,13 @@ from accounts.managers import CustomUserManager
 from tenancy.models import Company
 
 
+class Gender(models.TextChoices):
+    MALE = "MALE", "Male"
+    FEMALE = "FEMALE", "Female"
+    OTHER = "OTHER", "Other"
+    PREFER_NOT_TO_SAY = "PREFER_NOT_TO_SAY", "Prefer not to say"
+
+
 class User(AbstractBaseUser, PermissionsMixin):
     """
     Custom User model using email as the unique login identifier.
@@ -31,19 +38,18 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Company relationship — one Company has many Users, a User belongs
     # to one Company. Company can be NULL for platform-level users.
-    company = models.ForeignKey(
-        Company,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='users',
-    )
+    company = models.ForeignKey(Company,on_delete=models.SET_NULL,null=True,blank=True,related_name='users')
 
     # Employee metadata (optional)
     employee_id = models.CharField(max_length=100, null=True, blank=True)
     designation = models.CharField(max_length=150, null=True, blank=True)
     department = models.CharField(max_length=150, null=True, blank=True)
     last_activity = models.DateTimeField(null=True, blank=True)
+
+    country = models.CharField(max_length=4,blank=True)
+    phone_country_code = models.CharField(max_length=6,blank=True)
+
+    gender = models.CharField(max_length=30,choices=Gender.choices,blank=True,null=True)
 
     is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
@@ -70,6 +76,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def get_short_name(self) -> str:
         return self.first_name
+
+
 
 
 class OTP(models.Model):

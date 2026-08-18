@@ -12,6 +12,7 @@ from audit.services import audit_service
 from common.services.email_service import send_email
 from accounts.models import OTP
 from accounts.services import OTPService
+from common.contact_validation import normalize_phone
 
 from tenancy.models import Company
 from rbac.models import Role
@@ -169,57 +170,6 @@ class InvitationService:
 
         return invitation
 
-    # def accept_invitation(self, token, password, first_name, last_name):
-    #     """
-    #     Accept an invitation by creating a user account.
-    #     """
-    #     invitation = self.validate_token(token)
-
-    #     with transaction.atomic():
-    #         # Create or update user
-    #         user, created = User.objects.get_or_create(
-    #             email=invitation.email.lower().strip(),
-    #             defaults={
-    #                 'first_name': first_name,
-    #                 'last_name': last_name,
-    #                 'company': invitation.company,
-    #                 'is_active': True,
-    #                 'is_email_verified': True,
-    #             },
-    #         )
-
-    #         if not created:
-    #             user.first_name = first_name
-    #             user.last_name = last_name
-    #             user.company = invitation.company
-    #             user.is_active = True
-    #             user.is_email_verified = True
-
-    #         user.set_password(password)
-    #         user.save()
-
-    #         # Assign role if provided
-    #         if invitation.role:
-    #             from rbac.models import UserRole
-    #             UserRole.objects.get_or_create(user=user, role=invitation.role)
-
-    #         invitation.status = InvitationStatus.ACCEPTED
-    #         invitation.accepted_at = timezone.now()
-    #         invitation.save(update_fields=['status', 'accepted_at'])
-
-    #         audit_service.log(
-    #             module=AuditModule.INVITATION,
-    #             action=AuditAction.ACCEPT,
-    #             entity='Invitation',
-    #             entity_id=str(invitation.id),
-    #             company=invitation.company,
-    #             user=user,
-    #             old_value={'status': InvitationStatus.PENDING},
-    #             new_value={'status': InvitationStatus.ACCEPTED, 'user_id': str(user.id)},
-    #         )
-
-    #     return user
-
     def request_invitation_otp(self,token,password):
         """
         Validate an invitation and send an OTP before activating
@@ -247,9 +197,13 @@ class InvitationService:
         self.otp_service.generate_and_send_otp(user=user,purpose=OTP.Purpose.INVITATION)
         return user
 
-    def accept_invitation(self,token,password,otp):
+    def accept_invitation(self, token, password, otp, mobile_number=None):
         """
         Verify the invitation OTP and complete account activation.
+
+        Administrator-controlled fields (first name, last name, country,
+        gender, company and role) are already stored on the pre-created User.
+        The invitee can only provide/update their mobile number.
         """
         invitation = self.validate_token(token)
 
@@ -259,10 +213,13 @@ class InvitationService:
             )
         except User.DoesNotExist:
             raise ValueError(
-            "The user account associated with this invitation was not found."
-        )
+                "The user account associated with this invitation was not found."
+            )
+
         if user.company_id != invitation.company_id:
-            raise ValueError("The invited user does not belong to the invited company.")
+            raise ValueError(
+                "The invited user does not belong to the invited company."
+            )
 
         if user.is_active:
             raise ValueError(
@@ -276,30 +233,73 @@ class InvitationService:
             submitted_code=otp,
         )
 
+        normalized_mobile = None
+        normalized_phone_country_code = None
+
+        if mobile_number:
+            if not user.country:
+                raise ValueError(
+                    "A country is not configured for this user. "
+                    "Please contact your administrator."
+                )
+
+            try:
+                normalized_phone = normalize_phone(
+                    phone=mobile_number,
+                    country=user.country,
+                )
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+
+            # User.mobile_number is unique in the current schema.
+            duplicate_mobile = (
+                User.objects
+                .filter(mobile_number=normalized_phone.number)
+                .exclude(pk=user.pk)
+                .exists()
+            )
+            if duplicate_mobile:
+                raise ValueError(
+                    "This mobile number is already associated with another user."
+                )
+
+            normalized_mobile = normalized_phone.number
+            normalized_phone_country_code = normalized_phone.dial_code
+
         with transaction.atomic():
             # Password is saved ONLY after successful OTP verification.
             user.set_password(password)
             user.is_active = True
             user.is_email_verified = True
-            user.save(
-                update_fields=[
-                    "password",
-                    "is_active",
-                    "is_email_verified",
-                ]
-            )
 
-            # The role was already assigned when the Super Admin
-            # created the user. We do not create a duplicate role here.
-            
+            update_fields = [
+                "password",
+                "is_active",
+                "is_email_verified",
+            ]
+
+            if normalized_mobile is not None:
+                user.mobile_number = normalized_mobile
+                user.phone_country_code = normalized_phone_country_code
+                update_fields.extend([
+                    "mobile_number",
+                    "phone_country_code",
+                ])
+
+            user.save(update_fields=update_fields)
+
+            # The role, company, first name, last name, country and gender
+            # were already set by the administrator when the user was created.
+            # The invitee cannot change those values during acceptance.
+
             invitation.status = InvitationStatus.ACCEPTED
             invitation.accepted_at = timezone.now()
             invitation.save(
-            update_fields=[
-                "status",
-                "accepted_at",
-            ]
-        )
+                update_fields=[
+                    "status",
+                    "accepted_at",
+                ]
+            )
 
         audit_service.log(
             module=AuditModule.INVITATION,
@@ -318,11 +318,12 @@ class InvitationService:
                 "user_id": str(user.id),
                 "is_active": True,
                 "is_email_verified": True,
+                "mobile_number_updated": normalized_mobile is not None,
             },
         )
+
         return user
 
-        
 
     def expire_old_tokens(self):
         """

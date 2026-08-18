@@ -16,6 +16,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.db.models.functions import Lower
 
 from core.models import BaseModel
 
@@ -43,6 +44,8 @@ class Company(BaseModel):
         blank=True,
         null=True,
     )
+    
+    contact_phone_country_code = models.CharField(max_length=6,blank=True)
 
     contact_phone = models.CharField(
         max_length=20,
@@ -54,11 +57,18 @@ class Company(BaseModel):
         blank=True,
     )
 
+
     class Meta:
         db_table = "company"
         ordering = ["name"]
         verbose_name = "Company"
         verbose_name_plural = "Companies"
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                name="unique_company_name_ci",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.code})"

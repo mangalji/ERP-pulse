@@ -1,8 +1,10 @@
 from django.contrib.auth.password_validation import validate_password
 from django.core.validators import RegexValidator
 from rest_framework import serializers
+
 from common import constants
-from accounts.models import LoginActivity, User
+from accounts.models import LoginActivity, User, Gender
+from common.contact_validation import normalize_phone
 from rbac.models import UserRole
 
 otp_code_validator = RegexValidator(
@@ -16,8 +18,8 @@ otp_code_validator = RegexValidator(
 # ("not-a-phone!!", "1234", "00000000000000000000") while still
 # allowing real international numbers without a country-specific format.
 mobile_number_validator = RegexValidator(
-    regex=r'^\+?[1-9]\d{7,14}$',
-    message='Enter a valid mobile number (digits only, optionally starting with +).',
+    regex=r'^\+?[1-9]\d{6,14}$',
+    message='Enter a valid mobile number.',
 )
 
 # Rejects digits and HTML/script-relevant characters in a human name
@@ -27,7 +29,7 @@ mobile_number_validator = RegexValidator(
 # accented Latin, etc.) are allowed.
 name_validator = RegexValidator(
     regex=r'^[^\d<>{}\[\]\\\/`~^*_=|]+$',
-    message="Name can't contain digits or special characters like < > { } [ ].",
+    message="Name can't contain digits or special characters.",
 )
 
 def human_name_field(*, max_length: int = 100, required: bool = True) -> serializers.CharField:
@@ -40,6 +42,40 @@ def human_name_field(*, max_length: int = 100, required: bool = True) -> seriali
         required=required,
         allow_blank=not required,
     )
+
+def add_normalized_phone(attrs,*,required:bool=False):
+    """
+    Normalize phone data in serializers that receive both phone and country.
+
+    This helper leaves blank phone data alone only when required=False.
+    """
+    phone = attrs.get("mobile_number")
+    country = attrs.get("country")
+
+    if not phone:
+        if required:
+            raise serializers.ValidationError(
+                {"mobile_number": "Phone number is required."}
+            )
+        return attrs
+
+    if not country:
+        raise serializers.ValidationError(
+            {"country": "Country is required when a phone number is provided."}
+        )
+
+    try:
+        normalized = normalize_phone(phone=phone, country=country)
+    except ValueError as exc:
+        raise serializers.ValidationError(
+            {"mobile_number": str(exc)}
+        ) from exc
+
+    attrs["mobile_number"] = normalized.number
+    attrs["country"] = normalized.country_code
+    attrs["phone_country_code"] = normalized.dial_code
+    return attrs
+
 
 class RegisterSerializer(serializers.Serializer):
     """
@@ -87,21 +123,22 @@ class VerifyRegistrationOTPSerializer(serializers.Serializer):
 
 class CompleteProfileSerializer(serializers.Serializer):
     """
-    Validates the final registration step: first/last name, mobile
-    number (optional), and the signed token issued by VerifyRegistrationOTPView.
-    Mobile-number uniqueness is a business rule and stays in
-    AuthenticationService.complete_registration().
+    Validates final registration profile data.
+
+    Phone remains optional for compatibility with the existing registration
+    flow. If supplied, country must also be supplied and the phone is
+    normalized to E.164.
     """
     registration_token = serializers.CharField(max_length=2048)
     first_name = human_name_field()
     last_name = human_name_field()
-    mobile_number = serializers.CharField(
-        max_length=16,
-        validators=[mobile_number_validator],
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-    )
+    mobile_number = serializers.CharField(max_length=20,validators=[mobile_number_validator],required=False,allow_blank=True,allow_null=True)
+    country = serializers.CharField(max_length=4,required=False,allow_blank=True)
+    gender = serializers.ChoiceField(choices=Gender.choices,required=False,allow_blank=True,allow_null=True)
+
+    def validate(self, attrs):
+        return add_normalized_phone(attrs, required=False)
+
 
 class LoginSerializer(serializers.Serializer):
     """
@@ -153,6 +190,9 @@ class UserSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'mobile_number',
+            "country",
+            "phone_country_code",
+            "gender",
             'profile_pic',
             'is_active',
             'is_email_verified',
@@ -199,11 +239,6 @@ class ResetPasswordSerializer(serializers.Serializer):
         return attrs
 
 
-class SendProfileUpdateOTPSerializer(serializers.Serializer):
-    """Validates POST /api/v1/auth/profile/send-otp/ input."""
-    pass  # No input needed — OTP is sent to the authenticated user's email
-
-
 class VerifyProfileUpdateOTPSerializer(serializers.Serializer):
     """Validates POST /api/v1/auth/profile/update/ input."""
     otp_code = serializers.CharField(
@@ -216,6 +251,17 @@ class VerifyProfileUpdateOTPSerializer(serializers.Serializer):
     mobile_number = serializers.CharField(
         max_length=16,
         validators=[mobile_number_validator],
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    country = serializers.CharField(
+        max_length=2,
+        required=False,
+        allow_blank=True,
+    )
+    gender = serializers.ChoiceField(
+        choices=Gender.choices,
         required=False,
         allow_blank=True,
         allow_null=True,

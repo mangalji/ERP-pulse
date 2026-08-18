@@ -11,7 +11,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from ocr.exceptions import InvalidFileException
-# from ocr.models import OCRBatch, OCRUpload
+
 from ocr.validators import validate_extension, validate_file_size, validate_mime_type
 
 

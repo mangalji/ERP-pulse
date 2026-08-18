@@ -11,7 +11,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
-from django.db import transaction
 from common.throttles import RegisterOTPThrottle
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
@@ -19,7 +18,6 @@ from superadmin.permissions import IsSuperAdmin
 
 from .serializers import DemoRequestSerializer
 from .services import demo_request_service
-from common.utils.response import success_response
 
 
 class DemoRequestViewSet(viewsets.ViewSet):

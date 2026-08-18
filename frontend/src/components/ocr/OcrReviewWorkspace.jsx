@@ -40,12 +40,7 @@ function cloneData(data) {
   if (!data || typeof data !== 'object') return {}
 
   let source = data
-  // const source = 
-  //   data.data && 
-  //   typeof data.data === 'object' &&
-  //   !Array.isArray(data.data)
-  //     ? data.data
-  //     : data
+
   // Handle current OCR response shape: [{ ... }]
   if (Array.isArray(source)) {
     source = source[0] || {}

@@ -22,7 +22,6 @@ from ocr.exceptions import (
 )
 from ocr.models import OCRBatch, OCRDocument, OCRUpload
 from ocr.notebook_extraction_service import notebook_gemini_extractor
-# from ocr.services.extraction_persistence import persist_extraction
 from ocr.services.gemini_quota_limiter import GeminiQuotaLimiter
 from ocr.services.pipeline_service import idp_pipeline_service
 
@@ -306,16 +305,6 @@ try:
             # Do not persist it to the OCR document tables here. The user must
             # review/edit the result and explicitly click Save before a
             # database version is created.
-            # document, version = persist_extraction(
-            #     upload=upload,
-            #     user=upload.user,
-            #     result=result,
-            # )
-            
-            # _sync_raw_result_snapshot(
-            #     version,
-            #     result,
-            # )
 
             completed_at = timezone.now()
             upload.status = OCRUpload.Status.COMPLETED

@@ -39,31 +39,7 @@ const QUICK_ACTIONS = [
     module: 'employees',
     permission: 'employee.manage',
   },
-  // {
-  //   to: '/app/employees',
-  //   label: 'Invite Employee',
-  //   icon: EmployeesIcon,
-  //   module: 'employees',
-  //   permission: 'employee.manage',
-  // },
-  // {
-  //   to: '/app/integrations/netsuite',
-  //   label: 'Connect NetSuite',
-  //   icon: NetSuiteIcon,
-  //   module: null,
-  //   permission: null,
-  // },
-  // {
-  //   to: isCompanyAdmin
-  //     ? '/app/integrations/netsuite'
-  //     : '/app/netsuite',
-  //   label: isCompanyAdmin
-  //     ? 'Connect Netsuite'
-  //     : 'NetSuite',
-  //   icon: NetSuiteIcon,
-  //   module: null,
-  //   permission: null,
-  // },
+
   {
   to: '/app/ocr-test',
   label: 'OCR',
@@ -237,9 +213,6 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     
       // For all other actions, respect the employee's
       // module and permission assignments.
-      // if (!isCompanyAdmin && action.label === 'NetSuite'){
-      //   return true
-      // }
       if (!action.module && !action.permission) return true
     
       const hasModule = userModules.some(

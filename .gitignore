@@ -39,6 +39,7 @@ backend/static/
 backend/staticfiles/
 media/
 backend/media/
+backend/show_db_schema.py
 
 # ==========================
 # Node / Vite

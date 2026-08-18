@@ -9,7 +9,6 @@ This file contains settings shared by every environment:
 Environment-specific settings should never be added here.
 """
 
-# from datetime import timedelta
 from pathlib import Path
 from decouple import Csv, config
 from .apps import INSTALLED_APPS
@@ -140,12 +139,18 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS":{
+            "min_length":8,
+        }
     },
     {
         "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+    },
+    {
+        "NAME": "accounts.validators.StrongPasswordValidator",
     },
 ]
 

@@ -304,16 +304,6 @@ class AuthenticationService:
         logger.info('Profile updated for user %s (fields: %s).', user.id, update_fields)
         return user
 
-    # -----------------------------------------------------------------
-    # Login
-    #
-    # Sprint 8.4: public registration is retired, so every account now
-    # reaches ACTIVE (is_active=True, is_email_verified=True) exclusively
-    # via the Invitation Activation flow (invitations.services.accept_
-    # invitation). Deliberately reuses is_active/is_email_verified as the
-    # only gate — no new status field/migration per Sprint 8.4 scope
-    # (product decision: keep changes minimal for the manager/client demo).
-    # -----------------------------------------------------------------
 
     def login(self, *, email: str, password: str) -> User:
         """
@@ -321,39 +311,23 @@ class AuthenticationService:
         is active/verified, send a LOGIN OTP. Issues no token.
         """
         import traceback
-        # DEBUG_LOGIN_SERVICE: login() entered with email={email}  # temporarily disabled debug logging
         user = self.user_repository.get_by_email(email)
-        # DEBUG_LOGIN_SERVICE: get_by_email returned = {user}  # temporarily disabled debug logging
         if user is None:
-            # DEBUG_LOGIN_SERVICE: user is None → raising InvalidCredentialsException  # temporarily disabled debug logging
             raise InvalidCredentialsException('Invalid email or password.')
-        # DEBUG_LOGIN_SERVICE: user.is_active = {user.is_active}  # temporarily disabled debug logging
-        # DEBUG_LOGIN_SERVICE: user.is_email_verified = {user.is_email_verified}  # temporarily disabled debug logging
         pw_ok = user.check_password(password)
-        # DEBUG_LOGIN_SERVICE: check_password = {pw_ok}  # temporarily disabled debug logging
         if not pw_ok:
-            # DEBUG_LOGIN_SERVICE: password check failed → raising InvalidCredentialsException  # temporarily disabled debug logging
             raise InvalidCredentialsException('Invalid email or password.')
 
         if not user.is_active or not user.is_email_verified:
-            # DEBUG_LOGIN_SERVICE: account not active/verified → raising AccountNotVerifiedException  # temporarily disabled debug logging
-            # DEBUG_LOGIN_SERVICE: is_active={user.is_active}, is_email_verified={user.is_email_verified}  # temporarily disabled debug logging
             raise AccountNotVerifiedException(
                 'Please activate your account first. Check your email for the '
                 'invitation link, or contact your administrator if your access '
                 'has been disabled.'
             )
-        # DEBUG_LOGIN_SERVICE: BEFORE OTP generation  # temporarily disabled debug logging
         try:
             self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)
         except Exception as e:
-            # DEBUG_LOGIN_SERVICE: OTP EXCEPTION:  # temporarily disabled debug logging
-            #   type: {type(e).__name__}  # temporarily disabled debug logging
-            #   message: {str(e)}  # temporarily disabled debug logging
-            #   status_code attr: {getattr(e, 'status_code', 'NONE')}  # temporarily disabled debug logging
-            #   traceback:\n{traceback.format_exc()}  # temporarily disabled debug logging
             raise
-        # DEBUG_LOGIN_SERVICE: AFTER OTP generation, returning user  # temporarily disabled debug logging
         logger.info('Login OTP sent for user %s.', user.id)
         return user
 
@@ -383,13 +357,10 @@ class AuthenticationService:
         or not — never reveal whether an email is registered
         (AUTHENTICATION_DESIGN.md, Section 10).
         """
-        emial = email.lower().strip()
+        email = email.lower().strip()
         user = self.user_repository.get_by_email(email)
 
         if user is None:
-            # Don't reveal whether the email exists — always return
-            # success to the caller. The OTP was "sent" as far as the
-            # API consumer knows.
             logger.info('Login OTP resend requested for unknown email=%s.', email)
             return {"email": email}
 

@@ -71,25 +71,6 @@ import OcrBatchHistoryPage from '../pages/client/OcrBatchHistoryPage.jsx'
  * These pages are NOT routed; their legacy URLs redirect to /app/* equivalents.
  * Commented imports kept for traceability. Do not delete files.
  */
-// import DashboardPage from '../pages/DashboardPage.jsx'
-// import ConnectNetSuitePage from '../pages/ConnectNetSuitePage.jsx'
-// import AiAssistantPage from '../pages/AiAssistantPage.jsx'
-// import CustomersPage from '../pages/CustomersPage.jsx'
-// import EmployeesPage from '../pages/EmployeesPage.jsx'
-// import VendorsPage from '../pages/VendorsPage.jsx'
-// import InventoryPage from '../pages/InventoryPage.jsx'
-// import SalesOrdersPage from '../pages/SalesOrdersPage.jsx'
-// import PurchaseOrdersPage from '../pages/PurchaseOrdersPage.jsx'
-// import InvoicesPage from '../pages/InvoicesPage.jsx'
-// import InvoiceReaderPage from '../pages/InvoiceReaderPage.jsx'
-// import ReportsPage from '../pages/ReportsPage.jsx'
-// import HistoryPage from '../pages/HistoryPage.jsx'
-// import SettingsPage from '../pages/SettingsPage.jsx'
-// import SystemHealthPage from '../pages/SystemHealthPage.jsx'
-
-/* Legacy auth pages — intentionally not routed (Sprint 8.4: invitation-only onboarding). */
-// import RegisterPage from '../pages/auth/RegisterPage.jsx'
-// import CompleteProfilePage from '../pages/auth/CompleteProfilePage.jsx'
 
 function PublicRoute({ children }) {
   return <PublicLayout>{children}</PublicLayout>
@@ -327,8 +308,6 @@ export default function AppRoutes() {
     </ProtectedRoute>
   }
 />
-{/* <Route path="/app/ocr-test" element={<OcrTestPage />} />
-<Route path="/app/ocr-test/result" element={<OcrTestResultPage />} /> */}
 <Route path="/app/ocr-test/history/:documentId" element={<OcrTestResultPage />} />
 
       <Route

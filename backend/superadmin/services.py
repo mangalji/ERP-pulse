@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from datetime import timedelta
-
+import re
 from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from accounts.models import User
+from common.contact_validation import normalize_phone
+
+from accounts.models import User, Gender
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
 from notifications.models import Notification
@@ -180,8 +182,10 @@ class SuperAdminService:
             company_plan.original_price = original_price
             company_plan.final_price = final_price
             company_plan.assigned_by = assigned_by
-            company_plan.save(update_fields=['start_date', 'status', 'end_date', 'discount_type', 'discount_value',
-                                              'billing_cycle', 'original_price', 'final_price', 'assigned_by'])
+            company_plan.save(update_fields=[
+                'start_date', 'status', 'end_date', 'discount_type', 'discount_value',
+                'billing_cycle', 'original_price', 'final_price', 'assigned_by'
+                ])
 
         self._create_subscription_history(
             company=company, plan=plan, company_plan=company_plan,
@@ -482,11 +486,65 @@ class SuperAdminService:
             qs = qs.filter(Q(reason__icontains=search) | Q(company__name__icontains=search))
         return list(qs.order_by('-started_at')[:50])
 
-    def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None):
+    def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None,mobile_number=None, country=None, gender=None):
         """Create a pending company user and send the existing invitation flow."""
+
+
         normalized_email = email.lower().strip()
+
         if User.objects.filter(email__iexact=normalized_email).exists():
             raise ValueError("A user with this email already exists.")
+
+        first_name = (first_name or '').strip()
+        last_name = (last_name or '').strip()
+
+        if len(normalized_email) > 40:
+            raise ValueError("Email must not exceed 40 characters.")
+        
+        if len(first_name) > 20:
+            raise ValueError("First name must not exceed 20 characters.")
+        
+        if len(last_name) > 20:
+            raise ValueError("Last name must not exceed 20 characters.")
+        
+        name_pattern = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$")
+        
+        if not name_pattern.fullmatch(first_name):
+            raise ValueError(
+                "First name may contain letters, spaces, hyphens, and apostrophes only."
+            )
+        
+        if not name_pattern.fullmatch(last_name):
+            raise ValueError(
+                "Last name may contain letters, spaces, hyphens, and apostrophes only."
+            )
+
+        if not first_name:
+            raise ValueError("First name is required.")
+        if not last_name:
+            raise ValueError("Last name is required.")
+
+        if not country:
+            raise ValueError("Country is required.")
+        if gender not in dict(Gender.choices):
+            raise ValueError("Invalid gender selected.")  
+
+        normalized_phone = None
+        phone_country_code = ''
+        if mobile_number:
+            try:
+                normalized = normalize_phone(
+                    phone=mobile_number,
+                    country=country,
+                )
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            normalized_phone = normalized.number
+            country = normalized.country_code
+            phone_country_code = normalized.dial_code  
+
+            if User.objects.filter(mobile_number=normalized_phone).exists():
+                raise ValueError("A user with this mobile number already exists.")
 
         if not company_id:
             raise ValueError("company_id is required.")
@@ -512,8 +570,12 @@ class SuperAdminService:
         with transaction.atomic():
             user = User(
                 email=normalized_email,
-                first_name=first_name.strip(),
-                last_name=last_name.strip(),
+                first_name=first_name,
+                last_name=last_name,
+                mobile_number=normalized_phone,
+                country=country.strip().upper(),
+                phone_country_code=phone_country_code,
+                gender=gender,
                 company=company,
                 is_active=False,
                 is_email_verified=False,
@@ -573,9 +635,74 @@ class SuperAdminService:
 
     def update_employee(self, *, employee_id, **data):
         user = get_object_or_404(User, pk=employee_id)
-        for field in ['first_name', 'last_name', 'mobile_number', 'designation', 'department', 'company']:
+        
+        if 'first_name' in data and data['first_name'] is not None:
+            first_name = data['first_name'].strip()
+
+            if len(first_name) < 2:
+                raise ValueError("First name must contain at least 2 characters.")
+
+            if len(first_name) > 20:
+                raise ValueError("First name must not exceed 20 characters.")
+
+            if not re.fullmatch(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$", first_name):
+                raise ValueError(
+                    "First name may contain letters, spaces, hyphens, and apostrophes only."
+                )
+
+            user.first_name = first_name
+
+
+        if 'last_name' in data and data['last_name'] is not None:
+            last_name = data['last_name'].strip()
+
+            if len(last_name) < 2:
+                raise ValueError("Last name must contain at least 2 characters.")
+
+            if len(last_name) > 20:
+                raise ValueError("Last name must not exceed 20 characters.")
+
+            if not re.fullmatch(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$", last_name):
+                raise ValueError(
+                    "Last name may contain letters, spaces, hyphens, and apostrophes only."
+                )
+
+            user.last_name = last_name
+
+
+        if 'country' in data and data['country']:
+            country = data['country'].strip().upper()
+
+            normalized_phone = normalize_phone(
+                phone=data.get('mobile_number') or user.mobile_number,
+                country=country,
+            )
+
+            user.country = normalized_phone.country_code
+            user.phone_country_code = normalized_phone.dial_code
+            user.mobile_number = normalized_phone.number
+
+        elif 'mobile_number' in data and data['mobile_number']:
+            normalized_phone = normalize_phone(
+                phone=data['mobile_number'],
+                country=user.country,
+            )
+
+            user.mobile_number = normalized_phone.number
+            user.phone_country_code = normalized_phone.dial_code
+
+
+        if 'gender' in data and data['gender'] is not None:
+            if data['gender'] not in dict(Gender.choices):
+                raise ValueError("Invalid gender selected.")
+
+            user.gender = data['gender']
+
+
+        for field in ['designation', 'department', 'company']:
             if field in data and data[field] is not None:
                 setattr(user, field, data[field])
+
         if 'is_active' in data:
             user.is_active = data['is_active']
         user.save()

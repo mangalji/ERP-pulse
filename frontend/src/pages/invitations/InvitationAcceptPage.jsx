@@ -20,6 +20,7 @@ export default function InvitationAcceptPage() {
 
   const [password, setPassword] = useState('')
   const [otp, setOtp] = useState('')
+  const [mobileNumber, setMobileNumber] = useState('')
 
   useEffect(() => {
     if (!token) {
@@ -40,12 +41,13 @@ export default function InvitationAcceptPage() {
       })
   }, [token])
 
-  const handleRequestOtp = async ({password: submittedPassword,confirm_password}) =>{
+  const handleRequestOtp = async ({password: submittedPassword,confirm_password, mobile_number}) =>{
     setIsSubmitting(true)
     setError('')
     try{
       await invitationApi.requestOtp({token, password: submittedPassword, confirm_password})
       setPassword(submittedPassword)
+      setMobileNumber(mobile_number || '')
       setStatus('otp')
       addToast(
         'OTP sent successfully. Please check your email.',
@@ -77,6 +79,7 @@ export default function InvitationAcceptPage() {
         token,
         password,
         otp,
+        mobile_number: mobileNumber,
       })
       setStatus('success')
       addToast(

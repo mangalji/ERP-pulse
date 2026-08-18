@@ -16,7 +16,9 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
 
-from accounts.models import User
+from common.contact_validation import normalize_phone
+
+from accounts.models import User, Gender
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from invitations.models import Invitation, InvitationStatus
@@ -50,9 +52,44 @@ class ClientPortalService:
 
     @transaction.atomic
     def create_employee(self, *, company, acting_user, **data):
-        email = data.get('email')
-        if User.objects.filter(email=email).exists():
+        email = (data.get('email') or '').lower().strip()
+        if not email:
+            raise ValueError('Email is required.')
+        if User.objects.filter(email__iexact=email).exists():
             raise ValueError('A user with this email already exists.')
+
+        first_name = (data.get('first_name') or '').strip()
+        last_name = (data.get('last_name') or '').strip()
+        if not first_name:
+            raise ValueError('First name is required.')
+        if not last_name:
+            raise ValueError('Last name is required.')
+
+        country = (data.get('country') or '').strip().upper()
+        if not country:
+            raise ValueError('Country is required.')
+
+        gender = data.get('gender')
+        if gender not in dict(Gender.choices):
+            raise ValueError('Invalid gender selected.')
+
+        mobile_number = data.get('mobile_number')
+        normalized_phone = None
+        phone_country_code = ''
+        if mobile_number:
+            try:
+                normalized = normalize_phone(
+                    phone=mobile_number,
+                    country=country,
+                )
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            normalized_phone = normalized.number
+            country = normalized.country_code
+            phone_country_code = normalized.dial_code
+
+            if User.objects.filter(mobile_number=normalized_phone).exists():
+                raise ValueError('A user with this mobile number already exists.')
 
         # TASK 7: Subscription Enforcement — verify employee limit.
         from superadmin.models import CompanyPlan
@@ -69,9 +106,13 @@ class ClientPortalService:
                 )
 
         employee = User.objects.create(
-            email=email.lower().strip(),
-            first_name=data.get('first_name', ''),
-            last_name=data.get('last_name', ''),
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            mobile_number=normalized_phone,
+            country=country,
+            phone_country_code=phone_country_code,
+            gender=gender,
             designation=data.get('designation', ''),
             department=data.get('department', ''),
             company=company,
@@ -146,10 +187,49 @@ class ClientPortalService:
             'designation': employee.designation,
             'department': employee.department,
         }
+        update_fields = []
+
         for field in ('first_name', 'last_name', 'designation', 'department'):
             if field in data and data[field] is not None:
-                setattr(employee, field, data[field])
-        employee.save(update_fields=['first_name', 'last_name', 'designation', 'department'])
+                value = data[field].strip() if isinstance(data[field], str) else data[field]
+                if field in ('first_name', 'last_name') and not value:
+                    raise ValueError(f'{field.replace("_", " ").title()} is required.')
+                setattr(employee, field, value)
+                update_fields.append(field)
+
+        if 'gender' in data:
+            gender = data.get('gender')
+            if gender not in dict(User.Gender.choices):
+                raise ValueError('Invalid gender selected.')
+            employee.gender = gender
+            update_fields.append('gender')
+
+        if 'country' in data or 'mobile_number' in data:
+            new_country = (data.get('country') or employee.country or '').strip().upper()
+            new_phone = data.get('mobile_number', employee.mobile_number)
+            if new_phone:
+                if not new_country:
+                    raise ValueError('Country is required when updating a phone number.')
+                try:
+                    normalized = normalize_phone(
+                        phone=new_phone,
+                        country=new_country,
+                    )
+                except ValueError as exc:
+                    raise ValueError(str(exc)) from exc
+                if User.objects.filter(mobile_number=normalized.number).exclude(pk=employee.pk).exists():
+                    raise ValueError('A user with this mobile number already exists.')
+                employee.mobile_number = normalized.number
+                employee.country = normalized.country_code
+                employee.phone_country_code = normalized.dial_code
+                update_fields.extend(['mobile_number', 'country', 'phone_country_code'])
+            elif 'country' in data:
+                employee.country = new_country
+                employee.phone_country_code = ''
+                update_fields.extend(['country', 'phone_country_code'])
+
+        if update_fields:
+            employee.save(update_fields=list(dict.fromkeys(update_fields)))
 
         # Handle role update if provided
         role_id = data.get('role_id')
@@ -296,13 +376,59 @@ class ClientPortalService:
 
         company_changed = []
         settings_changed = []
-
-        for field in ('contact_email', 'contact_phone', 'country'):
-            if field in data:
-                setattr(company, field, data[field])
-                company_changed.append(field)
-        if company_changed:
-            company.save(update_fields=company_changed)
+        contact_email = data.get('contact_email')
+        contact_phone = data.get('contact_phone')
+        country = data.get('country')
+        
+        if contact_email is not None:
+            company.contact_email = contact_email
+            company_changed.append('contact_email')
+        
+        if contact_phone is not None or country is not None:
+            final_country = (
+                country.strip().upper()
+                if country
+                else (company.country or '').strip().upper()
+            )
+        
+            final_phone = (
+                contact_phone
+                if contact_phone is not None
+                else company.contact_phone
+            )
+        
+            if final_phone:
+                try:
+                    normalized = normalize_phone(
+                        phone=final_phone,
+                        country=final_country,
+                    )
+                except ValueError as exc:
+                    raise ValueError(str(exc)) from exc
+        
+                company.contact_phone = normalized.number
+                company.country = normalized.country_code
+                company.contact_phone_country_code = normalized.dial_code
+        
+                company_changed.extend([
+                    'contact_phone',
+                    'country',
+                    'contact_phone_country_code',
+                ])
+        
+            elif country is not None:
+                company.country = final_country
+                company.contact_phone_country_code = ''
+        
+                company_changed.extend([
+                    'country',
+                    'contact_phone_country_code',
+                ])
+        
+        
+        
+                if company_changed:
+                    company.save(update_fields=company_changed)
 
         for field in ('timezone', 'currency', 'language', 'date_format', 'number_format'):
             if field in data:

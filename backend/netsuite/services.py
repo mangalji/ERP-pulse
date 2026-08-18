@@ -149,11 +149,6 @@ class NetSuiteConnectionService:
                     "This NetSuite account is already connected."
                 )
 
-            # if self.repository.exists_for_account(user,netsuite_account_id):
-            #     raise NetSuiteConnectionAlreadyExistsException(
-            #         "You alreadty have a connection for this netsuite account"
-            #     )
-
             connection = self.repository.prepare_for_oauth_retry(
                 existing,
                 user=user,
@@ -187,18 +182,6 @@ class NetSuiteConnectionService:
             )
 
         authorization_url = self.get_authorization_url(user=user,connection=connection)
-
-        # connection = self.repository.create(
-        #     user=user,
-        #     client_name=client_name,
-        #     client_id=client_id,
-        #     environment=environment,
-        #     client_secret=client_secret,
-        #     netsuite_account_id=netsuite_account_id,
-        #     company_id=company_id,
-        # )
-        # self.audit_log_repository.log(action='created', connection=connection)
-
 
         return {
             "connection":connection,

@@ -1,14 +1,10 @@
 from django.urls import path
 from accounts.views import (
-    RegisterView, 
-    VerifyRegistrationOTPView,
     LoginView,
     LogoutView,
     MeView,
     TokenRefreshView,
     VerifyLoginOTPView,
-    ResendRegistrationOTPView,
-    CompleteProfileView,
     ResendLoginOTPView,
     LoginHistoryView,
     ForgotPasswordView,

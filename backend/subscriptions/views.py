@@ -17,7 +17,6 @@ from tenancy.models import Company, CompanyModule, Module
 from subscriptions.permissions import IsSuperAdminOrCompanyAdmin
 from subscriptions.serializers import ModuleSerializer, PlanSerializer, SubscriptionSerializer, UsageSerializer
 from subscriptions.services import license_service, subscription_service
-from tenancy.models import Company
 from superadmin.models import Plan
 
 class SubscriptionViewSet(viewsets.ViewSet):

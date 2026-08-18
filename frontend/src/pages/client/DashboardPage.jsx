@@ -31,15 +31,6 @@ const CHART_COLORS = [
   'var(--color-muted)',
 ]
 
-// const QUICK_ACTIONS = [
-//   { label: 'Upload Invoice', href: '/app/invoice-reader', intent: 'primary' },
-//   { label: 'Add Employee', href: '/app/employees', intent: 'secondary' },
-//   { label: 'Invite Employee', href: '/app/employees', intent: 'secondary' },
-//   { label: 'Connect NetSuite', href: '/app/integrations/netsuite', intent: 'secondary' },
-//   { label: 'Generate Report', href: '/app/reports', intent: 'secondary' },
-//   { label: 'Open AI Assistant', href: '/app/ai-assistant', intent: 'secondary' },
-// ]
-
 const ACTIVITY_TONE = {
   employee: 'primary',
   invoice: 'positive',
@@ -336,23 +327,6 @@ export default function DashboardPage() {
                 </div>
               )}
             </Card>
-
-            {/* Quick Actions */}
-            {/* <Card className="p-5">
-              <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Quick Actions</h2>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                {QUICK_ACTIONS.map((action) => (
-                  <Button
-                    key={action.label}
-                    intent={action.intent}
-                    size="md"
-                    onClick={() => (window.location.href = action.href)}
-                  >
-                    {action.label}
-                  </Button>
-                ))}
-              </div>
-            </Card> */}
           </>
         )}
       </div>

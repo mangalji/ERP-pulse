@@ -448,12 +448,6 @@ export default function OcrTestPage() {
     }
   }, [activeResult?.preview_url])
 
-  // const activeOutput = useMemo(() => {
-  //   if (!activeResult) return ''
-
-  //   return JSON.stringify(activeResult, null, 2)
-  // }, [activeResult])
-
   const canSlide = results.length > 1
 
   const goPrevious = () => {

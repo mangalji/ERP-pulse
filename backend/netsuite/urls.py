@@ -27,10 +27,8 @@ from netsuite.views import (
     NetSuiteMyConnectionView,
     NetSuitePostOCRVendorBillView,
 )
-# from netsuite.posting_views import NetSuitePostOCRVendorBillView
 
 urlpatterns = [
-    # path('connect/', NetSuiteConnectView.as_view(), name='netsuite-connect'),
     path('callback/', NetSuiteCallbackView.as_view(), name='netsuite-callback'),
     path('customers/', NetSuiteCustomersView.as_view(), name='netsuite-customers'),
     path('customers/<str:record_id>/', NetSuiteCustomerDetailView.as_view(), name='netsuite-customer-detail'),

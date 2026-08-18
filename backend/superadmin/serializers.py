@@ -1,3 +1,5 @@
+import re
+from common.contact_validation import normalize_phone
 from rest_framework import serializers
 from .models import (
     Plan, CompanyPlan, SupportSession,
@@ -76,7 +78,154 @@ class CompanySerializer(serializers.ModelSerializer):
             "id",
             "created_at",
             "updated_at",
+            "contact_phone_country_code",
         )
+        extra_kwargs = {
+        "code": {
+            "validators": [],
+        },
+    }
+
+    def validate(self, attrs):
+        is_create = self.instance is None
+
+        name = (attrs.get("name") or "").strip()
+        code = (attrs.get("code") or "").strip()
+        email = (attrs.get("contact_email") or "").strip()
+        country = (attrs.get("country") or "").strip().upper()
+        phone = (attrs.get("contact_phone") or "").strip()
+        # Prevent duplicate company identity.
+        # Name and code are compared case-insensitively.
+        name_queryset = Company.objects.filter(
+            name__iexact=name,
+        )
+
+        code_queryset = Company.objects.filter(
+            code__iexact=code,
+        )
+
+        if self.instance:
+            name_queryset = name_queryset.exclude(
+                pk=self.instance.pk,
+            )
+            code_queryset = code_queryset.exclude(
+                pk=self.instance.pk,
+            )
+
+        if name_queryset.exists():
+            raise serializers.ValidationError({
+                "name": "A company with this name is already registered."
+            })
+
+        if code_queryset.exists():
+            raise serializers.ValidationError({
+                "code": "This company code is already assigned to another company."
+            })        
+
+        # Required fields on company creation.
+        if is_create:
+            if not name:
+                raise serializers.ValidationError({
+                    "name": "Company name is required."
+                })
+
+            if not code:
+                raise serializers.ValidationError({
+                    "code": "Company code is required."
+                })
+
+            if not email:
+                raise serializers.ValidationError({
+                    "contact_email": "Contact email is required."
+                })
+
+            if not country:
+                raise serializers.ValidationError({
+                    "country": "Country is required."
+                })
+
+            if not phone:
+                raise serializers.ValidationError({
+                    "contact_phone": "Contact phone is required."
+                })
+
+        # Company name
+        if name:
+            if len(name) < 3:
+                raise serializers.ValidationError({
+                    "name": "Company name must contain at least 3 characters."
+                })
+
+            if len(name) > 100:
+                raise serializers.ValidationError({
+                    "name": "Company name must not exceed 100 characters."
+                })
+
+            if not re.fullmatch(
+                r"^[A-Za-z0-9À-ÖØ-öø-ÿ&().,'\- ]+$",
+                name,
+            ):
+                raise serializers.ValidationError({
+                    "name": "Company name contains unsupported characters."
+                })
+
+            attrs["name"] = name
+
+        # Company code
+        if code:
+            if len(code) < 2:
+                raise serializers.ValidationError({
+                    "code": "Company code must contain at least 2 characters."
+                })
+
+            if len(code) > 20:
+                raise serializers.ValidationError({
+                    "code": "Company code must not exceed 20 characters."
+                })
+
+            if not re.fullmatch(r"^[A-Za-z0-9_-]+$", code):
+                raise serializers.ValidationError({
+                    "code": "Company code may contain only letters, numbers, hyphens and underscores."
+                })
+
+            attrs["code"] = code
+
+        # Contact email
+        if email:
+            if len(email) > 40:
+                raise serializers.ValidationError({
+                    "contact_email": "Contact email must not exceed 40 characters."
+                })
+
+            attrs["contact_email"] = email
+
+        # Country + phone
+        if country or phone:
+            if not country:
+                raise serializers.ValidationError({
+                    "country": "Country is required when a contact phone is provided.",
+             })
+
+            if not phone:
+                raise serializers.ValidationError({
+                    "contact_phone": "Contact phone is required."
+                })
+
+            try:
+                normalized = normalize_phone(
+                    phone=phone,
+                    country=country,
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError({
+                    "contact_phone": str(exc)
+                }) from exc
+
+            attrs["contact_phone"] = normalized.number
+            attrs["country"] = normalized.country_code
+            attrs["contact_phone_country_code"] = normalized.dial_code
+
+        return attrs
 
     # Legacy onboarding note: company creation previously accepted admin
     # fields and sent an invitation here. User onboarding now belongs solely

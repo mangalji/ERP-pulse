@@ -187,24 +187,13 @@ class LoginView(APIView):
     throttle_classes = [LoginOTPThrottle]
 
     def post(self, request):
-        # DEBUG_LOGIN_VIEW: post() entered  # temporarily disabled debug logging
-        # DEBUG_LOGIN_VIEW: request.data = {request.data}  # temporarily disabled debug logging
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        # DEBUG_LOGIN_VIEW: serializer valid, validated_data = {serializer.validated_data}  # temporarily disabled debug logging
         try:
-            # DEBUG_LOGIN_VIEW: calling authentication_service.login()  # temporarily disabled debug logging
             user = authentication_service.login(**serializer.validated_data)
-            # DEBUG_LOGIN_VIEW: login() returned user = {user}  # temporarily disabled debug logging
         except Exception as e:
             import traceback
-            # DEBUG_LOGIN_VIEW: EXCEPTION caught:  # temporarily disabled debug logging
-            #   type: {type(e).__name__}  # temporarily disabled debug logging
-            #   message: {str(e)}  # temporarily disabled debug logging
-            #   status_code attr: {getattr(e, 'status_code', 'NONE')}  # temporarily disabled debug logging
-            #   traceback:\n{traceback.format_exc()}  # temporarily disabled debug logging
             raise
-        # DEBUG_LOGIN_VIEW: returning success_response for user {user}  # temporarily disabled debug logging
         return success_response(
             message='OTP sent to your registered email. Please verify to continue.',
             data={'email': user.email},

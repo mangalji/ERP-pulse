@@ -136,21 +136,6 @@ export default function DashboardPage() {
                 {loading ? <Skeleton className="h-40 w-full" /> : <SparklineChart data={[]} />}
               </Card>
 
-              {/* <Card className="p-5">
-                <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-                  Top Customers
-                </h2>
-                {loading ? (
-                  <div className="flex flex-col gap-3">
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <Skeleton key={i} className="h-8 w-full" />
-                    ))}
-                  </div>
-                ) : (
-                  // <TopCustomersBar customers={recentCustomers?.slice(0, 5) || []} />
-                  <TopCustomersBar customers={[]} />
-                )}
-              </Card> */}
             </div>
 
             <Card className="p-5">

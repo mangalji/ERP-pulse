@@ -2,7 +2,6 @@ import apiClient, { unwrap } from './apiClient.js'
 import { NETSUITE_ENDPOINTS } from '../utils/constants.js'
 
 export const netsuiteApi = {
-  // getConnectUrl: () => apiClient.get(NETSUITE_ENDPOINTS.connect).then(unwrap),
   // Connection management — a user can hold several NetSuite connections
   // (one per account), with exactly one marked active at a time.
   listConnections: () => apiClient.get(NETSUITE_ENDPOINTS.connections).then(unwrap),

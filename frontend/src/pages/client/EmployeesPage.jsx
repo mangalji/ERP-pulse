@@ -11,6 +11,29 @@ import Skeleton from '../../components/ui/Skeleton.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
+import {
+  COUNTRY_OPTIONS,
+  NAME_MAX_LENGTH,
+  EMAIL_MAX_LENGTH,
+  getCountryRule,
+  validateEmail,
+  validateName,
+  validatePhone,
+  validateGender,
+} from '../../utils/formValidation.js'
+
+// const COUNTRY_OPTIONS = [
+//   { value: 'IN', label: 'India', dialCode: '+91' },
+//   { value: 'US', label: 'United States', dialCode: '+1' },
+//   { value: 'GB', label: 'United Kingdom', dialCode: '+44' },
+//   { value: 'AU', label: 'Australia', dialCode: '+61' },
+//   { value: 'CA', label: 'Canada', dialCode: '+1' },
+//   { value: 'AE', label: 'United Arab Emirates', dialCode: '+971' },
+//   { value: 'SG', label: 'Singapore', dialCode: '+65' },
+//   { value: 'DE', label: 'Germany', dialCode: '+49' },
+//   { value: 'FR', label: 'France', dialCode: '+33' },
+//   { value: 'JP', label: 'Japan', dialCode: '+81' },
+// ]
 
 export default function EmployeesPage() {
   const { toasts, addToast, removeToast } = useToast()
@@ -24,11 +47,62 @@ export default function EmployeesPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
   const [roles, setRoles] = useState([])
-  const [form, setForm] = useState({ email: '', first_name: '', last_name: '', role_id: '', designation: '', department: '' })
+  const [form, setForm] = useState({email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', gender: '', role_id: '', designation: '', department: ''})
+  const [touched, setTouched] = useState({})
+  const [fieldErrors, setFieldErrors] = useState({})
   const [editingEmployee, setEditingEmployee] = useState(null)
   const [editing, setEditing] = useState(false)
   const [viewEmployee, setViewEmployee] = useState(null)
   const navigate = useNavigate()
+
+  const updateField = (field, value) => {
+  setForm((prev) => ({
+    ...prev,
+    [field]: value,
+  }))
+
+  setTouched((prev) => ({
+    ...prev,
+    [field]: true,
+  }))
+
+  let error = ''
+
+  if (field === 'email') error = validateEmail(value)
+  if (field === 'first_name') error = validateName(value, 'First Name')
+  if (field === 'last_name') error = validateName(value, 'Last Name')
+  if (field === 'mobile_number') error = validatePhone(value, form.country)
+  if (field === 'gender') error = validateGender(value)
+
+  setFieldErrors((prev) => ({
+    ...prev,
+    [field]: error,
+  }))
+}
+
+const isFormValid = () => {
+  const errors = {
+    email: validateEmail(form.email),
+    first_name: validateName(form.first_name, 'First Name'),
+    last_name: validateName(form.last_name, 'Last Name'),
+    country: form.country ? '' : 'Please select a country.',
+    mobile_number: validatePhone(form.mobile_number, form.country),
+    gender: validateGender(form.gender),
+  }
+
+  setTouched({
+    email: true,
+    first_name: true,
+    last_name: true,
+    country: true,
+    mobile_number: true,
+    gender: true,
+  })
+
+  setFieldErrors(errors)
+
+  return !Object.values(errors).some(Boolean)
+}
 
   const loadEmployees = useCallback(async () => {
     setLoading(true)
@@ -71,32 +145,33 @@ export default function EmployeesPage() {
     return roleNames.filter(Boolean).join(', ') || '—'
   }
 
+  const handleCountryChange = (country) => {
+    const selected = COUNTRY_OPTIONS.find((item) => item.value === country)
+
+    setForm((prev) => ({
+      ...prev,
+      country,
+      phone_country_code: selected?.dialCode || '',
+    }))
+
+    const phoneError = validatePhone(form.mobile_number, country)
+
+    setTouched((prev) => ({
+      ...prev,
+      country: true,
+      mobile_number: true,
+    }))
+
+    setFieldErrors((prev) => ({
+      ...prev,
+      country: country ? '' : 'Please select a country.',
+      mobile_number: phoneError,
+    }))
+  }
+
   const handleCreate = async (event) => {
     event.preventDefault()
 
-    const email = form.email.trim()
-
-    if (!email) {
-      addToast('Email is required', 'error')
-      return
-    }
-    if (email.length > 40) {
-      addToast('Email must not exceed 40 characters.', 'error')
-      return
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      addToast('Please enter a valid email address.', 'error')
-      return
-    }
-    if (!form.first_name.trim()) {
-      addToast('First name is required', 'error')
-      return
-    }
-    if (!form.last_name.trim()) {
-      addToast('Last name is required', 'error')
-      return
-    }
     if (!form.role_id) {
       addToast('Please select a role', 'error')
       return
@@ -108,14 +183,17 @@ export default function EmployeesPage() {
         email: form.email,
         first_name: form.first_name,
         last_name: form.last_name,
-        // role_id: form.role_id ? Number(form.role_id) : undefined,
+        mobile_number: form.mobile_number,
+        country: form.country,
+        phone_country_code: form.phone_country_code,
+        gender: form.gender,
         role_id: form.role_id || undefined,
         designation: form.designation,
         department: form.department,
       })
       addToast('Employee invitation sent successfully', 'success')
       setShowCreate(false)
-      setForm({ email: '', first_name: '', last_name: '', role_id: '', designation: '', department: '' })
+      setForm({email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', gender: '', role_id: '', designation: '', department: '', })
       loadEmployees()
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to create employee', 'error')
@@ -156,21 +234,33 @@ export default function EmployeesPage() {
       email: emp.email || '',
       first_name: emp.first_name || '',
       last_name: emp.last_name || '',
+      mobile_number: emp.mobile_number || '',
+      country: emp.country || 'IN',
+      phone_country_code: emp.phone_country_code || '+91',
+      gender: emp.gender || '',
       role_id: emp.roles?.[0]?.role_id ? String(emp.roles[0].role_id) : '',
       designation: emp.designation || '',
       department: emp.department || '',
     })
     setShowCreate(false)
+    setTouched({})
+    setFieldErrors({})
   }
 
   const handleUpdate = async (event) => {
     event.preventDefault()
+    if (!isFormValid()) {
+  return
+}
     setEditing(true)
     try {
       await clientApi.updateEmployee(editingEmployee.id, {
         first_name: form.first_name,
         last_name: form.last_name,
-        // role_id: form.role_id ? Number(form.role_id) : undefined,
+        mobile_number: form.mobile_number,
+        country: form.country,
+        phone_country_code: form.phone_country_code,
+        gender: form.gender,
         role_id: form.role_id || undefined,
         designation: form.designation,
         department: form.department,
@@ -238,21 +328,39 @@ export default function EmployeesPage() {
                 label="Email"
                 type="email"
                 required
+                maxLength={EMAIL_MAX_LENGTH}
                 value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                onChange={(e) => updateField('email', e.target.value)}
               />
+              {touched.email && (
+  <p className={`text-xs ${fieldErrors.email ? 'text-red-600' : 'text-green-600'}`}>
+    {fieldErrors.email || '✓ Valid email address.'}
+  </p>
+)}
               <Input
                 id="empFirst"
                 label="First name"
                 value={form.first_name}
-                onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+                onChange={(e) => updateField('first_name', e.target.value)}
+                maxLength={NAME_MAX_LENGTH}
               />
+              {touched.first_name && (
+                <p className={`text-xs ${fieldErrors.first_name ? 'text-red-600' : 'text-green-600'}`}>
+                  {fieldErrors.first_name || '✓ Valid first name.'}
+                </p>
+              )}
               <Input
                 id="empLast"
                 label="Last name"
                 value={form.last_name}
-                onChange={(e) => setForm({ ...form, last_name: e.target.value })}
+                onChange={(e) => updateField('last_name', e.target.value)}
+                maxLength={NAME_MAX_LENGTH}
               />
+              {touched.last_name && (
+                <p className={`text-xs ${fieldErrors.last_name ? 'text-red-600' : 'text-green-600'}`}>
+                  {fieldErrors.last_name || '✓ Valid last name.'}
+                </p>
+              )}
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-[var(--color-ink-soft)]">Role</span>
                 <select
@@ -266,6 +374,77 @@ export default function EmployeesPage() {
                   ))}
                 </select>
               </label>
+              <label className="flex flex-col gap-1.5">
+  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+    Country
+  </span>
+
+  <select
+    value={form.country}
+    onChange={(e) => handleCountryChange(e.target.value)}
+    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+  >
+    <option value="">Select country</option>
+
+    {COUNTRY_OPTIONS.map((country) => (
+      <option key={country.value} value={country.value}>
+        {country.label} ({country.dialCode})
+      </option>
+    ))}
+  </select>
+</label>
+
+<div className="grid grid-cols-[100px_1fr] gap-2">
+  <Input
+    label="Code"
+    value={form.phone_country_code}
+    readOnly
+    className="bg-[var(--color-canvas)]"
+  />
+
+  <Input
+    label="Mobile Number"
+    type="tel"
+    value={form.mobile_number}
+    onChange={(e) =>
+  updateField(
+    'mobile_number',
+    e.target.value.replace(/\D/g, ''),
+  )
+}
+    required
+    maxLength={getCountryRule(form.country)?.maxDigits || 15}
+  />
+  {touched.mobile_number && (
+  <p className={`text-xs ${fieldErrors.mobile_number ? 'text-red-600' : 'text-green-600'}`}>
+    {fieldErrors.mobile_number || '✓ Valid mobile number.'}
+  </p>
+)}
+</div>
+
+<label className="flex flex-col gap-1.5">
+  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+    Gender
+  </span>
+
+  <select
+    value={form.gender}
+    onChange={(e) =>
+      setForm({
+        ...form,
+        gender: e.target.value,
+      })
+    }
+    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+    required
+  >
+    <option value="">Select gender</option>
+    <option value="MALE">Male</option>
+    <option value="FEMALE">Female</option>
+    <option value="OTHER">Other</option>
+    <option value="PREFER_NOT_TO_SAY">Prefer not to say</option>
+  </select>
+</label>
               <Input
                 id="empDesignation"
                 label="Designation"
@@ -310,14 +489,95 @@ export default function EmployeesPage() {
                 id="editEmpFirst"
                 label="First name"
                 value={form.first_name}
-                onChange={(e) => setForm({ ...form, first_name: e.target.value })}
+                onChange={(e) => updateField('first_name', e.target.value)}
+                maxLength={NAME_MAX_LENGTH}
               />
+              {touched.first_name && (
+                <p className={`text-xs ${fieldErrors.first_name ? 'text-red-600' : 'text-green-600'}`}>
+                  {fieldErrors.first_name || '✓ Valid first name.'}
+                </p>
+              )}
               <Input
                 id="editEmpLast"
                 label="Last name"
                 value={form.last_name}
-                onChange={(e) => setForm({ ...form, last_name: e.target.value })}
+                onChange={(e) => updateField('last_name', e.target.value)}
+                maxLength={NAME_MAX_LENGTH}
               />
+              {touched.last_name && (
+                <p className={`text-xs ${fieldErrors.last_name ? 'text-red-600' : 'text-green-600'}`}>
+                  {fieldErrors.last_name || '✓ Valid last name.'}
+                </p>
+              )}
+              <label className="flex flex-col gap-1.5">
+  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+    Country
+  </span>
+
+  <select
+    value={form.country}
+    onChange={(e) => handleCountryChange(e.target.value)}
+    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+  >
+    <option value="">Select country</option>
+
+    {COUNTRY_OPTIONS.map((country) => (
+      <option key={country.value} value={country.value}>
+        {country.label} ({country.dialCode})
+      </option>
+    ))}
+  </select>
+</label>
+
+<div className="grid grid-cols-[100px_1fr] gap-2">
+  <Input
+    label="Code"
+    value={form.phone_country_code}
+    readOnly
+    className="bg-[var(--color-canvas)]"
+  />
+
+  <Input
+    label="Mobile Number"
+    type="tel"
+    maxLength={getCountryRule(form.country)?.maxDigits || 15}
+    value={form.mobile_number}
+    onChange={(e) =>
+      updateField(
+        'mobile_number',
+        e.target.value.replace(/\D/g, ''),
+      )
+    }
+  />
+  {touched.mobile_number && (
+    <p className={`text-xs ${fieldErrors.mobile_number ? 'text-red-600' : 'text-green-600'}`}>
+      {fieldErrors.mobile_number || '✓ Valid mobile number.'}
+    </p>
+  )}
+</div>
+
+<label className="flex flex-col gap-1.5">
+  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+    Gender
+  </span>
+
+  <select
+    value={form.gender}
+    onChange={(e) => updateField('gender', e.target.value)}
+    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+  >
+    <option value="">Select gender</option>
+    <option value="MALE">Male</option>
+    <option value="FEMALE">Female</option>
+    <option value="OTHER">Other</option>
+    <option value="PREFER_NOT_TO_SAY">Prefer not to say</option>
+  </select>
+  {touched.gender && (
+    <p className={`text-xs ${fieldErrors.gender ? 'text-red-600' : 'text-green-600'}`}>
+      {fieldErrors.gender || '✓ Gender selected.'}
+    </p>
+  )}
+</label>
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-[var(--color-ink-soft)]">Role</span>
                 <select

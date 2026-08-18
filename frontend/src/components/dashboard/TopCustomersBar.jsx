@@ -5,9 +5,6 @@ export default function TopCustomersBar({ customers }) {
         <li key={customer.id}>
           <div className="mb-1.5 flex items-center justify-between text-sm">
             <span className="font-medium text-[var(--color-ink)]">{customer.name}</span>
-            {/* <span className="font-mono-tabular text-[var(--color-muted)]">
-              ${customer.value.toLocaleString('en-US')}
-            </span> */}
             <span className="font-mono-tabular text-[var(--color-muted)]">
               ${(Number(customer.value) || 0).toLocaleString('en-US')}
             </span>

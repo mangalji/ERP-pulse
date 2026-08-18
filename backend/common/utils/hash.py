@@ -1,30 +1,3 @@
-# from django.contrib.auth.hashers import make_password, check_password
-
-# def hash_password(password:str) -> str:
-
-#     """
-#     args: plain text value
-#     return: hashed value
-#     """
-
-#     return make_password(password)
-
-# def verify_hash(value:str,hashed_value:str)->bool:
-
-#     """
-#     verify hash value
-
-#     args: 
-#         value: plain text value
-#         hashed_value: hashed value
-    
-#     return: True if valid.
-#     """
-
-#     return check_password(value,hashed_value)
-
-
-
 from django.contrib.auth.hashers import check_password, make_password
 
 
