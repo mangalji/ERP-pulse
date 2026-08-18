@@ -156,27 +156,21 @@ export default function OcrReviewWorkspace({
   const { toasts, addToast, removeToast } = useToast()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [posting, setPosting] = useState(false)
   const [viewMode, setViewMode] = useState('fields')
   const [data, setData] = useState({})
-  const [originalData, setOriginalData] = useState({})
 
   useEffect(() => {
-    const normalized= cloneData(result?.data)
-
     setEditing(false)
     setSaving(false)
     setViewMode('fields')
-    setData(normalized)
-    setOriginalData(normalized)
+    setData(cloneData(result?.data))
   }, [result?.upload_id, result?.document_id, result?.version_id, result?.data])
 
   const lineItems = useMemo(
     () => (Array.isArray(data.line_items) ? data.line_items : []),
     [data.line_items],
   )
-  const isDirty = useMemo(() => {
-  return JSON.stringify(data) !== JSON.stringify(originalData)
-  }, [data, originalData])
 
   const setField = (key, value) => {
     setData((current) => ({
@@ -256,18 +250,10 @@ export default function OcrReviewWorkspace({
         data: responseData?.data || payload.data,
       }
 
-      // setData(cloneData(savedResult.data))
-      // setEditing(false)
-      // addToast('OCR result saved successfully.')
-      // onSaved?.(savedResult)
-      const savedData = cloneData(savedResult.data)
-
-      setData(savedData)
-      setOriginalData(savedData)
+      setData(cloneData(savedResult.data))
       setEditing(false)
       addToast('OCR result saved successfully.')
       onSaved?.(savedResult)
-
     } catch (err) {
       console.error('Failed to save OCR result:', err)
       addToast(
@@ -279,6 +265,52 @@ export default function OcrReviewWorkspace({
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+
+  const handlePost = async () => {
+    if (!result?.document_id) {
+      addToast(
+        'Please save the OCR data before posting it to NetSuite.',
+        'error',
+      )
+      return
+    }
+
+    try {
+      setPosting(true)
+
+      const response = await apiClient.post(
+        '/netsuite/ocr/post-vendor-bill/',
+        {
+          document_id: result.document_id,
+        },
+      )
+
+      const responseData =
+        response?.data?.data ?? response?.data ?? {}
+
+      const recordId = responseData?.netsuite_record_id
+
+      addToast(
+        recordId
+          ? `Vendor Bill created in NetSuite. Record ID: ${recordId}`
+          : 'Vendor Bill created in NetSuite.',
+        'success',
+      )
+    } catch (err) {
+      console.error('Failed to post Vendor Bill to NetSuite:', err)
+
+      addToast(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Failed to post Vendor Bill to NetSuite.',
+        'error',
+      )
+    } finally {
+      setPosting(false)
     }
   }
 
@@ -456,13 +488,7 @@ export default function OcrReviewWorkspace({
           type="button"
           intent="primary"
           onClick={handleSave}
-          // disabled={saving || (!editing && Boolean(result?.document_id))}
-          disabled={saving || (Boolean(result?.document_id) && !isDirty)}
-          title={
-            result?.document_id && !isDirty
-              ? 'Now new changes'
-              : 'save ocr data'
-          }
+          disabled={saving || (!editing && Boolean(result?.document_id))}
           isLoading={saving}
         >
           Save
@@ -472,8 +498,14 @@ export default function OcrReviewWorkspace({
           <Button
             type="button"
             intent="netsuite"
-            disabled
-            title="NetSuite posting will be enabled in the NetSuite integration step."
+            onClick={handlePost}
+            disabled={posting || !result?.document_id}
+            isLoading={posting}
+            title={
+              !result?.document_id
+                ? 'Save the OCR result before posting to NetSuite'
+                : 'Post Vendor Bill to NetSuite'
+            }
           >
             Post
           </Button>

@@ -64,24 +64,66 @@ class NetSuiteConnectionService:
         )
         if connection is None:
             raise NetSuiteConnectionNotFoundException("connection not found.")
+        try:
+            client = NetSuiteAuthClient(
+                account_id=connection.netsuite_account_id,
+                client_id=connection.client_id,
+                client_secret=connection.client_secret,
+            )
+            token_set = client.exchange_code_for_tokens(code=code)
 
-        client = NetSuiteAuthClient(
-        account_id=connection.netsuite_account_id,
-        client_id=connection.client_id,
-        client_secret=connection.client_secret,
-    )
-        token_set = client.exchange_code_for_tokens(code=code)
+            self.repository.complete_OAuth(
+                connection,
+                access_token=token_set.access_token,
+                refresh_token=token_set.refresh_token,
+                access_token_expires_at=token_set.access_token_expires_at,
+            )
+            self.audit_log_repository.log(action='oauth_completed', connection=connection)
 
-        self.repository.complete_OAuth(
-            connection,
-            access_token=token_set.access_token,
-            refresh_token=token_set.refresh_token,
-            access_token_expires_at=token_set.access_token_expires_at,
-        )
-        self.audit_log_repository.log(action='oauth_completed', connection=connection)
+            # Reference/master data is synchronized asynchronously. OAuth
+            # callback must remain fast and must not block on a large account.
+            try:
+                from netsuite.tasks import sync_netsuite_reference_data
 
-        logger.info('NetSuite connected for user %s.', user.id)
-        return user
+                if hasattr(sync_netsuite_reference_data, "delay"):
+                    sync_netsuite_reference_data.delay(str(connection.id))
+                else:
+                    logger.warning(
+                        "Celery task dispatch unavailable; reference sync not queued — connection=%s",
+                        connection.id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to queue NetSuite reference sync — connection=%s",
+                    connection.id,
+                )
+
+        except Exception as exc:
+
+            logger.exception(
+                "NetSuite OAuth token exchange failed — connection=%s",
+                connection.id,
+            )
+
+            connection.status = "error"
+            connection.is_active = False
+            connection.last_error = str(exc)[:2000]
+            connection.save(
+                update_fields=[
+                    "status",
+                    "is_active",
+                    "last_error",
+                    "updated_at",
+                ]
+            )
+
+            self.audit_log_repository.log(
+                action="oauth_failed",
+                connection=connection,
+                detail=str(exc)[:1000],
+            )
+            raise
+
 
     def list_connections(self,*,user:User):
         return self.repository.list_by_user(user)
@@ -96,23 +138,67 @@ class NetSuiteConnectionService:
             netsuite_account_id:str,
             company_id=None):
 
-        if self.repository.exists_for_account(user,netsuite_account_id):
-            raise NetSuiteConnectionAlreadyExistsException(
-                "You alreadty have a connection for this netsuite account"
-            )
-        
-        connection = self.repository.create(
+        existing = self.repository.get_existing_for_account(
             user=user,
-            client_name=client_name,
-            client_id=client_id,
-            environment=environment,
-            client_secret=client_secret,
             netsuite_account_id=netsuite_account_id,
-            company_id=company_id,
         )
-        self.audit_log_repository.log(action='created', connection=connection)
+
+        if existing:
+            if existing.status == 'connected' and existing.is_active:
+                raise NetSuiteConnectionAlreadyExistsException(
+                    "This NetSuite account is already connected."
+                )
+
+            # if self.repository.exists_for_account(user,netsuite_account_id):
+            #     raise NetSuiteConnectionAlreadyExistsException(
+            #         "You alreadty have a connection for this netsuite account"
+            #     )
+
+            connection = self.repository.prepare_for_oauth_retry(
+                existing,
+                user=user,
+                company_id=company_id,
+                client_name=client_name,
+                environment=environment,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+
+            self.audit_log_repository.log(
+                action="oauth_retry_started",
+                connection=connection,
+            )
+
+        else:
+
+            connection = self.repository.create(
+                user=user,
+                client_name=client_name,
+                client_id=client_id,
+                environment=environment,
+                client_secret=client_secret,
+                netsuite_account_id=netsuite_account_id,
+                company_id=company_id,
+            )
+
+            self.audit_log_repository.log(
+                action="created",
+                connection=connection,
+            )
 
         authorization_url = self.get_authorization_url(user=user,connection=connection)
+
+        # connection = self.repository.create(
+        #     user=user,
+        #     client_name=client_name,
+        #     client_id=client_id,
+        #     environment=environment,
+        #     client_secret=client_secret,
+        #     netsuite_account_id=netsuite_account_id,
+        #     company_id=company_id,
+        # )
+        # self.audit_log_repository.log(action='created', connection=connection)
+
 
         return {
             "connection":connection,
@@ -169,7 +255,15 @@ class NetSuiteConnectionService:
         return switched
 
     def get_company_connections(self, *, company_id):
-        return NetSuiteConnection.objects.filter(company_id=company_id).order_by('-is_active', '-connected_at')
+        return (
+            NetSuiteConnection.objects
+            .filter(
+                company_id=company_id,
+                status="connected",
+                is_active=True,
+            )
+            .order_by("-connected_at")
+        )
 
     def assign_employee(self, *, connection_id, employee_id):
         from accounts.models import User
@@ -219,6 +313,40 @@ class NetSuiteConnectionService:
             connection.consecutive_failures += 1
             connection.save(update_fields=['status', 'last_error', 'consecutive_failures', 'updated_at'])
             return {'success': False, 'message': str(exc)}
+
+    def mark_oauth_failed(
+        self,
+        *,
+        state: str,
+        error_message: str,
+    ):
+        user_id, connection_id = resolve_user_id_from_state(state)
+
+        connection = self.repository.get_by_id(
+            user=User.objects.get(id=user_id),
+            connection_id=connection_id,
+        )
+
+        if connection:
+            connection.status = "error"
+            connection.is_active = False
+            connection.last_error = error_message[:2000]
+            connection.save(
+                update_fields=[
+                    "status",
+                    "is_active",
+                    "last_error",
+                    "updated_at",
+                ]
+            )
+
+            self.audit_log_repository.log(
+                action="oauth_failed",
+                connection=connection,
+                detail=error_message[:1000],
+            )
+
+        return connection
     
 
 class NetSuiteDataService:
@@ -538,10 +666,451 @@ class NetSuiteDataService:
     def list_invoices(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
         return self._list_transactions_via_suiteql(user=user, transaction_type='CustInvc', limit=limit, offset=offset)
 
-    def _require_connection(self, user: User):
-        connection = self.repository.get_by_user(user)
+    def _require_connection(self, user: User):  
+        connection = self.repository.get_for_user(user)
         if connection is None or not connection.is_active:
             raise NetSuiteConnectionNotFoundException(
                 'No active NetSuite connection found. Please connect your NetSuite account first.'
             )
         return connection
+
+class NetSuiteReferenceSyncService:
+    """Synchronize NetSuite master/reference IDs into ERP Pulse."""
+
+    PAGE_SIZE = 1000
+
+    def __init__(self, repository=None):
+        self.repository = repository or NetSuiteConnectionRepository()
+        self.data_service = NetSuiteDataService(repository=self.repository)
+
+    def _sync_id_collection(self, *, connection, user, record_type: str) -> int:
+        offset = 0
+        total_synced = 0
+
+        while True:
+            response = self.data_service.get_records(
+                record_type=record_type,
+                user=user,
+                limit=self.PAGE_SIZE,
+                offset=offset,
+            )
+            items = response.get("items", []) if isinstance(response, dict) else []
+            if not items:
+                break
+
+            cached = []
+            for row in items:
+                internal_id = row.get("id")
+                if internal_id is None:
+                    continue
+                cached.append({
+                    "connection_id": connection.id,
+                    "record_type": record_type,
+                    "internal_id": str(internal_id),
+                    "data": {"links": row.get("links", [])},
+                })
+
+            total_synced += self.repository.upsert_reference_records(cached)
+
+            if not response.get("hasMore") and len(items) < self.PAGE_SIZE:
+                break
+            offset += len(items)
+
+        return total_synced
+
+    def _sync_vendors(self, *, connection, user) -> int:
+        offset = 0
+        total_synced = 0
+
+        while True:
+            raw = self.data_service.list_vendors(
+                user=user,
+                limit=self.PAGE_SIZE,
+                offset=offset,
+            )
+            items = raw.get("items", []) if isinstance(raw, dict) else []
+            if not items:
+                break
+
+            records = []
+            for row in items:
+                name = row.get("companyName") or row.get("entityId") or ""
+                records.append({
+                    "connection_id": connection.id,
+                    "record_type": NetSuiteRecordType.VENDOR,
+                    "internal_id": row.get("id"),
+                    "external_id": row.get("entityId"),
+                    "name": name,
+                    "search_name": str(name).strip().lower(),
+                    "is_inactive": row.get("status") == "Inactive",
+                    "data": row,
+                })
+
+            total_synced += self.repository.upsert_reference_records(records)
+
+            if len(items) < self.PAGE_SIZE:
+                break
+            offset += len(items)
+
+    def _sync_inventory_items(self, *, connection, user) -> int:
+        offset = 0
+        total_synced = 0
+        while True:
+            raw = self.data_service.list_inventory_items(
+                user=user,
+                limit=self.PAGE_SIZE,
+                offset=offset,
+            )
+            items = raw.get("items", []) if isinstance(raw, dict) else []
+            if not items:
+                break
+
+            records = []
+            for row in items:
+                name = row.get("displayName") or row.get("itemId") or ""
+                records.append({
+                    "connection_id": connection.id,
+                    "record_type": NetSuiteRecordType.INVENTORY_ITEM,
+                    "internal_id": row.get("id"),
+                    "external_id": row.get("itemId"),
+                    "name": name,
+                    "search_name": str(name).strip().lower(),
+                    "item_type": row.get("type") or "Inventory Item",
+                    "is_inactive": False,
+                    "data": row,
+                })
+
+            total_synced += self.repository.upsert_reference_records(records)
+
+            if not raw.get("hasMore") and len(items) < self.PAGE_SIZE:
+                break
+            offset += len(items)
+
+        return total_synced
+
+    def sync_connection(self, *, connection_id) -> dict:
+        connection = NetSuiteConnection.objects.get(pk=connection_id)
+
+        if connection.status != "connected" or not connection.is_active:
+            raise ValueError("NetSuite connection is not active.")
+
+        user = connection.user
+        counts = {}
+        errors_found = []
+
+        # Cache IDs for all NetSuite record types currently supported by
+        # this application, except Vendor Bill itself (created by posting).
+        id_only_types = (
+            NetSuiteRecordType.CUSTOMER,
+            NetSuiteRecordType.EMPLOYEE,
+            NetSuiteRecordType.SALES_ORDER,
+            NetSuiteRecordType.PURCHASE_ORDER,
+            NetSuiteRecordType.INVOICE,
+            NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
+            NetSuiteRecordType.NON_INVENTORY_RESALE_ITEM,
+            NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM,
+            NetSuiteRecordType.SERVICE_SALE_ITEM,
+            NetSuiteRecordType.SERVICE_RESALE_ITEM,
+            NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
+            NetSuiteRecordType.DESCRIPTION_ITEM,
+            NetSuiteRecordType.DISCOUNT_ITEM,
+            NetSuiteRecordType.KIT_ITEM,
+            NetSuiteRecordType.ASSEMBLY_ITEM,
+            NetSuiteRecordType.MARKUP_ITEM,
+            NetSuiteRecordType.PAYMENT_ITEM,
+            NetSuiteRecordType.SUBTOTAL_ITEM,
+            NetSuiteRecordType.ITEM_GROUP,
+        )
+
+        for record_type in id_only_types:
+            try:
+                counts[record_type] = self._sync_id_collection(
+                    connection=connection,
+                    user=user,
+                    record_type=record_type,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "NetSuite reference sync failed for %s — connection=%s",
+                    record_type,
+                    connection.id,
+                )
+                errors_found.append(f"{record_type}: {exc}")
+
+        try:
+            counts[NetSuiteRecordType.VENDOR] = self._sync_vendors(
+                connection=connection,
+                user=user,
+            )
+        except Exception as exc:
+            logger.exception(
+                "NetSuite vendor sync failed — connection=%s",
+                connection.id,
+            )
+            errors_found.append(f"vendor: {exc}")
+
+        try:
+            counts[NetSuiteRecordType.INVENTORY_ITEM] = self._sync_inventory_items(
+                connection=connection,
+                user=user,
+            )
+        except Exception as exc:
+            logger.exception(
+                "NetSuite inventory item sync failed — connection=%s",
+                connection.id,
+            )
+            errors_found.append(f"inventoryItem: {exc}")
+
+        from django.utils import timezone
+        connection.last_synced_at = timezone.now()
+        connection.last_error = "; ".join(errors_found)[:5000] or None
+        connection.save(
+            update_fields=["last_synced_at", "last_error", "updated_at"]
+        )
+
+        return {
+            "connection_id": str(connection.id),
+            "counts": counts,
+            "errors": errors_found,
+        }
+
+
+class NetSuiteVendorBillPostingService:
+    """Create a NetSuite Vendor Bill from an approved OCR version."""
+
+    def __init__(self, repository=None):
+        self.repository = repository or NetSuiteConnectionRepository()
+        self.data_service = NetSuiteDataService(repository=self.repository)
+
+    @staticmethod
+    def _reviewed_data(version) -> dict:
+        data = (
+            version.reviewed_json
+            if isinstance(version.reviewed_json, dict) and version.reviewed_json
+            else version.normalized_json
+        )
+        if not isinstance(data, dict):
+            raise ValueError("OCR data is not a valid JSON object.")
+        return data
+
+    @staticmethod
+    def _normalization_key(value) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    def _resolve_unique_reference(
+        self,
+        *,
+        connection_id,
+        record_type: str,
+        value: str,
+        label: str,
+    ):
+        matches = self.repository.find_reference_records(
+            connection_id=connection_id,
+            record_type=record_type,
+            search_name=self._normalization_key(value),
+        )
+
+        if not matches:
+            raise ValueError(
+                f'No active NetSuite {label} matched "{value}". '
+                "Run the NetSuite reference sync or correct the OCR value."
+            )
+
+        if len(matches) > 1:
+            raise ValueError(
+                f'Multiple NetSuite {label}s matched "{value}". '
+                "Posting was stopped to prevent selecting the wrong record."
+            )
+
+        return matches[0]
+
+    def post_vendor_bill(self, *, document_id, user: User) -> dict:
+        from ocr.models import OCRDocumentVersion, OCRDocument, OCRLineItem
+
+        if getattr(user, "company_id", None) is None:
+            raise ValueError("Your account is not associated with a company.")
+
+        if self._is_company_admin(user):
+            document = (
+                OCRDocument.objects
+                .filter(pk=document_id, company_id=user.company_id)
+                .first()
+            )
+        else:
+            document = (
+                OCRDocument.objects
+                .filter(pk=document_id, company_id=user.company_id, user=user)
+                .first()
+            )
+
+        if document is None:
+            raise ValueError("OCR document not found or access is not allowed.")
+
+        version = (
+            OCRDocumentVersion.objects
+            .filter(document=document)
+            .order_by("-version_number")
+            .first()
+        )
+        if version is None:
+            raise ValueError("No saved OCR version exists for this document.")
+
+        data = self._reviewed_data(version)
+        line_items = data.get("line_items") or []
+
+        if not data.get("vendor_name"):
+            raise ValueError("Vendor Name is required before posting.")
+        if not line_items:
+            raise ValueError("At least one OCR item line is required before posting.")
+
+        connection = self.repository.get_for_user(user)
+        if connection is None:
+            raise ValueError(
+                "No connected NetSuite account is assigned to this user."
+            )
+
+        existing = self.repository.get_ocr_posting(
+            document_id=document.id,
+            version_id=version.id,
+        )
+        if existing and existing.status == "posted" and existing.netsuite_record_id:
+            return {
+                "posting_id": str(existing.id),
+                "netsuite_record_id": existing.netsuite_record_id,
+                "already_posted": True,
+            }
+
+        vendor = self._resolve_unique_reference(
+            connection_id=connection.id,
+            record_type=NetSuiteRecordType.VENDOR,
+            value=data["vendor_name"],
+            label="vendor",
+        )
+
+        payload_items = []
+        for index, line in enumerate(line_items, start=1):
+            description = line.get("description")
+            quantity = line.get("quantity")
+            rate = line.get("unit_price")
+
+            if not description:
+                raise ValueError(f"Line {index}: item description is required.")
+            if quantity in (None, ""):
+                raise ValueError(f"Line {index}: quantity is required.")
+            if rate in (None, ""):
+                raise ValueError(f"Line {index}: unit price is required.")
+
+            item = self._resolve_unique_reference(
+                connection_id=connection.id,
+                record_type=NetSuiteRecordType.INVENTORY_ITEM,
+                value=description,
+                label="item",
+            )
+
+            payload_items.append({
+                "item": {"id": str(item.internal_id)},
+                "quantity": quantity,
+                "rate": rate,
+            })
+
+        payload = {
+            "entity": {"id": str(vendor.internal_id)},
+            "item": {"items": payload_items},
+        }
+
+        if data.get("invoice_number"):
+            payload["tranid"] = data["invoice_number"]
+        if data.get("invoice_date"):
+            payload["trandate"] = data["invoice_date"]
+        if data.get("due_date"):
+            payload["duedate"] = data["due_date"]
+
+        posting = self.repository.save_ocr_posting(
+            document=document,
+            version=version,
+            connection=connection,
+            user=user,
+            status="pending",
+            request_payload=payload,
+        )
+
+        try:
+            client, resolved_connection = self.data_service._get_authenticated_client(user)
+            response = self.data_service._call_and_track_health(
+                resolved_connection,
+                client.create_record,
+                record_type=NetSuiteRecordType.VENDOR_BILL,
+                data=payload,
+            )
+
+            record_id = self._extract_record_id(response)
+            if not record_id:
+                raise ValueError(
+                    "NetSuite created a response, but no Vendor Bill record ID was returned."
+                )
+
+            posting.status = "posted"
+            posting.netsuite_record_id = str(record_id)
+            posting.response_payload = response if isinstance(response, dict) else {}
+            posting.error_message = None
+            posting.save(update_fields=[
+                "status",
+                "netsuite_record_id",
+                "response_payload",
+                "error_message",
+                "updated_at",
+            ])
+
+            return {
+                "posting_id": str(posting.id),
+                "netsuite_record_id": str(record_id),
+                "already_posted": False,
+            }
+
+        except Exception as exc:
+            logger.exception(
+                "Vendor Bill posting failed — document=%s version=%s connection=%s",
+                document.id,
+                version.id,
+                connection.id,
+            )
+            posting.status = "error"
+            posting.error_message = str(exc)[:5000]
+            posting.save(update_fields=[
+                "status",
+                "error_message",
+                "updated_at",
+            ])
+            raise
+
+    @staticmethod
+    def _extract_record_id(response: dict | None) -> str | None:
+        if not isinstance(response, dict):
+            return None
+
+        if response.get("id") is not None:
+            return str(response["id"])
+
+        for link in response.get("links", []) or []:
+            if link.get("rel") == "self" and link.get("href"):
+                tail = str(link["href"]).rstrip("/").split("/")
+                if tail and tail[-1].isdigit():
+                    return tail[-1]
+
+        return None
+
+    @staticmethod
+    def _is_company_admin(user) -> bool:
+        try:
+            if getattr(user, "is_superuser", False):
+                return True
+            return user.user_roles.filter(
+                role__name__iexact="Company Admin",
+            ).exists()
+        except Exception:
+            logger.exception(
+                "Failed to resolve Company Admin role for OCR posting — user=%s",
+                getattr(user, "id", None),
+            )
+            return False

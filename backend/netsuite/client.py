@@ -154,6 +154,26 @@ class NetSuiteAuthClient:
             params=params,
         )
 
+    def create_record(
+        self,
+        *,
+        record_type: str,
+        data: dict,
+        access_token: str | None = None,
+        ) -> dict:
+        """Create a NetSuite REST record without retrying the mutation."""
+        if not record_type:
+            raise ValueError("Unsupported NetSuite record type.")
+        if not isinstance(data, dict):
+            raise ValueError("NetSuite record payload must be a JSON object.")
+
+        return self._post(
+            path=f"record/v1/{record_type}",
+            access_token=access_token,
+            data=data,
+            retryable=False,
+        )
+
     def get_customers(self, *, access_token: str | None = None) -> dict:
         """
         GET /record/v1/customer — NetSuite's REST Record collection endpoint.

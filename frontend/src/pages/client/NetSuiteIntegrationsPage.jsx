@@ -45,9 +45,15 @@ export default function NetSuiteIntegrationsPage() {
     setSaving(true)
     try {
       const result = await netsuiteApi.createConnection(formData)
-      addToast('Connection created. Complete OAuth to activate.', 'success')
-      setShowForm(false)
-      loadData()
+      if (!result?.authorization_url){
+        throw new Error(
+          'NetSuite authorization URL was not returned.',
+        )
+      }
+      window.location.href = result.authorization_url
+      // addToast('Connection created. Complete OAuth to activate.', 'success')
+      // setShowForm(false)
+      // loadData()
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to create connection', 'error')
     } finally {

@@ -116,7 +116,9 @@ class CompanyViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def soft_delete(self, request, pk=None):
         company = self.get_object()
-        company.soft_delete()
+        # company.soft_delete()
+        company.is_deleted = True
+        company.save(update_fields=['is_deleted'])
         audit_service.log(
             module=AuditModule.TENANCY,
             action=AuditAction.DELETE,

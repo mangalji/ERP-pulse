@@ -7,6 +7,7 @@ class NetSuiteRecordType:
     SALES_ORDER = 'salesOrder'
     PURCHASE_ORDER = 'purchaseOrder'
     INVOICE = 'invoice'
+    VENDOR_BILL = 'vendorBill'
     
     # NetSuite Item Subtypes
     INVENTORY_ITEM = 'inventoryItem'
@@ -34,6 +35,7 @@ class NetSuiteRecordType:
             cls.SALES_ORDER,
             cls.PURCHASE_ORDER,
             cls.INVOICE,
+            cls.VENDOR_BILL,
             cls.INVENTORY_ITEM,
             cls.NON_INVENTORY_SALE_ITEM,
             cls.NON_INVENTORY_RESALE_ITEM,

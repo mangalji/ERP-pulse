@@ -1,6 +1,10 @@
 from accounts.models import User
 from netsuite.models import NetSuiteConnection, NetSuiteConnectionAuditLog
 from django.db import transaction
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteConnectionAuditLog, NetSuiteReferenceRecord, NetSuiteOCRPosting
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class NetSuiteConnectionRepository:
@@ -15,6 +19,57 @@ class NetSuiteConnectionRepository:
 
     def get_by_user(self, user: User) -> NetSuiteConnection | None:
         return NetSuiteConnection.objects.filter(user=user,is_active=True).first()
+
+    def get_for_user(self, user: User) -> NetSuiteConnection | None:
+        """
+        Resolve the NetSuite connection available to this user.
+
+        Company Admin:
+            Uses the active connection they own.
+
+        Employee:
+            Uses the active connection assigned through EmployeeConnection.
+        """
+        try:
+            is_company_admin = (
+                getattr(user, "is_superuser", False)
+                or user.user_roles.filter(
+                    role__name__iexact="Company Admin",
+                ).exists()
+            )
+
+            if is_company_admin:
+                return (
+                    NetSuiteConnection.objects.filter(
+                        user=user,
+                        company_id=user.company_id,
+                        is_active=True,
+                        status="connected",
+                    )
+                    .first()
+                )
+
+            assignment = (
+                EmployeeConnection.objects
+                .select_related("connection")
+                .filter(
+                    employee=user,
+                    connection__company_id=user.company_id,
+                    connection__is_active=True,
+                    connection__status="connected",
+                )
+                .order_by("-created_at")
+                .first()
+            )
+
+            return assignment.connection if assignment else None
+
+        except Exception:
+            logger.exception(
+                "Failed to resolve NetSuite connection — user=%s",
+                getattr(user, "id", None),
+            )
+            return None
 
     def update_tokens(
         self,
@@ -116,6 +171,48 @@ class NetSuiteConnectionRepository:
         status="pending",
         is_active=False,
     )
+
+    def get_existing_for_account( self, *, user: User, netsuite_account_id: str) -> NetSuiteConnection | None:
+        return (
+            NetSuiteConnection.objects
+            .filter(
+                user=user,
+                netsuite_account_id=netsuite_account_id,
+            )
+            .first()
+        )
+
+    def prepare_for_oauth_retry(
+        self,
+        connection: NetSuiteConnection,
+        *,
+        user: User,
+        company_id,
+        client_name: str,
+        environment: str,
+        client_id: str,
+        client_secret: str,
+    ) -> NetSuiteConnection:
+        connection.user = user
+        connection.company_id = company_id
+        connection.client_name = client_name
+        connection.environment = environment
+        connection.client_id = client_id
+        connection.client_secret = client_secret
+    
+        connection.access_token = None
+        connection.refresh_token = None
+        connection.access_token_expires_at = None
+        connection.refresh_token_expires_at = None
+    
+        connection.status = "pending"
+        connection.is_active = False
+        connection.last_error = None
+        connection.consecutive_failures = 0
+    
+        connection.save()
+    
+        return connection
 
     def rename(
     self,
@@ -221,6 +318,113 @@ class NetSuiteConnectionRepository:
             )
 
             return connection
+
+    def upsert_reference_records(self, records: list[dict]) -> int:
+        """Bulk upsert cached NetSuite reference records."""
+        if not records:
+            return 0
+
+        objects = [
+            NetSuiteReferenceRecord(
+                connection_id=item["connection_id"],
+                record_type=item["record_type"],
+                internal_id=str(item["internal_id"]),
+                external_id=item.get("external_id"),
+                name=item.get("name") or "",
+                search_name=item.get("search_name") or "",
+                item_type=item.get("item_type"),
+                is_inactive=bool(item.get("is_inactive", False)),
+                data=item.get("data") or {},
+            )
+            for item in records
+            if item.get("internal_id") is not None
+        ]
+
+        if not objects:
+            return 0
+
+        NetSuiteReferenceRecord.objects.bulk_create(
+            objects,
+            update_conflicts=True,
+            update_fields=[
+                "external_id",
+                "name",
+                "search_name",
+                "item_type",
+                "is_inactive",
+                "data",
+                "synced_at",
+            ],
+            unique_fields=[
+                "connection",
+                "record_type",
+                "internal_id",
+            ],
+            batch_size=500,
+        )
+        return len(objects)
+
+    def find_reference_records(
+        self,
+        *,
+        connection_id,
+        record_type: str,
+        search_name: str,
+    ) -> list[NetSuiteReferenceRecord]:
+        value = (search_name or "").strip()
+        if not value:
+            return []
+
+        queryset = NetSuiteReferenceRecord.objects.filter(
+            connection_id=connection_id,
+            record_type=record_type,
+            is_inactive=False,
+        )
+
+        # Exact match is intentional: financial posting must never guess.
+        return list(
+            queryset.filter(search_name__iexact=value)
+            .order_by("internal_id")
+        )
+
+    def get_ocr_posting(self, *, document_id, version_id):
+        return (
+            NetSuiteOCRPosting.objects
+            .filter(document_id=document_id, version_id=version_id)
+            .first()
+        )
+
+    def save_ocr_posting(
+        self,
+        *,
+        document,
+        version,
+        connection,
+        user,
+        status: str,
+        request_payload: dict | None = None,
+        response_payload: dict | None = None,
+        netsuite_record_id: str | None = None,
+        error_message: str | None = None,
+    ):
+        posting, _ = NetSuiteOCRPosting.objects.get_or_create(
+            document=document,
+            version=version,
+            defaults={
+                "connection": connection,
+                "created_by": user,
+            },
+        )
+
+        posting.connection = connection
+        posting.created_by = user
+        posting.status = status
+        posting.request_payload = request_payload or {}
+        posting.response_payload = response_payload or {}
+        posting.netsuite_record_id = netsuite_record_id
+        posting.error_message = error_message
+        posting.save()
+        return posting
 
 class NetSuiteConnectionAuditLogRepository:
     """

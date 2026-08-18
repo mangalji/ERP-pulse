@@ -25,7 +25,9 @@ from netsuite.views import (
     NetSuiteRemoveEmployeeView,
     NetSuiteTestConnectionView,
     NetSuiteMyConnectionView,
+    NetSuitePostOCRVendorBillView,
 )
+# from netsuite.posting_views import NetSuitePostOCRVendorBillView
 
 urlpatterns = [
     # path('connect/', NetSuiteConnectView.as_view(), name='netsuite-connect'),
@@ -52,4 +54,5 @@ urlpatterns = [
     path("company/connections/<uuid:connection_id>/remove-employee/<uuid:employee_id>/", NetSuiteRemoveEmployeeView.as_view(), name="netsuite_remove_employee"),
     path("company/connections/<uuid:connection_id>/test/", NetSuiteTestConnectionView.as_view(), name="netsuite_test_connection"),
     path("my/connection/", NetSuiteMyConnectionView.as_view(), name="netsuite_my_connection"),
+    path("ocr/post-vendor-bill/", NetSuitePostOCRVendorBillView.as_view(), name="netsuite_post_ocr_vendor_bill"),
 ]

@@ -11,14 +11,18 @@ from django.conf import settings
 from django.shortcuts import redirect
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
-
+from rest_framework.response import Response
+from rest_framework import status
+import logging
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException
 from netsuite.models import EmployeeConnection, NetSuiteConnection
+from accounts.models import User
 from netsuite.serializers import (
     NetSuiteCallbackSerializer, 
     NetSuiteConnectionCreateSerializer,
@@ -28,7 +32,29 @@ from netsuite.serializers import (
     EmployeeConnectionSerializer,
     AssignEmployeeSerializer,
 )
-from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
+from netsuite.services import NetSuiteConnectionService, NetSuiteDataService, NetSuiteVendorBillPostingService
+
+logger = logging.getLogger(__name__)
+
+
+def _is_company_admin(user) -> bool:
+    try:
+        if getattr(user, "is_superuser", False):
+            return True
+
+        if not getattr(user, "company_id", None):
+            return False
+
+        return user.user_roles.filter(
+            role__name__iexact="Company Admin",
+        ).exists()
+
+    except Exception:
+        logger.exception(
+            "Failed to determine Company Admin role — user=%s",
+            getattr(user, "id", None),
+        )
+        return False
 
 def _validate_record_id(record_id: str) -> None:
     """
@@ -62,9 +88,23 @@ class NetSuiteCallbackView(APIView):
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
 
-        if params.get('error'):
-            raise NetSuiteAuthorizationDeniedException(
-                'NetSuite authorization was not granted.'
+        # if params.get('error'):
+        #     raise NetSuiteAuthorizationDeniedException(
+        #         'NetSuite authorization was not granted.'
+        #     )
+
+        if params.get("error"):
+            NetSuiteConnectionService().mark_oauth_failed(
+                state=params["state"],
+                error_message=(
+                    params.get("error_description")
+                    or params.get("error")
+                    or "NetSuite authorization was not granted."
+                ),
+            )
+        
+            return redirect(
+                f"{settings.FRONTEND_URL}/settings?netsuite=failed"
             )
 
         if not params.get('code'):
@@ -479,6 +519,10 @@ class NetSuiteConnectionListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self,request):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+            "Only Company Admin can view NetSuite connection management."
+            )
         try:
             offset = int(request.query_params.get("offset", 0))
         except (ValueError, TypeError):
@@ -506,6 +550,10 @@ class NetSuiteConnectionListCreateView(APIView):
         )
 
     def post(self,request):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can create NetSuite connections."
+            )
         serializer = NetSuiteConnectionCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = NetSuiteConnectionService().create_connection(
@@ -567,6 +615,10 @@ class NetSuiteCompanyConnectionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can manage NetSuite connections."
+            )
         company = getattr(request.user, 'company', None)
         if not company:
             return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
@@ -579,6 +631,10 @@ class NetSuiteCompanyConnectionsView(APIView):
         )
 
     def post(self, request):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can create NetSuite connections."
+            )
         company = getattr(request.user, 'company', None)
         if not company:
             return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
@@ -607,6 +663,10 @@ class NetSuiteAssignEmployeeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, connection_id):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can assign NetSuite access."
+            )
         company = getattr(request.user, 'company', None)
         if not company:
             return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
@@ -638,6 +698,10 @@ class NetSuiteRemoveEmployeeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, connection_id, employee_id):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can assign NetSuite access."
+            )
         company = getattr(request.user, 'company', None)
         if not company:
             return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
@@ -661,6 +725,10 @@ class NetSuiteTestConnectionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, connection_id):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can assign NetSuite access."
+            )
         company = getattr(request.user, 'company', None)
         if not company:
             return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
@@ -687,3 +755,47 @@ class NetSuiteMyConnectionView(APIView):
             message='Your NetSuite connection fetched successfully.',
             data=NetSuiteConnectionListSerializer(connection).data,
         )
+
+class NetSuitePostOCRVendorBillView(APIView):
+    """Post a saved/reviewed OCR document as a NetSuite Vendor Bill."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            document_id = request.data.get("document_id")
+            if not document_id:
+                return Response(
+                    {"detail": "document_id is required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            result = NetSuiteVendorBillPostingService().post_vendor_bill(
+                document_id=document_id,
+                user=request.user,
+            )
+
+            return success_response(
+                message="Vendor Bill created in NetSuite.",
+                data=result,
+            )
+
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected OCR-to-NetSuite Vendor Bill failure — user=%s",
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {
+                    "detail": (
+                        "The Vendor Bill could not be created in NetSuite. "
+                        "Please check the OCR values and NetSuite master-data sync."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

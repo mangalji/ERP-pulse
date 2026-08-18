@@ -217,3 +217,108 @@ class EmployeeConnection(models.Model):
 
     def __str__(self):
         return f'{self.employee.email} → {self.connection.client_name or self.connection.netsuite_account_id}'
+
+class NetSuiteReferenceRecord(models.Model):
+    """Cached NetSuite master/reference record for one connected account."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        NetSuiteConnection,
+        on_delete=models.CASCADE,
+        related_name="reference_records",
+    )
+    record_type = models.CharField(max_length=80)
+    internal_id = models.CharField(max_length=64)
+    external_id = models.CharField(max_length=255, null=True, blank=True)
+    name = models.CharField(max_length=500, blank=True, default="")
+    search_name = models.CharField(max_length=500, blank=True, default="")
+    item_type = models.CharField(max_length=80, null=True, blank=True)
+    is_inactive = models.BooleanField(default=False)
+    data = models.JSONField(default=dict, blank=True)
+    synced_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "netsuite_reference_record"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["connection", "record_type", "internal_id"],
+                name="unique_ns_reference_record",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["connection", "record_type", "search_name"],
+                name="ns_ref_conn_type_name_idx",
+            ),
+            models.Index(
+                fields=["connection", "record_type", "external_id"],
+                name="ns_ref_conn_type_ext_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.record_type}:{self.internal_id} — {self.name or self.external_id or ''}"
+
+
+class NetSuiteOCRPosting(models.Model):
+    """Audit/idempotency record for an OCR document posted to NetSuite."""
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("posted", "Posted"),
+        ("error", "Error"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        "ocr.OCRDocument",
+        on_delete=models.CASCADE,
+        related_name="netsuite_postings",
+    )
+    version = models.ForeignKey(
+        "ocr.OCRDocumentVersion",
+        on_delete=models.CASCADE,
+        related_name="netsuite_postings",
+    )
+    connection = models.ForeignKey(
+        NetSuiteConnection,
+        on_delete=models.CASCADE,
+        related_name="ocr_postings",
+    )
+    record_type = models.CharField(max_length=80, default="vendorBill")
+    netsuite_record_id = models.CharField(max_length=64, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    request_payload = models.JSONField(default=dict, blank=True)
+    response_payload = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="netsuite_ocr_postings",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "netsuite_ocr_posting"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "version"],
+                name="unique_ocr_netsuite_posting",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["connection", "status"],
+                name="ns_post_conn_status_idx",
+            ),
+            models.Index(
+                fields=["netsuite_record_id"],
+                name="ns_post_record_id_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.document_id} v{self.version_id} → {self.netsuite_record_id or self.status}"

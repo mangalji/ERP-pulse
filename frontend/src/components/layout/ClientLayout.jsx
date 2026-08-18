@@ -18,6 +18,7 @@ const ALL_NAV_ITEMS = [
   { to: '/app/analytics', label: 'Analytics', icon: AnalyticsIcon, module: 'bi' },
   { to: '/app/notifications', label: 'Notifications', icon: BellIcon, module: 'notifications' },
   { to: '/app/settings', label: 'Company Settings', icon: GearIcon, module: null },
+  
 ]
 
 /* Employee-only items that always show for any authenticated user */
@@ -45,13 +46,24 @@ const QUICK_ACTIONS = [
   //   module: 'employees',
   //   permission: 'employee.manage',
   // },
-  {
-    to: '/app/integrations/netsuite',
-    label: 'Connect NetSuite',
-    icon: NetSuiteIcon,
-    module: null,
-    permission: null,
-  },
+  // {
+  //   to: '/app/integrations/netsuite',
+  //   label: 'Connect NetSuite',
+  //   icon: NetSuiteIcon,
+  //   module: null,
+  //   permission: null,
+  // },
+  // {
+  //   to: isCompanyAdmin
+  //     ? '/app/integrations/netsuite'
+  //     : '/app/netsuite',
+  //   label: isCompanyAdmin
+  //     ? 'Connect Netsuite'
+  //     : 'NetSuite',
+  //   icon: NetSuiteIcon,
+  //   module: null,
+  //   permission: null,
+  // },
   {
   to: '/app/ocr-test',
   label: 'OCR',
@@ -201,6 +213,16 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     return true
   })
 
+  const netSuiteNavItem = {
+  to: isCompanyAdmin
+    ? '/app/integrations/netsuite'
+    : '/app/netsuite',
+  label: isCompanyAdmin
+    ? 'NetSuite Integration'
+    : 'NetSuite',
+  icon: NetSuiteIcon,
+}
+
   const visibleQuickActions = QUICK_ACTIONS.filter((action) => {
       // Company Admin can see all quick actions.
       if (isCompanyAdmin) return true
@@ -215,6 +237,9 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     
       // For all other actions, respect the employee's
       // module and permission assignments.
+      // if (!isCompanyAdmin && action.label === 'NetSuite'){
+      //   return true
+      // }
       if (!action.module && !action.permission) return true
     
       const hasModule = userModules.some(
@@ -229,6 +254,16 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     
       return true
     })    
+
+    const netSuiteQuickAction = {
+  to: isCompanyAdmin
+    ? '/app/integrations/netsuite'
+    : '/app/netsuite',
+  label: isCompanyAdmin
+    ? 'Connect NetSuite'
+    : 'NetSuite',
+  icon: NetSuiteIcon,
+}
 
     return (
       <div className="flex min-h-screen bg-[var(--color-canvas)]">
@@ -267,7 +302,8 @@ export default function ClientLayout({ title, breadcrumb, children }) {
           </div>
   
           <nav className="flex flex-1 flex-col gap-1">
-            {visibleNav.map(({ to, label, icon: Icon, end }) => (
+            {/* {visibleNav.map(({ to, label, icon: Icon, end }) => ( */}
+            {[...visibleNav, netSuiteNavItem].map(({ to, label, icon: Icon, end }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -291,7 +327,8 @@ export default function ClientLayout({ title, breadcrumb, children }) {
                   Quick Actions
                 </p>
                 <div className="flex flex-col gap-1">
-                  {visibleQuickActions.map(({ to, label, icon: Icon }) => (
+                  {[...visibleQuickActions, netSuiteQuickAction].map(
+  ({ to, label, icon: Icon }) => (
                     <NavLink
                       key={`${to}-${label}`}
                       to={to}
