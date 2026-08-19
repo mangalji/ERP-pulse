@@ -420,9 +420,19 @@ class ForgotPasswordView(APIView):
 
         user = authentication_service.user_repository.get_by_email(email)
         if user:
-            authentication_service.otp_service.generate_and_send_otp(
-                user=user, purpose=OTP.Purpose.PASSWORD_RESET
-            )
+            try: 
+                authentication_service.otp_service.generate_and_send_otp(
+                    user=user, purpose=OTP.Purpose.PASSWORD_RESET
+                )
+            except Exception:
+                # Keep the existing security behavior:
+                # never reveal whether the email exists or why access is blocked.
+                pass
+            else:
+                authentication_service.otp_service.generate_and_send_otp(
+                    user=user,
+                    purpose=OTP.Purpose.PASSWORD_RESET,
+                )
 
         # Always return success -- never reveal whether email is registered
         return success_response(

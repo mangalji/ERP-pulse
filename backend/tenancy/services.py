@@ -25,11 +25,17 @@ from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
 from notifications.models import Notification
 from rbac.models import Role, RolePermission, UserRole
-from tenancy.models import CompanyModule, CompanySettings
+from tenancy.models import CompanyModule, CompanySettings, Company, CompanySuspensionReason
 
+from superadmin.models import CompanyPlan, CompanyPlanStatus
 
 class ClientPortalService:
     """Company-scoped business logic for the client portal."""
+
+    def _ensure_company_operational(self, *, company):
+        company_lifecycle_service.ensure_operational(
+            company=company
+        )
 
     # ── Employees ─────────────────────────────────────────────
 
@@ -44,6 +50,7 @@ class ClientPortalService:
         return qs.order_by('first_name', 'last_name')
 
     def get_employee(self, *, company, employee_id):
+        self._ensure_company_operational(company=company)
         return get_object_or_404(
             User.objects.prefetch_related('user_roles__role'),
             pk=employee_id,
@@ -52,6 +59,7 @@ class ClientPortalService:
 
     @transaction.atomic
     def create_employee(self, *, company, acting_user, **data):
+        self._ensure_company_operational(company=company)
         email = (data.get('email') or '').lower().strip()
         if not email:
             raise ValueError('Email is required.')
@@ -150,6 +158,7 @@ class ClientPortalService:
         return employee
 
     def resend_employee_invitation(self, *, company, employee_id, acting_user):
+        self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
         invitation = Invitation.objects.filter(
             email=employee.email,
@@ -162,6 +171,7 @@ class ClientPortalService:
         return employee
 
     def list_employees(self, *, company, search=None, status=None):
+        self._ensure_company_operational(company=company)
         qs = User.objects.filter(company=company).select_related('company').prefetch_related('user_roles__role')
         if search:
             qs = qs.filter(
@@ -180,6 +190,7 @@ class ClientPortalService:
 
     @transaction.atomic
     def update_employee(self, *, company, employee_id, acting_user, **data):
+        self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
         old = {
             'first_name': employee.first_name,
@@ -259,6 +270,7 @@ class ClientPortalService:
 
     @transaction.atomic
     def activate_employee(self, *, company, employee_id, acting_user):
+        self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
         employee.is_active = True
         employee.save(update_fields=['is_active'])
@@ -276,6 +288,7 @@ class ClientPortalService:
 
     @transaction.atomic
     def deactivate_employee(self, *, company, employee_id, acting_user):
+        self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
         employee.is_active = False
         employee.save(update_fields=['is_active'])
@@ -303,6 +316,7 @@ class ClientPortalService:
 
         Never returns another company's roles.
         """
+        self._ensure_company_operational(company=company)
         return (
         Role.objects
         .filter(
@@ -324,6 +338,7 @@ class ClientPortalService:
 
     @transaction.atomic
     def assign_role(self, *, company, employee_id, role_id, acting_user):
+        self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
         role = self._validate_role(company=company, role_id=role_id)
         user_role, created = UserRole.objects.get_or_create(user=employee, role=role)
@@ -340,6 +355,7 @@ class ClientPortalService:
 
     @transaction.atomic
     def remove_role(self, *, company, employee_id, role_id, acting_user):
+        self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
         role = self._validate_role(company=company, role_id=role_id)
         deleted, _ = UserRole.objects.filter(user=employee, role=role).delete()
@@ -357,11 +373,13 @@ class ClientPortalService:
     # ── Company settings ──────────────────────────────────────
 
     def get_company_settings(self, *, company):
+        self._ensure_company_operational(company=company)
         settings, _ = CompanySettings.objects.get_or_create(company=company)
         return {'company': company, 'settings': settings}
 
     @transaction.atomic
     def update_company_settings(self, *, company, acting_user, data):
+        self._ensure_company_operational(company=company)
         settings, _ = CompanySettings.objects.get_or_create(company=company)
         old = {
             'contact_email': company.contact_email,
@@ -461,6 +479,9 @@ class ClientPortalService:
     # ── Notifications (user-scoped) ───────────────────────────
 
     def list_notifications(self, *, user, is_read=None, limit=20, offset=0):
+        company = getattr(user,'company', None)
+        if company:
+            self._ensure_company_operational(company=company)
         qs = Notification.objects.filter(user=user).select_related('company')
         if is_read is not None:
             qs = qs.filter(is_read=is_read)
@@ -469,9 +490,21 @@ class ClientPortalService:
         return qs[offset:offset + limit], count
 
     def unread_notifications_count(self, *, user):
-        return Notification.objects.filter(user=user, is_read=False).count()
+        company = getattr(user, 'company', None)
+
+        if company:
+            self._ensure_company_operational(company=company)
+
+        return Notification.objects.filter(
+            user=user,
+            is_read=False,
+        ).count()
 
     def mark_notification_read(self, *, notification_id, user):
+        company = getattr(user, 'company', None)
+
+        if company:
+            self._ensure_company_operational(company=company)
         notification = get_object_or_404(Notification, pk=notification_id, user=user)
         notification.is_read = True
         notification.read_at = timezone.now()
@@ -479,6 +512,11 @@ class ClientPortalService:
         return notification
 
     def mark_all_notifications_read(self, *, user):
+        company = getattr(user, 'company', None)
+
+        if company:
+            self._ensure_company_operational(company=company)
+            
         updated = Notification.objects.filter(user=user, is_read=False).update(
             is_read=True, read_at=timezone.now(),
         )
@@ -488,6 +526,8 @@ class ClientPortalService:
 
     def get_client_context(self, *, user):
         company = getattr(user, 'company', None)
+        if company:
+            self._ensure_company_operational(company=company)
         modules = []
         permissions = []
         if company:
@@ -531,3 +571,99 @@ class ClientPortalService:
             'permissions': permissions,
             'plan': plan_info,
         }
+
+from django.utils import timezone
+
+from superadmin.models import CompanyPlan, CompanyPlanStatus
+from tenancy.models import Company
+
+
+class CompanyLifecycleService:
+    """
+    Central source of truth for determining whether a company
+    is allowed to perform client-side operations.
+    """
+
+    def get_current_plan(self, *, company):
+        return (
+            CompanyPlan.objects
+            .filter(company=company)
+            .select_related('plan')
+            .order_by('-start_date', '-created_at')
+            .first()
+        )
+
+    def get_effective_status(self, *, company):
+        """
+        Return the company's effective operational status.
+
+        A company is operational only when:
+        - it is not soft deleted,
+        - it is not manually suspended,
+        - and its current subscription is within its valid period.
+        """
+        if company.is_deleted:
+            return Company.Status.SUSPENDED
+
+        if company.suspension_reason == CompanySuspensionReason.MANUAL:
+            return Company.Status.SUSPENDED
+
+        # if company.status == Company.Status.SUSPENDED:
+        #     return Company.Status.SUSPENDED
+        # A suspended status can be either:
+        # 1. a temporary state caused by deleted/invalid subscription, or
+        # 2. a manually suspended company.
+        #
+        # Effective state is therefore determined from deletion + subscription
+        # below instead of treating the stored SUSPENDED value as permanent.
+
+        today = timezone.now().date()
+
+        plan = self.get_current_plan(company=company)
+
+        if not plan:
+            return Company.Status.SUSPENDED
+
+        if plan.status in {
+            CompanyPlanStatus.CANCELLED,
+            CompanyPlanStatus.EXPIRED,
+            CompanyPlanStatus.REPLACED,
+        }:
+            return Company.Status.SUSPENDED
+
+        if plan.start_date and plan.start_date > today:
+            return Company.Status.SUSPENDED
+
+        if plan.end_date and plan.end_date < today:
+            return Company.Status.SUSPENDED
+
+        if plan.status == CompanyPlanStatus.TRIAL:
+            return Company.Status.TRIAL
+
+        if plan.status == CompanyPlanStatus.ACTIVE:
+            return Company.Status.ACTIVE
+
+        return Company.Status.SUSPENDED
+
+    def is_operational(self, *, company):
+        return self.get_effective_status(company=company) in {
+            Company.Status.ACTIVE,
+            Company.Status.TRIAL,
+        }
+
+    def ensure_operational(self, *, company):
+        """
+        Raise a ValueError when the company is not allowed
+        to perform client operations.
+        """
+        effective_status = self.get_effective_status(company=company)
+
+        if effective_status == Company.Status.SUSPENDED:
+            raise ValueError(
+                'Your company account is currently suspended.'
+            )
+
+        return company
+
+
+company_lifecycle_service = CompanyLifecycleService()

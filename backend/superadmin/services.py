@@ -28,19 +28,24 @@ from superadmin.models import (
     PaymentStatus,
     TransactionStatus,
 )
-from tenancy.models import Company, CompanyModule, Module
-
+from tenancy.models import Company, CompanyModule, Module, CompanyDeletionHistory, CompanySuspensionReason
+from tenancy.services import company_lifecycle_service
 
 class SuperAdminService:
     """Business logic for AGSuite Super Admin operations."""
 
     def get_dashboard_summary(self):
         company_summary = Company.objects.aggregate(
-            total=Count("id"),
-            active=Count("id", filter=Q(status=Company.Status.ACTIVE)),
-            suspended=Count("id", filter=Q(status=Company.Status.SUSPENDED)),
-            trial=Count("id", filter=Q(status=Company.Status.TRIAL)),
+            total=Count("id",filter=Q(is_deleted=False)),
+            active=Count("id", filter=Q(is_deleted=False, status=Company.Status.ACTIVE)),
+            suspended=Count("id", filter=Q(is_deleted=False, status=Company.Status.SUSPENDED)),
+            trial=Count("id", filter=Q(is_deleted=False, status=Company.Status.TRIAL)),
+            soft_deleted = Count(
+                "id",
+                filter=Q(is_deleted=True)
+            )
         )
+        permanent_deleted = CompanyDeletionHistory.objects.count()
 
         user_summary = User.objects.aggregate(
             agsuite=Count("id", filter=Q(company__isnull=True)),
@@ -70,6 +75,8 @@ class SuperAdminService:
             "active_companies": company_summary["active"],
             "suspended_companies": company_summary["suspended"],
             "trial_companies": company_summary["trial"],
+            "soft_deleted_companies": company_summary["soft_deleted"],
+            "permanently_deleted_companies": permanent_deleted,
             "total_agsuite_employees": user_summary["agsuite"],
             "total_client_employees": user_summary["client"],
             "total_plans": plan_summary["total"],
@@ -89,7 +96,56 @@ class SuperAdminService:
                 )[:5]
             ),
         }
+    @transaction.atomic
+    def permanently_delete_company(self, *, company_id, deleted_by=None):
+        """
+        Permanently delete a company after its 15-day recovery period.
 
+        A minimal deletion-history snapshot is preserved before the
+        company is hard-deleted. All company-owned records configured
+        with CASCADE are removed with the company.
+        """
+        company = Company.objects.select_for_update().filter(
+            pk=company_id,
+        ).first()
+
+        if not company:
+            raise ValueError('Company not found.')
+
+        if not company.is_deleted:
+            raise ValueError(
+                'Only soft-deleted companies can be permanently deleted.'
+            )
+
+        if company.deleted_at is None:
+            raise ValueError(
+                'Company does not have a valid deletion timestamp.'
+            )
+
+        permanently_deleted_at = timezone.now()
+
+        history = CompanyDeletionHistory.objects.create(
+            company_id_snapshot=company.id,
+            company_name=company.name,
+            company_code=company.code,
+            soft_deleted_at=company.deleted_at,
+            permanently_deleted_at=permanently_deleted_at,
+            deleted_by=deleted_by,
+        )
+
+        company_name = company.name
+        company_code = company.code
+
+        company.delete()
+
+        return {
+            'history_id': str(history.id),
+            'company_id': str(history.company_id_snapshot),
+            'company_name': company_name,
+            'company_code': company_code,
+            'permanently_deleted_at': permanently_deleted_at,
+        }
+        
     def get_company_plan_history(self, company_id):
         return list(
             CompanyPlan.objects.filter(company_id=company_id)
@@ -135,14 +191,32 @@ class SuperAdminService:
             )
         )
     @transaction.atomic
-    def assign_plan(self, *, company_id, plan_id, discount_type=None, discount_value=None,
-                    billing_cycle=None, assigned_by=None, status=None):
+    def assign_plan(
+        self, 
+        *, 
+        company_id, 
+        plan_id, 
+        discount_type=None, 
+        discount_value=None,
+        billing_cycle=None, 
+        assigned_by=None, 
+        status=None, 
+        start_date=None, 
+        end_date=None
+        ):
         company = get_object_or_404(Company, pk=company_id)
         plan = get_object_or_404(Plan, pk=plan_id)
         normalized_status = status or CompanyPlanStatus.ACTIVE
         normalized_discount_type = discount_type or DiscountType.NONE
         normalized_discount_value = discount_value or 0
         normalized_billing_cycle = billing_cycle or BillingCycle.MONTHLY
+
+        start_date = start_date or timezone.now().date()
+
+        if end_date is not None and end_date < start_date:
+            raise ValueError(
+                'Plan end date cannot be earlier than the start date.'
+            )
 
         original_price = plan.yearly_price if normalized_billing_cycle == BillingCycle.YEARLY else plan.monthly_price
         final_price = self._calculate_final_price(original_price, normalized_discount_type, normalized_discount_value)
@@ -159,7 +233,8 @@ class SuperAdminService:
             company=company,
             plan=plan,
             defaults={
-                'start_date': timezone.now().date(),
+                'start_date': start_date,
+                'end_data':end_date,
                 'status': normalized_status,
                 'is_auto_renew': False,
                 'discount_type': normalized_discount_type,
@@ -172,9 +247,18 @@ class SuperAdminService:
         )
 
         if not created:
-            company_plan.start_date = company_plan.start_date or timezone.now().date()
+            company_plan.start_date = start_date
             company_plan.status = normalized_status
-            company_plan.end_date = None if normalized_status in [CompanyPlanStatus.ACTIVE, CompanyPlanStatus.TRIAL] else company_plan.end_date
+
+            if end_date is not None:
+                company_plan.end_date = end_date
+
+            elif normalized_status in [
+                CompanyPlanStatus.ACTIVE,
+                CompanyPlanStatus.TRIAL,
+            ]:
+                company_plan.end_date = None
+            
             company_plan.is_auto_renew = company_plan.is_auto_renew
             company_plan.discount_type = normalized_discount_type
             company_plan.discount_value = normalized_discount_value
@@ -200,7 +284,23 @@ class SuperAdminService:
             company=company, plan=plan, original_amount=original_price,
             final_amount=final_price, billing_cycle=normalized_billing_cycle,
         )
-
+        company.status = company_lifecycle_service.get_effective_status(
+            company=company
+        )
+        if company.status in [
+            Company.Status.ACTIVE,
+            Company.Status.TRIAL,
+            ]:
+            company.suspension_reason = CompanySuspensionReason.NONE
+        elif company.suspension_reason != CompanySuspensionReason.MANUAL:
+            company.suspension_reason = CompanySuspensionReason.PLAN
+        company.save(
+            update_fields=[
+                'status',
+                'suspension_reason'
+            ]
+        )
+        
         return company_plan
 
     @staticmethod
@@ -313,6 +413,14 @@ class SuperAdminService:
         company_plan.status = CompanyPlanStatus.CANCELLED
         company_plan.end_date = timezone.now().date()
         company_plan.save(update_fields=['status', 'end_date'])
+        company.status = Company.Status.SUSPENDED
+        company.suspension_reason = CompanySuspensionReason.PLAN
+        company.save(
+            update_fields=[
+                'status',
+                'suspension_reason',
+            ]
+        )
 
         self._create_subscription_history(
             company=company, plan=company_plan.plan, company_plan=company_plan,
@@ -322,11 +430,19 @@ class SuperAdminService:
             status_before=old_status, status_after=CompanyPlanStatus.CANCELLED,
             change_type='cancel',
         )
-
         return company_plan
+    
     @transaction.atomic
-    def renew_plan(self, *, company_id, plan_id=None, discount_type=None, discount_value=None,
-                   billing_cycle=None, assigned_by=None):
+    def renew_plan(
+        self, 
+        *, 
+        company_id, 
+        plan_id=None, 
+        discount_type=None, 
+        discount_value=None, 
+        billing_cycle=None, 
+        assigned_by=None
+        ):
         company = get_object_or_404(Company, pk=company_id)
         company_plan = CompanyPlan.objects.filter(company=company).order_by('-start_date').first()
         if company_plan is None and plan_id is None:
@@ -345,6 +461,25 @@ class SuperAdminService:
         company_plan.status = CompanyPlanStatus.ACTIVE
         company_plan.start_date = timezone.now().date()
         company_plan.save(update_fields=['status', 'start_date'])
+        company.status = company_lifecycle_service.get_effective_status(
+            company=company
+        )
+
+        company.suspension_reason = (
+            CompanySuspensionReason.NONE
+            if company.status in [
+                Company.Status.ACTIVE,
+                Company.Status.TRIAL,
+            ]
+            else CompanySuspensionReason.PLAN
+        )
+
+        company.save(
+            update_fields=[
+                'status',
+                'suspension_reason',
+            ]
+        )
         return company_plan
 
     def list_notifications(self, *, user, searchable=None, is_read=None, limit=None, offset=0):
@@ -378,16 +513,36 @@ class SuperAdminService:
     def get_employee_roles(self, *, user):
         return list(user.user_roles.select_related('role').values('role_id', 'role__name'))
 
+
+    def ensure_employee_company_operational(self, *, employee):
+        company = getattr(employee, 'company', None)
+
+        # AGSuite internal user — no client company restriction.
+        if company is None:
+            return
+
+        if company.is_deleted:
+            raise ValueError(
+                "This employee's company no longer exists."
+            )
+
+        if company_lifecycle_service.get_effective_status(
+            company=company
+        ) == Company.Status.SUSPENDED:
+            raise ValueError(
+                "This company's account is currently suspended. "
+                "Employee operations are unavailable."
+            )
+
+
     @transaction.atomic
-    def assign_user_role(
-    self,
-    *,
-    user_id,
-    role_id,
-        ):
+    def assign_user_role( self, *, user_id, role_id):
         user = get_object_or_404(
             User,
             pk=user_id,
+        )
+        self.ensure_employee_company_operational(
+            employee=user
         )
 
         role = get_object_or_404(
@@ -407,6 +562,9 @@ class SuperAdminService:
     
     def remove_user_role(self, *, user_id, role_id):
         user = get_object_or_404(User, pk=user_id)
+        self.ensure_employee_company_operational(
+            employee=user
+        )
         deleted, _ = UserRole.objects.filter(user=user, role_id=role_id).delete()
         return {'deleted': deleted > 0}
 
@@ -551,6 +709,17 @@ class SuperAdminService:
         company = Company.objects.filter(pk=company_id).first()
         if not company:
             raise ValueError("Company not found.")
+        if company.is_deleted:
+            raise ValueError(
+                "This company no longer exists."
+            )
+        if company_lifecycle_service.get_effective_status(
+            company=company
+        ) == Company.Status.SUSPENDED:
+            raise ValueError(
+                "This company's account is currently suspended. "
+                "New employee invitations are unavailable."
+            )
 
         role_name = {
             "admin": "Company Admin",
@@ -611,6 +780,32 @@ class SuperAdminService:
     
         if not employee:
             raise ValueError("Employee not found.")
+
+        # if employee.company is None:
+        #     return ...
+
+        if employee.company and employee.company.is_deleted:
+            raise ValueError(
+                "This employee's company no longer exists."
+            )
+        if(
+            employee.company
+            and company_lifecycle_service.get_effective_status(
+                company=employee.company
+            ) == Company.Status.SUSPENDED
+        ):
+            raise ValueError(
+                "This company's account is currently suspended. "
+                "Invitation operations are unavailable."
+            )
+
+        if company_lifecycle_service.get_effective_status(
+            company=employee.company
+        ) == Company.Status.SUSPENDED:
+            raise ValueError(
+                "This company's account is currently suspended. "
+                "Invitation operations are unavailable."
+            )
     
         invitation = (
             Invitation.objects
@@ -635,6 +830,19 @@ class SuperAdminService:
 
     def update_employee(self, *, employee_id, **data):
         user = get_object_or_404(User, pk=employee_id)
+        if user.company:
+            if user.company.is_deleted:
+                raise ValueError(
+                    "This employee's company no longer exists."
+                )
+
+            if company_lifecycle_service.get_effective_status(
+                company=user.company
+            ) == Company.Status.SUSPENDED:
+                raise ValueError(
+                    "This company's account is currently suspended. "
+                    "Employee operations are unavailable."
+                )
         
         if 'first_name' in data and data['first_name'] is not None:
             first_name = data['first_name'].strip()
@@ -709,13 +917,51 @@ class SuperAdminService:
         return user
 
     def deactivate_employee(self, *, employee_id):
-        user = get_object_or_404(User, pk=employee_id)
+        user = get_object_or_404(
+            User.objects.select_related('company'),
+            pk=employee_id,
+        )
+
+        if user.company:
+            if user.company.is_deleted:
+                raise ValueError(
+                    "This employee's company no longer exists."
+                )
+
+            if company_lifecycle_service.get_effective_status(
+                company=user.company
+            ) == Company.Status.SUSPENDED:
+                raise ValueError(
+                    "This company's account is currently suspended. "
+                    "Employee operations are unavailable."
+                )
+
         user.is_active = False
         user.save(update_fields=['is_active'])
+
         return user
 
     def activate_employee(self, *, employee_id):
-        user = get_object_or_404(User, pk=employee_id)
+        user = get_object_or_404(
+            User.objects.select_related('company'),
+            pk=employee_id,
+        )
+
+        if user.company:
+            if user.company.is_deleted:
+                raise ValueError(
+                    "This employee's company no longer exists."
+                )
+
+            if company_lifecycle_service.get_effective_status(
+                company=user.company
+            ) == Company.Status.SUSPENDED:
+                raise ValueError(
+                    "This company's account is currently suspended. "
+                    "Employee operations are unavailable."
+                )
+
         user.is_active = True
         user.save(update_fields=['is_active'])
+
         return user

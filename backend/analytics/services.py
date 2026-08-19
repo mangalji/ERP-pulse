@@ -24,6 +24,7 @@ from typing import Any
 
 from accounts.models import User
 from netsuite.services import NetSuiteDataService
+from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,14 @@ class AnalyticsService:
 
     def __init__(self, netsuite_data_service: NetSuiteDataService | None = None):
         self.netsuite_data_service = netsuite_data_service or NetSuiteDataService()
+
+    def _ensure_user_company_operational(self, *, user: User) -> None:
+        company = getattr(user, 'company', None)
+
+        if company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=company
+            )
 
     def get_top_customers(self, *, user: User, limit: int = 5) -> list[dict[str, Any]]:
         """
@@ -163,6 +172,7 @@ class AnalyticsService:
         method can be re-enabled by querying the verified columns
         directly.
         """
+        self._ensure_user_company_operational(user=user)
         logger.info(
             'get_low_inventory skipped: inventory quantity fields are '
             'unavailable in the current NetSuite account.'
@@ -412,6 +422,7 @@ class AnalyticsService:
         which may not be directly available via SuiteQL. Returns empty list with
         logged message if cost data is unavailable.
         """
+        self._ensure_user_company_operational(user=user)
         logger.info(
             'get_product_margins: product cost fields may not be available via SuiteQL. '
             'Returning empty list.'
@@ -430,6 +441,7 @@ class AnalyticsService:
         customer activity tracking not currently available in basic NetSuite queries.
         Returns empty list with logged message.
         """
+        self._ensure_user_company_operational(user=user)
         logger.info(
             'get_customer_churn_risk: churn risk analysis requires customer activity '
             'tracking not yet available. Returning empty list.'
@@ -558,6 +570,7 @@ class AnalyticsService:
         """
 
     def _execute(self, *, query: str, user: User) -> list[dict[str, Any]]:
+        self._ensure_user_company_operational(user=user)
         response = self.netsuite_data_service.execute_suiteql(query=query, user=user)
         return response.get('items', [])
 

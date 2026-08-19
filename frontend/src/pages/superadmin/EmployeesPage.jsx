@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import DataTable from '../../components/superadmin/DataTable.jsx'
@@ -46,6 +46,8 @@ export default function EmployeesPage() {
   const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const companyId = searchParams.get('company_id')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -53,6 +55,7 @@ export default function EmployeesPage() {
     try {
       const data = await superadminApi.listEmployees({
         search: search || undefined,
+        company_id: companyId || undefined,
         offset,
         limit: PAGE_SIZE,
       })
@@ -63,7 +66,7 @@ export default function EmployeesPage() {
     } finally {
       setLoading(false)
     }
-  }, [search, offset])
+  }, [search, offset, companyId])
 
   useEffect(() => {
     load()
@@ -73,6 +76,10 @@ export default function EmployeesPage() {
     try {
       const data = await superadminApi.listCompanies({ limit: 100 })
       setCompanies(data.results || [])
+      // .filter(
+      //   (company) => 
+      //     company.status !== 'SUSPENDED'
+      // )
     } catch {
       setCompanies([])
     }
@@ -286,6 +293,18 @@ const isFormValid = () => {
       header: 'Company',
       render: (row) => <span className="text-[var(--color-ink-soft)]">{row.company_name || 'AGSuite'}</span>,
     },
+    {
+  key: 'company_status',
+  header: 'Company Status',
+  render: (row) => (
+    row.company_status ? (
+      <StatusBadge status={row.company_status} />
+    ) : (
+      <span className="text-[var(--color-muted)]">—</span>
+    )
+  ),
+},
+
     { key: 'designation', header: 'Designation', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.designation || '—'}</span> },
     { key: 'department', header: 'Department', render: (row) => <span className="text-[var(--color-ink-soft)]">{row.department || '—'}</span> },
     {
@@ -317,6 +336,17 @@ const isFormValid = () => {
   const isExpired =
     invitationStatus === 'EXPIRED' ||
     invitationStatus === 'INVITATION_EXPIRED'
+
+  const isCompanySuspended =
+  row.company_status === 'SUSPENDED'
+
+if (isCompanySuspended) {
+  return (
+    <span className="rounded-md bg-[var(--color-netsuite-soft)] px-2 py-1 text-xs font-medium text-[var(--color-netsuite)]">
+      Company Suspended
+    </span>
+  )
+}
 
   if (isPending || isExpired) {
     return (
@@ -437,41 +467,42 @@ const isFormValid = () => {
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40" onClick={() => setCreateOpen(false)} />
-            <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+            <div className="relative w-full max-w-3xl max-h-[calc(100vh-80px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
             <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">Create User</h3>
             <div className="mt-4 flex flex-col gap-4">
-              {/* <Input label="Email" type="email" value={form.email} onChange={(e) => {setForm({ ...form, email: e.target.value }); setFormError('');}} /> */}
               <Input label="Email" type="email" maxLength={EMAIL_MAX_LENGTH} value={form.email} onChange={(e) => updateField('email', e.target.value)} />
                 {touched.email && (
                   <p className={`text-xs ${fieldErrors.email ? 'text-red-600' : 'text-green-600'}`}>
                     {fieldErrors.email || '✓ Valid email address.'}
                   </p>
                 )}
-              <div className="grid grid-cols-2 gap-4">
-                <Input
-  label="First Name"
-  maxLength={NAME_MAX_LENGTH}
-  value={form.first_name}
-  onChange={(e) => updateField('first_name', e.target.value)}
-/>
-{touched.first_name && (
-  <p className={`text-xs ${fieldErrors.first_name ? 'text-red-600' : 'text-green-600'}`}>
-    {fieldErrors.first_name || '✓ Valid first name.'}
-  </p>
-)}
-                {/* <Input label="First Name" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /> */}
-                <Input
-  label="Last Name"
-  maxLength={NAME_MAX_LENGTH}
-  value={form.last_name}
-  onChange={(e) => updateField('last_name', e.target.value)}
-/>
-{touched.last_name && (
-  <p className={`text-xs ${fieldErrors.last_name ? 'text-red-600' : 'text-green-600'}`}>
-    {fieldErrors.last_name || '✓ Valid last name.'}
-  </p>
-)}
-                {/* <Input label="Last Name" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /> */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <Input
+                    label="First Name"
+                    maxLength={NAME_MAX_LENGTH}
+                    value={form.first_name}
+                    onChange={(e) => updateField('first_name', e.target.value)}
+                  />
+                  {touched.first_name && (
+                    <p className={`mt-1 text-xs ${fieldErrors.first_name ? 'text-red-600' : 'text-green-600'}`}>
+                      {fieldErrors.first_name || '✓ Valid first name.'}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Input
+                    label="Last Name"
+                    maxLength={NAME_MAX_LENGTH}
+                    value={form.last_name}
+                    onChange={(e) => updateField('last_name', e.target.value)}
+                  />
+                  {touched.last_name && (
+                    <p className={`mt-1 text-xs ${fieldErrors.last_name ? 'text-red-600' : 'text-green-600'}`}>
+                      {fieldErrors.last_name || '✓ Valid last name.'}
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <label className="flex flex-col gap-1.5">

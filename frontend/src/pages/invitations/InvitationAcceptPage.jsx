@@ -122,7 +122,28 @@ export default function InvitationAcceptPage() {
   if (status === 'expired' || invitation?.status !== 'PENDING') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-canvas)]">
+        <div className="w-full max-w-md"></div>
         <InvitationExpired />
+        {error && (
+          <div
+            role="alert"
+            className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            {error}
+          </div>
+        )}
+        <div className="mt-4 text-center">
+          <p className="text-xs text-[var(--color-muted)]">
+            Please contact your administrator to request a new invitation.
+          </p>
+
+          <Link
+            to="/login"
+            className="mt-2 inline-block text-sm font-medium text-[var(--color-primary)] hover:underline"
+          >
+            Back to login
+          </Link>
+        </div>
         <Toast
           toasts={toasts}
           removeToast={removeToast}

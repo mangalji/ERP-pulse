@@ -39,6 +39,7 @@ from ai.repositories import AIAuditLogRepository, ConversationRepository, Messag
 from ai.tools.registry import ToolRegistry
 from ai.validator import ResultValidator, ToolResult
 from common.constants import AI_CONVERSATION_HISTORY_LIMIT
+from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,13 @@ class AIService:
         # leave an empty orphan conversation behind. The AI provider call
         # below is deliberately outside this block: it's an external HTTP
         # call and must never hold a DB transaction open while it runs.
+
+        company = getattr(user, 'company', None)
+
+        if company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=company
+            )
         with transaction.atomic():
             conversation = self._get_or_create_conversation(
                 user=user, conversation_id=conversation_id, message=message

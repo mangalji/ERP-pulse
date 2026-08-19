@@ -16,6 +16,7 @@ from invoice.models import InvoiceBatch, InvoiceFile, ExtractedInvoice, BatchSta
 from ocr.models import OCRUpload
 from ocr.services import ocr_service
 from ocr.extraction_service import ocr_extraction_service
+from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,12 @@ class InvoiceService:
     def process_batch(self, batch_id: str) -> None:
         """Process all files in a batch in the background."""
         try:
-            batch = InvoiceBatch.objects.get(id=batch_id)
+            # batch = InvoiceBatch.objects.get(id=batch_id)
+            batch = InvoiceBatch.objects.select_related('company').get(id=batch_id)
         except InvoiceBatch.DoesNotExist:
             logger.error('Batch %s not found.', batch_id)
             return
+        company_lifecycle_service.ensure_operational(company=batch.company)
 
         batch.status = BatchStatus.PROCESSING
         batch.save()
@@ -51,6 +54,8 @@ class InvoiceService:
     def _process_file(self, invoice_file: InvoiceFile) -> None:
         """Process a single invoice file through the pipeline."""
         start_time = time.perf_counter()
+        company = invoice_file.batch.company
+        company_lifecycle_service.ensure_operational(company=company)
         
         try:
             invoice_file.status = FileStatus.PROCESSING
@@ -110,6 +115,9 @@ class InvoiceService:
 
         # Reset batch counters
         batch = invoice_file.batch
+        company_lifecycle_service.ensure_operational(
+            company=batch.company
+        )
         if invoice_file.status == FileStatus.FAILED:
             InvoiceBatch.objects.filter(id=batch.id).update(failed_files=F('failed_files') - 1)
 

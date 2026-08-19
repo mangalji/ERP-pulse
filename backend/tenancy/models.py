@@ -26,6 +26,14 @@ class CompanyStatus(models.TextChoices):
     SUSPENDED = "SUSPENDED", "Suspended"
     EXPIRED = "EXPIRED", "Expired"
 
+
+class CompanySuspensionReason(models.TextChoices):
+    NONE = "NONE", "None"
+    MANUAL = "MANUAL", "Manual Suspension"
+    PLAN = "PLAN", "Subscription Issue"
+    DELETED = "DELETED", "Soft Deleted"
+
+
 class Company(BaseModel):
     """
     A tenant organization in the ERP Pulse platform.
@@ -40,6 +48,7 @@ class Company(BaseModel):
     name = models.CharField(max_length=255, help_text="Display name of the client company.")
     code = models.CharField(max_length=50, unique=True, db_index=True, help_text="Unique immutable company identifier.")
     status = models.CharField(max_length=20,choices=CompanyStatus.choices,default=CompanyStatus.TRIAL,db_index=True)
+    suspension_reason = models.CharField(max_length=20,choices=CompanySuspensionReason.choices,default=CompanySuspensionReason.NONE,db_index=True)
     contact_email = models.EmailField(
         blank=True,
         null=True,
@@ -73,6 +82,53 @@ class Company(BaseModel):
     def __str__(self):
         return f"{self.name} ({self.code})"
 
+class CompanyDeletionHistory(BaseModel):
+    """
+    Minimal record retained after a company is permanently deleted.
+
+    This does not preserve company business data. It only keeps enough
+    metadata for the Super Admin to see that the company was permanently
+    deleted.
+    """
+
+    company_id_snapshot = models.UUIDField(
+        db_index=True,
+        help_text="ID of the deleted company captured before permanent deletion.",
+    )
+
+    company_name = models.CharField(max_length=255)
+
+    company_code = models.CharField(max_length=50)
+
+    soft_deleted_at = models.DateTimeField()
+
+    permanently_deleted_at = models.DateTimeField()
+
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='company_deletions',
+    )
+
+    class Meta:
+        db_table = "company_deletion_history"
+        ordering = ["-permanently_deleted_at"]
+        indexes = [
+            models.Index(
+                fields=["company_id_snapshot"],
+                name="cdh_company_id_idx",
+            ),
+            models.Index(
+                fields=["permanently_deleted_at"],
+                name="cdh_deleted_at_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.company_name} ({self.company_code}) - Permanently Deleted"
+
 
 class Module(BaseModel):
     """A feature module that can be enabled/disabled per company."""
@@ -99,7 +155,7 @@ class Module(BaseModel):
 class CompanyModule(BaseModel):
     """Links a Company to a Module with enable/disable and usage limits."""
 
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="company_modules")
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name="company_modules")
     module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="company_modules")
     enabled = models.BooleanField(default=True)
     usage_limit = models.PositiveIntegerField(null=True, blank=True)

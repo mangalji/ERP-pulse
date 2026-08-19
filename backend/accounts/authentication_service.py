@@ -26,6 +26,7 @@ from common.utils.datetime import calculate_expiry, is_expired
 from common.utils.hash import hash_value, verify_value
 from common.utils.otp import generate_otp_code
 from common.utils.signed_token import generate_signed_token, verify_signed_token
+from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,28 @@ class AuthenticationService:
     def __init__(self, user_repository: UserRepository | None = None, otp_service=None):
         self.user_repository = user_repository or UserRepository()
         self.otp_service = otp_service or OTPService()
+
+    def _ensure_user_company_operational(self, *, user) -> None:
+        """
+        Client-company users can authenticate only when their company
+        is operational.
+
+        Platform-level users (company=None), such as AGSuite/Super Admin
+        users, are not restricted by client-company lifecycle state.
+        """
+        company = getattr(user, 'company', None)
+
+        if company is None:
+            return
+
+        try:
+            company_lifecycle_service.ensure_operational(company=company)
+        except ValueError as exc:
+            # Keep the authentication response generic so company status
+            # is not disclosed to an unauthenticated caller.
+            raise InvalidCredentialsException(
+                'Invalid email or password.'
+            ) from exc
 
     # -----------------------------------------------------------------
     # Registration
@@ -256,6 +279,7 @@ class AuthenticationService:
             logger.info('Password reset attempted for unknown email=%s.', email)
             return {'email': email}
 
+        self._ensure_user_company_operational(user=user)
         self.otp_service.verify_otp(
             user=user, purpose=OTP.Purpose.PASSWORD_RESET, submitted_code=otp_code
         )
@@ -324,6 +348,8 @@ class AuthenticationService:
                 'invitation link, or contact your administrator if your access '
                 'has been disabled.'
             )
+        self._ensure_user_company_operational(user=user)
+
         try:
             self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)
         except Exception as e:
@@ -340,6 +366,8 @@ class AuthenticationService:
         user = self.user_repository.get_by_email(email)
         if user is None:
             raise InvalidCredentialsException('Invalid email or verification code.')
+
+        self._ensure_user_company_operational(user=user)
 
         self.otp_service.verify_otp(
             user=user, purpose=OTP.Purpose.LOGIN, submitted_code=otp_code

@@ -233,6 +233,20 @@ class CompanySerializer(serializers.ModelSerializer):
     # uses ModelSerializer's default company-only create behavior.
 
 
+class CompanyUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Company
+
+        fields = [
+            'name',
+            'code',
+            'contact_email',
+            'contact_phone_country_code',
+            'contact_phone',
+            'country',
+        ]
+
+
 class PlanDetailSerializer(serializers.ModelSerializer):
     """Extended plan serializer for detail page."""
     enabled_modules = serializers.SerializerMethodField()
@@ -398,6 +412,10 @@ class SuperAdminEmployeeSerializer(serializers.ModelSerializer):
         source="company.name",
         read_only=True,
     )
+    company_status = serializers.CharField(
+        source="company.status",
+        read_only=True,
+    )
 
     role = serializers.SerializerMethodField()
     invitation_status = serializers.SerializerMethodField()
@@ -416,6 +434,7 @@ class SuperAdminEmployeeSerializer(serializers.ModelSerializer):
             "company",
             "company_name",
             "is_active",
+            "company_status",
             "is_staff",
             "is_email_verified",
             "role",
@@ -515,7 +534,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'user_count', 'active_user_count', 'module_count',
             'current_plan', 'assigned_modules', 'admin_email',
             'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
-            'transactions',
+            'transactions', 'suspension_reason',
         ]
         read_only_fields = fields
 

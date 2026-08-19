@@ -21,6 +21,7 @@ from invoice.services import invoice_service, start_background_processing
 from invoice.validators import InvoiceValidator
 from invoice.models import InvoiceBatch, InvoiceFile, ExtractedInvoice, InvoiceReviewHistory, InvoiceNetSuiteMapping, FileStatus, ExtractionStatus, BatchStatus
 from invoice.serializers import InvoiceBatchSerializer, InvoiceFileSerializer, ExtractedInvoiceSerializer, InvoiceNetSuiteMappingSerializer
+from tenancy.services import company_lifecycle_service
 
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
 MAX_FILE_SIZE_MB = 10
@@ -35,6 +36,15 @@ class InvoiceUploadView(views.APIView):
         company = getattr(request.user, 'company', None)
         if company is None:
             return Response({'detail': 'Company context required.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            company_lifecycle_service.ensure_operational(
+                company=company
+            )
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         files = request.FILES.getlist('files')
         if not files:
@@ -95,12 +105,35 @@ class InvoiceFileViewSet(viewsets.ModelViewSet):
 
     def get_object(self):
         company = getattr(self.request, 'company', None)
-        obj = get_object_or_404(InvoiceFile, pk=self.kwargs['pk'])
+        if company is not None:
+            try:
+                company_lifecycle_service.ensure_operational(
+                    company=company
+                )
+            except ValueError as exc:
+                raise PermissionError(str(exc))
+
+        obj = get_object_or_404(
+            InvoiceFile,
+            pk=self.kwargs['pk'],
+        )
         if company and obj.batch.company_id != company.id:
             raise PermissionError('File does not belong to your company.')
         return obj
 
     def destroy(self, request, *args, **kwargs):
+        company = getattr(request, 'company', None)
+
+        if company is not None:
+            try:
+                company_lifecycle_service.ensure_operational(
+                    company=company
+                )
+            except ValueError as exc:
+                return Response(
+                    {'detail': str(exc)},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         instance = self.get_object()
         if instance.status not in [FileStatus.UPLOADED, FileStatus.FAILED]:
             return Response({'detail': 'Cannot delete file while processing.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -109,6 +142,18 @@ class InvoiceFileViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def retry(self, request, pk=None):
+        company = getattr(request, 'company', None)
+
+        if company is not None:
+            try:
+                company_lifecycle_service.ensure_operational(
+                    company=company
+                )
+            except ValueError as exc:
+                return Response(
+                    {'detail': str(exc)},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         invoice_file = self.get_object()
         if invoice_file.status == FileStatus.PROCESSING:
             return Response({'detail': 'File is already processing.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -118,6 +163,18 @@ class InvoiceFileViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'])
     def extraction(self, request, pk=None):
+        company = getattr(request, 'company', None)
+
+        if company is not None:
+            try:
+                company_lifecycle_service.ensure_operational(
+                    company=company
+                )
+            except ValueError as exc:
+                return Response(
+                    {'detail': str(exc)},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         invoice_file = self.get_object()
         extraction = getattr(invoice_file, 'extraction', None)
         if not extraction:
@@ -137,8 +194,18 @@ class InvoiceReviewView(views.APIView):
     def post(self, request, file_id):
         invoice_file = get_object_or_404(InvoiceFile, pk=file_id)
         company = getattr(request, 'company', None)
-        if company and invoice_file.batch.company_id != company.id:
-            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if company:
+            if invoice_file.batch.company_id != company.id:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            try:
+                company_lifecycle_service.ensure_operational(
+                    company=company
+                )
+            except ValueError as exc:
+                return Response(
+                    {'detail': str(exc)},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         extraction = getattr(invoice_file, 'extraction', None)
         if not extraction:
@@ -212,8 +279,18 @@ class InvoicePayloadPreviewView(views.APIView):
     def post(self, request, file_id):
         invoice_file = get_object_or_404(InvoiceFile, pk=file_id)
         company = getattr(request, 'company', None)
-        if company and invoice_file.batch.company_id != company.id:
-            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if company:
+            if invoice_file.batch.company_id != company.id:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            try:
+                company_lifecycle_service.ensure_operational(
+                    company=company
+                )
+            except ValueError as exc:
+                return Response(
+                    {'detail': str(exc)},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         extraction = getattr(invoice_file, 'extraction', None)
         if not extraction:

@@ -16,6 +16,7 @@ from netsuite.models import EmployeeConnection, NetSuiteConnection
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionAuditLogRepository, NetSuiteConnectionRepository
 from netsuite.token_manager import NetSuiteTokenManager
+from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,17 @@ class NetSuiteConnectionService:
         self.repository = repository or NetSuiteConnectionRepository()
         self.audit_log_repository = audit_log_repository or NetSuiteConnectionAuditLogRepository()
 
+    def _ensure_user_company_operational(self, *, user: User) -> None:
+        company = getattr(user, 'company', None)
+
+        if company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=company
+            )
+    
     def get_authorization_url(self, *, user: User, connection) -> str:
         """Step 1: build the URL the frontend should redirect the browser to."""
+        self._ensure_user_company_operational(user=user)
         return build_authorization_url(user_id=str(user.id),connection_id=str(connection.id),account_id=connection.netsuite_account_id,
         client_id=connection.client_id,)
 
@@ -57,6 +67,7 @@ class NetSuiteConnectionService:
             # NetSuite's redirect back — the signature itself already
             # proved the state wasn't tampered with.
             raise NetSuiteStateMismatchException('Invalid OAuth state parameter.') from exc
+        self._ensure_user_company_operational(user=user)
 
         connection = self.repository.get_by_id(
             user=user,
@@ -126,6 +137,7 @@ class NetSuiteConnectionService:
 
 
     def list_connections(self,*,user:User):
+        self._ensure_user_company_operational(user=user)
         return self.repository.list_by_user(user)
     
     def create_connection(
@@ -137,6 +149,7 @@ class NetSuiteConnectionService:
             client_secret:str,
             netsuite_account_id:str,
             company_id=None):
+        self._ensure_user_company_operational(user=user)
 
         existing = self.repository.get_existing_for_account(
             user=user,
@@ -194,6 +207,7 @@ class NetSuiteConnectionService:
             connection_id,
             client_name:str,
             ):
+        self._ensure_user_company_operational(user=user)
         connection = self.repository.get_by_id(user,connection_id)
 
         if connection is None:
@@ -214,6 +228,7 @@ class NetSuiteConnectionService:
             user:User,
             connection_id,
     ):
+        self._ensure_user_company_operational(user=user)
         connection = self.repository.get_by_id(user,connection_id)
 
         if connection is None:
@@ -228,6 +243,7 @@ class NetSuiteConnectionService:
             user:User,
             connection_id,
     ):
+        self._ensure_user_company_operational(user=user)
         connection = self.repository.get_by_id(user,connection_id)
 
         if connection is None:
@@ -249,8 +265,15 @@ class NetSuiteConnectionService:
         )
 
     def assign_employee(self, *, connection_id, employee_id):
-        from accounts.models import User
-        connection = NetSuiteConnection.objects.get(pk=connection_id)
+        connection = NetSuiteConnection.objects.select_related(
+                'company'
+            ).get(pk=connection_id)
+
+        if connection.company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=connection.company
+            )
+
         employee = User.objects.get(pk=employee_id)
 
         if connection.company and employee.company_id != connection.company_id:
@@ -263,6 +286,20 @@ class NetSuiteConnectionService:
         return assignment
 
     def remove_employee(self, *, connection_id, employee_id):
+        connection = NetSuiteConnection.objects.select_related(
+            'company'
+        ).filter(pk=connection_id).first()
+
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException(
+                "connection not found."
+            )
+
+        if connection.company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=connection.company
+            )
+
         deleted, _ = EmployeeConnection.objects.filter(
             connection_id=connection_id,
             employee_id=employee_id,
@@ -277,7 +314,11 @@ class NetSuiteConnectionService:
         return assignment.connection
 
     def test_connection(self, *, connection_id):
-        connection = NetSuiteConnection.objects.get(pk=connection_id)
+        connection = NetSuiteConnection.objects.select_related('company').get(pk=connection_id)
+        if connection.company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=connection.company
+            )
         client = NetSuiteAuthClient(
             account_id=connection.netsuite_account_id,
             client_id=connection.client_id,
@@ -353,14 +394,21 @@ class NetSuiteDataService:
         self.token_manager = token_manager or NetSuiteTokenManager(repository=self.repository)
 
     def _get_authenticated_client(self, user: User) -> NetSuiteAuthClient:
+        company = getattr(user, 'company', None)
+
+        if company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=company
+            )
+
         connection = self._require_connection(user)
         access_token = self.token_manager.get_valid_access_token(connection)
 
         client = NetSuiteAuthClient(
-        account_id=connection.netsuite_account_id,
-        client_id=connection.client_id,
-        client_secret=connection.client_secret,
-        access_token=access_token,
+            account_id=connection.netsuite_account_id,
+            client_id=connection.client_id,
+            client_secret=connection.client_secret,
+            access_token=access_token,
         )
 
         return client, connection
@@ -772,12 +820,16 @@ class NetSuiteReferenceSyncService:
         return total_synced
 
     def sync_connection(self, *, connection_id) -> dict:
-        connection = NetSuiteConnection.objects.get(pk=connection_id)
+        connection = NetSuiteConnection.objects.select_related('user__company').get(pk=connection_id)
 
         if connection.status != "connected" or not connection.is_active:
             raise ValueError("NetSuite connection is not active.")
 
         user = connection.user
+        if user.company is not None:
+            company_lifecycle_service.ensure_operational(
+                company=user.company
+            )
         counts = {}
         errors_found = []
 
@@ -911,8 +963,16 @@ class NetSuiteVendorBillPostingService:
     def post_vendor_bill(self, *, document_id, user: User) -> dict:
         from ocr.models import OCRDocumentVersion, OCRDocument, OCRLineItem
 
-        if getattr(user, "company_id", None) is None:
-            raise ValueError("Your account is not associated with a company.")
+        # if getattr(user, "company_id", None) is None:
+            # raise ValueError("Your account is not associated with a company.")
+        company = getattr(user, 'company', None)
+        if company is None:
+            raise ValueError(
+                "Your account is not associated with a company."
+            )
+        company_lifecycle_service.ensure_operational(
+            company=company
+        )
 
         if self._is_company_admin(user):
             document = (

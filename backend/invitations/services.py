@@ -36,7 +36,7 @@ class InvitationService:
             return user
         return None
 
-    def create_invitation(self, *, email, company_id, role_id=None, created_by=None, expires_in_days=7, request=None, send_email=True):
+    def create_invitation(self, *, email, company_id, role_id=None, created_by=None, request=None, send_email=True):
         """
         Create a new invitation
         When send_email=False, only the invitation record is created.
@@ -55,7 +55,7 @@ class InvitationService:
         if existing:
             raise ValueError('An active invitation already exists for this email and company.')
 
-        expires_at = timezone.now() + timedelta(days=expires_in_days)
+        expires_at = timezone.now() + timedelta(hours=24)
 
         with transaction.atomic():
             invitation = Invitation.objects.create(
@@ -132,7 +132,7 @@ class InvitationService:
         if invitation.status != InvitationStatus.PENDING:
             raise ValueError('Only pending invitations can be resent.')
 
-        invitation.expires_at = timezone.now() + timedelta(days=7)
+        invitation.expires_at = timezone.now() + timedelta(hours=24)
         invitation.save(update_fields=['expires_at'])
 
         self._send_invitation_email(invitation)

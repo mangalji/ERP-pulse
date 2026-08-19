@@ -63,12 +63,12 @@ class CreateInvitationSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
-    expires_in_days = serializers.IntegerField(
-        required=False,
-        default=7,
-        min_value=1,
-        max_value=30,
-    )
+    # expires_in_days = serializers.IntegerField(
+    #     required=False,
+    #     default=7,
+    #     min_value=1,
+    #     max_value=30,
+    # )
 
     def validate_company_id(self, value):
         from tenancy.models import Company

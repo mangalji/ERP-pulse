@@ -30,15 +30,27 @@ export default function LoginPage() {
   return (
     <AuthLayout eyebrow="Welcome back" title="Log in to ERP Pulse" subtitle="Enter your email and password to continue.">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {localError && (
+          <div
+            role="alert"
+            className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+          >
+            {localError}
+          </div>
+        )}
         <Input
           id="email"
           type="email"
           label="Email"
           placeholder="you@company.com"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value)
+            if (localError) {
+              setLocalError('')
+            }
+          }}
           required
-          error={localError}
         />
         <Input
           id="password"

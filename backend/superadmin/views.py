@@ -1,8 +1,10 @@
+from datetime import timedelta
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
@@ -27,9 +29,11 @@ from superadmin.serializers import (
     SubscriptionHistorySerializer,
     TransactionSerializer,
     SuperAdminEmployeeSerializer,
+    CompanyUpdateSerializer,
 )
 from superadmin.services import SuperAdminService
-from tenancy.models import Company, CompanyModule, Module
+from tenancy.models import Company, CompanyModule, Module, CompanyDeletionHistory, CompanySuspensionReason
+from tenancy.services import company_lifecycle_service
 from rbac.models import Role, UserRole
 
 User = get_user_model()
@@ -54,11 +58,52 @@ class CompanyViewSet(viewsets.ModelViewSet):
             module_count=Count('company_modules', distinct=True),
         ).prefetch_related('company_plans')
 
+    def get_serializer_class(self):
+        if self.action in ['update', 'partial_update']:
+            return CompanyUpdateSerializer
+    
+        return CompanySerializer
+
     def list(self, request, *args, **kwargs):
-        """Override to return paginated response in success envelope format."""
+        """
+        Return client companies with explicit lifecycle filtering.
+
+        scope:
+          - active      -> non-deleted companies
+          - soft_deleted -> companies inside the 15-day recovery window
+          - all         -> both active and soft-deleted companies
+        """        
         queryset = self.filter_queryset(self.get_queryset())
-        offset = int(request.query_params.get('offset', 0))
-        limit = int(request.query_params.get('limit', 20))
+        scope = request.query_params.get('scope','active')
+        if scope == 'active':
+            queryset = queryset.filter(is_deleted=False)
+
+        elif scope == 'soft_deleted':
+            queryset = queryset.filter(
+                is_deleted=True,
+                deleted_at__isnull=False,
+            )
+
+        elif scope != 'all':
+            return Response(
+                {
+                    'detail': (
+                        'Invalid scope. Use active, soft_deleted, or all.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            offset = max(0, int(request.query_params.get('offset', 0)))
+            limit = int(request.query_params.get('limit', 10))
+
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'offset and limit must be integers.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Never allow more than 10 companies in one response
+        limit = max(1, min(limit, 10))
         count = queryset.count()
         page = queryset[offset:offset + limit]
         return paginated_response(
@@ -83,66 +128,210 @@ class CompanyViewSet(viewsets.ModelViewSet):
     def suspend(self, request, pk=None):
         company = self.get_object()
         company.status = Company.Status.SUSPENDED
-        company.save(update_fields=['status'])
-        audit_service.log(
-            module=AuditModule.TENANCY,
-            action=AuditAction.UPDATE,
-            entity='Company',
-            entity_id=str(company.id),
-            company=company,
-            user=request.user,
-            old_value={'status': Company.Status.ACTIVE},
-            new_value={'status': company.status},
-        )
-        return success_response(message='Company suspended successfully.', data={'id': str(company.id)})
+        company.suspension_reason = CompanySuspensionReason.MANUAL
+        company.save(update_fields=['status','suspension_reason'])
+        # audit_service.log(
+        #     module=AuditModule.TENANCY,
+        #     action=AuditAction.UPDATE,
+        #     entity='Company',
+        #     entity_id=str(company.id),
+        #     company=company,
+        #     user=request.user,
+        #     old_value={'status': Company.Status.ACTIVE},
+        #     new_value={'status': company.status},
+        # )
+        return success_response(message='Company suspended successfully.', data={'id': str(company.id),'status':company.status})
 
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         company = self.get_object()
-        company.status = Company.Status.ACTIVE
-        company.save(update_fields=['status'])
-        audit_service.log(
-            module=AuditModule.TENANCY,
-            action=AuditAction.UPDATE,
-            entity='Company',
-            entity_id=str(company.id),
-            company=company,
-            user=request.user,
-            old_value={'status': Company.Status.SUSPENDED},
-            new_value={'status': company.status},
-        )
-        return success_response(message='Company activated successfully.', data={'id': str(company.id)})
+        if company.is_deleted:
+            raise ValidationError(
+                {'detail': 'A deleted company must be restored before activation.'}
+            )
+        effective_status = company_lifecycle_service.get_effective_status(
+            company=company
+            )
+        if effective_status not in {
+            Company.Status.ACTIVE,
+            Company.Status.TRIAL,
+        }:
+            raise ValidationError(
+                {
+                    'detail': (
+                        'Company cannot be activated because its subscription '
+                        'is not currently valid.'
+                    )
+                }
+            )
+        company.status = effective_status
+        company.suspension_reason = CompanySuspensionReason.NONE
+        company.save(update_fields=['status','suspension_reason'])
+        # audit_service.log(
+        #     module=AuditModule.TENANCY,
+        #     action=AuditAction.UPDATE,
+        #     entity='Company',
+        #     entity_id=str(company.id),
+        #     company=company,
+        #     user=request.user,
+        #     # old_value={'status': Company.Status.SUSPENDED},
+        #     new_value={'status': company.status},
+        # )
+        return success_response(message='Company activated successfully.', data={'id': str(company.id),'status':company.status})
 
     @action(detail=True, methods=['post'])
     def soft_delete(self, request, pk=None):
         company = self.get_object()
-        # company.soft_delete()
+        now = timezone.now()
         company.is_deleted = True
-        company.save(update_fields=['is_deleted'])
-        audit_service.log(
-            module=AuditModule.TENANCY,
-            action=AuditAction.DELETE,
-            entity='Company',
-            entity_id=str(company.id),
-            company=company,
-            user=request.user,
+        company.deleted_at = now
+        company.status = Company.Status.SUSPENDED
+        company.suspension_reason = CompanySuspensionReason.DELETED
+        company.save(update_fields=['is_deleted','deleted_at','status','suspension_reason'])
+        # audit_service.log(
+        #     module=AuditModule.TENANCY,
+        #     action=AuditAction.DELETE,
+        #     entity='Company',
+        #     entity_id=str(company.id),
+        #     company=company,
+        #     user=request.user,
+        #     old_value={
+        #         'status': company.status,
+        #         'is_deleted': False,
+        #     },
+        #     new_value={
+        #         'status': Company.Status.SUSPENDED,
+        #         'is_deleted': True,
+        #         'deleted_at': now.isoformat(),
+        #     },
+        #     )
+        return success_response(message='Company soft deleted successfully.', 
+            data={
+            'id': str(company.id),
+            'status': company.status,
+            'deleted_at': company.deleted_at,
+            'recovery_period_days': 15,
+            },
         )
-        return success_response(message='Company soft deleted successfully.', data={'id': str(company.id)})
+    
 
     @action(detail=True, methods=['post'])
     def restore(self, request, pk=None):
         company = self.get_object()
-        company.restore()
-        audit_service.log(
-            module=AuditModule.TENANCY,
-            action=AuditAction.UPDATE,
-            entity='Company',
-            entity_id=str(company.id),
-            company=company,
-            user=request.user,
-        )
-        return success_response(message='Company restored successfully.', data={'id': str(company.id)})
 
+        if not company.is_deleted:
+            raise ValidationError(
+                {'detail': 'This company is not soft deleted.'}
+            )
+
+        if company.deleted_at is None:
+            raise ValidationError(
+                {'detail': 'This company does not have a valid deletion timestamp.'}
+            )
+
+        recovery_deadline = company.deleted_at + timedelta(days=15)
+
+        if timezone.now() >= recovery_deadline:
+            raise ValidationError(
+                {'detail': 'The 15-day recovery period has expired. This company can no longer be restored.'}
+            )
+
+        company.is_deleted = False
+        company.deleted_at = None
+        company.suspension_reason = CompanySuspensionReason.NONE
+
+        # Re-evaluate status after removing soft-delete state.
+        effective_status = company_lifecycle_service.get_effective_status(
+            company=company
+        )
+
+        company.status = effective_status
+
+        company.save(
+            update_fields=[
+                'is_deleted',
+                'deleted_at',
+                'status',
+                'suspension_reason',
+            ]
+        )
+
+        # audit_service.log(
+        #     module=AuditModule.TENANCY,
+        #     action=AuditAction.UPDATE,
+        #     entity='Company',
+        #     entity_id=str(company.id),
+        #     company=company,
+        #     user=request.user,
+        #     new_value={
+        #         'status': company.status,
+        #         'is_deleted': False,
+        #     },
+        # )
+
+        return success_response(
+            message='Company restored successfully.',
+            data={
+                'id': str(company.id),
+                'status': company.status,
+            },
+        )
+
+    @action(detail=False, methods=['get'], url_path='permanently-deleted')
+    def permanently_deleted(self, request):
+        """
+        Return permanent deletion history.
+    
+        The actual Company row and its tenant data no longer exist.
+        Only CompanyDeletionHistory metadata is retained.
+        """
+        queryset = CompanyDeletionHistory.objects.select_related(
+            'deleted_by'
+        ).order_by('-permanently_deleted_at')
+    
+        try:
+            offset = max(0, int(request.query_params.get('offset', 0)))
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'offset and limit must be integers.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    
+        limit = max(1, min(limit, 10))
+    
+        count = queryset.count()
+        page = queryset[offset:offset + limit]
+    
+        results = [
+            {
+                'id': str(item.id),
+                'company_id': str(item.company_id_snapshot),
+                'company_name': item.company_name,
+                'company_code': item.company_code,
+                'soft_deleted_at': item.soft_deleted_at,
+                'permanently_deleted_at': item.permanently_deleted_at,
+                'deleted_by': (
+                    item.deleted_by.email
+                    if item.deleted_by
+                    else None
+                ),
+                'status': Company.Status.SUSPENDED,
+                'lifecycle_status': 'PERMANENTLY_DELETED',
+            }
+            for item in page
+        ]
+    
+        return paginated_response(
+            message='Permanently deleted companies fetched successfully.',
+            results=results,
+            count=count,
+            request=request,
+            offset=offset,
+            limit=limit,
+        )
+
+    
     @action(detail=False, methods=['get'])
     def stats(self, request):
         data = superadmin_service.get_dashboard_summary()
@@ -436,12 +625,32 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         """Return paginated employees in the standard success envelope."""
         queryset = self.filter_queryset(self.get_queryset())
 
-        offset = int(request.query_params.get('offset', 0))
-        limit = int(request.query_params.get('limit', 20))
-    
+        # Hide employees belonging to soft-deleted companies.
+        queryset = queryset.filter(
+            Q(company__isnull=True) | 
+            Q(company__is_deleted=False)
+        )
+        company_id = request.query_params.get('company_id')
+
+        if company_id:
+            queryset = queryset.filter(
+                company_id=company_id
+            )
+        try:
+            offset=max(
+                0,int(request.query_params.get('offset',0))
+            )
+            limit = int(request.query_params.get('limit',20))
+
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    'detail':'offset and limit must be integers.'
+                },status=status.HTTP_400_BAD_REQUEST,
+            )
         count = queryset.count()
         page = queryset[offset:offset + limit]
-    
+            
         return paginated_response(
             message='Employees fetched successfully.',
             results=SuperAdminEmployeeSerializer(page, many=True).data,
@@ -492,7 +701,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def deactivate(self, request, pk=None):
-        employee = superadmin_service.deactivate_employee(employee_id=pk)
+        try:
+            employee = superadmin_service.deactivate_employee(employee_id=pk)
+        except ValueError as exc:
+            return Response(
+                {'detail':str(exc)},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return success_response(message='Employee deactivated successfully.', data=UserSerializer(employee).data)
 
     @action(detail=True, methods=['post'])
@@ -506,7 +721,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         except ValueError as exc:
             return Response(
                 {'detail': str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_403_FORBIDDEN,
             )
     
         return success_response(
@@ -520,7 +735,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
-        employee = superadmin_service.activate_employee(employee_id=pk)
+        try:
+            employee = superadmin_service.activate_employee(employee_id=pk)
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+            status=status.HTTP_403_FORBIDDEN,
+            )
         return success_response(message='Employee activated successfully.', data=UserSerializer(employee).data)
 
     @action(detail=True, methods=['post'])
@@ -528,7 +749,15 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         role_id = request.data.get('role_id')
         if not role_id:
             return Response({'detail': 'role_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        result = superadmin_service.assign_user_role(user_id=pk, role_id=role_id)
+        try:
+            result = superadmin_service.assign_user_role(user_id=pk, role_id=role_id)
+        except ValueError as exc:
+            return Response(
+                {
+                    'detail': str(exc)
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return success_response(message='Employee role assigned successfully.', data={'created': result['created']})
 
     @action(detail=True, methods=['post'])
@@ -536,7 +765,15 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         role_id = request.data.get('role_id')
         if not role_id:
             return Response({'detail': 'role_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        result = superadmin_service.remove_user_role(user_id=pk, role_id=role_id)
+        try:
+            result = superadmin_service.remove_user_role(user_id=pk, role_id=role_id)
+        except ValueError as exc:
+            return Response(
+                {
+                    'detail': str(exc)
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return success_response(message='Employee role removed successfully.', data={'deleted': result['deleted']})
 
 

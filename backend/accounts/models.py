@@ -38,7 +38,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Company relationship — one Company has many Users, a User belongs
     # to one Company. Company can be NULL for platform-level users.
-    company = models.ForeignKey(Company,on_delete=models.SET_NULL,null=True,blank=True,related_name='users')
+    company = models.ForeignKey(Company,on_delete=models.CASCADE,null=True,blank=True,related_name='users')
 
     # Employee metadata (optional)
     employee_id = models.CharField(max_length=100, null=True, blank=True)

@@ -15,6 +15,8 @@ from ai.serializers import AIChatRequestSerializer, AIConversationSerializer, AI
 from ai.services import AIService
 from common.utils.response import success_response
 from common.throttles import AIChatThrottle
+from rest_framework.response import Response
+from rest_framework import status
 
 conversation_repository = ConversationRepository()
 message_repository = MessageRepository()
@@ -35,13 +37,21 @@ class ChatView(APIView):
         serializer = AIChatRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        result = AIService().ask(user=request.user, **serializer.validated_data)
+        try:
+            result = AIService().ask(
+                user=request.user,
+                **serializer.validated_data,
+            )
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         return success_response(
             message='Response generated successfully.',
             data=result,
         )
-
 
 class ConversationHistoryView(APIView):
     """

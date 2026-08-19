@@ -12,6 +12,7 @@ from django.db.models import F
 
 from invoice.models import InvoiceBatch, InvoiceFile, BatchStatus, FileStatus
 from invoice.services import invoice_service
+from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,8 @@ try:
     @shared_task(bind=True, max_retries=3, default_retry_delay=60)
     def process_batch_task(self, batch_id: str) -> None:
         try:
-            batch = InvoiceBatch.objects.get(id=batch_id)
+            batch = InvoiceBatch.objects.select_related('company').get(id=batch_id)
+            company_lifecycle_service.ensure_operational(company=batch.company)
         except InvoiceBatch.DoesNotExist:
             logger.error('Batch %s not found.', batch_id)
             return
@@ -49,7 +51,12 @@ try:
     @shared_task(bind=True, max_retries=3, default_retry_delay=60)
     def process_invoice_file_task(self, file_id: str) -> None:
         try:
-            invoice_file = InvoiceFile.objects.get(id=file_id)
+            invoice_file = InvoiceFile.objects.select_related(
+                'batch__company'
+            ).get(id=file_id)
+            company_lifecycle_service.ensure_operational(
+                company=invoice_file.batch.company
+            )
         except InvoiceFile.DoesNotExist:
             logger.error('File %s not found.', file_id)
             return

@@ -55,7 +55,7 @@ class InvitationViewSet(viewsets.ViewSet):
             company_id=serializer.validated_data['company_id'],
             role_id=serializer.validated_data.get('role_id'),
             created_by=request.user,
-            expires_in_days=serializer.validated_data.get('expires_in_days', 7),
+            # expires_in_days=serializer.validated_data.get('expires_in_days', 7),
             request=request,
         )
 
