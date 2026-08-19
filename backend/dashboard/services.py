@@ -20,7 +20,7 @@ view itself needs.
 
 import logging
 from typing import Any
-
+from netsuite.exceptions import NetSuiteConnectionNotFoundException
 from accounts.models import User
 from netsuite.constants import NetSuiteRecordType
 from netsuite.services import NetSuiteDataService
@@ -94,6 +94,10 @@ class DashboardService:
             try:
                 response = list_method(user=user, limit=1, offset=0)
                 return response.get('totalResults', 0)
+            except NetSuiteConnectionNotFoundException:
+                # No NetSuite connection is a normal state.
+                # Let the view handle it without logging it as an error.
+                raise
             except Exception as exc:
                 logger.warning(
                     'Dashboard summary: %s failed via SuiteQL — falling back to REST API. '
@@ -107,6 +111,11 @@ class DashboardService:
                 record_type=record_type, user=user, limit=1,
             )
             return response.get('totalResults', 0)
+        
+        except NetSuiteConnectionNotFoundException:
+             # No active NetSuite connection.
+            raise
+
         except Exception as exc:
             logger.exception(
                 'Dashboard summary: %s (REST fallback) also failed for user %s — %s',

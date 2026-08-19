@@ -7,61 +7,113 @@ import { clientApi } from '../../services/client.js'
  * All possible sidebar items. Each item maps to a module code.
  * Items without a module_code are always shown (Dashboard, Profile, Notifications, Settings).
  */
-const ALL_NAV_ITEMS = [
-  { to: '/app', label: 'Dashboard', icon: DashboardIcon, end: true, module: null },
-  { to: '/app/invoice-reader', label: 'Invoice Reader', icon: InvoiceIcon, module: 'invoice_reader' },
-  { to: '/app/ocr-jobs', label: 'OCR Jobs', icon: OcrIcon, module: 'ocr' },
-  { to: '/app/ai-assistant', label: 'AI Assistant', icon: SparkleIcon, module: 'ai' },
-  { to: '/app/employees', label: 'Employees', icon: EmployeesIcon, module: 'employees' },
-  { to: '/app/reports', label: 'Reports', icon: ReportIcon, module: 'reports' },
-  { to: '/app/reports-engine', label: 'Reports Engine', icon: ReportEngineIcon, module: 'reports' },
-  { to: '/app/analytics', label: 'Analytics', icon: AnalyticsIcon, module: 'bi' },
-  { to: '/app/notifications', label: 'Notifications', icon: BellIcon, module: 'notifications' },
-  { to: '/app/settings', label: 'Company Settings', icon: GearIcon, module: null },
+// const ALL_NAV_ITEMS = [
+//   { to: '/app', label: 'Dashboard', icon: DashboardIcon, end: true, module: null },
+//   { to: '/app/invoice-reader', label: 'Invoice Reader', icon: InvoiceIcon, module: 'invoice_reader' },
+//   { to: '/app/ocr-jobs', label: 'OCR Jobs', icon: OcrIcon, module: 'ocr' },
+//   { to: '/app/ai-assistant', label: 'AI Assistant', icon: SparkleIcon, module: 'ai' },
+//   { to: '/app/employees', label: 'Employees', icon: EmployeesIcon, module: 'employees' },
+//   { to: '/app/reports', label: 'Reports', icon: ReportIcon, module: 'reports' },
+//   { to: '/app/reports-engine', label: 'Reports Engine', icon: ReportEngineIcon, module: 'reports' },
+//   { to: '/app/analytics', label: 'Analytics', icon: AnalyticsIcon, module: 'bi' },
+//   { to: '/app/notifications', label: 'Notifications', icon: BellIcon, module: 'notifications' },
+//   { to: '/app/settings', label: 'Company Settings', icon: GearIcon, module: null },
   
-]
+// ]
 
-/* Employee-only items that always show for any authenticated user */
-const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
-
-const QUICK_ACTIONS = [
+const ALL_NAV_ITEMS = [
   {
-    to: '/app/invoice-reader',
-    label: 'Upload Invoice',
-    icon: InvoiceIcon,
-    module: 'invoice_reader',
-    permission: 'ocr.upload',
+    to: '/app',
+    label: 'Dashboard',
+    icon: DashboardIcon,
+    end: true,
+    module: null,
+  },
+  {
+    to: '/app/ocr-test',
+    label: 'OCR',
+    icon: OcrIcon,
+    module: null,
+  },
+  {
+    to: '/app/ai-assistant',
+    label: 'AI Assistant',
+    icon: SparkleIcon,
+    module: 'ai',
   },
   {
     to: '/app/employees',
-    label: 'Add Employee',
+    label: 'Employees',
     icon: EmployeesIcon,
     module: 'employees',
-    permission: 'employee.manage',
   },
-
-  {
-  to: '/app/ocr-test',
-  label: 'OCR',
-  icon: OcrIcon,
-  module: null,
-  permission: null,
-},
   {
     to: '/app/reports-engine/generate',
     label: 'Generate Report',
     icon: ReportEngineIcon,
     module: 'reports',
-    permission: 'reports.view',
   },
   {
-    to: '/app/ai-assistant',
-    label: 'Open AI Assistant',
-    icon: SparkleIcon,
-    module: 'ai',
-    permission: 'ai.chat',
+    to: '/app/analytics',
+    label: 'Analytics',
+    icon: AnalyticsIcon,
+    module: 'bi',
+  },
+  {
+    to: '/app/notifications',
+    label: 'Notifications',
+    icon: BellIcon,
+    module: 'notifications',
+  },
+  {
+    to: '/app/settings',
+    label: 'Company Settings',
+    icon: GearIcon,
+    module: null,
   },
 ]
+
+/* Employee-only items that always show for any authenticated user */
+const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
+
+// const QUICK_ACTIONS = [
+//   {
+//     to: '/app/invoice-reader',
+//     label: 'Upload Invoice',
+//     icon: InvoiceIcon,
+//     module: 'invoice_reader',
+//     permission: 'ocr.upload',
+//   },
+//   {
+//     to: '/app/employees',
+//     label: 'Add Employee',
+//     icon: EmployeesIcon,
+//     module: 'employees',
+//     permission: 'employee.manage',
+//   },
+
+//   {
+//   to: '/app/ocr-test',
+//   label: 'OCR',
+//   icon: OcrIcon,
+//   module: null,
+//   permission: null,
+// },
+//   {
+//     to: '/app/reports-engine/generate',
+//     label: 'Generate Report',
+//     icon: ReportEngineIcon,
+//     module: 'reports',
+//     permission: 'reports.view',
+//   },
+//   {
+//     to: '/app/ai-assistant',
+//     label: 'Open AI Assistant',
+//     icon: SparkleIcon,
+//     module: 'ai',
+//     permission: 'ai.chat',
+//   },
+// ]
 
 /**
  * Reusable Client Company Portal layout.
@@ -199,34 +251,34 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   icon: NetSuiteIcon,
 }
 
-  const visibleQuickActions = QUICK_ACTIONS.filter((action) => {
-      // Company Admin can see all quick actions.
-      if (isCompanyAdmin) return true
+  // const visibleQuickActions = QUICK_ACTIONS.filter((action) => {
+  //     // Company Admin can see all quick actions.
+  //     if (isCompanyAdmin) return true
 
-      // Employees must not see employee-management actions.
-      if (
-        action.label === 'Add Employee' ||
-        action.label === 'Invite Employee'
-      ) {
-        return false
-      }
+  //     // Employees must not see employee-management actions.
+  //     if (
+  //       action.label === 'Add Employee' ||
+  //       action.label === 'Invite Employee'
+  //     ) {
+  //       return false
+  //     }
     
-      // For all other actions, respect the employee's
-      // module and permission assignments.
-      if (!action.module && !action.permission) return true
+  //     // For all other actions, respect the employee's
+  //     // module and permission assignments.
+  //     if (!action.module && !action.permission) return true
     
-      const hasModule = userModules.some(
-        (m) => m.module_code === action.module,
-      )
+  //     const hasModule = userModules.some(
+  //       (m) => m.module_code === action.module,
+  //     )
     
-      if (!hasModule) return false
+  //     if (!hasModule) return false
     
-      if (action.permission) {
-        return userPermissions.includes(action.permission)
-      }
+  //     if (action.permission) {
+  //       return userPermissions.includes(action.permission)
+  //     }
     
-      return true
-    })    
+  //     return true
+  //   })    
 
     const netSuiteQuickAction = {
   to: isCompanyAdmin
@@ -294,7 +346,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
                 {label}
               </NavLink>
             ))}
-                    {visibleQuickActions.length > 0 && (
+                    {/* {visibleQuickActions.length > 0 && (
               <div className="mt-5 border-t border-[var(--color-sidebar-soft)] pt-4">
                 <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-sidebar-ink)]">
                   Quick Actions
@@ -314,7 +366,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
                   ))}
                 </div>
               </div>
-            )}
+            )} */}
           </nav>
   
           <div className="mt-4 flex flex-col gap-1">

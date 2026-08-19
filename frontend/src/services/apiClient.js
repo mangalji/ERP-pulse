@@ -41,6 +41,13 @@ apiClient.interceptors.response.use(
     if (!original || original._retry) return Promise.reject(error)
 
     const isRefreshEndPoint = original.url.includes('/auth/token/refresh/')
+    const isAuthEndpoint =
+      original.url.includes('/auth/login/') ||
+      original.url.includes('/auth/login/verify-otp/') ||
+      original.url.includes('/auth/register/') ||
+      original.url.includes('/auth/register/verify-otp/') ||
+      original.url.includes('/auth/forgot-password/') ||
+      original.url.includes('/auth/reset-password/')
     const is401 = error.response?.status === 401
 
     // Attach the backend's error response so unwrap-like logic works
@@ -48,7 +55,7 @@ apiClient.interceptors.response.use(
       error.payload = error.response.data
     }
 
-    if (!is401 || isRefreshEndPoint) return Promise.reject(error)
+    if (!is401 || isRefreshEndPoint || isAuthEndpoint) return Promise.reject(error)
 
     if (isRefreshing) {
       return new Promise((resolve, reject) => {

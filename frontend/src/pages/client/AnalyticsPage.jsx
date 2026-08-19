@@ -24,6 +24,7 @@ export default function AnalyticsPage() {
   const [recentInvoices, setRecentInvoices] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [netsuiteAvailable, setNetsuiteAvailable] = useState(true)
 
   const loadAnalytics = async () => {
     setLoading(true)
@@ -33,10 +34,23 @@ export default function AnalyticsPage() {
         clientApi.getDashboardSummary(),
         clientApi.getRecentInvoices(),
       ])
+
+      const available = summaryData.netsuite_available != false
+      setNetsuiteAvailable(available)
+
+      if (!available) {
+        setSummary(summaryData)
+        setRecentInvoices([])
+        return
+      }
       setSummary(summaryData)
       setRecentInvoices(invoicesData?.results ?? invoicesData ?? [])
     } catch (err) {
-      setError(err.payload?.message || err.message || 'Failed to load analytics')
+      setError(
+        err.payload?.message || 
+          err.message || 
+            'Failed to load analytics',
+      )
     } finally {
       setLoading(false)
     }
@@ -91,6 +105,18 @@ export default function AnalyticsPage() {
 
         {error ? (
           <ErrorState message={error} onRetry={loadAnalytics} />
+        ) : !loading && !netsuiteAvailable ? (
+          <Card className="p-8">
+            <div className="flex flex-col items-center justify-center text-center">
+              <h2 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+                NetSuite data is not available
+              </h2>
+        
+              <p className="mt-2 max-w-md text-sm text-[var(--color-muted)]">
+                Connect your NetSuite account to view analytics and invoice data.
+              </p>
+            </div>
+          </Card>
         ) : (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -111,7 +137,9 @@ export default function AnalyticsPage() {
                 <h2 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
                   Invoice Revenue Trend
                 </h2>
-                <Badge tone="netsuite">Live from NetSuite</Badge>
+                {netsuiteAvailable && (
+                  <Badge tone="netsuite">Live from NetSuite</Badge>
+                )}
               </div>
               {loading ? (
                 <Skeleton className="h-72 w-full" />

@@ -11,7 +11,7 @@ used by accounts/ and netsuite/.
 from rest_framework import permissions
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.views import APIView
-
+from netsuite.exceptions import NetSuiteConnectionNotFoundException
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import DashboardThrottle
@@ -59,12 +59,29 @@ class DashboardSummaryView(APIView):
                 data={},
                 status_code=401,
             )
+        try:
 
-        summary = _get_dashboard_service().get_summary(user=request.user)
-        return success_response(
-            message='Dashboard summary fetched successfully.',
-            data=summary,
-        )
+            summary = _get_dashboard_service().get_summary(user=request.user)
+            summary['netsuite_available'] = True
+            return success_response(
+                message='Dashboard summary fetched successfully.',
+                data=summary,
+            )
+        except NetSuiteConnectionNotFoundException:
+            return success_response(
+                message='NetSuite data is not available.',
+                data={
+                    'netsuite_available': False,
+                    'message': 'NetSuite data is not available.',
+                    'total_customers': 0,
+                    'total_employees': 0,
+                    'total_vendors': 0,
+                    'total_inventory_items': 0,
+                    'total_sales_orders': 0,
+                    'total_purchase_orders': 0,
+                    'total_invoices': 0,
+                },
+            )
 
 
 class RecentSalesOrdersView(APIView):
@@ -110,7 +127,17 @@ class RecentInvoicesView(APIView):
             )
 
         offset, limit = _parse_pagination_params(request)
-        all_invoices = _get_dashboard_service().get_recent_invoices(user=request.user)
+        try:
+            all_invoices = _get_dashboard_service().get_recent_invoices(user=request.user)
+        except NetSuiteConnectionNotFoundException:
+            return paginated_response(
+                message='NetSuite data is not available.',
+                results=[],
+                count=0,
+                request=request,
+                offset=offset,
+                limit=limit,
+            )
         count = len(all_invoices)
         page = all_invoices[offset:offset + limit]
         return paginated_response(
