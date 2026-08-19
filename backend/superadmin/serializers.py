@@ -14,15 +14,9 @@ User = get_user_model()
 
 
 class PlanSerializer(serializers.ModelSerializer):
-    enabled_models = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=Module.objects.all(),
-        required=False,
-    )
-
     class Meta:
         model = Plan
-        fields = '__all__'
+        fields = ['id', 'name', 'description', 'price', 'validity_days', 'status', 'created_at', 'updated_at']
         read_only_fields = ('id', 'created_at', 'updated_at')
 
 
@@ -249,33 +243,11 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
 
 class PlanDetailSerializer(serializers.ModelSerializer):
     """Extended plan serializer for detail page."""
-    enabled_modules = serializers.SerializerMethodField()
-    included_modules_count = serializers.SerializerMethodField()
-    companies_using_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Plan
-        fields = '__all__'
+        fields = ['id', 'name', 'description', 'price', 'validity_days', 'status', 'created_at', 'updated_at']
         read_only_fields = ('id', 'created_at', 'updated_at')
-
-    def get_enabled_modules(self, obj):
-        return [
-            {
-                'id': m.id,
-                'name': m.name,
-                'code': m.code,
-                'display_name': m.display_name,
-            }
-            for m in obj.enabled_models.all()
-        ]
-
-    def get_included_modules_count(self, obj):
-        return obj.enabled_models.count()
-
-    def get_companies_using_count(self, obj):
-        return obj.company_plans.filter(
-            status__in=[CompanyPlanStatus.ACTIVE, CompanyPlanStatus.TRIAL]
-        ).count()
 
 
 class CompanyPlanSummarySerializer(serializers.ModelSerializer):
@@ -288,7 +260,7 @@ class CompanyPlanSummarySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'plan_name', 'status', 'start_date', 'end_date', 'is_auto_renew',
             'discount_type', 'discount_value', 'billing_cycle', 'original_price', 'final_price',
-            'discount_display',
+            'validity_days', 'discount_display',
         ]
 
     def get_discount_display(self, obj):
@@ -504,7 +476,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
         fields = '__all__'
-        read_only_fields = ('id', 'created_at')
+        read_only_fields = ('id', 'created_at', 'updated_at')
 
     def get_discount_amount(self, obj):
         return obj.original_amount - obj.final_amount

@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from common.contact_validation import normalize_phone
-
+from django.utils.crypto import get_random_string
 from accounts.models import User, Gender
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
@@ -31,6 +31,7 @@ from superadmin.models import (
 from tenancy.models import Company, CompanyModule, Module, CompanyDeletionHistory, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
 
+from decimal import Decimal, InvalidOperation
 class SuperAdminService:
     """Business logic for AGSuite Super Admin operations."""
 
@@ -234,7 +235,7 @@ class SuperAdminService:
             plan=plan,
             defaults={
                 'start_date': start_date,
-                'end_data':end_date,
+                'end_date':end_date,
                 'status': normalized_status,
                 'is_auto_renew': False,
                 'discount_type': normalized_discount_type,
@@ -303,15 +304,156 @@ class SuperAdminService:
         
         return company_plan
 
+    @transaction.atomic
+    def create_pending_assignment(self, *, company_id, plan_id, discount_type=None, discount_value=None, assigned_by=None):
+        company = get_object_or_404(Company, pk=company_id)
+        plan = get_object_or_404(Plan, pk=plan_id)
+
+        if company.is_deleted:
+            raise ValueError('This company no longer exists.')
+
+        if plan.is_deleted:
+            raise ValueError('This plan is no longer available.')
+
+        existing_active = CompanyPlan.objects.filter(
+            company=company,
+            status__in=[CompanyPlanStatus.ACTIVE, CompanyPlanStatus.TRIAL],
+        ).first()
+        if existing_active:
+            raise ValueError(
+                'Company already has an active subscription. '
+                'Please cancel the existing plan before assigning a new one.'
+            )
+
+        existing_pending_tx = Transaction.objects.filter(
+            company=company,
+            payment_status=PaymentStatus.PENDING,
+        ).first()
+        if existing_pending_tx:
+            raise ValueError(
+                'An unpaid transaction already exists for this company. '
+                'Please complete or cancel it before creating a new assignment.'
+            )
+        normalized_discount_type = discount_type or DiscountType.NONE
+        try:
+            normalized_discount_value = (
+                Decimal(str(discount_value))
+                if discount_value not in (None,'')
+                else Decimal('0')
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError('Discount value must be a valid number.')
+
+        if normalized_discount_type == DiscountType.NONE:
+            normalized_discount_value = Decimal('0')
+
+        if normalized_discount_type not in {DiscountType.NONE, DiscountType.PERCENTAGE, DiscountType.FIXED}:
+            raise ValueError('Invalid discount type.')
+
+        original_price = plan.price
+        final_price = self._calculate_final_price(original_price, normalized_discount_type, normalized_discount_value)
+
+        if normalized_discount_type == DiscountType.PERCENTAGE:
+            if normalized_discount_value < 0 or normalized_discount_value > 100:
+                raise ValueError('Discount percentage must be between 0 and 100.')
+        elif normalized_discount_type == DiscountType.FIXED:
+            if normalized_discount_value < 0 or normalized_discount_value > original_price:
+                raise ValueError('Fixed discount cannot exceed the plan price.')
+
+        transaction = Transaction.objects.create(
+            company=company,
+            plan=plan,
+            transaction_id=f'TXN-{get_random_string(8).upper()}',
+            original_amount=original_price,
+            final_amount=final_price,
+            discount_amount=original_price - final_price,
+            discount_type=normalized_discount_type,
+            discount_value=normalized_discount_value,
+            payment_status=PaymentStatus.PENDING,
+            transaction_status=TransactionStatus.INITIATED,
+            payment_method='MANUAL',
+            assigned_by=assigned_by,
+        )
+
+        return {'transaction': transaction}
+
+    @transaction.atomic
+    def complete_transaction(self, *, transaction_id):
+        transaction = Transaction.objects.select_related('company', 'plan').filter(
+            transaction_id=transaction_id,
+        ).select_for_update().first()
+
+        if not transaction:
+            raise ValueError('Transaction not found.')
+
+        if transaction.payment_status == PaymentStatus.SUCCESS:
+            company_plan = CompanyPlan.objects.filter(
+                company=transaction.company,
+                plan=transaction.plan,
+            ).order_by('-start_date').first()
+            if company_plan:
+                return {'company_plan': company_plan, 'transaction': transaction}
+            raise ValueError('Transaction is completed but no company plan found.')
+
+        if transaction.payment_status != PaymentStatus.PENDING:
+            raise ValueError('This transaction cannot be completed.')
+
+        company = transaction.company
+        plan = transaction.plan
+
+        existing_active = CompanyPlan.objects.filter(
+            company=company,
+            status__in=[CompanyPlanStatus.ACTIVE, CompanyPlanStatus.TRIAL],
+        ).select_for_update().first()
+        if existing_active:
+            raise ValueError(
+                'Company already has an active subscription. '
+                'Please cancel the existing plan before completing this transaction.'
+            )
+
+        today = timezone.now().date()
+        start_date = today
+        end_date = start_date + timedelta(days=plan.validity_days)
+
+        company_plan = CompanyPlan.objects.create(
+            company=company,
+            plan=plan,
+            start_date=start_date,
+            end_date=end_date,
+            status=CompanyPlanStatus.ACTIVE,
+            is_auto_renew=False,
+            discount_type=transaction.discount_type,
+            discount_value=transaction.discount_value,
+            original_price=transaction.original_amount,
+            final_price=transaction.final_amount,
+            validity_days=plan.validity_days,
+            assigned_by=transaction.assigned_by,
+        )
+
+        transaction.payment_status = PaymentStatus.SUCCESS
+        transaction.transaction_status = TransactionStatus.COMPLETED
+        transaction.save(update_fields=['payment_status', 'transaction_status'])
+
+        if company.suspension_reason != CompanySuspensionReason.MANUAL:
+            company.suspension_reason = CompanySuspensionReason.NONE
+        company.status = company_lifecycle_service.get_effective_status(company=company)
+        company.save(update_fields=['status', 'suspension_reason'])
+
+        return {'company_plan': company_plan, 'transaction': transaction}
+
     @staticmethod
     def _calculate_final_price(original_price, discount_type, discount_value):
+        original_price = Decimal(str(original_price))
+        discount_value = Decimal(str(discount_value))
         if discount_type == DiscountType.PERCENTAGE:
-            discount_amount = original_price * (discount_value / 100)
+            discount_amount = (
+                original_price * discount_value / Decimal("100")
+            )
         elif discount_type == DiscountType.FIXED:
             discount_amount = discount_value
         else:
-            discount_amount = 0
-        return max(original_price - discount_amount, 0)
+            discount_amount = Decimal('0')
+        return max(original_price - discount_amount, Decimal('0'))
 
     def _create_subscription_history(self, *, company, plan, company_plan, original_price,
                                      discount_type, discount_value, final_price, billing_cycle,

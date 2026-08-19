@@ -358,12 +358,12 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
 
 class PlanViewSet(viewsets.ModelViewSet):
-    queryset = Plan.objects.all().prefetch_related('enabled_models')
+    queryset = Plan.objects.filter(is_deleted=False).prefetch_related('enabled_models')
     serializer_class = PlanSerializer
     permission_classes = [IsSuperAdmin]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'description']
-    ordering_fields = ['name', 'monthly_price', 'yearly_price', 'created_at']
+    ordering_fields = ['name', 'price', 'created_at']
     ordering = ['name']
 
     def list(self, request, *args, **kwargs):
@@ -383,23 +383,9 @@ class PlanViewSet(viewsets.ModelViewSet):
         )
 
     def retrieve(self, request, *args, **kwargs):
-        """Override to return plan detail with included modules and companies using this plan."""
+        """Override to return plan detail."""
         plan = self.get_object()
         plan_data = PlanDetailSerializer(plan).data
-
-        # Companies using this plan
-        companies = CompanyPlan.objects.filter(plan=plan).select_related('company').order_by('company__name')
-        company_list = [
-            {
-                'company_id': str(cp.company.id),
-                'company_name': cp.company.name,
-                'status': cp.status,
-                'start_date': cp.start_date,
-                'end_date': cp.end_date,
-            }
-            for cp in companies
-        ]
-        plan_data['companies_using'] = company_list
 
         return success_response(
             message='Plan fetched successfully.',
@@ -438,6 +424,14 @@ class PlanViewSet(viewsets.ModelViewSet):
         )
         return success_response(message='Plan deactivated successfully.', data=PlanSerializer(plan).data)
 
+    @action(detail=True, methods=['post'])
+    def delete_plan(self, request, pk=None):
+        plan = self.get_object()
+        plan.is_deleted = True
+        plan.deleted_at = timezone.now()
+        plan.save(update_fields=['is_deleted', 'deleted_at'])
+        return success_response(message='Plan deleted successfully.')
+
 
 class CompanyPlanViewSet(viewsets.ModelViewSet):
     queryset = CompanyPlan.objects.select_related('company', 'plan')
@@ -465,6 +459,44 @@ class CompanyPlanViewSet(viewsets.ModelViewSet):
             status=status_value,
         )
         return success_response(message='Plan assigned successfully.', data=CompanyPlanSerializer(company_plan).data)
+
+    @action(detail=False, methods=['post'])
+    def assign_pending(self, request):
+        company_id = request.data.get('company_id')
+        plan_id = request.data.get('plan_id')
+        discount_type = request.data.get('discount_type')
+        discount_value = request.data.get('discount_value')
+        if not company_id or not plan_id:
+            return Response({'detail': 'company_id and plan_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = superadmin_service.create_pending_assignment(
+                company_id=company_id, plan_id=plan_id,
+                discount_type=discount_type, discount_value=discount_value,
+                assigned_by=request.user,
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return success_response(
+            message='Plan assigned. Payment pending.',
+            data={'transaction': TransactionSerializer(result['transaction']).data},
+        )
+
+    @action(detail=False, methods=['post'], url_path='complete_transaction')
+    def complete_transaction(self, request):
+        transaction_id = request.data.get('transaction_id')
+        if not transaction_id:
+            return Response({'detail': 'transaction_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = superadmin_service.complete_transaction(transaction_id=transaction_id)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return success_response(
+            message='Transaction completed. Subscription activated.',
+            data={
+                'company_plan': CompanyPlanSerializer(result['company_plan']).data,
+                'transaction': TransactionSerializer(result['transaction']).data,
+            }
+        )
 
     @action(detail=False, methods=['post'])
     def upgrade(self, request):

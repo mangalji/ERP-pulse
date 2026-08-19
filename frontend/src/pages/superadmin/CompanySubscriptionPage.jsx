@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+﻿import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import Card from '../../components/ui/Card.jsx'
@@ -11,8 +11,8 @@ import SubscriptionCard from '../../components/subscriptions/SubscriptionCard.js
 import ModuleGrid from '../../components/subscriptions/ModuleGrid.jsx'
 import UsageCard from '../../components/subscriptions/UsageCard.jsx'
 import PlanHistoryTable from '../../components/subscriptions/PlanHistoryTable.jsx'
-import { subscriptionApi } from '../../services/subscriptions.js'
 import { superadminApi } from '../../services/superadmin.js'
+import { subscriptionApi } from '../../services/subscriptions.js'
 
 const TABS = [
   { key: 'subscription', label: 'Subscription' },
@@ -24,9 +24,10 @@ const TABS = [
 
 export default function CompanySubscriptionPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const { toasts, addToast, removeToast } = useToast()
   const [tab, setTab] = useState('subscription')
-  const [subscription, setSubscription] = useState(null)
+  const [company, setCompany] = useState(null)
   const [modules, setModules] = useState([])
   const [usage, setUsage] = useState([])
   const [history, setHistory] = useState([])
@@ -37,7 +38,6 @@ export default function CompanySubscriptionPage() {
   const [selectedPlan, setSelectedPlan] = useState('')
   const [discountType, setDiscountType] = useState('NONE')
   const [discountValue, setDiscountValue] = useState('')
-  const [billingCycle, setBillingCycle] = useState('MONTHLY')
   const [effectivePrice, setEffectivePrice] = useState(0)
 
   useEffect(() => {
@@ -47,13 +47,13 @@ export default function CompanySubscriptionPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [subData, modData, histData, plansData] = await Promise.all([
+      const [companyData, modData, histData, plansData] = await Promise.all([
         superadminApi.getCompany(id),
         superadminApi.fetchCompanyModules(id),
         subscriptionApi.getCompanyPlanHistory(id),
-        subscriptionApi.listPlans(),
+        superadminApi.listPlans(),
       ])
-      setSubscription(subData)
+      setCompany(companyData)
       setModules(modData.results || modData || [])
       setHistory(histData || [])
       setPlans(plansData.results || plansData || [])
@@ -63,7 +63,6 @@ export default function CompanySubscriptionPage() {
       } catch {
         setTransactions([])
       }
-      // Load usage data separately — may 404 for super admins without a company
       try {
         const usageData = await subscriptionApi.getMyUsage()
         setUsage(usageData || [])
@@ -77,22 +76,49 @@ export default function CompanySubscriptionPage() {
     }
   }
 
+  const currentPlan = company?.current_plan || null
+  const pendingTransaction = transactions.find(tx => tx.payment_status === 'PENDING')
+  const completedTransaction = transactions.find(tx => tx.payment_status === 'SUCCESS')
+
+  const flowState = currentPlan
+    ? 'active'
+    : pendingTransaction
+      ? 'pending'
+      : 'assign'
+
   const handleAssignPlan = async () => {
     if (!selectedPlan) return
     setSaving(true)
     try {
-      await subscriptionApi.assignPlan({
+      await superadminApi.assignPlanPending({
         company_id: id,
         plan_id: selectedPlan,
-        status: 'TRIAL',
         discount_type: discountType,
-        discount_value: discountValue,
-        billing_cycle: billingCycle,
+        discount_value: 
+          discountValue === 'NONE'
+           ? 0
+           : Number(discountValue) || 0,
       })
-      addToast('Plan assigned successfully', 'success')
+      addToast('Plan assigned. Payment pending.', 'success')
       loadData()
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to assign plan', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCompleteTransaction = async () => {
+    if (!pendingTransaction) return
+    setSaving(true)
+    try {
+      await superadminApi.completeTransaction({
+        transaction_id: pendingTransaction.transaction_id,
+      })
+      addToast('Transaction completed. Subscription activated.', 'success')
+      loadData()
+    } catch (err) {
+      addToast(err.payload?.message || err.message || 'Failed to complete transaction', 'error')
     } finally {
       setSaving(false)
     }
@@ -114,16 +140,16 @@ export default function CompanySubscriptionPage() {
     }
     const plan = plans.find((p) => p.id === selectedPlan)
     if (!plan) return
-    const original = billingCycle === 'YEARLY' ? Number(plan.yearly_price) : Number(plan.monthly_price)
+    const original = Number(plan.price || 0)
     const discountNum = Number(discountValue) || 0
-    let final = original || 0
+    let final = original
     if (discountType === 'PERCENTAGE') {
       final = original - (original * discountNum / 100)
     } else if (discountType === 'FIXED') {
       final = original - discountNum
     }
     setEffectivePrice(Math.max(final, 0))
-  }, [selectedPlan, billingCycle, discountType, discountValue, plans])
+  }, [selectedPlan, discountType, discountValue, plans])
 
   const handleToggleModule = async (moduleId) => {
     const mod = modules.find((m) => m.module === moduleId)
@@ -149,6 +175,8 @@ export default function CompanySubscriptionPage() {
     )
   }
 
+  const selectedPlanData = plans.find((p) => p.id === selectedPlan)
+
   return (
     <AdminLayout title="Company Subscription" breadcrumb="Subscription">
       <div className="flex flex-col gap-6">
@@ -164,8 +192,8 @@ export default function CompanySubscriptionPage() {
           <span className="text-sm text-[var(--color-muted)]">Company Detail</span>
         </div>
         <PageHeader
-          title={subscription?.name || 'Company'}
-          subtitle={`Subscription management for ${subscription?.name || ''}`}
+          title={company?.name || 'Company'}
+          subtitle={`Subscription management for ${company?.name || ''}`}
         />
 
         <div className="flex gap-2 border-b border-[var(--color-border)]">
@@ -186,78 +214,139 @@ export default function CompanySubscriptionPage() {
 
         {tab === 'subscription' && (
           <div className="flex flex-col gap-4">
-            <Card className="p-5">
-              <h3 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Current Plan</h3>
-              <SubscriptionCard
-                planName={subscription?.plan_name}
-                status={subscription?.status}
-                startDate={subscription?.start_date}
-                endDate={subscription?.end_date}
-                isAutoRenew={subscription?.is_auto_renew}
-              />
-            </Card>
-            <Card className="p-5">
-              <h3 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Assign Plan</h3>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Selected Plan</label>
-                  <Select value={selectedPlan} onChange={(e) => handlePlanChange(e.target.value)} className="flex-1">
-                    <option value="">Select a plan</option>
-                    {plans.map((plan) => (
-                      <option key={plan.id} value={plan.id}>
-                        {plan.name} - ₹{plan.monthly_price}/mo | ₹{plan.yearly_price}/yr
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Original Price</label>
-                  <Input
-                    type="number"
-                    value={selectedPlan ? (billingCycle === 'YEARLY'
-                      ? plans.find((p) => p.id === selectedPlan)?.yearly_price || 0
-                      : plans.find((p) => p.id === selectedPlan)?.monthly_price || 0) : 0}
-                    readOnly
-                    className="bg-[var(--color-canvas)]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Billing Cycle</label>
-                  <Select value={billingCycle} onChange={(e) => { setBillingCycle(e.target.value); handlePlanChange(selectedPlan) }} className="w-full">
-                    <option value="MONTHLY">Monthly</option>
-                    <option value="YEARLY">Yearly</option>
-                  </Select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Discount Type</label>
-                  <Select value={discountType} onChange={(e) => handleDiscountChange(e.target.value)} className="w-full">
-                    <option value="NONE">No Discount</option>
-                    <option value="PERCENTAGE">Percentage (%)</option>
-                    <option value="FIXED">Fixed Amount (₹)</option>
-                  </Select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Discount Value</label>
-                  <Input
-                    type="number"
-                    value={discountValue}
-                    onChange={(e) => setDiscountValue(e.target.value)}
-                    disabled={discountType === 'NONE'}
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
-                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Final Price</label>
-                    <p className="text-2xl font-bold text-[var(--color-primary)]">
-                      ₹{effectivePrice.toFixed(2)}/{billingCycle === 'YEARLY' ? 'yr' : 'mo'}
-                    </p>
+            {flowState === 'assign' && (
+              <Card className="p-5">
+                <h3 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Assign Plan</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Select Plan</label>
+                    <Select value={selectedPlan} onChange={(e) => handlePlanChange(e.target.value)} className="flex-1">
+                      <option value="">Select a plan</option>
+                      {plans.map((plan) => (
+                        <option key={plan.id} value={plan.id}>
+                          {plan.name} - ₹{plan.price}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  {selectedPlanData && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Plan Price</label>
+                        <Input type="number" value={selectedPlanData.price || 0} readOnly className="bg-[var(--color-canvas)]" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Validity</label>
+                        <Input type="number" value={selectedPlanData.validity_days || 30} readOnly className="bg-[var(--color-canvas)]" />
+                      </div>
+                    </>
+                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Discount Type</label>
+                    <Select value={discountType} onChange={(e) => handleDiscountChange(e.target.value)} className="w-full">
+                      <option value="NONE">No Discount</option>
+                      <option value="PERCENTAGE">Percentage (%)</option>
+                      <option value="FIXED">Fixed Amount (₹)</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Discount Value</label>
+                    <Input
+                      type="number"
+                      value={discountValue}
+                      onChange={(e) => setDiscountValue(e.target.value)}
+                      disabled={discountType === 'NONE'}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+                      <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Final Amount</label>
+                      <p className="text-2xl font-bold text-[var(--color-primary)]">
+                        ₹{effectivePrice.toFixed(2)}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="mt-4 flex justify-end">
-                <Button onClick={handleAssignPlan} isLoading={saving}>Assign Plan</Button>
-              </div>
-            </Card>
+                <div className="mt-4 flex justify-end">
+                  <Button onClick={handleAssignPlan} isLoading={saving} disabled={!selectedPlan}>Assign Plan</Button>
+                </div>
+              </Card>
+            )}
+
+            {flowState === 'pending' && pendingTransaction && (
+              <Card className="p-5">
+                <h3 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Payment Pending</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Plan</label>
+                    <p className="text-sm font-medium text-[var(--color-ink)]">{pendingTransaction.plan__name || '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Original Price</label>
+                    <p className="text-sm font-medium text-[var(--color-ink-soft)]">₹{Number(pendingTransaction.original_amount || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Discount</label>
+                    <p className="text-sm font-medium text-[var(--color-ink-soft)]">-₹{Number(pendingTransaction.discount_amount || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Final Amount</label>
+                    <p className="text-sm font-bold text-[var(--color-primary)]">₹{Number(pendingTransaction.final_amount || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Transaction ID</label>
+                    <p className="text-sm font-mono text-[var(--color-ink)]">{pendingTransaction.transaction_id || '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Payment Status</label>
+                    <p className="text-sm font-medium text-[var(--color-ink-soft)]">Pending</p>
+                  </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <Button onClick={handleCompleteTransaction} isLoading={saving}>Transaction Completed</Button>
+                </div>
+              </Card>
+            )}
+
+            {flowState === 'active' && currentPlan && (
+              <Card className="p-5">
+                <h3 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Subscription Active</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Plan</label>
+                    <p className="text-sm font-medium text-[var(--color-ink)]">{currentPlan.plan_name || '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Final Price</label>
+                    <p className="text-sm font-bold text-[var(--color-primary)]">₹{Number(currentPlan.final_price || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Transaction ID</label>
+                    <p className="text-sm font-mono text-[var(--color-ink)]">{completedTransaction?.transaction_id || '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Payment Status</label>
+                    <p className="text-sm font-medium text-[var(--color-ink-soft)]">{completedTransaction ? 'Completed' : '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Subscription Status</label>
+                    <p className="text-sm font-medium text-[var(--color-ink-soft)]">{currentPlan.status || '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Start Date</label>
+                    <p className="text-sm text-[var(--color-ink-soft)]">{currentPlan.start_date ? new Date(currentPlan.start_date).toLocaleDateString() : '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">End Date</label>
+                    <p className="text-sm text-[var(--color-ink-soft)]">{currentPlan.end_date ? new Date(currentPlan.end_date).toLocaleDateString() : '—'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">Validity</label>
+                    <p className="text-sm text-[var(--color-ink-soft)]">{currentPlan.validity_days ?? 30} days</p>
+                  </div>
+                </div>
+              </Card>
+            )}
           </div>
         )}
 
@@ -291,7 +380,7 @@ export default function CompanySubscriptionPage() {
                       <th className="pb-2 pr-4 font-medium">Discount</th>
                       <th className="pb-2 pr-4 font-medium">Final Amount</th>
                       <th className="pb-2 pr-4 font-medium">Status</th>
-                      <th className="pb-2 pr-4 font-medium">Date</th>
+                      <th className="pb-2 font-medium">Date</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -299,11 +388,11 @@ export default function CompanySubscriptionPage() {
                       <tr key={tx.id} className="border-b border-[var(--color-border)] last:border-0">
                         <td className="py-3 pr-4 font-mono text-xs text-[var(--color-ink)]">{tx.transaction_id}</td>
                         <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{tx.plan__name || '—'}</td>
-                        <td className="py-3 pr-4 text-[var(--color-ink-soft)]">₹{Number(tx.original_amount).toFixed(2)}</td>
+                        <td className="py-3 pr-4 text-[var(--color-ink-soft)]">₹{Number(tx.original_amount || 0).toFixed(2)}</td>
                         <td className="py-3 pr-4 text-[var(--color-ink-soft)]">
-                          -₹{Number(tx.discount_amount).toFixed(2)}
+                          -₹{Number(tx.discount_amount || 0).toFixed(2)}
                         </td>
-                        <td className="py-3 pr-4 font-medium text-[var(--color-primary)]">₹{Number(tx.final_amount).toFixed(2)}</td>
+                        <td className="py-3 pr-4 font-medium text-[var(--color-primary)]">₹{Number(tx.final_amount || 0).toFixed(2)}</td>
                         <td className="py-3 pr-4"><span className="capitalize">{tx.payment_status}</span></td>
                         <td className="py-3 pr-4 text-[var(--color-muted)]">
                           {tx.created_at ? new Date(tx.created_at).toLocaleDateString() : '—'}

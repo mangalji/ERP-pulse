@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
@@ -17,12 +17,8 @@ const PAGE_SIZE = 10
 const EMPTY_PLAN = {
   name: '',
   description: '',
-  monthly_price: '',
-  yearly_price: '',
-  max_employees: 0,
-  max_ocr_documents: 0,
-  max_storage_gb: 0,
-  status: 'ACTIVE',
+  price: '',
+  validity_days: 30,
 }
 
 export default function PlansPage() {
@@ -35,7 +31,7 @@ export default function PlansPage() {
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
 
-  const [modal, setModal] = useState(null) // null | {mode:'create'} | {mode:'edit', plan}
+  const [modal, setModal] = useState(null)
   const [form, setForm] = useState(EMPTY_PLAN)
   const [saving, setSaving] = useState(false)
   const [confirm, setConfirm] = useState(null)
@@ -45,13 +41,8 @@ export default function PlansPage() {
     if (!confirm) return
     setSaving(true)
     try {
-      if (confirm.action === 'activate') {
-        await superadminApi.activatePlan(confirm.plan.id)
-        addToast('Plan activated successfully')
-      } else {
-        await superadminApi.deactivatePlan(confirm.plan.id)
-        addToast('Plan deactivated successfully')
-      }
+      await superadminApi.deletePlan(confirm.plan.id)
+      addToast('Plan deleted successfully')
       setConfirm(null)
       load()
     } catch (err) {
@@ -92,12 +83,8 @@ export default function PlansPage() {
     setForm({
       name: plan.name || '',
       description: plan.description || '',
-      monthly_price: plan.monthly_price ?? '',
-      yearly_price: plan.yearly_price ?? '',
-      max_employees: plan.max_employees ?? 0,
-      max_ocr_documents: plan.max_ocr_documents ?? 0,
-      max_storage_gb: plan.max_storage_gb ?? 0,
-      status: plan.status || 'ACTIVE',
+      price: plan.price ?? '',
+      validity_days: plan.validity_days ?? 30,
     })
     setModal({ mode: 'edit', plan })
   }
@@ -121,22 +108,6 @@ export default function PlansPage() {
     }
   }
 
-  /* Old delete handler — kept for rollback
-  const handleDelete = async () => {
-    setSaving(true)
-    try {
-      await superadminApi.deletePlan(confirm.plan.id)
-      addToast('Plan deleted successfully')
-      setConfirm(null)
-      load()
-    } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to delete plan', 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
-  */
-
   const totalPages = Math.ceil(count / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
@@ -154,24 +125,14 @@ export default function PlansPage() {
       ),
     },
     {
-      key: 'monthly_price',
-      header: 'Monthly',
-      render: (row) => <span className="font-mono-tabular text-[var(--color-ink-soft)]">${Number(row.monthly_price || 0).toFixed(2)}</span>,
+      key: 'price',
+      header: 'Price',
+      render: (row) => <span className="font-mono-tabular text-[var(--color-ink-soft)]">Rs.{Number(row.price || 0).toFixed(2)}</span>,
     },
     {
-      key: 'yearly_price',
-      header: 'Yearly',
-      render: (row) => <span className="font-mono-tabular text-[var(--color-ink-soft)]">${Number(row.yearly_price || 0).toFixed(2)}</span>,
-    },
-    {
-      key: 'max_employees',
-      header: 'Max Employees',
-      render: (row) => <span className="text-[var(--color-ink-soft)]">{row.max_employees ?? 0}</span>,
-    },
-    {
-      key: 'enabled_models',
-      header: 'Included Modules',
-      render: (row) => <span className="text-[var(--color-ink-soft)]">{row.enabled_models?.length ?? 0}</span>,
+      key: 'validity_days',
+      header: 'Validity',
+      render: (row) => <span className="text-[var(--color-ink-soft)]">{row.validity_days ?? 30} days</span>,
     },
     {
       key: 'status',
@@ -197,21 +158,12 @@ export default function PlansPage() {
           <button onClick={() => openEdit(row)} className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]">
             Edit
           </button>
-          {row.status === 'ACTIVE' ? (
-            <button
-              onClick={() => setConfirm({ plan: row, action: 'deactivate' })}
-              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-netsuite)] hover:bg-[var(--color-netsuite-soft)]"
-            >
-              Deactivate
-            </button>
-          ) : (
-            <button
-              onClick={() => setConfirm({ plan: row, action: 'activate' })}
-              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
-            >
-              Activate
-            </button>
-          )}
+          <button
+            onClick={() => setConfirm({ plan: row, action: 'delete' })}
+            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-negative)] hover:bg-[var(--color-negative-soft)]"
+          >
+            Delete
+          </button>
         </div>
       ),
     },
@@ -233,7 +185,7 @@ export default function PlansPage() {
         </div>
         <PageHeader
           title="Plans"
-          subtitle="Manage subscription plans and their limits."
+          subtitle="Manage subscription plans and their validity."
           actions={<Button onClick={openCreate}>Create Plan</Button>}
         />
 
@@ -278,27 +230,8 @@ export default function PlansPage() {
             <div className="mt-4 flex flex-col gap-4">
               <Input label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               <Input label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              <div className="grid grid-cols-2 gap-4">
-                <Input label="Monthly Price" type="number" value={form.monthly_price} onChange={(e) => setForm({ ...form, monthly_price: e.target.value })} />
-                <Input label="Yearly Price" type="number" value={form.yearly_price} onChange={(e) => setForm({ ...form, yearly_price: e.target.value })} />
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <Input label="Max Employees" type="number" value={form.max_employees} onChange={(e) => setForm({ ...form, max_employees: e.target.value })} />
-                <Input label="Max OCR Docs" type="number" value={form.max_ocr_documents} onChange={(e) => setForm({ ...form, max_ocr_documents: e.target.value })} />
-                <Input label="Max Storage (GB)" type="number" value={form.max_storage_gb} onChange={(e) => setForm({ ...form, max_storage_gb: e.target.value })} />
-              </div>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">Status</span>
-                <select
-                  value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                >
-                  <option value="ACTIVE">Active</option>
-                  <option value="INACTIVE">Inactive</option>
-                  <option value="ARCHIVED">Archived</option>
-                </select>
-              </label>
+              <Input label="Price (₹)" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+              <Input label="Validity (days)" type="number" value={form.validity_days} onChange={(e) => setForm({ ...form, validity_days: e.target.value })} />
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <Button intent="secondary" onClick={() => setModal(null)}>Cancel</Button>
@@ -308,24 +241,12 @@ export default function PlansPage() {
         </div>
       )}
 
-      {/* Old delete confirm dialog — replaced by activate/deactivate
       <ConfirmDialog
         open={!!confirm}
-        title="Delete plan?"
-        message={confirm ? `Are you sure you want to delete ${confirm.plan.name}?` : ''}
+        title={confirm ? `Delete plan?` : ''}
+        message={confirm ? `Are you sure you want to delete ${confirm?.plan?.name}?` : ''}
         confirmLabel="Delete"
-        onConfirm={handleDelete}
-        onCancel={() => setConfirm(null)}
-        loading={saving}
-      />
-      */}
-
-      <ConfirmDialog
-        open={!!confirm}
-        title={confirm ? `${confirm.action === 'activate' ? 'Activate' : 'Deactivate'} plan?` : ''}
-        message={confirm ? `Are you sure you want to ${confirm.action} ${confirm?.plan?.name}?` : ''}
-        confirmLabel={confirm?.action === 'activate' ? 'Activate' : 'Deactivate'}
-        intent="primary"
+        intent="negative"
         onConfirm={handlePlanAction}
         onCancel={() => setConfirm(null)}
         loading={saving}

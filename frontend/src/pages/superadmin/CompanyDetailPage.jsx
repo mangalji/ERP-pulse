@@ -33,6 +33,7 @@ export default function CompanyDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [confirm, setConfirm] = useState(null)
+  const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false)
 
   const [editOpen, setEditOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -296,11 +297,7 @@ export default function CompanyDetailPage() {
 
               <Button
                 size="sm"
-                onClick={() =>
-                  navigate(
-                    `/admin/companies/${company.id}/subscription`,
-                  )
-                }
+                onClick={() => setSubscriptionModalOpen(true)}
               >
                 View Subscription
               </Button>
@@ -1098,6 +1095,137 @@ export default function CompanyDetailPage() {
         )}
 
         {/* Toast */}
+        {subscriptionModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setSubscriptionModalOpen(false)}
+            />
+            <div className="relative max-h-[calc(100vh-80px)] w-full max-w-2xl overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+              <div className="mb-5 flex items-center justify-between">
+                <h2 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+                  Subscription — {company.name}
+                </h2>
+                <button
+                  onClick={() => setSubscriptionModalOpen(false)}
+                  className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {(() => {
+                const pendingTx = transactions.find(tx => tx.payment_status === 'PENDING')
+                const completedTx = transactions.find(tx => tx.payment_status === 'SUCCESS')
+                const activePlan = company.current_plan
+
+                if (!activePlan && !pendingTx) {
+                  return (
+                    <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
+                      <p className="text-sm font-medium text-[var(--color-ink)]">No subscription assigned</p>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="flex flex-col gap-4">
+                    {activePlan && (
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Plan Name</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{activePlan.plan_name || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Subscription Status</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{activePlan.status || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Original Price</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">₹{Number(activePlan.original_price || 0).toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Discount</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.discount_display || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Final Price</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--color-primary)]">₹{Number(activePlan.final_price || 0).toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Validity</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.validity_days ?? 30} days</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Start Date</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.start_date ? new Date(activePlan.start_date).toLocaleDateString() : '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">End Date</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.end_date ? new Date(activePlan.end_date).toLocaleDateString() : '—'}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {completedTx && (
+                      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)] mb-2">Transaction Details</p>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs text-[var(--color-muted)]">Transaction ID</p>
+                            <p className="text-sm font-mono text-[var(--color-ink)]">{completedTx.transaction_id || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-[var(--color-muted)]">Payment Status</p>
+                            <p className="text-sm text-[var(--color-ink-soft)]">Completed</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {pendingTx && (
+                      <div className="flex flex-col gap-4">
+                        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+                          <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)] mb-2">Pending Transaction</p>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div>
+                              <p className="text-xs text-[var(--color-muted)]">Transaction ID</p>
+                              <p className="text-sm font-mono text-[var(--color-ink)]">{pendingTx.transaction_id || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-[var(--color-muted)]">Payment Status</p>
+                              <p className="text-sm text-[var(--color-ink-soft)]">Pending</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Plan Name</p>
+                            <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{pendingTx.plan__name || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Original Price</p>
+                            <p className="mt-1 text-sm text-[var(--color-ink-soft)]">₹{Number(pendingTx.original_amount || 0).toFixed(2)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Discount</p>
+                            <p className="mt-1 text-sm text-[var(--color-ink-soft)]">-₹{Number(pendingTx.discount_amount || 0).toFixed(2)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Final Price</p>
+                            <p className="mt-1 text-sm font-semibold text-[var(--color-primary)]">₹{Number(pendingTx.final_amount || 0).toFixed(2)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
         <Toast
           toasts={toasts}
           removeToast={removeToast}

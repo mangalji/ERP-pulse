@@ -1,10 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import StatusBadge from '../../components/superadmin/StatusBadge.jsx'
 import InfoCard from '../../components/superadmin/InfoCard.jsx'
-import SectionCard from '../../components/superadmin/SectionCard.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
@@ -19,8 +18,6 @@ export default function PlanDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [editForm, setEditForm] = useState({})
   const [saving, setSaving] = useState(false)
-  const [allModules, setAllModules] = useState([])
-  const [loadingModules, setLoadingModules] = useState(false)
 
   const loadPlan = useCallback(async () => {
     setLoading(true)
@@ -31,16 +28,8 @@ export default function PlanDetailPage() {
       setEditForm({
         name: data.name,
         description: data.description,
-        monthly_price: data.monthly_price,
-        yearly_price: data.yearly_price,
-        max_employees: data.max_employees,
-        max_ocr_documents: data.max_ocr_documents,
-        max_storage_gb: data.max_storage_gb,
-        trial_days: data.trial_days,
-        ai_credits: data.ai_credits,
-        ocr_credits: data.ocr_credits,
-        status: data.status,
-        enabled_models: (data.enabled_modules || []).map((m) => m.id),
+        price: data.price,
+        validity_days: data.validity_days,
       })
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load plan')
@@ -53,23 +42,6 @@ export default function PlanDetailPage() {
     loadPlan()
   }, [loadPlan])
 
-  const loadModules = async () => {
-    setLoadingModules(true)
-    try {
-      const modData = await superadminApi.listModules()
-      setAllModules(modData.results || modData || [])
-    } catch {
-      setAllModules([])
-    } finally {
-      setLoadingModules(false)
-    }
-  }
-
-  const handleEdit = () => {
-    loadModules()
-    setEditOpen(true)
-  }
-
   const handleSave = async () => {
     setSaving(true)
     try {
@@ -77,7 +49,6 @@ export default function PlanDetailPage() {
       setPlan(updated)
       setEditOpen(false)
     } catch (err) {
-      // eslint-disable-next-line no-alert
       alert(err.payload?.message || err.message || 'Failed to update plan')
     } finally {
       setSaving(false)
@@ -104,8 +75,6 @@ export default function PlanDetailPage() {
 
   if (!plan) return null
 
-  const enabledModules = plan.enabled_modules || []
-
   return (
     <AdminLayout title={plan.name} breadcrumb="Plan Detail">
       <div className="flex flex-col gap-6">
@@ -129,7 +98,7 @@ export default function PlanDetailPage() {
               <Button size="sm" intent="secondary" onClick={() => navigate(`/admin/plans`)}>
                 Back to Plans
               </Button>
-              <Button size="sm" onClick={() => handleEdit()}>
+              <Button size="sm" onClick={() => setEditOpen(true)}>
                 Edit Plan
               </Button>
             </div>
@@ -150,176 +119,23 @@ export default function PlanDetailPage() {
         <InfoCard
           title="Pricing"
           items={[
-            { label: 'Monthly Price', value: `₹${Number(plan.monthly_price || 0).toFixed(2)}` },
-            { label: 'Yearly Price', value: `₹${Number(plan.yearly_price || 0).toFixed(2)}` },
+            { label: 'Price', value: `₹${Number(plan.price || 0).toFixed(2)}` },
+            { label: 'Validity', value: `${plan.validity_days ?? 30} days` },
           ]}
         />
 
-        <InfoCard
-          title="Limits"
-          items={[
-            { label: 'Max Employees', value: plan.max_employees ?? 0 },
-            { label: 'Max OCR Documents', value: plan.max_ocr_documents ?? 0 },
-            { label: 'Max Storage (GB)', value: plan.max_storage_gb ?? 0 },
-            { label: 'Trial Days', value: plan.trial_days ?? 0 },
-            { label: 'AI Credits', value: plan.ai_credits ?? 0 },
-            { label: 'OCR Credits', value: plan.ocr_credits ?? 0 },
-          ]}
-        />
-
-        <SectionCard
-          title="Included Modules"
-          subtitle={`${enabledModules.length} module${enabledModules.length !== 1 ? 's' : ''} included`}
-        >
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {enabledModules.map((mod) => (
-              <div
-                key={mod.id}
-                className="flex items-center justify-between rounded-lg border border-[var(--color-border)] p-3"
-              >
-                <div>
-                  <p className="text-sm font-medium text-[var(--color-ink)]">{mod.display_name || mod.name}</p>
-                  <p className="text-xs text-[var(--color-muted)]">{mod.code}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-
-        {plan.companies_using && plan.companies_using.length > 0 && (
-          <SectionCard title="Companies Using This Plan">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]">
-                    <th className="pb-2 pr-4 font-medium">Company</th>
-                    <th className="pb-2 pr-4 font-medium">Status</th>
-                    <th className="pb-2 pr-4 font-medium">Start Date</th>
-                    <th className="pb-2 font-medium">Expiry Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {plan.companies_using.map((cp) => (
-                    <tr key={cp.company_id} className="border-b border-[var(--color-border)] last:border-0">
-                      <td className="py-3 pr-4">
-                        <button
-                          onClick={() => navigate(`/admin/companies/${cp.company_id}`)}
-                          className="font-medium text-[var(--color-primary)] hover:underline"
-                        >
-                          {cp.company_name}
-                        </button>
-                      </td>
-                      <td className="py-3 pr-4"><StatusBadge status={cp.status} /></td>
-                      <td className="py-3 pr-4 text-[var(--color-ink-soft)]">
-                        {cp.start_date ? new Date(cp.start_date).toLocaleDateString() : '—'}
-                      </td>
-                      <td className="py-3 text-[var(--color-ink-soft)]">
-                        {cp.end_date ? new Date(cp.end_date).toLocaleDateString() : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </SectionCard>
-        )}
-
-        {/* Edit Plan Modal */}
         {editOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/40" onClick={() => setEditOpen(false)} />
-            <div className="relative w-full max-w-2xl rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+            <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
               <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
                 Edit Plan
               </h3>
-              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input
-                  label="Plan Name"
-                  value={editForm.name || ''}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                />
-                <Input
-                  label="Description"
-                  value={editForm.description || ''}
-                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                />
-                <Input
-                  label="Monthly Price (₹)"
-                  type="number"
-                  value={editForm.monthly_price || ''}
-                  onChange={(e) => setEditForm({ ...editForm, monthly_price: e.target.value })}
-                />
-                <Input
-                  label="Yearly Price (₹)"
-                  type="number"
-                  value={editForm.yearly_price || ''}
-                  onChange={(e) => setEditForm({ ...editForm, yearly_price: e.target.value })}
-                />
-                <Input
-                  label="Max Employees"
-                  type="number"
-                  value={editForm.max_employees || ''}
-                  onChange={(e) => setEditForm({ ...editForm, max_employees: e.target.value })}
-                />
-                <Input
-                  label="Max OCR Documents"
-                  type="number"
-                  value={editForm.max_ocr_documents || ''}
-                  onChange={(e) => setEditForm({ ...editForm, max_ocr_documents: e.target.value })}
-                />
-                <Input
-                  label="Max Storage (GB)"
-                  type="number"
-                  value={editForm.max_storage_gb || ''}
-                  onChange={(e) => setEditForm({ ...editForm, max_storage_gb: e.target.value })}
-                />
-                <Input
-                  label="Trial Days"
-                  type="number"
-                  value={editForm.trial_days || ''}
-                  onChange={(e) => setEditForm({ ...editForm, trial_days: e.target.value })}
-                />
-                <Input
-                  label="AI Credits"
-                  type="number"
-                  value={editForm.ai_credits || ''}
-                  onChange={(e) => setEditForm({ ...editForm, ai_credits: e.target.value })}
-                />
-                 <Input
-                   label="OCR Credits"
-                   type="number"
-                   value={editForm.ocr_credits || ''}
-                   onChange={(e) => setEditForm({ ...editForm, ocr_credits: e.target.value })}
-                 />
-                 <div className="sm:col-span-2">
-                   <label className="block text-sm font-medium text-[var(--color-ink-soft)] mb-1">
-                     Included Modules
-                   </label>
-                   {loadingModules ? (
-                     <p className="text-sm text-[var(--color-muted)]">Loading modules...</p>
-                   ) : (
-                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                       {allModules.map((mod) => (
-                         <label key={mod.id} className="flex items-center gap-2 text-sm">
-                           <input
-                             type="checkbox"
-                             checked={(editForm.enabled_models || []).includes(mod.id)}
-                             onChange={(e) => {
-                               const current = editForm.enabled_models || []
-                               if (e.target.checked) {
-                                 setEditForm({ ...editForm, enabled_models: [...current, mod.id] })
-                               } else {
-                                 setEditForm({ ...editForm, enabled_models: current.filter((m) => m !== mod.id) })
-                               }
-                             }}
-                             className="rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
-                           />
-                           <span>{mod.display_name || mod.name}</span>
-                         </label>
-                       ))}
-                     </div>
-                   )}
-                 </div>
+              <div className="mt-4 flex flex-col gap-4">
+                <Input label="Plan Name" value={editForm.name || ''} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                <Input label="Description" value={editForm.description || ''} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+                <Input label="Price (₹)" type="number" value={editForm.price || ''} onChange={(e) => setEditForm({ ...editForm, price: e.target.value })} />
+                <Input label="Validity (days)" type="number" value={editForm.validity_days || ''} onChange={(e) => setEditForm({ ...editForm, validity_days: e.target.value })} />
               </div>
               <div className="mt-6 flex justify-end gap-2">
                 <Button intent="secondary" size="sm" onClick={() => setEditOpen(false)}>Cancel</Button>

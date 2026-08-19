@@ -12,10 +12,12 @@ class PlanStatus(models.TextChoices):
 
 class Plan(BaseModel):
     """
-    Subscription plan that defines limits and pricing for a company.
+    Subscription plan that defines pricing and validity for a company.
     """
     name = models.CharField(max_length=150, unique=True)
     description = models.TextField(blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    validity_days = models.PositiveIntegerField(default=30)
     monthly_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     yearly_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     max_employees = models.PositiveIntegerField(default=0)
@@ -71,6 +73,7 @@ class CompanyPlan(BaseModel):
     billing_cycle = models.CharField(max_length=20, choices=BillingCycle.choices, default=BillingCycle.MONTHLY)
     original_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     final_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    validity_days = models.PositiveIntegerField(default=30)
     assigned_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -171,6 +174,15 @@ class Transaction(BaseModel):
     payment_status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)
     transaction_status = models.CharField(max_length=20, choices=TransactionStatus.choices, default=TransactionStatus.INITIATED)
     payment_method = models.CharField(max_length=50, default='MANUAL', help_text='Razorpay, Stripe, Manual, etc.')
+    discount_type = models.CharField(max_length=20, choices=DiscountType.choices, default=DiscountType.NONE)
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_transactions',
+    )
     invoice_number = models.CharField(max_length=64, blank=True, help_text='GST invoice number if applicable')
     created_at = models.DateTimeField(auto_now_add=True)
 

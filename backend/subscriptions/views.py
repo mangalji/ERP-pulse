@@ -218,7 +218,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='plans')
     def list_plans(self, request):
         """GET /api/v1/subscriptions/plans/ — list available plans."""
-        plans = Plan.objects.filter(status=Plan.Status.ACTIVE)
+        plans = Plan.objects.filter(is_deleted=False)
         return success_response(
             message='Plans fetched successfully.',
             data=PlanSerializer(plans, many=True).data,
