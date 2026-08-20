@@ -264,7 +264,7 @@ class ReportEmailView(APIView):
     def post(self, request):
         history_id = request.data.get('history_id')
         recipients = request.data.get('recipients') or []
-        subject = request.data.get('subject') or 'ERP Pulse Report'
+        subject = request.data.get('subject') or 'AGSuite ERP Report'
         message = request.data.get('message') or ''
         if not history_id:
             return Response({'detail': 'history_id is required.'}, status=status.HTTP_400_BAD_REQUEST)

@@ -1,5 +1,5 @@
 """
-Generic utility functions for ERP Pulse.
+Generic utility functions for AGSuite ERP.
 
 Only utilities that are NOT already in ``common/utils/`` belong here.
 Existing utilities (``common/utils/crypto.py``, ``common/utils/datetime.py``,

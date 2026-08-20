@@ -41,7 +41,7 @@ export default function HistoryPage() {
           Login Activity
         </h2>
         <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Recent sign-ins to your ERP Pulse account, most recent first.
+          Recent sign-ins to your AGSuite ERP account, most recent first.
         </p>
 
         <Card className="mt-4 p-6">

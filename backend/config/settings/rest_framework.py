@@ -1,5 +1,5 @@
 """
-Django REST Framework configuration for ERP Pulse.
+Django REST Framework configuration for AGSuite ERP.
 """
 
 from decouple import config

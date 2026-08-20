@@ -1,5 +1,5 @@
 """
-JWT configuration for ERP Pulse.
+JWT configuration for AGSuite ERP.
 
 Uses:
 - djangorestframework-simplejwt

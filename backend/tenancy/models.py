@@ -1,7 +1,7 @@
 """
 Company model for the tenancy app.
 
-``Company`` represents a tenant organization in the ERP Pulse platform.
+``Company`` represents a tenant organization in the AGSuite ERP platform.
 Each company is a distinct tenant with its own users, NetSuite
 connections, and data. This is the foundation for multi-tenancy.
 
@@ -36,7 +36,7 @@ class CompanySuspensionReason(models.TextChoices):
 
 class Company(BaseModel):
     """
-    A tenant organization in the ERP Pulse platform.
+    A tenant organization in the AGSuite ERP platform.
 
     Each Company is a distinct tenant. Users belong to a Company via
     a future FK on the User model. NetSuite connections and all
@@ -64,6 +64,27 @@ class Company(BaseModel):
     country = models.CharField(
         max_length=100,
         blank=True,
+    )
+
+    industry = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Industry the company operates in.",
+    )
+
+    company_size = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Company size band.",
+    )
+
+    city = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="City where the company is located.",
     )
 
 

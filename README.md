@@ -1,4 +1,4 @@
-# ERP Pulse (AGSuite)
+# AGSuite ERP (AGSuite)
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![Django](https://img.shields.io/badge/Django-6.x-green)
@@ -6,12 +6,12 @@
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-success)
 ![License](https://img.shields.io/badge/License-Private-lightgrey)
 
-ERP Pulse is a **multi-tenant SaaS ERP aggregation platform** built with Django and React. It provides a unified interface for businesses to manage their ERP integrations, AI-powered analytics, invoicing, and enterprise reporting — all under a single subscription.
+AGSuite ERP is a **multi-tenant SaaS ERP aggregation platform** built with Django and React. It provides a unified interface for businesses to manage their ERP integrations, AI-powered analytics, invoicing, and enterprise reporting — all under a single subscription.
 
 ## Live Demo
 
-- Frontend: [https://erp-pulse-gamma.vercel.app/](https://erp-pulse-gamma.vercel.app/)
-- Backend API: [https://erp-pulse-backend.onrender.com](https://erp-pulse-backend.onrender.com)
+- Frontend: [https://agsuite-erp-gamma.vercel.app/](https://agsuite-erp-gamma.vercel.app/)
+- Backend API: [https://agsuite-erp-backend.onrender.com](https://agsuite-erp-backend.onrender.com)
 
 ---
 
@@ -282,13 +282,13 @@ npm run build
 
 ## Long-Term Vision
 
-ERP Pulse aims to become a complete ERP aggregation platform supporting multiple ERP systems from a single dashboard.
+AGSuite ERP aims to become a complete ERP aggregation platform supporting multiple ERP systems from a single dashboard.
 
 ```
 User
     │
     ▼
-ERP Pulse
+AGSuite ERP
     │
     ├── NetSuite
     ├── SAP

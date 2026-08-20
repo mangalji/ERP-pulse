@@ -21,7 +21,7 @@ class NetSuiteConnection(models.Model):
 
 
     """
-    One row per ERP Pulse user's connected NetSuite account.
+    One row per AGSuite ERP user's connected NetSuite account.
 
     Stores only the OAuth token set for that connection — no NetSuite
     business data (Customers/Items/Sales Orders live in their own models

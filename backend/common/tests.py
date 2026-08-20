@@ -126,7 +126,7 @@ class EmailServiceTests(TestCase):
                 recipient_list=[],
             )
 
-    @override_settings(BREVO_API_KEY='test-brevo-key', DEFAULT_FROM_NAME='ERP Pulse')
+    @override_settings(BREVO_API_KEY='test-brevo-key', DEFAULT_FROM_NAME='AGSuite ERP')
     @patch('common.services.email_service.requests.post')
     def test_send_email_success_brevo_path(self, mock_post):
         """
@@ -149,7 +149,7 @@ class EmailServiceTests(TestCase):
         self.assertEqual(call_kwargs['headers']['api-key'], 'test-brevo-key')
         self.assertEqual(call_kwargs['json']['to'], [{'email': 'user@example.com'}])
         self.assertEqual(call_kwargs['json']['subject'], 'Your OTP')
-        self.assertEqual(call_kwargs['json']['sender']['name'], 'ERP Pulse')
+        self.assertEqual(call_kwargs['json']['sender']['name'], 'AGSuite ERP')
 
     @override_settings(BREVO_API_KEY='test-brevo-key')
     @patch('common.services.email_service.requests.post')

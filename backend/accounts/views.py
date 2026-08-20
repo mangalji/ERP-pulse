@@ -512,5 +512,5 @@ class ProfileUpdateView(APIView):
 def health(request):
     return success_response(
         message="Service is healthy.",
-        data={"status": "ok", "service": "ERP Pulse Backend"},
+        data={"status": "ok", "service": "AGSuite ERP Backend"},
     )

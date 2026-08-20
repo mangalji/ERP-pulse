@@ -1,4 +1,4 @@
-"""Root URL configuration for ERP Pulse.
+"""Root URL configuration for AGSuite ERP.
 
 All API endpoints are namespaced under /api/v1/ per BACKEND_CONTEXT.md.
 """

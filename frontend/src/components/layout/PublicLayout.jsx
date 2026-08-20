@@ -20,7 +20,7 @@ export default function PublicLayout({ children }) {
               <span className="relative inline-flex h-full w-full rounded-full bg-current" />
             </span>
             <span className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-              ERP Pulse
+              AGSuite ERP
             </span>
           </Link>
 
@@ -58,11 +58,11 @@ export default function PublicLayout({ children }) {
                 <span className="relative inline-flex h-full w-full rounded-full bg-current" />
               </span>
               <span className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-                ERP Pulse
+                AGSuite ERP
               </span>
             </div>
             <p className="text-center text-xs text-[var(--color-muted)] md:text-left">
-              &copy; {new Date().getFullYear()} ERP Pulse. All rights reserved. Developed by Raj Mangal.
+              &copy; {new Date().getFullYear()} AGSuite ERP. All rights reserved. Developed by Raj Mangal.
             </p>
             <div className="flex items-center gap-4 text-xs text-[var(--color-muted)]">
               <Link to="/about" className="hover:text-[var(--color-ink)]">About</Link>

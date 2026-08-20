@@ -1,5 +1,5 @@
 """
-Business logic for connecting an ERP Pulse user's NetSuite account.
+Business logic for connecting an AGSuite ERP user's NetSuite account.
 
 Orchestrates oauth.py (URL/state), NetSuiteAuthClient (token exchange),
 and NetSuiteConnectionRepository (persistence) — the view layer never
@@ -706,7 +706,7 @@ class NetSuiteDataService:
         return connection
 
 class NetSuiteReferenceSyncService:
-    """Synchronize NetSuite master/reference IDs into ERP Pulse."""
+    """Synchronize NetSuite master/reference IDs into AGSuite ERP."""
 
     PAGE_SIZE = 1000
 

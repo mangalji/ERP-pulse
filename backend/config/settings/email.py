@@ -1,5 +1,5 @@
 """
-Email configuration for ERP Pulse.
+Email configuration for AGSuite ERP.
  
 Backend selection (see common/services/email_service.py for the
 actual branching logic):
@@ -68,12 +68,12 @@ else:
 
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
-    default="noreply@erppulse.local",
+    default="noreply@agsuiterp.local",
 )
 
 # Brevo's API requires a sender display name alongside the address.
 DEFAULT_FROM_NAME = config(
     "DEFAULT_FROM_NAME",
-    default="ERP Pulse",
+    default="AGSuite ERP",
 )
  

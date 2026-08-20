@@ -138,7 +138,7 @@ export default function FeaturesPage() {
             Powerful Features for Modern Business
           </h1>
           <p className="mt-4 text-lg text-[var(--color-muted)]">
-            ERP Pulse combines OCR, AI, NetSuite integration, and business intelligence into one unified platform.
+            AGSuite ERP combines OCR, AI, NetSuite integration, and business intelligence into one unified platform.
           </p>
         </div>
 

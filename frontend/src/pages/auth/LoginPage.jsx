@@ -28,7 +28,7 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthLayout eyebrow="Welcome back" title="Log in to ERP Pulse" subtitle="Enter your email and password to continue.">
+    <AuthLayout eyebrow="Welcome back" title="Log in to AGSuite ERP" subtitle="Enter your email and password to continue.">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {localError && (
           <div

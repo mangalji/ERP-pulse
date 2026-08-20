@@ -1,4 +1,4 @@
-"""Application definitions for ERP Pulse.
+"""Application definitions for AGSuite ERP.
 
 This module keeps application registration isolated from the rest of the
 settings so base.py remains clean and easy to read.

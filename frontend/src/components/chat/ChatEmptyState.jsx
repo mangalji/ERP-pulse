@@ -9,7 +9,7 @@ export default function ChatEmptyState({ prompts, onSelectPrompt }) {
       </span>
       <div>
         <h2 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
-          Ask ERP Pulse anything
+          Ask AGSuite ERP anything
         </h2>
         <p className="mt-1.5 text-sm text-[var(--color-muted)]">
           Answers are grounded in your NetSuite data — never invented.

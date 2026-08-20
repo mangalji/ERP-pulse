@@ -94,7 +94,7 @@ export default function ContactPage() {
           <div className="space-y-6">
             <Card className="p-6">
               <h3 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Email</h3>
-              <p className="mt-2 text-sm text-[var(--color-muted)]">contact@erppulse.com</p>
+              <p className="mt-2 text-sm text-[var(--color-muted)]">contact@agsuiterp.com</p>
             </Card>
             <Card className="p-6">
               <h3 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Phone</h3>

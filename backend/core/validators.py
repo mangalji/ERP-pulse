@@ -1,5 +1,5 @@
 """
-Generic, reusable validators for ERP Pulse.
+Generic, reusable validators for AGSuite ERP.
 
 Only cross-cutting validators belong here. Module-specific validation
 (e.g., OTP format, NetSuite record IDs, file MIME types) stays in the

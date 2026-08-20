@@ -1,5 +1,5 @@
 """
-Django management command to seed demo data for ERP Pulse demonstration.
+Django management command to seed demo data for AGSuite ERP demonstration.
 
 Creates a demo company with:
 - Company Admin and employees
@@ -15,7 +15,7 @@ Usage::
 
 Optional flags:
     --company-name  : Override demo company name (default: "Demo Company")
-    --email-domain  : Override email domain (default: "demo.erppulse.com")
+    --email-domain  : Override email domain (default: "demo.agsuiterp.com")
     --clear         : Delete existing demo data before seeding
 """
 
@@ -40,11 +40,11 @@ from demo.models import DemoRequest
 
 
 class Command(BaseCommand):
-    help = 'Seed demo data for ERP Pulse demonstration.'
+    help = 'Seed demo data for AGSuite ERP demonstration.'
 
     def add_arguments(self, parser):
         parser.add_argument('--company-name', type=str, default='Demo Company')
-        parser.add_argument('--email-domain', type=str, default='demo.erppulse.com')
+        parser.add_argument('--email-domain', type=str, default='demo.agsuiterp.com')
         parser.add_argument('--clear', action='store_true', help='Delete existing demo data before seeding')
 
     def handle(self, *args, **options):

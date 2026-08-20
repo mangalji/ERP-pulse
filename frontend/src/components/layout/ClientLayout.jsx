@@ -317,13 +317,13 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   </span>
 
   <span className="font-[var(--font-display)] text-lg font-semibold text-white">
-    ERP Pulse
+    AGSuite ERP
   </span>
 </NavLink>
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
               E
             </span>
-            <span className="font-[var(--font-display)] text-lg font-semibold text-white">ERP Pulse</span>
+            <span className="font-[var(--font-display)] text-lg font-semibold text-white">AGSuite ERP</span>
           </div>
   
           <nav className="flex flex-1 flex-col gap-1">

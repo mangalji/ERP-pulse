@@ -1,5 +1,5 @@
 """
-Logging configuration for ERP Pulse.
+Logging configuration for AGSuite ERP.
 
 Console logging is used in all environments.
 Production platforms (Render, Railway, etc.) automatically capture stdout.

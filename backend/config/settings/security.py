@@ -1,5 +1,5 @@
 """
-Security settings for ERP Pulse.
+Security settings for AGSuite ERP.
 """
 
 from decouple import Csv, config

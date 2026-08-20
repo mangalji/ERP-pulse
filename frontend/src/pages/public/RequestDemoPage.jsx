@@ -49,7 +49,7 @@ export default function RequestDemoPage() {
               Thank you!
             </h1>
             <p className="mt-4 text-[var(--color-muted)]">
-              Our team will contact you shortly to schedule your personalized demo of ERP Pulse.
+              Our team will contact you shortly to schedule your personalized demo of AGSuite ERP.
             </p>
             <div className="mt-8">
               <Link to="/">
@@ -70,7 +70,7 @@ export default function RequestDemoPage() {
             Request a Demo
           </h1>
           <p className="mt-4 text-lg text-[var(--color-muted)]">
-            See ERP Pulse in action. Fill out the form below and our team will get back to you within 24 hours.
+            See AGSuite ERP in action. Fill out the form below and our team will get back to you within 24 hours.
           </p>
         </div>
 

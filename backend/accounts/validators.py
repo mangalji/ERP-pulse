@@ -6,7 +6,7 @@ from django.utils.translation import gettext as _
 
 class StrongPasswordValidator:
     """
-    Enforces the password rules used by the ERP Pulse frontend:
+    Enforces the password rules used by the AGSuite ERP frontend:
     - minimum 8 characters
     - at least one uppercase letter
     - at least one lowercase letter

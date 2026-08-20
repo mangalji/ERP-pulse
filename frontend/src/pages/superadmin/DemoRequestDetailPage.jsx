@@ -110,6 +110,19 @@ export default function DemoRequestDetailPage() {
       const data = await demoApi.approve(id)
       setRequest(data)
       addToast('Demo request approved!', 'success')
+      navigate('/admin/companies', {
+        state: {
+          prefillCompany: {
+            name: data.company_name || '',
+            contact_email: data.business_email || '',
+            contact_phone: data.phone || '',
+            country: data.country || '',
+            industry: data.industry || '',
+            company_size: data.company_size || '',
+            city: data.city || '',
+          },
+        },
+      })
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Approval failed', 'error')
     } finally {

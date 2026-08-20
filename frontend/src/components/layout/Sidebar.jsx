@@ -35,7 +35,7 @@ export default function Sidebar({ open, onClose }) {
       >
         <div className="mb-8 flex items-center gap-2 px-2">
           <PulseIndicator state="connected" size="lg" />
-          <span className="font-[var(--font-display)] text-lg font-semibold text-white">ERP Pulse</span>
+          <span className="font-[var(--font-display)] text-lg font-semibold text-white">AGSuite ERP</span>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1">
@@ -59,7 +59,7 @@ export default function Sidebar({ open, onClose }) {
         </nav>
 
         <div className="rounded-lg bg-[var(--color-sidebar-soft)] p-3 text-xs text-[var(--color-sidebar-ink)]">
-          Source of truth: <span className="text-[var(--color-netsuite)]">NetSuite</span>. ERP Pulse never
+          Source of truth: <span className="text-[var(--color-netsuite)]">NetSuite</span>. AGSuite ERP never
           stores your business records locally.
         </div>
       </aside>

@@ -3,7 +3,7 @@ Prompt construction for the AI Assistant.
 
 Kept deterministic and reusable per AI_CONTEXT.md's "Prompt Philosophy"
 (deterministic, structured, short, reusable — avoid conversational
-prompts). The system prompt defines ERP Pulse's behaviour and never
+prompts). The system prompt defines AGSuite ERP's behaviour and never
 changes per-request; the user prompt carries the per-request context and
 question. Conversation history is NOT built here — it's threaded directly
 into the provider's messages array (see AIProvider.generate_response),
@@ -53,7 +53,7 @@ SECURITY_RULES = (
 )
 
 SYSTEM_PROMPT = (
-    'You are ERP Pulse\'s Business Intelligence Assistant.\n\n'
+    'You are AGSuite ERP\'s Business Intelligence Assistant.\n\n'
     'Rules you must always follow:\n'
     '- Answer only using the business context provided to you in this conversation.\n'
     '- The context may include both NetSuite data and local invoice/OCR data.\n'
@@ -113,7 +113,7 @@ def build_user_prompt(*, context: AIRequestContext, message: str) -> str:
 # ==================================================================
 
 PLANNER_SYSTEM_PROMPT = (
-    "You are a planning agent for ERP Pulse's Business Intelligence system. "
+    "You are a planning agent for AGSuite ERP's Business Intelligence system. "
     "Your ONLY job is to decide which tools are needed to answer the user's "
     "question and what parameters each tool needs.\n\n"
     "CRITICAL RULES:\n"
@@ -151,7 +151,7 @@ PLANNER_SYSTEM_PROMPT = (
 # SECURITY_RULES to avoid duplication with SYSTEM_PROMPT.
 # v5: reduced by ~40 % via SECURITY_RULES dedup and tighter wording.
 CAPABILITY_DRIVEN_SYSTEM_PROMPT = (
-    'You are ERP Pulse\'s Business Intelligence Assistant.\n\n'
+    'You are AGSuite ERP\'s Business Intelligence Assistant.\n\n'
     'The business data below has already been retrieved from NetSuite '
     'by the system. It is accurate and trusted.\n'
     'Your ONLY job is to explain, summarise, and answer questions '

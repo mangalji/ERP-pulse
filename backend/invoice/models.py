@@ -144,7 +144,7 @@ class InvoiceReviewHistory(models.Model):
 
 
 class InvoiceNetSuiteMapping(models.Model):
-    """Mapping between ERP Pulse invoice fields and NetSuite fields."""
+    """Mapping between AGSuite ERP invoice fields and NetSuite fields."""
 
     invoice_field = models.CharField(max_length=100, unique=True)
     netsuite_field = models.CharField(max_length=100)

@@ -92,7 +92,7 @@ export default function HomePage() {
         <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
           <div className="mx-auto max-w-3xl text-center">
             <h1 className="font-[var(--font-display)] text-4xl font-bold tracking-tight text-[var(--color-ink)] sm:text-5xl lg:text-6xl">
-              ERP Pulse
+              AGSuite ERP
               <span className="block text-[var(--color-primary)]">AI Powered Business Intelligence</span>
             </h1>
             <p className="mt-6 text-lg leading-8 text-[var(--color-muted)]">
@@ -119,7 +119,7 @@ export default function HomePage() {
               Everything you need to scale
             </h2>
             <p className="mt-4 text-lg text-[var(--color-muted)]">
-              From invoice processing to executive dashboards, ERP Pulse covers every layer of your business.
+              From invoice processing to executive dashboards, AGSuite ERP covers every layer of your business.
             </p>
           </div>
           <div className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -151,7 +151,7 @@ export default function HomePage() {
               Ready to transform your business?
             </h2>
             <p className="mt-4 text-lg text-[var(--color-muted)]">
-              See ERP Pulse in action. Book a demo with our team today.
+              See AGSuite ERP in action. Book a demo with our team today.
             </p>
             <div className="mt-8">
               <Link to="/request-demo">

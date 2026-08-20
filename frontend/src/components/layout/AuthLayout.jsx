@@ -12,7 +12,7 @@ export default function AuthLayout({ eyebrow, title, subtitle, children }) {
               <span className="relative inline-flex h-full w-full rounded-full bg-current" />
             </span>
             <span className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-              ERP Pulse
+              AGSuite ERP
             </span>
           </div>
 

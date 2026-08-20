@@ -79,7 +79,7 @@ def _auth_header(user):
 class PromptTests(TestCase):
     def test_build_system_prompt(self):
         prompt = build_system_prompt()
-        self.assertIn('ERP Pulse', prompt)
+        self.assertIn('AGSuite ERP', prompt)
         self.assertIn('Business Intelligence Assistant', prompt)
 
     def test_build_user_prompt_with_context(self):

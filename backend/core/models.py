@@ -1,5 +1,5 @@
 """
-Abstract BaseModel for all ERP Pulse domain models.
+Abstract BaseModel for all AGSuite ERP domain models.
 
 ``BaseModel`` composes ``TimestampMixin``, ``SoftDeleteMixin``, and
 ``AuditMixin`` and adds a UUID primary key — the standard field set
@@ -22,7 +22,7 @@ from core.mixins import AuditMixin, SoftDeleteMixin, TimestampMixin
 
 class BaseModel(TimestampMixin, SoftDeleteMixin, AuditMixin, models.Model):
     """
-    Abstract base model for all ERP Pulse domain models.
+    Abstract base model for all AGSuite ERP domain models.
 
     Provides:
     - UUID primary key (``id``)

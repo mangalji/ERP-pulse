@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import DataTable from '../../components/superadmin/DataTable.jsx'
@@ -32,11 +32,15 @@ const EMPTY_FORM = {
   contact_phone: '',
   contact_phone_country_code: '+91',
   country: '',
+  industry: '',
+  company_size: '',
+  city: '',
   status: 'TRIAL',
 }
 
 export default function CompaniesPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { toasts, addToast, removeToast } = useToast()
 
   // ─────────────────────────────────────────────────────────────
@@ -183,6 +187,29 @@ export default function CompaniesPage() {
   useEffect(() => {
     loadPermanentlyDeleted()
   }, [loadPermanentlyDeleted])
+
+  // ─────────────────────────────────────────────────────────────
+  // Pre-fill company form from Demo Request navigation state
+  // ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const prefill = location.state?.prefillCompany
+    if (!prefill) {
+      return
+    }
+    setForm({
+      ...EMPTY_FORM,
+      name: prefill.name || '',
+      contact_email: prefill.contact_email || '',
+      contact_phone: prefill.contact_phone || '',
+      country: prefill.country || '',
+      industry: prefill.industry || '',
+      company_size: prefill.company_size || '',
+      city: prefill.city || '',
+    })
+    setCreateOpen(true)
+    // Clear state to prevent duplicate prefill on refresh
+    navigate(location.pathname, { replace: true })
+  }, [location.state, location.pathname, navigate])
 
   // ─────────────────────────────────────────────────────────────
   // Sorting
@@ -1008,260 +1035,332 @@ export default function CompaniesPage() {
             onClick={closeCreate}
           />
 
-          <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
-            <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-              Create Company
-            </h3>
+          <div className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl">
+            {/* Header */}
+            <div className="flex-shrink-0 px-6 py-5">
+              <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+                Create Company
+              </h3>
+            </div>
 
-            <div className="mt-4 flex flex-col gap-4">
-              {/* Company name */}
-              <div>
-                <Input
-                  label="Name"
-                  value={form.name}
-                  maxLength={COMPANY_NAME_MAX_LENGTH}
-                  onChange={(e) =>
-                    updateField(
-                      'name',
-                      e.target.value
-                    )
-                  }
-                />
-
-                {touched.name && (
-                  <p
-                    className={`mt-1 text-xs ${
-                      fieldErrors.name
-                        ? 'text-red-600'
-                        : 'text-green-600'
-                    }`}
-                  >
-                    {fieldErrors.name ||
-                      '✓ Valid company name.'}
-                  </p>
-                )}
-              </div>
-
-              {/* Company code */}
-              <div>
-                <Input
-                  label="Code"
-                  value={form.code}
-                  maxLength={COMPANY_CODE_MAX_LENGTH}
-                  onChange={(e) =>
-                    updateField(
-                      'code',
-                      e.target.value
-                    )
-                  }
-                />
-
-                {touched.code && (
-                  <p
-                    className={`mt-1 text-xs ${
-                      fieldErrors.code
-                        ? 'text-red-600'
-                        : 'text-green-600'
-                    }`}
-                  >
-                    {fieldErrors.code ||
-                      '✓ Valid company code.'}
-                  </p>
-                )}
-              </div>
-
-              {/* Email */}
-              <div>
-                <Input
-                  label="Contact Email"
-                  type="email"
-                  value={form.contact_email}
-                  maxLength={EMAIL_MAX_LENGTH}
-                  onChange={(e) =>
-                    updateField(
-                      'contact_email',
-                      e.target.value
-                    )
-                  }
-                />
-
-                {touched.contact_email && (
-                  <p
-                    className={`mt-1 text-xs ${
-                      fieldErrors.contact_email
-                        ? 'text-red-600'
-                        : 'text-green-600'
-                    }`}
-                  >
-                    {fieldErrors.contact_email ||
-                      '✓ Valid email address.'}
-                  </p>
-                )}
-              </div>
-
-              {/* Country */}
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                  Country
-                </span>
-
-                <select
-                  value={form.country}
-                  onChange={(e) =>
-                    handleCountryChange(
-                      e.target.value
-                    )
-                  }
-                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                >
-                  <option value="">
-                    Select country
-                  </option>
-
-                  {COUNTRY_OPTIONS.map((country) => (
-                    <option
-                      key={country.value}
-                      value={country.value}
-                    >
-                      {country.label} (
-                      {country.dialCode})
-                    </option>
-                  ))}
-                </select>
-
-                {touched.country && (
-                  <p
-                    className={`mt-1 text-xs ${
-                      fieldErrors.country
-                        ? 'text-red-600'
-                        : 'text-green-600'
-                    }`}
-                  >
-                    {fieldErrors.country ||
-                      '✓ Country selected.'}
-                  </p>
-                )}
-              </label>
-
-              {/* Phone */}
-              <div>
-                <div className="grid grid-cols-[110px_1fr] gap-2">
+            {/* Scrollable content */}
+            <div className="flex-1 overflow-y-auto px-6 pb-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {/* Company name */}
+                <div>
                   <Input
-                    label="Code"
-                    value={
-                      form.contact_phone_country_code
-                    }
-                    readOnly
-                    className="bg-[var(--color-canvas)]"
-                  />
-
-                  <Input
-                    label="Contact Phone"
-                    type="tel"
-                    value={form.contact_phone}
-                    maxLength={
-                      getCountryRule(form.country)
-                        ?.maxDigits || 15
-                    }
+                    label="Name"
+                    value={form.name}
+                    maxLength={COMPANY_NAME_MAX_LENGTH}
                     onChange={(e) =>
                       updateField(
-                        'contact_phone',
-                        e.target.value.replace(
-                          /\D/g,
-                          ''
-                        )
+                        'name',
+                        e.target.value
                       )
                     }
                   />
 
-                  {touched.contact_phone && (
+                  {touched.name && (
                     <p
-                      className={`col-span-2 mt-1 text-xs ${
-                        fieldErrors.contact_phone
+                      className={`mt-1 text-xs ${
+                        fieldErrors.name
                           ? 'text-red-600'
                           : 'text-green-600'
                       }`}
                     >
-                      {fieldErrors.contact_phone ||
-                        '✓ Valid contact phone.'}
+                      {fieldErrors.name ||
+                        '✓ Valid company name.'}
                     </p>
                   )}
                 </div>
 
-                {form.country &&
-                  getCountryRule(form.country) && (
-                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      Example:{' '}
-                      {getCountryRule(form.country).example}
-                      {' — '}
-                      Enter{' '}
-                      {getCountryRule(form.country).minDigits ===
-                      getCountryRule(form.country).maxDigits
-                        ? `exactly ${getCountryRule(form.country).minDigits}`
-                        : `${getCountryRule(form.country).minDigits}-${getCountryRule(form.country).maxDigits}`}
-                      {' '}digits without the country code.
+                {/* Company code */}
+                <div>
+                  <Input
+                    label="Code"
+                    value={form.code}
+                    maxLength={COMPANY_CODE_MAX_LENGTH}
+                    onChange={(e) =>
+                      updateField(
+                        'code',
+                        e.target.value
+                      )
+                    }
+                  />
+
+                  {touched.code && (
+                    <p
+                      className={`mt-1 text-xs ${
+                        fieldErrors.code
+                          ? 'text-red-600'
+                          : 'text-green-600'
+                      }`}
+                    >
+                      {fieldErrors.code ||
+                        '✓ Valid company code.'}
                     </p>
                   )}
-              </div>
+                </div>
 
-              {/* Status */}
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                  Status
-                </span>
+                {/* Email */}
+                <div>
+                  <Input
+                    label="Contact Email"
+                    type="email"
+                    value={form.contact_email}
+                    maxLength={EMAIL_MAX_LENGTH}
+                    onChange={(e) =>
+                      updateField(
+                        'contact_email',
+                        e.target.value
+                      )
+                    }
+                  />
 
-                <select
-                  value={form.status}
-                  onChange={(e) =>
-                    updateField(
-                      'status',
-                      e.target.value
-                    )
-                  }
-                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                >
-                  <option value="TRIAL">
-                    Trial
-                  </option>
+                  {touched.contact_email && (
+                    <p
+                      className={`mt-1 text-xs ${
+                        fieldErrors.contact_email
+                          ? 'text-red-600'
+                          : 'text-green-600'
+                      }`}
+                    >
+                      {fieldErrors.contact_email ||
+                        '✓ Valid email address.'}
+                    </p>
+                  )}
+                </div>
 
-                  <option value="ACTIVE">
-                    Active
-                  </option>
+                {/* Country */}
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                    Country
+                  </span>
 
-                  <option value="SUSPENDED">
-                    Suspended
-                  </option>
-                </select>
-
-                {touched.status && (
-                  <p
-                    className={`mt-1 text-xs ${
-                      fieldErrors.status
-                        ? 'text-red-600'
-                        : 'text-green-600'
-                    }`}
+                  <select
+                    value={form.country}
+                    onChange={(e) =>
+                      handleCountryChange(
+                        e.target.value
+                      )
+                    }
+                    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                   >
-                    {fieldErrors.status ||
-                      '✓ Status selected.'}
-                  </p>
-                )}
-              </label>
+                    <option value="">
+                      Select country
+                    </option>
+
+                    {COUNTRY_OPTIONS.map((country) => (
+                      <option
+                        key={country.value}
+                        value={country.value}
+                      >
+                        {country.label} (
+                        {country.dialCode})
+                      </option>
+                    ))}
+                  </select>
+
+                  {touched.country && (
+                    <p
+                      className={`mt-1 text-xs ${
+                        fieldErrors.country
+                          ? 'text-red-600'
+                          : 'text-green-600'
+                      }`}
+                    >
+                      {fieldErrors.country ||
+                        '✓ Country selected.'}
+                    </p>
+                  )}
+                </label>
+
+                {/* Phone - full width */}
+                <div className="sm:col-span-2">
+                  <div className="grid grid-cols-[110px_1fr] gap-2">
+                    <Input
+                      label="Code"
+                      value={
+                        form.contact_phone_country_code
+                      }
+                      readOnly
+                      className="bg-[var(--color-canvas)]"
+                    />
+
+                    <Input
+                      label="Contact Phone"
+                      type="tel"
+                      value={form.contact_phone}
+                      maxLength={
+                        getCountryRule(form.country)
+                          ?.maxDigits || 15
+                      }
+                      onChange={(e) =>
+                        updateField(
+                          'contact_phone',
+                          e.target.value.replace(
+                            /\D/g,
+                            ''
+                          )
+                        )
+                      }
+                    />
+
+                    {touched.contact_phone && (
+                      <p
+                        className={`col-span-2 mt-1 text-xs ${
+                          fieldErrors.contact_phone
+                            ? 'text-red-600'
+                            : 'text-green-600'
+                        }`}
+                      >
+                        {fieldErrors.contact_phone ||
+                          '✓ Valid contact phone.'}
+                      </p>
+                    )}
+                  </div>
+
+                  {form.country &&
+                    getCountryRule(form.country) && (
+                      <p className="mt-1 text-xs text-[var(--color-muted)]">
+                        Example:{' '}
+                        {getCountryRule(form.country).example}
+                        {' — '}
+                        Enter{' '}
+                        {getCountryRule(form.country).minDigits ===
+                        getCountryRule(form.country).maxDigits
+                          ? `exactly ${getCountryRule(form.country).minDigits}`
+                          : `${getCountryRule(form.country).minDigits}-${getCountryRule(form.country).maxDigits}`}
+                        {' '}digits without the country code.
+                      </p>
+                    )}
+                </div>
+
+                {/* Industry */}
+                <div>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                      Industry
+                    </span>
+                    <select
+                      value={form.industry}
+                      onChange={(e) =>
+                        updateField('industry', e.target.value)
+                      }
+                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                    >
+                      <option value="">Select industry</option>
+                      <option value="TECHNOLOGY">Technology</option>
+                      <option value="MANUFACTURING">Manufacturing</option>
+                      <option value="RETAIL">Retail</option>
+                      <option value="FINANCE">Finance</option>
+                      <option value="HEALTHCARE">Healthcare</option>
+                      <option value="LOGISTICS">Logistics</option>
+                      <option value="ECOMMERCE">E-commerce</option>
+                      <option value="SERVICES">Professional Services</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                  </label>
+                </div>
+
+                {/* Company Size */}
+                <div>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                      Company Size
+                    </span>
+                    <select
+                      value={form.company_size}
+                      onChange={(e) =>
+                        updateField('company_size', e.target.value)
+                      }
+                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                    >
+                      <option value="">Select size</option>
+                      <option value="1-10">1-10 employees</option>
+                      <option value="11-50">11-50 employees</option>
+                      <option value="51-200">51-200 employees</option>
+                      <option value="201-500">201-500 employees</option>
+                      <option value="500+">500+ employees</option>
+                    </select>
+                  </label>
+                </div>
+
+                {/* City */}
+                <div>
+                  <Input
+                    label="City"
+                    value={form.city}
+                    onChange={(e) =>
+                      updateField('city', e.target.value)
+                    }
+                  />
+                </div>
+
+                {/* Status */}
+                <div>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                      Status
+                    </span>
+
+                    <select
+                      value={form.status}
+                      onChange={(e) =>
+                        updateField(
+                          'status',
+                          e.target.value
+                        )
+                      }
+                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                    >
+                      <option value="TRIAL">
+                        Trial
+                      </option>
+
+                      <option value="ACTIVE">
+                        Active
+                      </option>
+
+                      <option value="SUSPENDED">
+                        Suspended
+                      </option>
+                    </select>
+
+                    {touched.status && (
+                      <p
+                        className={`mt-1 text-xs ${
+                          fieldErrors.status
+                            ? 'text-red-600'
+                            : 'text-green-600'
+                        }`}
+                      >
+                        {fieldErrors.status ||
+                          '✓ Status selected.'}
+                      </p>
+                    )}
+                  </label>
+                </div>
+              </div>
             </div>
 
-            <div className="mt-6 flex justify-end gap-2">
-              <Button
-                intent="secondary"
-                onClick={closeCreate}
-              >
-                Cancel
-              </Button>
+            {/* Footer */}
+            <div className="flex-shrink-0 border-t border-[var(--color-border)] px-6 py-4">
+              <div className="flex justify-end gap-2">
+                <Button
+                  intent="secondary"
+                  onClick={closeCreate}
+                >
+                  Cancel
+                </Button>
 
-              <Button
-                onClick={handleCreate}
-                isLoading={saving}
-              >
-                Create
-              </Button>
+                <Button
+                  onClick={handleCreate}
+                  isLoading={saving}
+                >
+                  Create
+                </Button>
+              </div>
             </div>
           </div>
         </div>

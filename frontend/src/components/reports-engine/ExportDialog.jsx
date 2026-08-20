@@ -89,7 +89,7 @@ export default function ExportDialog({ open, reportTypeLabel, onClose, onExport,
                 id="export-subject"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                placeholder="ERP Pulse Report"
+                placeholder="AGSuite ERP Report"
               />
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-[var(--color-ink-soft)]">Message</span>

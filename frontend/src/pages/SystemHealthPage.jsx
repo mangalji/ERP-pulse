@@ -97,7 +97,7 @@ export default function SystemHealthPage() {
               System Health
             </h2>
             <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Live status of ERP Pulse's own backend — separate from any individual NetSuite connection.
+              Live status of AGSuite ERP's own backend — separate from any individual NetSuite connection.
             </p>
           </div>
           <Button intent="ghost" size="sm" onClick={loadAll}>

@@ -5,7 +5,7 @@ Only conversation/message history is stored here — no embeddings, no
 vector storage, no NetSuite business data (Customers/Items/etc. never get
 local models anywhere in this project, per NETSUITE_CONTEXT.md/PROJECT
 architecture rules). This is exactly the kind of data
-DATABASE_CONTEXT.md's "AI Insight" ownership describes: ERP Pulse-specific
+DATABASE_CONTEXT.md's "AI Insight" ownership describes: AGSuite ERP-specific
 data, not a copy of NetSuite records.
 """
 

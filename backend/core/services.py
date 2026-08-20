@@ -1,5 +1,5 @@
 """
-Base service class for ERP Pulse.
+Base service class for AGSuite ERP.
 
 Provides a thin ``BaseService`` that establishes the service-layer
 convention without imposing any business logic. Services across the

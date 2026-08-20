@@ -1,5 +1,5 @@
 """
-Cache configuration for ERP Pulse.
+Cache configuration for AGSuite ERP.
 
 Bug fix context: without an explicit CACHES setting, Django silently
 falls back to LocMemCache — an in-memory cache local to a single

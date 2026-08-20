@@ -1,5 +1,5 @@
 """
-Standard API response builders for ERP Pulse.
+Standard API response builders for AGSuite ERP.
 
 Every response follows the standard envelope:
 

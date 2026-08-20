@@ -1,5 +1,5 @@
 """
-Celery configuration for ERP Pulse.
+Celery configuration for AGSuite ERP.
 
 Uses Redis as both broker and result backend.
 Auto-discovers tasks from all installed apps.

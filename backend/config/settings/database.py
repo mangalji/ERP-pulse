@@ -1,5 +1,5 @@
 """
-Database configurations for ERP Pulse.
+Database configurations for AGSuite ERP.
 
 This module ONLY defines database configurations.
 

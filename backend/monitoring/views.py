@@ -29,7 +29,7 @@ class HealthCheckView(APIView):
     """
     GET /api/v1/monitoring/health/
 
-    Checks the dependencies ERP Pulse actually needs to function:
+    Checks the dependencies AGSuite ERP actually needs to function:
     - database: a real query, since this is the one dependency that must
       be live for almost anything to work.
     - email: configuration presence only (not a live SMTP handshake —

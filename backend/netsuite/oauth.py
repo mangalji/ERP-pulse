@@ -19,7 +19,7 @@ from django.core import signing
 from netsuite.exceptions import NetSuiteConfigurationException, NetSuiteStateMismatchException
 
 # Read-only scope only: this MVP never writes to NetSuite
-# (NETSUITE_CONTEXT.md — "ERP Pulse is primarily a Read-Only Integration").
+# (NETSUITE_CONTEXT.md — "AGSuite ERP is primarily a Read-Only Integration").
 OAUTH_SCOPE = 'rest_webservices'
 
 # How long a signed `state` value remains valid — generous enough to
@@ -41,7 +41,7 @@ def netsuite_account_domain(account_id: str) -> str:
 
 def build_authorization_url(*, user_id: str, connection_id: str, account_id: str, client_id: str) -> str:
     """
-    Build the NetSuite OAuth 2.0 authorize URL for a given ERP Pulse user.
+    Build the NetSuite OAuth 2.0 authorize URL for a given AGSuite ERP user.
 
     `state` is a signed, timestamped token encoding `user_id` — not a
     random opaque value stored in a database table. This lets

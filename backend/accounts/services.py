@@ -94,7 +94,7 @@ class OTPService:
         try:
             send_email(
                 recipient_list=[user.email],
-                subject='Your ERP Pulse verification code',
+                subject='Your AGSuite ERP verification code',
                 message=(
                     f'Your verification code is {raw_code}. '
                     f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'

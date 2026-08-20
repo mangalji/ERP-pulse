@@ -1,5 +1,5 @@
 """
-OCR module configuration for ERP Pulse.
+OCR module configuration for AGSuite ERP.
 
 All OCR-related configurable values live here so no magic numbers
 appear inside the OCR codebase. Values can be overridden via

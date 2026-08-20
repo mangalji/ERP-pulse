@@ -20,10 +20,10 @@ OTP_RESEND_COOLDOWN_SECONDS = 60
 REGISTRATION_SESSION_TTL_MINUTES = 20
 REGISTRATION_TOKEN_MAX_AGE_SECONDS = REGISTRATION_SESSION_TTL_MINUTES * 60
 
-EMAIL_SUBJECT_REGISTER = "Verify your ERP Pulse account"
-EMAIL_SUBJECT_LOGIN = "Your ERP Pulse login OTP"
-EMAIL_SUBJECT_PASSWORD_RESET = "Reset your ERP Pulse password"
-EMAIL_SUBJECT_PROFILE_UPDATE = "Confirm your ERP Pulse profile update"
+EMAIL_SUBJECT_REGISTER = "Verify your AGSuite ERP account"
+EMAIL_SUBJECT_LOGIN = "Your AGSuite ERP login OTP"
+EMAIL_SUBJECT_PASSWORD_RESET = "Reset your AGSuite ERP password"
+EMAIL_SUBJECT_PROFILE_UPDATE = "Confirm your AGSuite ERP profile update"
 
 # How many prior messages (not the whole conversation) get sent to the AI
 # provider as context on each turn. Kept deliberately small — unlimited

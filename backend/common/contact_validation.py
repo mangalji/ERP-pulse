@@ -1,5 +1,5 @@
 """
-Shared country/phone validation for ERP Pulse.
+Shared country/phone validation for AGSuite ERP.
 
 The selected country is the source of truth for validating the phone number.
 Phones are normalized to E.164 format before being persisted.

@@ -1,5 +1,5 @@
 """
-Base settings for ERP Pulse.
+Base settings for AGSuite ERP.
 
 This file contains settings shared by every environment:
 - Local Development

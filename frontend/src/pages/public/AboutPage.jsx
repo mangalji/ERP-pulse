@@ -34,10 +34,10 @@ export default function AboutPage() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl text-center">
           <h1 className="font-[var(--font-display)] text-3xl font-bold text-[var(--color-ink)] sm:text-4xl">
-            About ERP Pulse
+            About AGSuite ERP
           </h1>
           <p className="mt-6 text-lg text-[var(--color-muted)]">
-            ERP Pulse is developed by AGSuite, a team passionate about eliminating manual data entry
+            AGSuite ERP is developed by AGSuite, a team passionate about eliminating manual data entry
             and empowering businesses with intelligent automation. Our platform combines OCR, AI,
             and NetSuite integration to create a seamless workflow from document capture to
             financial reporting.

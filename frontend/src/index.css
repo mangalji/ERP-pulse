@@ -2,13 +2,13 @@
 @source "./";
 
 /*
- * ERP Pulse design tokens.
+ * AGSuite ERP design tokens.
  *
- * Palette logic: indigo is ERP Pulse's own color, used for every native
+ * Palette logic: indigo is AGSuite ERP's own color, used for every native
  * action and surface. Amber is reserved exclusively for anything that
  * touches NetSuite (the "Connect NetSuite" CTA, sync status, NetSuite
  * badges) so the two systems stay visually distinguishable at a glance —
- * the user should always be able to tell "is this ERP Pulse, or is this
+ * the user should always be able to tell "is this AGSuite ERP, or is this
  * reaching into NetSuite" without reading a label.
  */
 @theme {

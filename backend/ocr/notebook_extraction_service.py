@@ -2,7 +2,7 @@
 Notebook-compatible Gemini document extraction service.
 
 This service ports the extraction logic from the approved Colab prototype
-into the ERP Pulse application without changing the existing OCR upload
+into the AGSuite ERP application without changing the existing OCR upload
 storage layer or the asynchronous IDP pipeline.
 
 Step 1 scope:
@@ -63,7 +63,7 @@ LINE_ITEM_FIELDS = {
 }
 
 
-# Canonical output contract used by the ERP Pulse OCR feature.
+# Canonical output contract used by the AGSuite ERP OCR feature.
 # This is intentionally the same contract used by the approved notebook.
 EXTRACTION_SCHEMA: dict[str, Any] = {
     "type": "object",

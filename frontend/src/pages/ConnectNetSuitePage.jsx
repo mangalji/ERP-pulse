@@ -141,7 +141,7 @@ export default function ConnectNetSuitePage() {
 
   const handleDelete = async (connection) => {
     const confirmed = window.confirm(
-      `Remove "${connection.client_name}"? ERP Pulse will no longer be able to read data from this NetSuite account.`
+      `Remove "${connection.client_name}"? AGSuite ERP will no longer be able to read data from this NetSuite account.`
     )
     if (!confirmed) return
 
@@ -168,7 +168,7 @@ export default function ConnectNetSuitePage() {
             </h2>
             <p className="mx-auto mt-2 max-w-lg text-sm text-[var(--color-muted)] sm:text-base">
               Enter each account's credentials once — after you approve access on NetSuite's consent
-              screen, ERP Pulse stores and refreshes the connection automatically. You won't need to
+              screen, AGSuite ERP stores and refreshes the connection automatically. You won't need to
               reconnect unless you remove it.
             </p>
           </div>
@@ -185,7 +185,7 @@ export default function ConnectNetSuitePage() {
           <Card className="p-6">
             <EmptyState
               title="No NetSuite accounts connected yet"
-              description="Connect an account to start pulling live data into ERP Pulse."
+              description="Connect an account to start pulling live data into AGSuite ERP."
             />
           </Card>
         ) : (

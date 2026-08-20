@@ -104,7 +104,7 @@ export default function GenerateReportPage() {
         await reportsEngineApi.reports.email({
           history_id: data.id,
           recipients: options.recipients,
-          subject: options.subject || 'ERP Pulse Report',
+          subject: options.subject || 'AGSuite ERP Report',
           message: options.message || '',
         })
         showToast('Report generated and queued for email.')

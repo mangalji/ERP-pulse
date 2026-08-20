@@ -1,5 +1,5 @@
 """
-Reusable permission base classes for ERP Pulse.
+Reusable permission base classes for AGSuite ERP.
 
 Only generic, cross-cutting permission classes belong here.
 Business-specific permissions (e.g., "only the connection owner can
