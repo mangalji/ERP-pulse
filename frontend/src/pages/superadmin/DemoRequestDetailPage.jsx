@@ -110,8 +110,6 @@ export default function DemoRequestDetailPage() {
       const data = await demoApi.approve(id)
       setRequest(data)
       addToast('Demo request approved!', 'success')
-      setWizardOpen(true)
-      setStep(0)
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Approval failed', 'error')
     } finally {
@@ -192,8 +190,6 @@ export default function DemoRequestDetailPage() {
                   Accept
                 </Button>
               </>
-            ) : request.status === 'APPROVED' || request.status === 'CONTACTED' ? (
-              <Button onClick={() => setWizardOpen(true)} disabled={request.status === 'ONBOARDED'}>Convert to Company</Button>
             ) : null
           }
         />
