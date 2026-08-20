@@ -45,8 +45,8 @@ class DemoRequest(models.Model):
 
     company_name = models.CharField(max_length=255)
     contact_person = models.CharField(max_length=255)
-    business_email = models.EmailField()
-    phone = models.CharField(max_length=20)
+    business_email = models.EmailField(max_length=40)
+    phone = models.CharField(max_length=15)
 
     industry = models.CharField(
         max_length=30,

@@ -181,7 +181,7 @@ export default function DemoRequestDetailPage() {
         </div>
         <PageHeader
           title={`Demo Request ${request.demo_request_number}`}
-          subtitle={request.company_name}
+          subtitle={request.company_name?.toUpperCase()}
           actions={
             canAct ? (
               <>

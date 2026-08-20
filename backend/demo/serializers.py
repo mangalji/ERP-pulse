@@ -84,9 +84,9 @@ class DemoRequestSerializer(serializers.ModelSerializer):
 
     def validate_phone(self, value):
         """Validate phone number format."""
-        value= value.strip()
-        pattern = r'^\+?[1-9]\d{7,14}$'
-        if not re.match(pattern,value):
+        value = value.strip()
+        pattern = r"^\+?[1-9]\d{7,14}$"
+        if not re.match(pattern, value):
             raise serializers.ValidationError(
                 "Enter a valid phone number."
             )

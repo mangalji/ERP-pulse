@@ -20,6 +20,9 @@ export default function RequestDemoPage() {
         business_email: form.business_email.value,
         contact_person: form.contact_person.value,
         phone: form.phone.value,
+        industry: form.industry.value,
+        company_size: form.company_size.value,
+        city: form.city.value,
         country: form.country.value,
         message: form.message.value,
       })
@@ -90,6 +93,7 @@ export default function RequestDemoPage() {
                   type="email"
                   name="business_email"
                   required
+                  maxLength={50}
                   className="mt-1 block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-primary)] focus:outline-none"
                   placeholder="contact@company.com"
                 />
@@ -114,8 +118,57 @@ export default function RequestDemoPage() {
                   required
                   className="mt-1 block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-primary)] focus:outline-none"
                   placeholder="+91 98765 43210"
+                  maxLength={15}
+                  minLength={10}
+
                 />
               </div>
+            </div>
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-ink)]">Industry *</label>
+                <select
+                  name="industry"
+                  required
+                  className="mt-1 block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                >
+                  <option value="">Select industry</option>
+                  <option value="TECHNOLOGY">Technology</option>
+                  <option value="MANUFACTURING">Manufacturing</option>
+                  <option value="RETAIL">Retail</option>
+                  <option value="FINANCE">Finance</option>
+                  <option value="HEALTHCARE">Healthcare</option>
+                  <option value="LOGISTICS">Logistics</option>
+                  <option value="ECOMMERCE">E-commerce</option>
+                  <option value="SERVICES">Professional Services</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-ink)]">Company Size *</label>
+                <select
+                  name="company_size"
+                  required
+                  className="mt-1 block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                >
+                  <option value="">Select size</option>
+                  <option value="1-10">1-10 employees</option>
+                  <option value="11-50">11-50 employees</option>
+                  <option value="51-200">51-200 employees</option>
+                  <option value="201-500">201-500 employees</option>
+                  <option value="500+">500+ employees</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[var(--color-ink)]">City *</label>
+              <input
+                type="text"
+                name="city"
+                required
+                className="mt-1 block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-ink)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-primary)] focus:outline-none"
+                placeholder="Mumbai"
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--color-ink)]">Country *</label>
