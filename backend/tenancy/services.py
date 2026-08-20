@@ -587,7 +587,13 @@ class CompanyLifecycleService:
     def get_current_plan(self, *, company):
         return (
             CompanyPlan.objects
-            .filter(company=company)
+            .filter(
+                company=company,
+                status__in=[
+                    CompanyPlanStatus.ACTIVE,
+                    CompanyPlanStatus.TRIAL,
+                ]
+                )
             .select_related('plan')
             .order_by('-start_date', '-created_at')
             .first()

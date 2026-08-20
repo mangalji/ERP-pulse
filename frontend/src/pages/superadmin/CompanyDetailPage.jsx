@@ -766,7 +766,7 @@ export default function CompanyDetailPage() {
           )}
 
         {/* NetSuite */}
-        <InfoCard
+        {/* <InfoCard
           title="NetSuite"
           items={[
             {
@@ -799,7 +799,73 @@ export default function CompanyDetailPage() {
                   : '—',
             },
           ]}
-        />
+        /> */}
+            <SectionCard
+              title="NetSuite"
+              actions={
+                <Button
+                  size="sm"
+                  intent="secondary"
+                  onClick={() =>
+                    navigate(
+                      `/admin/companies/${company.id}/netsuite`,
+                    )
+                  }
+                >
+                  Manage NetSuite
+                </Button>
+              }
+            >
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                    Connection Status
+                  </p>
+            
+                  <div className="mt-2">
+                    {nsConnected ? (
+                      <StatusBadge status="true" />
+                    ) : (
+                      <StatusBadge status="false" />
+                    )}
+                  </div>
+                </div>
+                  
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                    Account ID
+                  </p>
+                  
+                  <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+                    {company.netsuite_account_id || '—'}
+                  </p>
+                </div>
+                  
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                    Environment
+                  </p>
+                  
+                  <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+                    {company.netsuite_environment || '—'}
+                  </p>
+                </div>
+                  
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                    Last Sync
+                  </p>
+                  
+                  <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
+                    {company.netsuite_last_sync
+                      ? new Date(
+                          company.netsuite_last_sync,
+                        ).toLocaleString()
+                      : '—'}
+                  </p>
+                </div>
+              </div>
+            </SectionCard>
 
         {/* Assigned Modules */}
         <SectionCard

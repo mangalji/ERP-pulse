@@ -149,6 +149,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {'detail': 'A deleted company must be restored before activation.'}
             )
+        company.suspension_reason = CompanySuspensionReason.NONE
         effective_status = company_lifecycle_service.get_effective_status(
             company=company
             )
@@ -156,6 +157,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
             Company.Status.ACTIVE,
             Company.Status.TRIAL,
         }:
+            # Restore the manual suspension if activation is not allowed.
+            company.suspension_reason = CompanySuspensionReason.MANUAL
             raise ValidationError(
                 {
                     'detail': (
@@ -165,7 +168,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
                 }
             )
         company.status = effective_status
-        company.suspension_reason = CompanySuspensionReason.NONE
+        # company.suspension_reason = CompanySuspensionReason.NONE
         company.save(update_fields=['status','suspension_reason'])
         # audit_service.log(
         #     module=AuditModule.TENANCY,
