@@ -19,11 +19,12 @@ export default function OcrTestResultPage() {
   const [error, setError] = useState('')
   const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
   const [previewError, setPreviewError] = useState('')
+  const [customFieldTypes, setCustomFieldTypes] = useState({})
 
   useEffect(() => {
     const loadResult = async () => {
       if (!documentId) {
-        const result = sessionStorage.getItem('ocr_test_result')
+        const saved = sessionStorage.getItem('ocr_test_result')
         if (!saved) {
           navigate('/app/ocr-test', { replace: true })
           return
@@ -33,6 +34,15 @@ export default function OcrTestResultPage() {
           const files = parsed?.files || []
           const firstResult = files.find((item) => item?.data) || files[0] || null
           setResult(firstResult)
+          const customFields = parsed?.requested_fields?.custom_fields || []
+          setCustomFieldTypes(
+            customFields.reduce((acc, cf) => {
+              if (cf.label && cf.key) {
+                acc[cf.key] = cf.data_type || 'text'
+              }
+              return acc
+            }, {})
+          )
         } catch (err) {
           console.error('Failed to load live OCR result:', err)
           setError('Failed to load OCR result from the current session.')
@@ -61,6 +71,16 @@ export default function OcrTestResultPage() {
         )[0]
 
         const reviewedData = latest?.reviewed_json && typeof latest.reviewed_json === 'object' && Object.keys(latest.reviewed_json).length ? latest.reviewed_json : latest?.normalized_json ?? {}
+
+        const customFields = payload?.requested_fields?.custom_fields || []
+        setCustomFieldTypes(
+          customFields.reduce((acc, cf) => {
+            if (cf.label && cf.key) {
+              acc[cf.key] = cf.data_type || 'text'
+            }
+            return acc
+          }, {})
+        )
 
         setResult({
           status: payload.status || 'APPROVED',
@@ -235,6 +255,7 @@ export default function OcrTestResultPage() {
                 <OcrReviewWorkspace
                   result={result}
                   onSaved={handleSaved}
+                  customFieldTypes={customFieldTypes}
                 />
               </div>
             </Card>

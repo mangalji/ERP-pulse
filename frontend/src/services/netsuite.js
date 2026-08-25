@@ -33,5 +33,27 @@ export const netsuiteApi = {
   testConnection: (connectionId) =>
     apiClient.post(`/netsuite/company/connections/${connectionId}/test/`).then((response) => response.data),
   getMyConnection: () => apiClient.get('/netsuite/my/connection/').then(unwrap),
+
+  // Phase 3: OCR Field Mapping
+  getFieldCatalogue: (connectionId, recordType = 'vendorBill') =>
+    apiClient.get('/netsuite/ocr/field-catalogue/', { params: { connection_id: connectionId, record_type: recordType } }).then(unwrap),
+  suggestMapping: (connectionId, recordType, sourceFields) =>
+    apiClient.post('/netsuite/ocr/suggest-mapping/', { connection_id: connectionId, record_type: recordType, ...sourceFields }).then(unwrap),
+  listFieldMappings: (connectionId, recordType = 'vendorBill') =>
+    apiClient.get('/netsuite/ocr/field-mappings/', { params: { connection_id: connectionId, record_type: recordType } }).then(unwrap),
+  saveFieldMappings: (connectionId, recordType, mappings) =>
+    apiClient.post('/netsuite/ocr/field-mappings/', { connection_id: connectionId, record_type: recordType, mappings }).then(unwrap),
+
+  // Phase 3: Validation
+  validateDocument: (documentId) =>
+    apiClient.post('/netsuite/ocr/validate/', { document_id: documentId }).then(unwrap),
+
+  // Phase 3: Custom Fields
+  createCustomField: (payload) =>
+    apiClient.post('/netsuite/ocr/custom-fields/', payload).then(unwrap),
+
+  // Phase 3: Posting
+  postVendorBill: (documentId, connectionId) =>
+    apiClient.post('/netsuite/ocr/post-vendor-bill/', { document_id: documentId, connection_id: connectionId }).then(unwrap),
 }
 

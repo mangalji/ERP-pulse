@@ -37,6 +37,7 @@ from ocr.services.normalization_service import normalization_service
 from ocr.services.validation_service import validation_service
 from ocr.pdf_processor import pdf_processor
 from ocr.extraction_service import ocr_extraction_service
+from ocr.adapters import get_adapter
 from ocr.utils import logger
 
 
@@ -54,7 +55,7 @@ class IDPPipelineService:
 
         Stages (each recorded in ``processing_metadata``):
         1. Load upload + validate
-        2. Convert PDF → images (or use single image)
+        2. Normalize document via format adapter → images
         3. Extract via Gemini + schema validate
         4. Classify + layout analyze + normalize
         5. Business-rule validation
@@ -77,11 +78,14 @@ class IDPPipelineService:
         upload = self._get_upload(upload_id, user)
         timeline: list[dict] = []
         document = None
+        adapter = None
 
         try:
-            # Stage: PDF → images
+            # Stage: normalize document via format adapter
             with self._stage('render', timeline):
-                images = self._render_images(upload)
+                adapter = get_adapter(upload.file.path, str(upload.id))
+                normalized = adapter.normalize()
+                images = normalized.get('pages', [])
 
             # Stage: extract + validate
             with self._stage('extract', timeline):
@@ -144,7 +148,27 @@ class IDPPipelineService:
                 f'IDP pipeline failed: {exc}'
             ) from exc
         finally:
+            if adapter is not None:
+                try:
+                    adapter.cleanup()
+                except Exception:
+                    logger.exception(
+                        'Adapter cleanup failed for upload %s.', upload_id
+                    )
             pdf_processor.cleanup(upload_id)
+
+            try:
+                rendered_dir = Path('/tmp/ocr_rendered')
+                if rendered_dir.exists():
+                    for f in rendered_dir.glob(f'{upload_id}_*'):
+                        try:
+                            f.unlink()
+                        except Exception:
+                            pass
+            except Exception:
+                logger.exception(
+                    'Rendered image cleanup failed for upload %s.', upload_id
+                )
 
     # ── Stage helpers ──────────────────────────────────────────────
 
@@ -200,24 +224,103 @@ class IDPPipelineService:
         return upload
 
     def _render_images(self, upload: OCRUpload) -> list:
-        """Convert the upload file to a list of image paths."""
-        file_path = upload.file.path
-        if upload.mime_type == 'application/pdf':
-            return pdf_processor.convert_to_images(file_path, upload.id)
-        # Images are used directly.
-        return [file_path]
+        adapter = get_adapter(upload.file.path, str(upload.id))
+        result = adapter.normalize()
+        return result.get('pages', [])
 
     def _extract(self, upload: OCRUpload, user, images) -> dict:
         """
-        Extract structured data from the rendered images.
+        Extract structured data from all rendered images.
 
-        Reuses ``OCRExtractionService`` for the first image (the
-        extraction prompt is single-image), then validates the schema.
+        For multi-page documents (PDF, DOCX, etc.), each page/image is
+        extracted independently and the results are merged into a single
+        canonical result. Header fields prefer the first non-null value
+        across pages; line items are concatenated.
         """
-        return ocr_extraction_service.extract(
-            _FakeUpload(upload, images[0]),
-            user,
-        )
+        requested_fields = None
+        if upload.batch and isinstance(upload.batch.requested_fields_json, dict):
+            requested_fields = upload.batch.requested_fields_json
+
+        if not images:
+            raise OCRServiceException(
+                'No images available for extraction.'
+            )
+
+        if len(images) == 1:
+            return ocr_extraction_service.extract(
+                _FakeUpload(upload, images[0]),
+                user,
+                requested_fields=requested_fields,
+            )
+
+        page_results = []
+        for idx, image_path in enumerate(images):
+            try:
+                result = ocr_extraction_service.extract(
+                    _FakeUpload(upload, image_path),
+                    user,
+                    requested_fields=requested_fields,
+                )
+                page_results.append(result)
+            except Exception as exc:
+                logger.exception(
+                    'Page extraction failed — upload=%s page=%d',
+                    upload.id,
+                    idx,
+                )
+                raise
+
+        return self._merge_extraction_results(page_results)
+
+    def _merge_extraction_results(self, page_results: list[dict]) -> dict:
+        """
+        Merge extraction results from multiple pages into a single result.
+
+        Strategy:
+        - Header fields (including custom): first non-null/non-empty value
+        - Line items (including custom): concatenate all lists
+        - raw_text: concatenate with page separators
+        - confidence/image_quality: use first page's values
+        """
+        if not page_results:
+            raise OCRServiceException('No page results to merge.')
+
+        if len(page_results) == 1:
+            return page_results[0]
+
+        base = page_results[0].copy()
+        base_data = dict(base.get('data', {}))
+
+        all_keys = set()
+        for result in page_results:
+            all_keys.update(result.get('data', {}).keys())
+
+        for key in all_keys:
+            values = []
+            for result in page_results:
+                val = result.get('data', {}).get(key)
+                if val is not None:
+                    values.append(val)
+
+            if key == 'line_items' or any(isinstance(v, list) for v in values):
+                merged_items = []
+                for val in values:
+                    if isinstance(val, list):
+                        merged_items.extend(val)
+                base_data[key] = merged_items
+            elif key == 'raw_text':
+                texts = [str(v) for v in values if v]
+                base_data[key] = '\n\n---PAGE BREAK---\n\n'.join(texts) if texts else None
+            else:
+                for val in values:
+                    if val is not None and val != '' and val != []:
+                        base_data[key] = val
+                        break
+                else:
+                    base_data[key] = values[0] if values else None
+
+        base['data'] = base_data
+        return base
 
     def _analyze(self, extraction: dict) -> dict:
         """Classify, analyze layout, and normalize the extraction."""

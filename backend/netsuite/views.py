@@ -20,8 +20,9 @@ from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
-from netsuite.exceptions import NetSuiteAuthorizationDeniedException
-from netsuite.models import EmployeeConnection, NetSuiteConnection
+from netsuite.exceptions import NetSuiteAuthorizationDeniedException, NetSuiteConnectionNotFoundException, NetSuiteRecordFetchException
+from celery.result import AsyncResult
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting
 from accounts.models import User
 from netsuite.serializers import (
     NetSuiteCallbackSerializer, 
@@ -31,8 +32,34 @@ from netsuite.serializers import (
     NetSuiteConnectionSwitchSerializer,
     EmployeeConnectionSerializer,
     AssignEmployeeSerializer,
+    NetSuiteFieldCatalogueSerializer,
+    MappingSuggestionSerializer,
+    MappingSuggestionRequestSerializer,
+    SaveMappingRequestSerializer,
+    OCRNetSuiteFieldMappingSerializer,
+    OCRValidationResultSerializer,
+    ValidateDocumentRequestSerializer,
+    CreateCustomFieldRequestSerializer,
+    NetSuiteCustomFieldSerializer,
+    NetSuiteConnectionTestSerializer,
 )
-from netsuite.services import NetSuiteConnectionService, NetSuiteDataService, NetSuiteVendorBillPostingService
+from netsuite.services import (
+    NetSuiteConnectionService,
+    NetSuiteDataService,
+    NetSuiteVendorBillPostingService,
+    NetSuiteFieldMappingService,
+    NetSuiteValidationService,
+    NetSuiteCustomFieldService,
+)
+from ocr.models import OCRDocument, OCRDocumentVersion, OCRNetSuiteFieldMapping, OCRValidationResult
+from tenancy.services import company_lifecycle_service
+from netsuite.tasks import (
+    BATCH_MAX_DOCUMENTS,
+    _store_batch_job_owner,
+    get_batch_job_owner,
+    batch_validate_documents_task,
+    batch_post_documents_task,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -764,6 +791,7 @@ class NetSuitePostOCRVendorBillView(APIView):
     def post(self, request):
         try:
             document_id = request.data.get("document_id")
+            connection_id = request.data.get("connection_id")
             if not document_id:
                 return Response(
                     {"detail": "document_id is required."},
@@ -773,6 +801,7 @@ class NetSuitePostOCRVendorBillView(APIView):
             result = NetSuiteVendorBillPostingService().post_vendor_bill(
                 document_id=document_id,
                 user=request.user,
+                connection_id=connection_id,
             )
 
             return success_response(
@@ -799,3 +828,460 @@ class NetSuitePostOCRVendorBillView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class NetSuiteFieldCatalogueView(APIView):
+    """Return available NetSuite fields for a record type."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        connection_id = request.query_params.get('connection_id')
+        record_type = request.query_params.get('record_type', 'vendorBill')
+
+        if not connection_id:
+            return Response(
+                {"detail": "connection_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            company = getattr(request.user, "company", None)
+            if company is None:
+                return Response(
+                    {"detail": "User is not associated with a company."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            service = NetSuiteFieldMappingService()
+            catalogue = service.get_field_catalogue(
+                company=company,
+                connection_id=connection_id,
+                record_type=record_type,
+            )
+            serializer = NetSuiteFieldCatalogueSerializer(catalogue)
+            return success_response(
+                message="NetSuite Vendor Bill field catalogue fetched successfully.",
+                data=serializer.data,
+            )
+        except NetSuiteConnectionNotFoundException as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load NetSuite field catalogue — user=%s",
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {"detail": "Failed to load NetSuite field catalogue."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class NetSuiteSuggestMappingView(APIView):
+    """Return safe field-mapping suggestions from the authorized Vendor Bill catalogue."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = MappingSuggestionRequestSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+
+        company = getattr(request.user, "company", None)
+        if company is None:
+            return Response(
+                {"detail": "User is not associated with a company."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            service = NetSuiteFieldMappingService()
+            suggestions = service.suggest_mappings(
+                company=company,
+                connection_id=payload["connection_id"],
+                record_type=payload["record_type"],
+                source_fields=payload["source_fields"],
+            )
+            output = MappingSuggestionSerializer(
+                suggestions,
+                many=True,
+            ).data
+            return success_response(
+                message="NetSuite field mapping suggestions fetched successfully.",
+                data=output,
+            )
+        except NetSuiteConnectionNotFoundException as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to generate mapping suggestions — user=%s",
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {"detail": "Failed to generate mapping suggestions."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class NetSuiteFieldMappingListCreateView(APIView):
+    """List or save OCR → NetSuite Vendor Bill field mappings."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        connection_id = request.query_params.get("connection_id")
+        record_type = request.query_params.get("record_type", "vendorBill")
+
+        if not connection_id:
+            return Response(
+                {"detail": "connection_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        company = getattr(request.user, "company", None)
+        if company is None:
+            return Response(
+                {"detail": "User is not associated with a company."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            service = NetSuiteFieldMappingService()
+            mappings = service.get_mappings(
+                company=company,
+                connection_id=connection_id,
+                record_type=record_type,
+            )
+            return success_response(
+                message="Saved NetSuite field mappings fetched successfully.",
+                data=OCRNetSuiteFieldMappingSerializer(
+                    mappings,
+                    many=True,
+                ).data,
+            )
+        except NetSuiteConnectionNotFoundException as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load field mappings — user=%s",
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {"detail": "Failed to load field mappings."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def post(self, request):
+        serializer = SaveMappingRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+
+        company = getattr(request.user, "company", None)
+        if company is None:
+            return Response(
+                {"detail": "User is not associated with a company."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            service = NetSuiteFieldMappingService()
+            saved = service.save_mappings(
+                company=company,
+                connection_id=payload["connection_id"],
+                record_type=payload["record_type"],
+                mappings=payload["mappings"],
+            )
+            return success_response(
+                data=OCRNetSuiteFieldMappingSerializer(
+                    saved,
+                    many=True,
+                ).data,
+                message="Mappings saved successfully.",
+            )
+        except NetSuiteConnectionNotFoundException as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to save field mappings — user=%s",
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {"detail": "Failed to save field mappings."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class NetSuiteValidateDocumentView(APIView):
+    """Validate an OCR document against NetSuite reference data."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ValidateDocumentRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        document_id = serializer.validated_data['document_id']
+
+        try:
+            service = NetSuiteValidationService()
+            result = service.validate_document(
+                document_id=document_id,
+                user=request.user,
+            )
+            return success_response(data=result)
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception(
+                "Document validation failed — document=%s user=%s",
+                document_id,
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {"detail": "Document validation failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class NetSuiteCreateCustomFieldView(APIView):
+    """Create a NetSuite custom field for an OCR custom field."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = CreateCustomFieldRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+
+        company = getattr(request.user, 'company', None)
+        if company is None:
+            return Response(
+                {"detail": "User is not associated with a company."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        connection_id = request.data.get('connection_id')
+        if not connection_id:
+            return Response(
+                {"detail": "connection_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            service = NetSuiteCustomFieldService()
+            custom_field = service.create_custom_field(
+                company=company,
+                connection_id=connection_id,
+                record_type=payload['record_type'],
+                scope=payload['scope'],
+                field_label=payload['field_label'],
+                datatype=payload['datatype'],
+                source_field_key=payload['source_field_key'],
+                source_field_label=payload['source_field_label'],
+            )
+            data = NetSuiteCustomFieldSerializer(custom_field).data
+            return success_response(data=data, message="Custom field created successfully.")
+        except NetSuiteConnectionNotFoundException as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to create NetSuite custom field — user=%s",
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {"detail": "Failed to create NetSuite custom field."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+class NetSuiteBatchBaseView(APIView):
+    """Shared validation for large OCR validation/posting jobs."""
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _parse_document_ids(request):
+        document_ids = request.data.get("document_ids")
+
+        if not isinstance(document_ids, list) or not document_ids:
+            raise ValidationError(
+                {"document_ids": "document_ids must be a non-empty list."}
+            )
+
+        if len(document_ids) > BATCH_MAX_DOCUMENTS:
+            raise ValidationError(
+                {
+                    "document_ids": (
+                        f"A maximum of {BATCH_MAX_DOCUMENTS} documents "
+                        "can be processed per batch."
+                    )
+                }
+            )
+
+        normalized = []
+        for value in document_ids:
+            try:
+                normalized.append(str(value))
+            except Exception:
+                raise ValidationError(
+                    {"document_ids": "Every document ID must be valid."}
+                )
+
+        return normalized
+
+    @staticmethod
+    def _visible_document_ids(request, document_ids):
+        company_id = getattr(request.user, "company_id", None)
+        if not company_id:
+            raise ValidationError(
+                {"detail": "User is not associated with a company."}
+            )
+
+        queryset = OCRDocument.objects.filter(
+            pk__in=document_ids,
+            company_id=company_id,
+        )
+
+        if not _is_company_admin(request.user):
+            queryset = queryset.filter(user=request.user)
+
+        visible = {str(pk) for pk in queryset.values_list("pk", flat=True)}
+        missing = [doc_id for doc_id in document_ids if doc_id not in visible]
+
+        if missing:
+            raise PermissionDenied(
+                "One or more selected documents are not accessible."
+            )
+
+        return document_ids
+
+
+class NetSuiteBatchValidateView(NetSuiteBatchBaseView):
+    """Queue up to 100 OCR document validations in Celery."""
+
+    def post(self, request):
+        document_ids = self._parse_document_ids(request)
+        document_ids = self._visible_document_ids(request, document_ids)
+
+        task = batch_validate_documents_task.delay(
+            document_ids,
+            str(request.user.id),
+        )
+        _store_batch_job_owner(
+            task.id,
+            str(request.user.id),
+            "validate",
+        )
+
+        return success_response(
+            message="Batch validation queued successfully.",
+            data={
+                "job_id": task.id,
+                "action": "validate",
+                "total": len(document_ids),
+                "status": "PENDING",
+            },
+        )
+
+
+class NetSuiteBatchPostView(NetSuiteBatchBaseView):
+    """Queue up to 100 OCR document postings in Celery."""
+
+    def post(self, request):
+        document_ids = self._parse_document_ids(request)
+        document_ids = self._visible_document_ids(request, document_ids)
+
+        connection_id = request.data.get("connection_id")
+
+        task = batch_post_documents_task.delay(
+            document_ids,
+            str(request.user.id),
+            str(connection_id) if connection_id else None,
+        )
+        _store_batch_job_owner(
+            task.id,
+            str(request.user.id),
+            "post",
+        )
+
+        return success_response(
+            message="Batch posting queued successfully.",
+            data={
+                "job_id": task.id,
+                "action": "post",
+                "total": len(document_ids),
+                "status": "PENDING",
+            },
+        )
+
+
+class NetSuiteBatchJobStatusView(APIView):
+    """Return progress for an authorized Celery NetSuite batch job."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job_id):
+        owner = get_batch_job_owner(str(job_id))
+        if owner is None:
+            return Response(
+                {"detail": "Batch job not found or expired."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if owner["user_id"] != str(request.user.id):
+            raise PermissionDenied("You cannot access this batch job.")
+
+        task_result = AsyncResult(str(job_id))
+        meta = task_result.info if isinstance(task_result.info, dict) else {}
+
+        data = {
+            "job_id": str(job_id),
+            "action": owner["action"],
+            "status": task_result.status,
+            "total": meta.get("total"),
+            "completed": meta.get("completed", 0),
+            "succeeded": meta.get("succeeded", 0),
+            "failed": meta.get("failed", 0),
+            "results": meta.get("results", []),
+        }
+
+        if task_result.successful():
+            result = task_result.result if isinstance(task_result.result, dict) else {}
+            data.update(
+                {
+                    "total": result.get("total", data["total"]),
+                    "completed": result.get("completed", data["completed"]),
+                    "succeeded": result.get("succeeded", data["succeeded"]),
+                    "failed": result.get("failed", data["failed"]),
+                    "results": result.get("results", []),
+                }
+            )
+        elif task_result.failed():
+            data["error"] = str(task_result.result)[:2000]
+
+        return success_response(data=data)

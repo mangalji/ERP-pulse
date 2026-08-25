@@ -22,13 +22,21 @@ def setup_periodic_tasks(sender, **kwargs):
     """
     Run company cleanup once every 24 hours.
     """
+    # Import the task objects lazily (after Django is ready) and pass real
+    # signatures. Celery 5.x requires a CallableSignature here; passing a
+    # plain string name previously raised ``'str' object has no attribute
+    # 'name'`` inside ``add_periodic_task``. The periodic behavior (task,
+    # schedule, name) is unchanged.
+    from tenancy.tasks import purge_expired_deleted_companies
+    from superadmin.tasks import sync_company_subscription_statuses
+
     sender.add_periodic_task(
         timedelta(days=1),
-        'tenancy.tasks.purge_expired_deleted_companies',
+        purge_expired_deleted_companies.s(),
         name='purge companies deleted for 15+ days',
     )
     sender.add_periodic_task(
-    timedelta(days=1),
-    'superadmin.tasks.sync_company_subscription_statuses',
-    name='sync company subscription statuses',
-)
+        timedelta(days=1),
+        sync_company_subscription_statuses.s(),
+        name='sync company subscription statuses',
+    )

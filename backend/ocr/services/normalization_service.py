@@ -53,6 +53,9 @@ class NormalizationService:
             A normalized dict with guaranteed keys:
             vendor, invoice_number, invoice_date, currency, subtotal,
             tax, total, purchase_order, items, document_type.
+            Any extra fields from ``raw`` (e.g. custom fields) are
+            preserved unchanged so dynamic extraction configurations
+            are not silently dropped.
         """
         logger.info('Normalizing extracted data — document_type=%s', document_type)
 
@@ -70,6 +73,14 @@ class NormalizationService:
             'items': items,
             'document_type': document_type,
         }
+
+        # Preserve any extra fields from the raw extraction (e.g. custom
+        # fields from a dynamic Phase 2 configuration) so they are not
+        # silently dropped by the normalization step.
+        standard_keys = set(normalized.keys())
+        for key, value in raw.items():
+            if key not in standard_keys:
+                normalized[key] = value
 
         # Compute totals from items if total is missing.
         if normalized['total'] is None and items:

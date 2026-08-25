@@ -3,9 +3,22 @@ from netsuite.models import NetSuiteConnection, NetSuiteConnectionAuditLog
 from django.db import transaction
 from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteConnectionAuditLog, NetSuiteReferenceRecord, NetSuiteOCRPosting
 import logging
+from netsuite.exceptions import NetSuiteConnectionNotFoundException
 
 logger = logging.getLogger(__name__)
 
+def _get_authorized_connection(self, *, connection_id, company):
+    connection = self.repository.get_for_company(
+        connection_id=connection_id,
+        company=company,
+    )
+
+    if connection is None:
+        raise NetSuiteConnectionNotFoundException(
+            "NetSuite connection not found or not accessible."
+        )
+
+    return connection
 
 class NetSuiteConnectionRepository:
     """
@@ -108,6 +121,19 @@ class NetSuiteConnectionRepository:
             user=user,
             id=connection_id,
         ).first()
+
+    def get_by_id_any(self, connection_id) -> NetSuiteConnection | None:
+        return NetSuiteConnection.objects.filter(
+            id=connection_id,
+        ).first()
+
+    def get_for_company( self, *, connection_id, company) -> NetSuiteConnection | None:
+        return (NetSuiteConnection.objects.select_related("company").filter(
+            id=connection_id,
+            company=company,
+            ).first()
+        )
+
 
     def exists_for_account(self, user: User, netsuite_account_id: str) -> bool:
         """

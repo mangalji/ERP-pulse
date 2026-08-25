@@ -13,8 +13,11 @@ returns the structured result.
 """
 
 from __future__ import annotations
-import time, uuid
+
+import time
+import uuid
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 
@@ -26,6 +29,13 @@ from ocr.exceptions import (
 from ocr.gemini_client import GeminiClient
 from ocr.image_processor import ImageProcessor, ImageQualityReport
 from ocr.models import OCRUpload
+from ocr.notebook_extraction_service import (
+    _apply_datatype_normalization,
+    _build_schema,
+    _normalize_result,
+    build_prompt,
+    resolve_field_config,
+)
 from ocr.schema import validate_extraction_result
 from ocr.utils import logger
 
@@ -34,6 +44,7 @@ CONFIDENCE_FIELDS: list[str] = [
     'vendor', 'invoice_number', 'invoice_date',
     'currency', 'subtotal', 'tax', 'total', 'purchase_order',
 ]
+
 
 class OCRExtractionService:
     """
@@ -64,13 +75,21 @@ class OCRExtractionService:
         self.gemini_client = gemini_client or GeminiClient()
         self.image_processor = image_processor or ImageProcessor()
 
-    def extract(self, upload: OCRUpload, user) -> dict:
+    def extract(
+        self,
+        upload: OCRUpload,
+        user,
+        requested_fields: dict[str, Any] | None = None,
+    ) -> dict:
         """
         Run the full extraction pipeline on an upload.
 
         Args:
             upload: The OCRUpload record to process.
             user: The authenticated user.
+            requested_fields: Optional dynamic extraction configuration
+                (Phase 2). When provided, the same canonical dynamic
+                contract is used as the test extraction path.
 
         Returns:
             A dictionary with the extraction result:
@@ -97,7 +116,9 @@ class OCRExtractionService:
         )
 
         # Step 1: Generate image quality report
-        image_path = Path(upload.file.path)
+        image_path = Path(
+            getattr(upload, 'path', None) or upload.file.path
+        )
         quality_report = ImageQualityReport.from_image(image_path)
 
         # Step 2: Preprocess image
@@ -112,10 +133,44 @@ class OCRExtractionService:
                 'Set OCR_ENABLE_GEMINI=True to enable.'
             )
 
-        extracted_data = self.gemini_client.extract(processed_path)
+        (
+            header_fields,
+            line_fields,
+            include_line_items,
+            header_types,
+            line_types,
+        ) = resolve_field_config(requested_fields)
+        header_keys = tuple(header_fields.keys())
+        line_keys = tuple(line_fields.keys())
+        schema = _build_schema(
+            header_fields, line_fields, include_line_items, header_types, line_types
+        )
+        prompt = build_prompt(
+            header_fields, line_fields, include_line_items, header_types, line_types
+        )
 
-        # Step 4: Validate schema
-        validated_data = validate_extraction_result(extracted_data)
+        extracted_data = self.gemini_client.extract(
+            processed_path,
+            prompt=prompt,
+            response_schema=schema,
+        )
+
+        # When using a dynamic contract, Gemini's response_schema already
+        # validates the shape. The legacy static validator expects the old
+        # shape (vendor, items, confidence) and would reject a dynamic
+        # result, so we only run it for the default (non-dynamic) path.
+        is_dynamic = requested_fields is not None and bool(requested_fields)
+        if not is_dynamic:
+            validated_data = validate_extraction_result(extracted_data)
+        else:
+            validated_data = dict(extracted_data)
+
+        validated_data = _normalize_result(
+            validated_data, header_keys, line_keys, include_line_items,
+        )
+        validated_data = _apply_datatype_normalization(
+            validated_data, header_types, line_types, line_keys
+        )
 
         # Step 5: Calculate confidence
         confidence = self._calculate_confidence(validated_data)

@@ -27,6 +27,9 @@ const LINE_ITEM_FIELDS = [
   { key: 'amount', label: 'Amount', type: 'number' },
 ]
 
+const TOP_LEVEL_KEY_SET = new Set(TOP_LEVEL_FIELDS.map((f) => f.key))
+const LINE_ITEM_KEY_SET = new Set(LINE_ITEM_FIELDS.map((f) => f.key))
+
 function emptyLineItem() {
   return {
     description: null,
@@ -64,7 +67,7 @@ function toInputValue(value) {
   return value === null || value === undefined ? '' : String(value)
 }
 
-function normalizeEditedData(data) {
+function normalizeEditedData(data, customFieldTypes = {}) {
   const next = cloneData(data)
 
   TOP_LEVEL_FIELDS.forEach(({ key, type }) => {
@@ -83,6 +86,31 @@ function normalizeEditedData(data) {
     if (value === '') {
       next[key] = null
     }
+  })
+
+  // Normalize custom header fields by their declared datatype.
+  Object.keys(customFieldTypes).forEach((key) => {
+    if (!(key in next)) return
+    const dataType = customFieldTypes[key]
+    const value = next[key]
+
+    if (value === '' || value === null || value === undefined) {
+      next[key] = null
+      return
+    }
+
+    if (dataType === 'number' || dataType === 'currency') {
+      const parsed = Number(value)
+      next[key] = Number.isFinite(parsed) ? parsed : null
+    } else if (dataType === 'boolean') {
+      if (typeof value === 'string') {
+        const lowered = value.trim().toLowerCase()
+        next[key] = lowered === 'true' || lowered === 'yes' || lowered === '1'
+      } else {
+        next[key] = Boolean(value)
+      }
+    }
+    // text and date are kept as-is (strings)
   })
 
   next.line_items = Array.isArray(next.line_items)
@@ -147,6 +175,13 @@ export default function OcrReviewWorkspace({
   onSaved,
   showPost = true,
   compact = false,
+  customFieldTypes = {},
+  connectionId = null,
+  validationResult = null,
+  onValidate = null,
+  onPost = null,
+  mappings = [],
+  onSaveMappings = null,
 }) {
   const { toasts, addToast, removeToast } = useToast()
   const [editing, setEditing] = useState(false)
@@ -166,6 +201,28 @@ export default function OcrReviewWorkspace({
     () => (Array.isArray(data.line_items) ? data.line_items : []),
     [data.line_items],
   )
+
+  // Custom / extra header fields (anything returned by OCR that is not a
+  // standard top-level field) are rendered generically so they survive the
+  // review/save flow visibly rather than only inside the raw JSON view.
+  const extraHeaderFields = useMemo(() => {
+    if (!data || typeof data !== 'object') return []
+    return Object.keys(data).filter(
+      (key) => key !== 'line_items' && !TOP_LEVEL_KEY_SET.has(key),
+    )
+  }, [data])
+
+  const extraLineKeys = useMemo(() => {
+    const keys = new Set()
+    ;(Array.isArray(data?.line_items) ? data.line_items : []).forEach((item) => {
+      if (item && typeof item === 'object') {
+        Object.keys(item).forEach((key) => {
+          if (!LINE_ITEM_KEY_SET.has(key)) keys.add(key)
+        })
+      }
+    })
+    return Array.from(keys)
+  }, [data?.line_items])
 
   const setField = (key, value) => {
     setData((current) => ({
@@ -223,7 +280,7 @@ export default function OcrReviewWorkspace({
       setSaving(true)
 
       const payload = {
-        data: normalizeEditedData(data),
+        data: normalizeEditedData(data, customFieldTypes),
       }
 
       if (result.document_id) {
@@ -276,6 +333,12 @@ export default function OcrReviewWorkspace({
     try {
       setPosting(true)
 
+      if (onPost) {
+        await onPost(result.document_id, connectionId)
+        addToast('Vendor Bill posted to NetSuite.', 'success')
+        return
+      }
+
       const response = await apiClient.post(
         '/netsuite/ocr/post-vendor-bill/',
         {
@@ -306,6 +369,24 @@ export default function OcrReviewWorkspace({
       )
     } finally {
       setPosting(false)
+    }
+  }
+  
+
+  const handleValidate = async () => {
+    if (!onValidate || !result?.document_id) return
+    try {
+      await onValidate(result.document_id)
+      addToast('Validation completed.', 'success')
+    } catch (err) {
+      console.error('Validation failed:', err)
+      addToast(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Validation failed.',
+        'error',
+      )
     }
   }
 
@@ -384,6 +465,20 @@ export default function OcrReviewWorkspace({
             onChange={setField}
           />
         ))}
+
+        {extraHeaderFields.map((key) => {
+          const dataType = customFieldTypes[key] || 'text'
+          const field = { key, label: key, type: dataType === 'currency' ? 'number' : dataType }
+          return (
+            <FieldInput
+              key={key}
+              field={field}
+              value={data[key]}
+              editable={editing && !saving}
+              onChange={setField}
+            />
+          )
+        })}
       </div>
 
       <Card className="overflow-hidden border border-[var(--color-border)] shadow-none">
@@ -413,6 +508,11 @@ export default function OcrReviewWorkspace({
                   <th className="px-4 py-3">Qty</th>
                   <th className="px-4 py-3">Unit Price</th>
                   <th className="px-4 py-3">Amount</th>
+                  {extraLineKeys.map((key) => (
+                    <th key={key} className="px-4 py-3">
+                      {key}
+                    </th>
+                  ))}
                   {editing && <th className="px-4 py-3">Action</th>}
                 </tr>
               </thead>
@@ -438,6 +538,29 @@ export default function OcrReviewWorkspace({
                         )}
                       </td>
                     ))}
+                    {extraLineKeys.map((key) => {
+                      const dataType = customFieldTypes[key] || 'text'
+                      const inputType = dataType === 'currency' || dataType === 'number' ? 'number' : dataType === 'date' ? 'date' : 'text'
+                      return (
+                        <td key={key} className="min-w-[150px] px-4 py-3 align-top">
+                          {editing ? (
+                            <input
+                              type={inputType}
+                              value={toInputValue(item?.[key])}
+                              step={inputType === 'number' ? 'any' : undefined}
+                              onChange={(event) =>
+                                setLineItemField(index, key, event.target.value)
+                              }
+                              className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                            />
+                          ) : (
+                            <span className="break-words text-[var(--color-ink)]">
+                              {toInputValue(item?.[key]) || '--'}
+                            </span>
+                          )}
+                        </td>
+                      )
+                    })}
                     {editing && (
                       <td className="px-4 py-3 align-top">
                         <Button
@@ -466,12 +589,17 @@ export default function OcrReviewWorkspace({
       </Card>
       </>
       )}
-      <div className={`flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] pt-4 ${compact ? '' : 'sticky bottom-0 bg-[var(--color-surface)]'}`}>
+
+      <div
+        className={`flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] pt-4 ${
+          compact ? '' : 'sticky bottom-0 bg-[var(--color-surface)]'
+        }`}
+      >
         <Button
           type="button"
           intent="secondary"
-          onClick={() => { 
-            setViewMode('fields') 
+          onClick={() => {
+            setViewMode('fields')
             setEditing(true)
           }}
           disabled={editing || saving}
@@ -483,28 +611,14 @@ export default function OcrReviewWorkspace({
           type="button"
           intent="primary"
           onClick={handleSave}
-          disabled={saving || (!editing && Boolean(result?.document_id))}
+          disabled={
+            saving ||
+            (!editing && Boolean(result?.document_id))
+          }
           isLoading={saving}
         >
           Save
         </Button>
-
-        {showPost && (
-          <Button
-            type="button"
-            intent="netsuite"
-            onClick={handlePost}
-            disabled={posting || !result?.document_id}
-            isLoading={posting}
-            title={
-              !result?.document_id
-                ? 'Save the OCR result before posting to NetSuite'
-                : 'Post Vendor Bill to NetSuite'
-            }
-          >
-            Post
-          </Button>
-        )}
       </div>
     </div>
   )

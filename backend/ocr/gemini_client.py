@@ -16,8 +16,12 @@ Business logic (orchestration, schema validation, confidence
 calculation) belongs in ``OCRExtractionService``.
 """
 from __future__ import annotations
-import json, time, uuid
+
+import json
+import time
+import uuid
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 
@@ -28,6 +32,7 @@ from ocr.exceptions import (
     GeminiValidationException,
 )
 from ocr.prompts import EXTRACTION_PROMPT, SYSTEM_PROMPT
+from ocr.notebook_extraction_service import _json_object_schema
 from ocr.utils import logger
 
 #: Google Generative AI client — imported lazily to avoid a hard
@@ -64,12 +69,21 @@ class GeminiClient:
         self.retry_delay: float = settings.OCR_RETRY_DELAY
         self._client = None
 
-    def extract(self, image_path: str | Path) -> dict:
+    def extract(
+        self,
+        image_path: str | Path,
+        prompt: str | None = None,
+        response_schema: dict[str, Any] | None = None,
+    ) -> dict:
         """
         Send an image to Gemini and return the parsed JSON result.
 
         Args:
             image_path: Path to the preprocessed image file.
+            prompt: Optional extraction prompt. Defaults to the static
+                EXTRACTION_PROMPT when omitted.
+            response_schema: Optional Gemini response_schema. Defaults
+                to the static EXTRACTION_SCHEMA when omitted.
 
         Returns:
             The parsed JSON dictionary from Gemini.
@@ -91,7 +105,12 @@ class GeminiClient:
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                response_text = self._call_api(image_path, request_id)
+                response_text = self._call_api(
+                    image_path,
+                    request_id,
+                    prompt=prompt,
+                    response_schema=response_schema,
+                )
                 result = self._parse_response(response_text, request_id)
 
                 latency_ms = (time.perf_counter() - start) * 1000
@@ -157,13 +176,21 @@ class GeminiClient:
             f'{last_exception}'
         ) from last_exception
 
-    def _call_api(self, image_path: str | Path, request_id: str) -> str:
+    def _call_api(
+        self,
+        image_path: str | Path,
+        request_id: str,
+        prompt: str | None = None,
+        response_schema: dict[str, Any] | None = None,
+    ) -> str:
         """
         Make the actual API call to Gemini.
 
         Args:
             image_path: Path to the image file.
             request_id: Unique request identifier for logging.
+            prompt: Optional extraction prompt.
+            response_schema: Optional Gemini response_schema.
 
         Returns:
             Raw response text from Gemini.
@@ -185,6 +212,9 @@ class GeminiClient:
                 f'Failed to create Gemini client: {exc}'
             ) from exc
 
+        effective_prompt = prompt or EXTRACTION_PROMPT
+        effective_schema = response_schema or _json_object_schema()
+
         try:
             image = genai.types.Part.from_uri(
                 file_uri=str(image_path),
@@ -192,7 +222,11 @@ class GeminiClient:
             )
             response = client.models.generate_content(
                 model=self.model,
-                contents=[SYSTEM_PROMPT, EXTRACTION_PROMPT, image],
+                contents=[SYSTEM_PROMPT, effective_prompt, image],
+                config=genai.types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=effective_schema,
+                ),
             )
         except TimeoutError as exc:
             raise GeminiTimeoutException(

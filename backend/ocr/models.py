@@ -74,6 +74,14 @@ class OCRBatch(models.Model):
         db_index=True,
     )
 
+    # Dynamic extraction configuration chosen at upload time — which
+    # standard fields to keep, which to drop, and any custom fields with
+    # their AI instructions and header/line scope. Empty/blank means "use
+    # the full default standard field set", which is exactly today's
+    # existing behavior — see notebook_extraction_service.resolve_field_config().
+    # Shape: {"standard_fields": [...], "custom_fields": [{"key","label","description","scope"}]}
+    requested_fields_json = models.JSONField(default=dict, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -89,6 +97,58 @@ class OCRBatch(models.Model):
 
     def __str__(self):
         return f'OCRBatch {self.id} ({self.status})'
+
+
+class OCRExtractionTemplate(models.Model):
+    """
+    A saved dynamic extraction configuration: which standard fields to
+    request, which to skip, and any custom fields with their AI
+    description/instruction and header/line scope.
+
+    Scoped per company, not per user, so a configuration one employee
+    builds (e.g. "GST Invoices" with a GSTIN custom field) is reusable by
+    every employee at that company, consistent with how templates are
+    meant to save repeat setup work across a team.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        'tenancy.Company',
+        on_delete=models.CASCADE,
+        related_name='ocr_extraction_templates',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ocr_extraction_templates',
+    )
+    name = models.CharField(max_length=150)
+
+    # Same shape as OCRBatch.requested_fields_json — see that field's
+    # docstring. Kept identical so a template can be applied to a batch
+    # by copying this value across without any translation step.
+    fields_config = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ocr_extraction_template'
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'name'],
+                name='unique_ocr_extraction_template_name_per_company',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['company', 'name'], name='ocr_tmpl_company_name_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.name} ({self.company_id})'
 
 
 class OCRUpload(models.Model):
@@ -477,3 +537,130 @@ class OCRQualityMetric(models.Model):
 
     def __str__(self) -> str:
         return f'QualityMetric {self.id} ({self.document_type})'
+
+
+class MappingStatus(models.TextChoices):
+    MAPPED = 'MAPPED', 'Mapped'
+    AMBIGUOUS = 'AMBIGUOUS', 'Ambiguous'
+    UNRESOLVED = 'UNRESOLVED', 'Unresolved'
+    INCOMPATIBLE = 'INCOMPATIBLE', 'Incompatible'
+
+
+class OCRNetSuiteFieldMapping(models.Model):
+    """
+    Mapping between an OCR source field and a NetSuite target field.
+
+    Scoped per company + NetSuite connection + record type so that
+    multiple AGSuite companies using the same NetSuite account do not
+    share or overwrite each other's mappings.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        'tenancy.Company',
+        on_delete=models.CASCADE,
+        related_name='ocr_netsuite_field_mappings',
+    )
+    connection = models.ForeignKey(
+        'netsuite.NetSuiteConnection',
+        on_delete=models.CASCADE,
+        related_name='ocr_field_mappings',
+    )
+    record_type = models.CharField(max_length=80, default='vendorBill')
+
+    source_field_key = models.CharField(max_length=100)
+    source_field_label = models.CharField(max_length=255)
+    source_scope = models.CharField(max_length=20, choices=[('header', 'Header'), ('line', 'Line Item')])
+    source_datatype = models.CharField(max_length=20)
+
+    target_field_id = models.CharField(max_length=100)
+    target_field_label = models.CharField(max_length=255)
+    target_scope = models.CharField(max_length=20)
+    target_datatype = models.CharField(max_length=20)
+    is_required = models.BooleanField(default=False)
+    is_custom = models.BooleanField(default=False)
+    reference_type = models.CharField(max_length=80, null=True, blank=True)
+
+    mapping_status = models.CharField(
+        max_length=20,
+        choices=MappingStatus.choices,
+        default=MappingStatus.MAPPED,
+    )
+    confidence = models.FloatField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ocr_netsuite_field_mapping'
+        ordering = ['source_field_key']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'connection', 'record_type', 'source_field_key'],
+                name='unique_ocr_netsuite_mapping_per_connection',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['company', 'connection', 'record_type'], name='ocr_ns_map_conn_idx'),
+            models.Index(fields=['source_field_key'], name='ocr_ns_map_src_idx'),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.source_field_key} → {self.target_field_id} ({self.mapping_status})'
+
+
+class ValidationStatus(models.TextChoices):
+    VALIDATED = 'VALIDATED', 'Validated'
+    VALIDATION_FAILED = 'VALIDATION_FAILED', 'Validation Failed'
+    PARTIAL = 'PARTIAL', 'Partial'
+
+
+class OCRValidationResult(models.Model):
+    """
+    Persisted validation state for an OCR document against NetSuite
+    reference data.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        OCRDocument,
+        on_delete=models.CASCADE,
+        related_name='validation_results',
+    )
+    version = models.ForeignKey(
+        OCRDocumentVersion,
+        on_delete=models.CASCADE,
+        related_name='validation_results',
+    )
+    connection = models.ForeignKey(
+        'netsuite.NetSuiteConnection',
+        on_delete=models.CASCADE,
+        related_name='ocr_validation_results',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=ValidationStatus.choices,
+        default=ValidationStatus.VALIDATION_FAILED,
+    )
+
+    vendor_extracted_name = models.CharField(max_length=255, null=True, blank=True)
+    vendor_matched = models.BooleanField(default=False)
+    vendor_netsuite_id = models.CharField(max_length=64, null=True, blank=True)
+
+    items = models.JSONField(default=list, blank=True)
+    errors = models.JSONField(default=list, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ocr_validation_result'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['document', 'version'], name='ocr_val_doc_ver_idx'),
+            models.Index(fields=['connection', 'status'], name='ocr_val_conn_status_idx'),
+        ]
+
+    def __str__(self) -> str:
+        return f'Validation {self.document_id} — {self.status}'

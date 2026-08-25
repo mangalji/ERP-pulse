@@ -105,6 +105,22 @@ class GeminiRateLimitException(OCRException):
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
 
 
+class UnsupportedFormatException(OCRException):
+    """
+    Raised when an uploaded file has an unsupported format.
+    """
+
+    status_code = status.HTTP_415_UNSUPPORTED_MEDIA_TYPE
+
+
+class DocumentProcessingException(OCRException):
+    """
+    Raised when a document adapter fails to process a supported format.
+    """
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 class OCRExtractionFailedException(OCRException):
     """
     Raised when the OCR extraction pipeline fails.

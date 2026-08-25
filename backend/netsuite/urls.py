@@ -26,6 +26,14 @@ from netsuite.views import (
     NetSuiteTestConnectionView,
     NetSuiteMyConnectionView,
     NetSuitePostOCRVendorBillView,
+    NetSuiteFieldCatalogueView,
+    NetSuiteSuggestMappingView,
+    NetSuiteFieldMappingListCreateView,
+    NetSuiteValidateDocumentView,
+    NetSuiteCreateCustomFieldView,
+    NetSuiteBatchValidateView,
+    NetSuiteBatchPostView,
+    NetSuiteBatchJobStatusView,
 )
 
 urlpatterns = [
@@ -53,4 +61,12 @@ urlpatterns = [
     path("company/connections/<uuid:connection_id>/test/", NetSuiteTestConnectionView.as_view(), name="netsuite_test_connection"),
     path("my/connection/", NetSuiteMyConnectionView.as_view(), name="netsuite_my_connection"),
     path("ocr/post-vendor-bill/", NetSuitePostOCRVendorBillView.as_view(), name="netsuite_post_ocr_vendor_bill"),
+    path("ocr/field-catalogue/", NetSuiteFieldCatalogueView.as_view(), name="netsuite_ocr_field_catalogue"),
+    path("ocr/suggest-mapping/", NetSuiteSuggestMappingView.as_view(), name="netsuite_ocr_suggest_mapping"),
+    path("ocr/field-mappings/", NetSuiteFieldMappingListCreateView.as_view(), name="netsuite_ocr_field_mappings"),
+    path("ocr/validate/", NetSuiteValidateDocumentView.as_view(), name="netsuite_ocr_validate"),
+    path("ocr/custom-fields/", NetSuiteCreateCustomFieldView.as_view(), name="netsuite_ocr_custom_fields"),
+    path("ocr/batch/validate/", NetSuiteBatchValidateView.as_view(), name="netsuite_ocr_batch_validate"),
+    path("ocr/batch/post/", NetSuiteBatchPostView.as_view(), name="netsuite_ocr_batch_post"),
+    path("ocr/batch/jobs/<uuid:job_id>/", NetSuiteBatchJobStatusView.as_view(), name="netsuite_ocr_batch_job_status"),
 ]

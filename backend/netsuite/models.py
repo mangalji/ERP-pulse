@@ -42,8 +42,8 @@ class NetSuiteConnection(models.Model):
         'tenancy.Company',
         on_delete=models.CASCADE,
         related_name='netsuite_connections',
-        null=True,
-        blank=True,
+        # null=True,
+        # blank=True,
     )
     client_name = models.CharField(max_length=255,null=True,blank=True)
     environment = models.CharField(
@@ -89,8 +89,8 @@ class NetSuiteConnection(models.Model):
 
         constraints = [
             models.UniqueConstraint(
-                fields=["user", "netsuite_account_id"],
-                name="unique_user_netsuite_account",
+                fields=["company", "netsuite_account_id"],
+                name="unique_company_netsuite_account",
             )
         ]
 
@@ -322,3 +322,71 @@ class NetSuiteOCRPosting(models.Model):
 
     def __str__(self):
         return f"{self.document_id} v{self.version_id} → {self.netsuite_record_id or self.status}"
+
+
+class NetSuiteCustomField(models.Model):
+    """
+    Tracks NetSuite custom fields created on behalf of AGSuite OCR
+    custom fields.
+
+    Prevents duplicate creation and preserves the authoritative mapping
+    between an OCR custom field and the resulting NetSuite script ID.
+    """
+
+    SCOPE_CHOICES = [
+        ('body', 'Body'),
+        ('column', 'Column / Item Sublist'),
+    ]
+
+    DATATYPE_CHOICES = [
+        ('text', 'Text'),
+        ('integer', 'Integer'),
+        ('decimal', 'Decimal'),
+        ('date', 'Date'),
+        ('checkbox', 'Checkbox'),
+        ('currency', 'Currency'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        'tenancy.Company',
+        on_delete=models.CASCADE,
+        related_name='netsuite_custom_fields',
+    )
+    connection = models.ForeignKey(
+        NetSuiteConnection,
+        on_delete=models.CASCADE,
+        related_name='ocr_custom_fields',
+    )
+    record_type = models.CharField(max_length=80)
+    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES)
+    field_label = models.CharField(max_length=255)
+    field_id = models.CharField(max_length=100)
+    datatype = models.CharField(max_length=20, choices=DATATYPE_CHOICES)
+
+    source_field_key = models.CharField(max_length=100)
+    source_field_label = models.CharField(max_length=255)
+
+    netsuite_field_id = models.CharField(max_length=64, null=True, blank=True)
+    status = models.CharField(max_length=20, default='pending')
+    error = models.TextField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'netsuite_custom_field'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'connection', 'record_type', 'scope', 'source_field_key'],
+                name='unique_ns_custom_field_per_context',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['company', 'connection', 'record_type'], name='ns_cf_conn_idx'),
+            models.Index(fields=['source_field_key'], name='ns_cf_src_idx'),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.field_id} ({self.record_type}:{self.scope})'

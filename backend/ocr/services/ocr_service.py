@@ -15,7 +15,9 @@ remains the single source of truth for the OCR/AI pipeline.
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
+import tempfile
 
 from django.db import transaction
 
@@ -26,7 +28,10 @@ from ocr.validators import (
     validate_extension,
     validate_file_size,
     validate_mime_type,
+    validate_file_format,
 )
+from ocr.formats import lookup_format
+from ocr.exceptions import InvalidFileException, UnsupportedFormatException, DocumentProcessingException
 
 
 class OCRService:
@@ -54,9 +59,9 @@ class OCRService:
         """
         Persist an uploaded file as an ``OCRUpload`` record.
 
-        Validates the file (size, extension, MIME type), computes a
-        SHA256 hash for duplicate detection, and stores the file under a
-        unique UUID-based name.
+        Validates the file (size, extension, MIME type, format content),
+        computes a SHA256 hash for duplicate detection, and stores the
+        file under a unique UUID-based name.
 
         Args:
             file: The uploaded file (DRF ``UploadedFile``).
@@ -68,10 +73,15 @@ class OCRService:
         Raises:
             InvalidFileException: If the file is oversized, has a
                 disallowed extension, or an unsupported MIME type.
+            UnsupportedFormatException: If the file format is not supported.
+            DocumentProcessingException: If the file content is corrupt.
         """
-        validate_file_size(file.size)
         validate_extension(file.name)
         validate_mime_type(file.content_type)
+
+        ext = file.name.rsplit('.', 1)[-1].lower()
+        fmt = lookup_format(ext, file.content_type or '')
+        validate_file_size(file.size, max_size=fmt.max_file_size_mb * 1024 * 1024)
 
         original_filename = file.name
 
@@ -81,6 +91,24 @@ class OCRService:
 
         extension = get_extension_from_mime_type(file.content_type)
         stored_filename = f'{uuid.uuid4().hex}.{extension}'
+
+        # Write content to a temporary file for format validation.
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{extension}') as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            validation = validate_file_format(tmp_path, original_filename)
+            if not validation['is_valid']:
+                raise InvalidFileException(
+                    'File validation failed: ' + '; '.join(validation['errors'])
+                )
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
         # Store the file under the UUID-based name, not the original,
         # so it cannot collide and does not leak the original filename.
@@ -97,6 +125,7 @@ class OCRService:
             file_hash=file_hash,
             status=OCRUpload.Status.UPLOADED,
         )
+
         logger.info(
             'Upload created — upload_id=%s user=%s size=%d',
             upload.id, user.id, file.size,

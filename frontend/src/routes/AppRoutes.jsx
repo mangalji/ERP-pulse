@@ -65,6 +65,7 @@ import ScheduledReportsPage from '../pages/reports-engine/ScheduledReportsPage.j
 import ReportHistoryPage from '../pages/reports-engine/ReportHistoryPage.jsx'
 import TemplatesPage from '../pages/reports-engine/TemplatesPage.jsx'
 import OcrTestPage from '../pages/client/OcrTestPage.jsx'
+import OcrFieldMappingPage from '../pages/client/OcrFieldMappingPage.jsx'
 import OcrTestResultPage from '../pages/client/OcrTestResultPage.jsx'
 import OcrBatchHistoryPage from '../pages/client/OcrBatchHistoryPage.jsx'
 /* Legacy flat pages (DashboardLayout) — retained on disk per DEVELOPMENT_GUIDELINES.md.
@@ -275,6 +276,14 @@ export default function AppRoutes() {
         }
       />
       
+      <Route
+        path="/app/ocr-test/field-mapping"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <OcrFieldMappingPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/app/ocr-test"
         element={

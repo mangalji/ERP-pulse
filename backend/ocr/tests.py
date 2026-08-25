@@ -44,6 +44,7 @@ from ocr.exceptions import (
     InvalidImageException,
     OCRExtractionFailedException,
     OCRServiceException,
+    UnsupportedFormatException,
 )
 from ocr.gemini_client import GeminiClient
 from ocr.prompts import EXTRACTION_PROMPT, REVIEW_PROMPT,SYSTEM_PROMPT
@@ -119,11 +120,32 @@ def _make_png(content: bytes = b'\x89PNG\r\n\x1a\n') -> SimpleUploadedFile:
     )
 
 
+def _make_real_png() -> SimpleUploadedFile:
+    from PIL import Image
+    import io
+    img = Image.new('RGB', (100, 100), color='red')
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    return SimpleUploadedFile(
+        'invoice.png',
+        buffer.getvalue(),
+        content_type='image/png',
+    )
+
+
 def _make_txt(content: bytes = b'plain text') -> SimpleUploadedFile:
     return SimpleUploadedFile(
         'invoice.txt',
         content,
         content_type='text/plain',
+    )
+
+
+def _make_invalid_file(content: bytes = b'invalid binary content') -> SimpleUploadedFile:
+    return SimpleUploadedFile(
+        'invoice.doc',
+        content,
+        content_type='application/msword',
     )
 
 
@@ -187,7 +209,7 @@ class ValidateExtensionTests(TestCase):
 
     def test_invalid_extension(self):
         with self.assertRaises(InvalidFileException):
-            validate_extension('invoice.txt')
+            validate_extension('invoice.doc')
 
     def test_no_extension(self):
         with self.assertRaises(InvalidFileException):
@@ -207,7 +229,7 @@ class ValidateMimeTypeTests(TestCase):
 
     def test_invalid_mime_type(self):
         with self.assertRaises(InvalidFileException):
-            validate_mime_type('text/plain')
+            validate_mime_type('application/msword')
 
     def test_empty_mime_type(self):
         with self.assertRaises(InvalidFileException):
@@ -244,7 +266,7 @@ class ValidatorUtilityTests(TestCase):
 
     def test_get_extension_from_mime_type_invalid(self):
         with self.assertRaises(InvalidFileException):
-            get_extension_from_mime_type('text/plain')
+            get_extension_from_mime_type('application/msword')
 
 
 # ==================================================================
@@ -259,7 +281,7 @@ class UploadSerializerTests(TestCase):
         self.assertTrue(serializer.is_valid())
 
     def test_valid_png(self):
-        serializer = UploadSerializer(data={'file': _make_png()})
+        serializer = UploadSerializer(data={'file': _make_real_png()})
         self.assertTrue(serializer.is_valid())
 
     def test_missing_file(self):
@@ -268,18 +290,19 @@ class UploadSerializerTests(TestCase):
         self.assertIn('file', serializer.errors)
 
     def test_invalid_extension(self):
-        serializer = UploadSerializer(data={'file': _make_txt()})
+        serializer = UploadSerializer(data={'file': _make_invalid_file()})
         self.assertFalse(serializer.is_valid())
 
     def test_invalid_mime_type(self):
-        """A .pdf filename with a text/plain MIME type should fail."""
+        """A .pdf filename with an application/msword MIME type should fail."""
         file = SimpleUploadedFile(
             'invoice.pdf',
             b'text content',
-            content_type='text/plain',
+            content_type='application/msword',
         )
         serializer = UploadSerializer(data={'file': file})
-        self.assertFalse(serializer.is_valid())
+        with self.assertRaises(UnsupportedFormatException):
+            serializer.is_valid()
 
 
 class UploadResponseSerializerTests(TestCase):
@@ -453,27 +476,27 @@ class OCRServiceTests(TestCase):
         self.assertNotEqual(upload.stored_filename, upload.original_filename)
 
     def test_upload_invalid_extension(self):
-        file = _make_txt()
+        file = _make_invalid_file()
         with self.assertRaises(InvalidFileException):
             self.service.upload(file=file, user=self.user)
 
     def test_upload_invalid_mime_type(self):
-        """A .pdf filename with text/plain MIME type should fail."""
+        """A .pdf filename with an application/msword MIME type should fail."""
         file = SimpleUploadedFile(
             'invoice.pdf',
             b'text content',
-            content_type='text/plain',
+            content_type='application/msword',
         )
         with self.assertRaises(InvalidFileException):
             self.service.upload(file=file, user=self.user)
 
     def test_upload_oversized_file(self):
-        """A file exceeding 10 MB should fail."""
+        """A file exceeding the format-specific limit should fail."""
         large_content = b'\x00' * (MAX_FILE_SIZE + 1)
         file = SimpleUploadedFile(
-            'invoice.pdf',
+            'invoice.xlsx',
             large_content,
-            content_type='application/pdf',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
         with self.assertRaises(InvalidFileException):
             self.service.upload(file=file, user=self.user)
@@ -586,7 +609,7 @@ class UploadEndpointTests(APITestCase):
         self.client.credentials(**_auth_header(self.user))
         response = self.client.post(
             '/api/v1/ocr/upload/',
-            {'file': _make_png()},
+            {'file': _make_real_png()},
             format='multipart',
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -611,21 +634,21 @@ class UploadEndpointTests(APITestCase):
         )
 
     def test_upload_invalid_extension(self):
-        """A .txt file should get 400."""
+        """A .doc file should get 400."""
         self.client.credentials(**_auth_header(self.user))
         response = self.client.post(
             '/api/v1/ocr/upload/',
-            {'file': _make_txt()},
+            {'file': _make_invalid_file()},
             format='multipart',
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_upload_invalid_mime_type(self):
-        """A .pdf filename with text/plain MIME type should get 400."""
+        """A .pdf filename with an application/msword MIME type should get 415."""
         file = SimpleUploadedFile(
             'invoice.pdf',
             b'text content',
-            content_type='text/plain',
+            content_type='application/msword',
         )
         self.client.credentials(**_auth_header(self.user))
         response = self.client.post(
@@ -633,7 +656,7 @@ class UploadEndpointTests(APITestCase):
             {'file': file},
             format='multipart',
         )
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
     def test_upload_missing_file(self):
         """A request with no file should get 400."""
@@ -646,12 +669,12 @@ class UploadEndpointTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_upload_oversized_file(self):
-        """A file exceeding 10 MB should get 400."""
+        """A file exceeding the format-specific limit should get 400."""
         large_content = b'\x00' * (MAX_FILE_SIZE + 1)
         file = SimpleUploadedFile(
-            'invoice.pdf',
+            'invoice.xlsx',
             large_content,
-            content_type='application/pdf',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
         self.client.credentials(**_auth_header(self.user))
         response = self.client.post(

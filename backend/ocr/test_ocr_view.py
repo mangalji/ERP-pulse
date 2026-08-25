@@ -14,14 +14,98 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ocr.models import OCRBatch, OCRDocumentVersion, OCRUpload
+from ocr.models import (
+    OCRBatch,
+    OCRExtractionTemplate,
+    OCRUpload,
+)
+from ocr.notebook_extraction_service import resolve_field_config
 from ocr.services.ocr_service import ocr_service
+from ocr.exceptions import OCRException
 from ocr.services.zip_upload_service import (
     ZipValidationError,
     extract_supported_files_from_zip,
 )
 from ocr.tasks import process_test_ocr_upload_task
 from ocr.utils import logger
+
+
+def _parse_requested_fields(raw) -> dict | None:
+    """
+    Normalize the user-supplied dynamic extraction configuration.
+
+    Accepts either a JSON object or a JSON-encoded string (multipart
+    form-data sends it as a string). Returns None when nothing usable was
+    supplied so the caller falls back to the default extraction path.
+    """
+    if raw is None:
+        return None
+
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return None
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            raise ValueError(
+                "requested_fields must be a valid JSON object."
+            )
+
+    if not isinstance(raw, dict):
+        raise ValueError("requested_fields must be a JSON object.")
+
+    return raw
+
+
+def _resolve_template_config(template_id, user) -> dict:
+    """Load a saved extraction template's config (company-scoped)."""
+    if not template_id:
+        raise ValueError("Invalid template identifier.")
+
+    try:
+        template = OCRExtractionTemplate.objects.get(
+            pk=template_id,
+            company=user.company,
+        )
+    except (OCRExtractionTemplate.DoesNotExist, ValueError, TypeError):
+        raise ValueError("Extraction template not found.")
+
+    config = template.fields_config
+    if not isinstance(config, dict):
+        config = {}
+
+    return config
+
+
+def _build_requested_fields(request) -> dict | None:
+    """
+    Resolve the effective requested_fields from the upload request.
+
+    Precedence: an explicit ``template_id`` wins over an inline
+    ``requested_fields`` payload. Both are validated through
+    ``resolve_field_config`` so the Phase 2 rule (a line-scoped custom
+    field is illegal without line_items extraction) is enforced here,
+    before any Celery task runs, with a clean 400 instead of a silent
+    extraction failure.
+    """
+    template_id = request.data.get("template_id")
+    raw_requested = _parse_requested_fields(
+        request.data.get("requested_fields")
+    )
+
+    if template_id:
+        requested_fields = _resolve_template_config(template_id, request.user)
+    elif raw_requested is not None:
+        requested_fields = raw_requested
+    else:
+        requested_fields = None
+
+    if requested_fields:
+        # Validates shape + enforces the line-custom-field rule.
+        resolve_field_config(requested_fields)
+
+    return requested_fields
 
 def _live_result_key(upload_id: str) -> str:
     return f"erp-pulse:ocr:live:{upload_id}"
@@ -116,6 +200,8 @@ class OCRTestExtractView(APIView):
                     extract_supported_files_from_zip(uploaded_file)
                 )
             except ZipValidationError:
+                raise
+            except OCRException as exc:
                 raise
             except Exception as exc:
                 raise ZipValidationError(
@@ -221,11 +307,20 @@ class OCRTestExtractView(APIView):
                 else None
             )
 
+            try:
+                requested_fields = _build_requested_fields(request)
+            except ValueError as exc:
+                return Response(
+                    {"detail": str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             batch = OCRBatch.objects.create(
                 user=request.user,
                 company=company,
                 source_type=source_type,
                 original_filename=original_filename,
+                requested_fields_json=requested_fields or {},
                 status=OCRBatch.Status.PROCESSING,
                 started_at=timezone.now(),
             )
@@ -238,7 +333,15 @@ class OCRTestExtractView(APIView):
                     user=request.user,
                 )
                 upload.batch = batch
-                upload.status = OCRUpload.Status.UPLOADED
+                # PROCESSING, not UPLOADED: from this point on the file is
+                # queued for the Celery task below, so "work is happening"
+                # from the user's perspective even before a worker actually
+                # picks it up and the task itself re-confirms PROCESSING.
+                # Reporting UPLOADED here was the spec's flagged bug — the
+                # frontend's very first status read (this response) and
+                # every poll before the task starts would show a resting
+                # state while a job was already in flight.
+                upload.status = OCRUpload.Status.PROCESSING
                 upload.failure_reason = None
                 upload.save(update_fields=["batch", "status", "failure_reason"])
                 created_uploads.append(upload)
@@ -523,6 +626,7 @@ class OCRTestBatchStatusView(APIView):
                 "completed_files": completed,
                 "failed_files": failed,
                 "files": results,
+                "requested_fields": batch.requested_fields_json or None,
                 "created_at": batch.created_at,
                 "started_at": batch.started_at,
                 "completed_at": batch.completed_at,
