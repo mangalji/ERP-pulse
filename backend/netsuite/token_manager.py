@@ -22,6 +22,8 @@ rest of the repository layer already uses for its own multi-row writes
 (see switch_active_connection, delete, complete_OAuth).
 """
 import logging
+import time
+from django.db import OperationalError
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
@@ -73,10 +75,41 @@ class NetSuiteTokenManager:
         except Exception as exc:
             self.repository.record_sync_failure(connection,error_message=f'Token refresh failed: {exc}')
             raise
-        updated_connection = self.repository.update_tokens(
-            connection,
-            access_token=token_set.access_token,
-            refresh_token=token_set.refresh_token,
-            access_token_expires_at=token_set.access_token_expires_at,
-        )
+        # updated_connection = self.repository.update_tokens(
+        #     connection,
+        #     access_token=token_set.access_token,
+        #     refresh_token=token_set.refresh_token,
+        #     access_token_expires_at=token_set.access_token_expires_at,
+        #     refresh_token_expires_at=token_set.refresh_token_expires_at,
+        # )
+
+        updated_connection = None
+
+        for attempt in range(3):
+            try:
+                updated_connection = self.repository.update_tokens(
+                    connection,
+                    access_token=token_set.access_token,
+                    refresh_token=token_set.refresh_token,
+                    access_token_expires_at=token_set.access_token_expires_at,
+                    refresh_token_expires_at=connection.refresh_token_expires_at,
+                )
+                break
+            
+            except OperationalError as exc:
+                if "database is locked" not in str(exc).lower():
+                    raise
+
+                logger.warning(
+                    "Could not persist refreshed NetSuite token because SQLite is locked. "
+                    "Using the refreshed access token for this request only."
+                )
+                return token_set.access_token
+                
+                # if attempt == 2:
+                #     raise
+                
+                # time.sleep(1.5 * (attempt + 1))
+
+
         return updated_connection.access_token

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Card from '../ui/Card.jsx'
 import Input from '../ui/Input.jsx'
 import Button from '../ui/Button.jsx'
@@ -183,6 +184,7 @@ export default function OcrReviewWorkspace({
   mappings = [],
   onSaveMappings = null,
 }) {
+  const navigate = useNavigate()
   const { toasts, addToast, removeToast } = useToast()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -319,6 +321,42 @@ export default function OcrReviewWorkspace({
       setSaving(false)
     }
   }
+
+  const handleOpenFieldMapping = () => {
+  if (!result?.document_id) {
+    addToast(
+      'Save the OCR result before opening Field Mapping.',
+      'error',
+    )
+    return
+  }
+
+  if (!connectionId) {
+    addToast(
+      'A connected NetSuite account is required for Field Mapping.',
+      'error',
+    )
+    return
+  }
+
+  sessionStorage.setItem(
+    'ocr_field_mapping_context',
+    JSON.stringify({
+      connection_id: connectionId,
+      record_type: 'vendorBill',
+      upload_id: result.upload_id || null,
+      document_id: result.document_id || null,
+      version_id: result.version_id || null,
+      filename: result.filename || null,
+      data: data || {},
+      requested_fields:
+        result.requested_fields || null,
+      source: 'ocr-history',
+    }),
+  )
+
+  navigate('/app/ocr-test/field-mapping')
+}
 
 
   const handlePost = async () => {
@@ -619,6 +657,20 @@ export default function OcrReviewWorkspace({
         >
           Save
         </Button>
+        {result?.document_id && (
+    <Button
+      type="button"
+      intent="secondary"
+      onClick={handleOpenFieldMapping}
+      disabled={
+        saving ||
+        posting ||
+        !connectionId
+      }
+    >
+      Map Fields with NetSuite
+    </Button>
+  )}
       </div>
     </div>
   )

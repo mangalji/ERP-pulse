@@ -1,24 +1,12 @@
 from accounts.models import User
 from netsuite.models import NetSuiteConnection, NetSuiteConnectionAuditLog
 from django.db import transaction
-from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteConnectionAuditLog, NetSuiteReferenceRecord, NetSuiteOCRPosting
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteConnectionAuditLog, NetSuiteReferenceRecord, NetSuiteOCRPosting, NetSuiteUserConnectionPreference
 import logging
 from netsuite.exceptions import NetSuiteConnectionNotFoundException
 
 logger = logging.getLogger(__name__)
 
-def _get_authorized_connection(self, *, connection_id, company):
-    connection = self.repository.get_for_company(
-        connection_id=connection_id,
-        company=company,
-    )
-
-    if connection is None:
-        raise NetSuiteConnectionNotFoundException(
-            "NetSuite connection not found or not accessible."
-        )
-
-    return connection
 
 class NetSuiteConnectionRepository:
     """
@@ -29,60 +17,326 @@ class NetSuiteConnectionRepository:
     NetSuiteConnectionService (services.py). This class only reads from
     and writes to the database.
     """
+    def _get_authorized_connection(self, *, connection_id, company):
+        # connection = self.repository.get_for_company(
+        #     connection_id=connection_id,
+        #     company=company,
+        # )
+        connection = (
+            NetSuiteConnection.objects
+            .filter(
+                id=connection_id,
+                company=company,
+                status="connected",
+                is_active=True,
+            )
+            .first()
+        )
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException(
+                "NetSuite connection not found or not accessible."
+            )
+
+        return connection
 
     def get_by_user(self, user: User) -> NetSuiteConnection | None:
-        return NetSuiteConnection.objects.filter(user=user,is_active=True).first()
+        # return NetSuiteConnection.objects.filter(user=user,is_active=True).first()
+        # return self.get_for_user(user)
+        return (
+            NetSuiteConnection.objects.filter(
+                user=user,
+                is_active=True,
+            ).first()
+        )
 
-    def get_for_user(self, user: User) -> NetSuiteConnection | None:
+    # def get_for_user(self, user: User) -> NetSuiteConnection | None:
+    #     """
+    #     Resolve the NetSuite connection available to this user.
+
+    #     Company Admin:
+    #         Uses the active connection they own.
+
+    #     Employee:
+    #         Uses the active connection assigned through EmployeeConnection.
+    #     """
+        
+    #     from netsuite.models import NetSuiteUserConnectionPreference
+    #     is_company_admin = (
+    #         getattr(user, "is_superuser", False) 
+    #         or user.user_roles.filter(
+    #             role__name__iexact="Company Admin",
+    #         ).exists()
+    #     )
+    #     # Build the user's actually authorized connections first.
+    #     if is_company_admin:
+    #         available = NetSuiteConnection.objects.filter(
+    #                 company_id=user.company_id,
+    #                 status="connected",
+    #                 is_active=True,
+    #             ).order_by("-connected_at")
+    #     else:
+    #         available = (
+    #             NetSuiteConnection.objects.filter(
+    #                 employee_assignments__employee=user,
+    #                 company_id=user.company_id,
+    #                 status="connected",
+    #                 is_active=True,
+    #             )
+    #             .distinct()
+    #             .order_by("-connected_at")
+    #         )
+    #     # No usable connection at all.
+    #     if not available.exists():
+    #         return None
+    #     # Use explicit user preference when it is still valid.
+    #     preference = (
+    #     NetSuiteUserConnectionPreference.objects
+    #     .select_related('connection')
+    #     .filter(user=user)
+    #     .first()
+    #     )
+    #     if preference and preference.connection:
+    #         preferred = available.filter(id=preference.connection_id).first()
+    #         if preferred:
+    #             return preferred
+    #         # Preference points to a connection the user can no longer use.
+    #         # Clear stale preference and fall back safely.
+    #         preference.connection = None
+    #         preference.save(
+    #             update_fields=["connections","updated_at"]
+    #         )
+    #         # Existing user / first-time user fallback.
+    #         current = available.first()
+    #         # Persist the fallback so subsequent requests use an explicit
+    #         # current connection.
+    #         NetSuiteUserConnectionPreference.objects.update_or_create(
+    #             user=user,
+    #             defaults={"connection": current},
+    #         )
+    #         return current
+
+    # def get_for_user(self, user: User) -> NetSuiteConnection | None:
+    #     """
+    #     Return the user's current NetSuite connection.
+
+    #     Company Admin:
+    #         - Can use any connected active connection in their company.
+
+    #     Employee:
+    #         - Can use only connected active connections assigned to them.
+
+    #     Preference:
+    #         - If a valid preference exists, use it.
+    #         - If no preference exists, automatically select the first
+    #           available connection and persist it.
+    #         - If the saved preference becomes invalid, automatically
+    #           fall back to the first available connection.
+    #     """
+
+    #     from netsuite.models import NetSuiteUserConnectionPreference
+
+    #     is_company_admin = (
+    #         getattr(user, "is_superuser", False)
+    #         or user.user_roles.filter(
+    #             role__name__iexact="Company Admin",
+    #         ).exists()
+    #     )
+
+    #     # ---------------------------------------------------------
+    #     # 1. Build connections this user is actually allowed to use
+    #     # ---------------------------------------------------------
+    #     if is_company_admin:
+    #         available = (
+    #             NetSuiteConnection.objects
+    #             .filter(
+    #                 company_id=user.company_id,
+    #                 status="connected",
+    #                 is_active=True,
+    #             )
+    #             .order_by("-connected_at")
+    #         )
+    #     else:
+    #         available = (
+    #             NetSuiteConnection.objects
+    #             .filter(
+    #                 company_id=user.company_id,
+    #                 employee_assignments__employee=user,
+    #                 status="connected",
+    #                 is_active=True,
+    #             )
+    #             .distinct()
+    #             .order_by("-connected_at")
+    #         )
+
+    #     # ---------------------------------------------------------
+    #     # 2. No available connection
+    #     # ---------------------------------------------------------
+    #     if not available.exists():
+    #         return None
+
+    #     # ---------------------------------------------------------
+    #     # 3. Try the user's saved preference
+    #     # ---------------------------------------------------------
+    #     preference = (
+    #         NetSuiteUserConnectionPreference.objects
+    #         .select_related("connection")
+    #         .filter(user=user)
+    #         .first()
+    #     )
+
+    #     if preference and preference.connection_id:
+    #         selected = available.filter(
+    #             id=preference.connection_id
+    #         ).first()
+
+    #         if selected:
+    #             return selected
+
+    #         # Saved preference is stale/invalid.
+    #         preference.connection = None
+    #         preference.save(
+    #             update_fields=[
+    #                 "connection",
+    #                 "updated_at",
+    #             ]
+    #         )
+
+    #     # ---------------------------------------------------------
+    #     # 4. Existing user with no preference:
+    #     #    automatically select first available connection
+    #     # ---------------------------------------------------------
+    #     selected = available.first()
+
+    #     NetSuiteUserConnectionPreference.objects.update_or_create(
+    #         user=user,
+    #         defaults={
+    #             "connection": selected,
+    #         },
+    #     )
+
+    #     return selected
+
+    def get_for_user(self, user:User) -> NetSuiteConnection | None:
+        available = self.list_available_for_user(user)
+
+        if not available.exists():
+            return None
+
+        preference = (
+            NetSuiteUserConnectionPreference.objects
+            .select_related("connection")
+            .filter(user=user)
+            .first()
+        )
+
+        if preference and preference.connection_id:
+            selected = available.filter(
+                id=preference.connection_id
+            ).first()
+
+            if selected:
+                return selected
+
+        selected = available.filter(status="connected").first()
+
+        if selected is None:
+            return None
+
+        NetSuiteUserConnectionPreference.objects.update_or_create(
+            user=user,
+            defaults={"connection": selected},
+        )
+
+        return selected
+
+    def get_authorized_for_user(
+        self,
+        *,
+        user: User,
+        connection_id,
+    ) -> NetSuiteConnection | None:
+
         """
-        Resolve the NetSuite connection available to this user.
+        Return a connection only when the current user is authorized
+        to use it.
 
         Company Admin:
-            Uses the active connection they own.
+            Any active connection belonging to their company.
 
         Employee:
-            Uses the active connection assigned through EmployeeConnection.
+            Only an active connection assigned through EmployeeConnection.
         """
-        try:
-            is_company_admin = (
-                getattr(user, "is_superuser", False)
-                or user.user_roles.filter(
-                    role__name__iexact="Company Admin",
-                ).exists()
+
+        connection = (
+            NetSuiteConnection.objects
+            .filter(
+                id=connection_id,
+                company_id=user.company_id,
+                status="connected",
+                is_active=True,
             )
+            .first()
+        )
 
-            if is_company_admin:
-                return (
-                    NetSuiteConnection.objects.filter(
-                        user=user,
-                        company_id=user.company_id,
-                        is_active=True,
-                        status="connected",
-                    )
-                    .first()
-                )
-
-            assignment = (
-                EmployeeConnection.objects
-                .select_related("connection")
-                .filter(
-                    employee=user,
-                    connection__company_id=user.company_id,
-                    connection__is_active=True,
-                    connection__status="connected",
-                )
-                .order_by("-created_at")
-                .first()
-            )
-
-            return assignment.connection if assignment else None
-
-        except Exception:
-            logger.exception(
-                "Failed to resolve NetSuite connection — user=%s",
-                getattr(user, "id", None),
-            )
+        if connection is None:
             return None
+
+        is_company_admin = (
+            getattr(user, "is_superuser", False)
+            or user.user_roles.filter(
+                role__name__iexact="Company Admin",
+            ).exists()
+        )
+
+        if is_company_admin:
+            return connection
+
+        if EmployeeConnection.objects.filter(
+            employee=user,
+            connection=connection,
+        ).exists():
+            return connection
+
+        return None
+
+    def list_available_for_user(
+        self,
+        user: User,
+    ):
+        is_company_admin = (
+            getattr(user, "is_superuser", False)
+            or user.user_roles.filter(
+                role__name__iexact="Company Admin",
+            ).exists()
+        )
+        connections = NetSuiteConnection.objects.filter(
+            company_id = user.company_id,
+            # status="connected",
+            is_active=True,
+        ).order_by("-connected_at")
+    
+        if is_company_admin:
+            return connections
+            # return NetSuiteConnection.objects.filter(
+            #     company_id=user.company_id,
+            #     status='connected',
+            #     is_active=True,
+            # ).order_by('-connected_at')
+    
+        # return (
+        #     NetSuiteConnection.objects
+        #     .filter(
+        #         employee_assignments__employee=user,
+        #         company_id=user.company_id,
+        #         status='connected',
+        #         is_active=True,
+        #     )
+        #     .distinct()
+        #     .order_by('-connected_at')
+        # )
+        return connections.filter(
+            employee_assignments__employee=user
+        ).distinct()
 
     def update_tokens(
         self,
@@ -100,9 +354,11 @@ class NetSuiteConnectionRepository:
         if refresh_token_expires_at is not None:
             connection.refresh_token_expires_at=refresh_token_expires_at
         connection.status = "connected"
+        connection.consecutive_failures = 0
+        connection.last_error = None
         connection.save(
             update_fields=[
-                'access_token', 'refresh_token', 'access_token_expires_at','refresh_token_expires_at','status', 'updated_at',
+                'access_token', 'refresh_token', 'access_token_expires_at','refresh_token_expires_at','status', "consecutive_failures", "last_error", 'updated_at',
             ]
         )
         return connection
@@ -114,12 +370,13 @@ class NetSuiteConnectionRepository:
         return connection
 
     def list_by_user(self,user:User):
-        return NetSuiteConnection.objects.filter(user=user).order_by("-is_active","-connected_at")
+        # return NetSuiteConnection.objects.filter(user=user).order_by("-is_active","-connected_at")
+        return self.list_available_for_user(user)
     
     def get_by_id(self,user:User,connection_id)-> NetSuiteConnection | None:
         return NetSuiteConnection.objects.filter(
-            user=user,
             id=connection_id,
+            company_id=user.company_id,
         ).first()
 
     def get_by_id_any(self, connection_id) -> NetSuiteConnection | None:
@@ -135,7 +392,7 @@ class NetSuiteConnectionRepository:
         )
 
 
-    def exists_for_account(self, user: User, netsuite_account_id: str) -> bool:
+    def exists_for_account(self, company_id, netsuite_account_id: str) -> bool:
         """
         Used by NetSuiteConnectionService.create_connection() to give a
         clean validation error instead of letting the (user,
@@ -144,7 +401,7 @@ class NetSuiteConnectionRepository:
         500.
         """
         return NetSuiteConnection.objects.filter(
-            user=user,
+            company_id=company_id,
             netsuite_account_id=netsuite_account_id,
         ).exists()
     
@@ -163,17 +420,17 @@ class NetSuiteConnectionRepository:
         """
         return NetSuiteConnection.objects.select_for_update().get(id=connection_id)
 
-    def switch_active_connection(self, user: User, connection: NetSuiteConnection):
-        with transaction.atomic():
-            NetSuiteConnection.objects.filter(
-                user=user,
-                is_active=True,
-            ).update(is_active=False)
+    # def switch_active_connection(self, user: User, connection: NetSuiteConnection):
+    #     with transaction.atomic():
+    #         NetSuiteConnection.objects.filter(
+    #             user=user,
+    #             is_active=True,
+    #         ).update(is_active=False)
 
-            connection.is_active = True
-            connection.save(update_fields=["is_active", "updated_at"])
+    #         connection.is_active = True
+    #         connection.save(update_fields=["is_active", "updated_at"])
 
-            return connection
+    #         return connection
     
     def create(
     self,
@@ -198,11 +455,11 @@ class NetSuiteConnectionRepository:
         is_active=False,
     )
 
-    def get_existing_for_account( self, *, user: User, netsuite_account_id: str) -> NetSuiteConnection | None:
+    def get_existing_for_account( self, *, company_id, netsuite_account_id: str) -> NetSuiteConnection | None:
         return (
             NetSuiteConnection.objects
             .filter(
-                user=user,
+                company_id=company_id,
                 netsuite_account_id=netsuite_account_id,
             )
             .first()
@@ -250,25 +507,26 @@ class NetSuiteConnectionRepository:
 
     def delete(self, connection: NetSuiteConnection):
         with transaction.atomic():
-
-            user = connection.user
-            was_active = connection.is_active
-
             connection.delete()
 
-            if was_active:
-                next_connection = (
-                    NetSuiteConnection.objects.filter(
-                        user=user,
-                        status="connected",
-                    )
-                    .order_by("-connected_at")
-                    .first()
-                )
+            # user = connection.user
+            # was_active = connection.is_active
 
-                if next_connection:
-                    next_connection.is_active = True
-                    next_connection.save(update_fields=["is_active", "updated_at"])
+            # connection.delete()
+
+            # if was_active:
+            #     next_connection = (
+            #         NetSuiteConnection.objects.filter(
+            #             user=user,
+            #             status="connected",
+            #         )
+            #         .order_by("-connected_at")
+            #         .first()
+            #     )
+
+            #     if next_connection:
+            #         next_connection.is_active = True
+            #         next_connection.save(update_fields=["is_active", "updated_at"])
 
     def record_sync_success(self, connection: NetSuiteConnection) -> NetSuiteConnection:
         """Called after a successful NetSuite data fetch or token refresh."""
@@ -300,6 +558,25 @@ class NetSuiteConnectionRepository:
         connection.save(update_fields=update_fields)
         return connection
 
+    def record_connection_success(self,connection: NetSuiteConnection) -> NetSuiteConnection:
+        """
+        Mark a connection healthy after a successful live NetSuite operation.
+        """
+        connection.status = "connected"
+        connection.consecutive_failures = 0
+        connection.last_error = None
+
+        connection.save(
+            update_fields=[
+                "status",
+                "consecutive_failures",
+                "last_error",
+                "updated_at",
+            ]
+        )
+
+        return connection
+
     def touch_last_used(self, connection: NetSuiteConnection) -> NetSuiteConnection:
         """
         Called after any successful live NetSuite API call through this
@@ -320,10 +597,10 @@ class NetSuiteConnectionRepository:
                        access_token_expires_at,
                        refresh_token_expires_at=None):
         with transaction.atomic():
-            NetSuiteConnection.objects.filter(
-                user=connection.user,
-                is_active=True,
-            ).exclude(id=connection.id).update(is_active=False)
+            # NetSuiteConnection.objects.filter(
+            #     user=connection.user,
+            #     is_active=True,
+            # ).exclude(id=connection.id).update(is_active=False)
             connection.access_token=access_token
             connection.refresh_token=refresh_token
             connection.access_token_expires_at = access_token_expires_at

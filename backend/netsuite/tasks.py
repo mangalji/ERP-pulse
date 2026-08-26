@@ -149,6 +149,7 @@ def _run_netsuite_batch(
             if action == "validate":
                 service_result = NetSuiteValidationService().validate_document(
                     document_id=document_id,
+                    connection_id=connection_id,
                     user=user,
                 )
                 result.update(
@@ -183,7 +184,8 @@ def _run_netsuite_batch(
 
         except Exception as exc:
             logger.exception(
-                "NetSuite batch %s item failed — action=%s document=%s user=%s",
+                "NetSuite batch item failed — action=%s document=%s user=%s",
+                # batch_id,
                 action,
                 document_id,
                 user_id,
@@ -234,7 +236,7 @@ def _run_netsuite_batch(
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=15)
-def batch_validate_documents_task(self, document_ids, user_id):
+def batch_validate_documents_task(self, document_ids, user_id, connection_id):
     """Validate up to 100 OCR documents without depending on the browser."""
     try:
         normalized_ids = [str(value) for value in document_ids]
@@ -243,6 +245,7 @@ def batch_validate_documents_task(self, document_ids, user_id):
             action="validate",
             document_ids=normalized_ids,
             user_id=str(user_id),
+            connection_id=str(connection_id) if connection_id else None,
         )
     except Exception as exc:
         logger.exception(

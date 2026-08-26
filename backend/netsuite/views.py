@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 import logging
+from netsuite.repositories import NetSuiteConnectionRepository
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
 from common.throttles import NetSuiteSyncThrottle
@@ -114,11 +115,6 @@ class NetSuiteCallbackView(APIView):
         serializer = NetSuiteCallbackSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
-
-        # if params.get('error'):
-        #     raise NetSuiteAuthorizationDeniedException(
-        #         'NetSuite authorization was not granted.'
-        #     )
 
         if params.get("error"):
             NetSuiteConnectionService().mark_oauth_failed(
@@ -708,6 +704,7 @@ class NetSuiteAssignEmployeeView(APIView):
 
         try:
             assignment = NetSuiteConnectionService().assign_employee(
+                user=request.user,
                 connection_id=connection_id,
                 employee_id=serializer.validated_data['employee_id'],
             )
@@ -740,6 +737,7 @@ class NetSuiteRemoveEmployeeView(APIView):
 
         try:
             NetSuiteConnectionService().remove_employee(
+                user=request.user,
                 connection_id=connection_id,
                 employee_id=employee_id,
             )
@@ -774,7 +772,8 @@ class NetSuiteMyConnectionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        connection = NetSuiteConnectionService().get_employee_connection(employee_id=request.user.id)
+        # connection = NetSuiteConnectionService().get_employee_connection(employee_id=request.user.id)
+        connection = NetSuiteConnectionRepository().get_for_user(request.user)
         if not connection:
             return Response({'detail': 'No NetSuite connection assigned.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -782,6 +781,41 @@ class NetSuiteMyConnectionView(APIView):
             message='Your NetSuite connection fetched successfully.',
             data=NetSuiteConnectionListSerializer(connection).data,
         )
+
+class NetSuiteMyConnectionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        service = NetSuiteConnectionService()
+
+        connections = service.list_available_for_user(
+            request.user,
+        )
+
+        current = service.get_current_connection(
+            user=request.user,
+        )
+
+        current_id = (
+            str(current.id)
+            if current
+            else None
+        )
+
+        data = {
+            "connections": NetSuiteConnectionListSerializer(
+                connections,
+                many=True,
+            ).data,
+            "current_connection_id": current_id,
+        }
+
+        return success_response(
+            message="Available NetSuite connections fetched successfully.",
+            data=data,
+        )
+
+
 
 class NetSuitePostOCRVendorBillView(APIView):
     """Post a saved/reviewed OCR document as a NetSuite Vendor Bill."""
@@ -837,6 +871,9 @@ class NetSuiteFieldCatalogueView(APIView):
     def get(self, request):
         connection_id = request.query_params.get('connection_id')
         record_type = request.query_params.get('record_type', 'vendorBill')
+        force_refresh = str(
+            request.query_params.get('force_refresh', 'false')
+        ).strip().lower() in {'1', 'true', 'yes', 'on'}
 
         if not connection_id:
             return Response(
@@ -856,10 +893,15 @@ class NetSuiteFieldCatalogueView(APIView):
                 company=company,
                 connection_id=connection_id,
                 record_type=record_type,
+                force_refresh=force_refresh,
             )
             serializer = NetSuiteFieldCatalogueSerializer(catalogue)
             return success_response(
-                message="NetSuite Vendor Bill field catalogue fetched successfully.",
+                message=(
+                    'NetSuite Vendor Bill field catalogue refreshed successfully.'
+                    if force_refresh and catalogue.get('source') == 'netsuite'
+                    else 'NetSuite field catalogue loaded successfully.'
+                ),
                 data=serializer.data,
             )
         except NetSuiteConnectionNotFoundException as exc:
@@ -872,9 +914,18 @@ class NetSuiteFieldCatalogueView(APIView):
                 "Failed to load NetSuite field catalogue — user=%s",
                 getattr(request.user, "id", None),
             )
-            return Response(
-                {"detail": "Failed to load NetSuite field catalogue."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return success_response(
+                message='NetSuite field catalogue is temporarily unavailable.',
+                data={
+                    'record_type': record_type,
+                    'fields': {'body': [], 'column': []},
+                    'custom_fields': [],
+                    'fetched_at': None,
+                    'source': 'error',
+                    'stale': False,
+                    'available': False,
+                    'error': str(exc)[:500],
+                },
             )
 
 
@@ -927,9 +978,9 @@ class NetSuiteSuggestMappingView(APIView):
                 "Failed to generate mapping suggestions — user=%s",
                 getattr(request.user, "id", None),
             )
-            return Response(
-                {"detail": "Failed to generate mapping suggestions."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return success_response(
+                message='Field mapping suggestions are temporarily unavailable.',
+                data=[],
             )
 
 
@@ -983,9 +1034,9 @@ class NetSuiteFieldMappingListCreateView(APIView):
                 "Failed to load field mappings — user=%s",
                 getattr(request.user, "id", None),
             )
-            return Response(
-                {"detail": "Failed to load field mappings."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return success_response(
+                message='No saved field mappings are currently available.',
+                data=[],
             )
 
     def post(self, request):
@@ -1039,19 +1090,39 @@ class NetSuiteFieldMappingListCreateView(APIView):
 class NetSuiteValidateDocumentView(APIView):
     """Validate an OCR document against NetSuite reference data."""
     permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
 
     def post(self, request):
         serializer = ValidateDocumentRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         document_id = serializer.validated_data['document_id']
+        connection_id = serializer.validated_data['connection_id']
 
         try:
             service = NetSuiteValidationService()
             result = service.validate_document(
                 document_id=document_id,
+                connection_id=connection_id,
                 user=request.user,
             )
-            return success_response(data=result)
+            return success_response(
+                message='NetSuite document validation completed.',
+                data=result,
+            )
+        except NetSuiteRecordFetchException as exc:
+            logger.exception(
+                "NetSuite provider validation failed — document=%s connection=%s user=%s",
+                document_id,
+                connection_id,
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {
+                    "detail": str(exc),
+                    "code": "NETSUITE_VALIDATION_UNAVAILABLE",
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         except ValueError as exc:
             return Response(
                 {"detail": str(exc)},
@@ -1188,10 +1259,19 @@ class NetSuiteBatchValidateView(NetSuiteBatchBaseView):
     def post(self, request):
         document_ids = self._parse_document_ids(request)
         document_ids = self._visible_document_ids(request, document_ids)
+        connection_id = request.data.get("connection_id")
 
+        if not connection_id:
+            return Response(
+                {
+                    "detail": "connection_id is required for batch validation."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         task = batch_validate_documents_task.delay(
             document_ids,
             str(request.user.id),
+            str(connection_id)
         )
         _store_batch_job_owner(
             task.id,
@@ -1284,4 +1364,6 @@ class NetSuiteBatchJobStatusView(APIView):
         elif task_result.failed():
             data["error"] = str(task_result.result)[:2000]
 
-        return success_response(data=data)
+        return success_response(
+            message="Batch job status retrieved successfully.",
+            data=data)

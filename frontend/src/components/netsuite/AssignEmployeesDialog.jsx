@@ -5,19 +5,44 @@ import Input from '../ui/Input.jsx'
 import Toast, { useToast } from '../ui/Toast.jsx'
 import { netsuiteApi } from '../../services/netsuite.js'
 
-export default function AssignEmployeesDialog({ connectionId, employees, onClose, onAssigned }) {
+export default function AssignEmployeesDialog({ connectionId, employees=[], assignedEmployees=[], onClose, onAssigned }) {
   const { toasts, addToast, removeToast } = useToast()
   const [selected, setSelected] = useState([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
 
+  function getAssignedEmployeeId(item) {
+  return (
+    item?.employee_id ||
+    item?.employee?.id ||
+    item?.id
+  )
+}
+
+const assignedIds = new Set(
+  assignedEmployees
+    .map(getAssignedEmployeeId)
+    .filter(Boolean),
+)
+
   const toggle = (empId) => {
+    if (assignedIds.has(empId)){
+      return
+    }
     setSelected((prev) =>
       prev.includes(empId) ? prev.filter((id) => id !== empId) : [...prev, empId]
     )
   }
 
   const handleAssign = async () => {
+
+    if (selected.length===0){
+      addToast(
+        'Select at least one employee',
+      'error',
+      )
+      return
+    }
     setLoading(true)
     try {
       await Promise.all(selected.map((empId) => netsuiteApi.assignEmployee(connectionId, empId)))

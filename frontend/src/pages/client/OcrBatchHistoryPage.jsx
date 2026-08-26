@@ -246,16 +246,20 @@ export default function OcrBatchHistoryPage() {
                   </p>
 
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
-                    {file.status}
+                    {/* {file.status} */}
+                    {String(file.status || '').toUpperCase()}
                   </p>
                 </div>
 
                 <Button
                   type="button"
                   intent="secondary"
+                  // 
                   disabled={
-                    file.status !== 'COMPLETED' ||
-                    (!file.document_id && !file.data)
+                    !['COMPLETED', 'FAILED'].includes(
+                      String(file.status || '').toUpperCase(),
+                    ) ||
+                    (!file.document_id && !file.data && !file.upload_id)
                   }
                   onClick={() => {
                     if (file.document_id) {
@@ -265,11 +269,12 @@ export default function OcrBatchHistoryPage() {
                       return
                     }
 
-                    if (file.data) {
+                    if (file.data || file.upload_id) {
                       sessionStorage.setItem(
                         'ocr_test_result',
                         JSON.stringify({
-                          status: 'COMPLETED',
+                          // status: 
+                          status: String(file.status || 'COMPLETED').toUpperCase(),
                           batch_id: batch.batch_id,
                           files: [file],
                         }),

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import apiClient from '../../services/apiClient.js'
+import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -20,6 +21,7 @@ export default function OcrTestResultPage() {
   const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
   const [previewError, setPreviewError] = useState('')
   const [customFieldTypes, setCustomFieldTypes] = useState({})
+  const [connection, setConnection] = useState(null)
 
   useEffect(() => {
     const loadResult = async () => {
@@ -110,6 +112,35 @@ export default function OcrTestResultPage() {
 
     loadResult()
   }, [documentId, navigate])
+
+  useEffect(() => {
+  let cancelled = false
+
+  netsuiteApi
+    .getMyConnection()
+    .then((payload) => {
+      const connectionData =
+        payload?.data ?? payload ?? null
+
+      if (!cancelled) {
+        setConnection(connectionData)
+      }
+    })
+    .catch((err) => {
+      console.warn(
+        'No NetSuite connection available for OCR history:',
+        err,
+      )
+
+      if (!cancelled) {
+        setConnection(null)
+      }
+    })
+
+  return () => {
+    cancelled = true
+  }
+}, [])
 
   useEffect(() => {
     let cancelled = false
@@ -256,6 +287,7 @@ export default function OcrTestResultPage() {
                   result={result}
                   onSaved={handleSaved}
                   customFieldTypes={customFieldTypes}
+                  connectionId={connection?.id || null}
                 />
               </div>
             </Card>

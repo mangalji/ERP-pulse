@@ -218,6 +218,36 @@ class EmployeeConnection(models.Model):
     def __str__(self):
         return f'{self.employee.email} → {self.connection.client_name or self.connection.netsuite_account_id}'
 
+
+class NetSuiteUserConnectionPreference(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='netsuite_connection_preference',
+    )
+
+    connection = models.ForeignKey(
+        NetSuiteConnection,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='current_for_users',
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'netsuite_user_connection_preference'
+
+    def __str__(self):
+        account = (
+            self.connection.client_name
+            if self.connection
+            else 'No connection'
+        )
+        return f'{self.user.email} → {account}'
+
+
 class NetSuiteReferenceRecord(models.Model):
     """Cached NetSuite master/reference record for one connected account."""
 
@@ -258,6 +288,48 @@ class NetSuiteReferenceRecord(models.Model):
 
     def __str__(self):
         return f"{self.record_type}:{self.internal_id} — {self.name or self.external_id or ''}"
+
+
+class NetSuiteFieldCatalogue(models.Model):
+    """
+    Cached Vendor Bill field metadata for one connected NetSuite account.
+
+    Metadata is connection-scoped because different NetSuite accounts can have
+    different customizations, enabled features and custom fields.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        NetSuiteConnection,
+        on_delete=models.CASCADE,
+        related_name="field_catalogues",
+    )
+    record_type = models.CharField(max_length=80, default="vendorBill")
+    body_fields = models.JSONField(default=list, blank=True)
+    line_fields = models.JSONField(default=list, blank=True)
+    custom_fields = models.JSONField(default=list, blank=True)
+    raw_metadata = models.JSONField(default=dict, blank=True)
+    metadata_hash = models.CharField(max_length=64, blank=True, default="")
+    fetched_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "netsuite_field_catalogue"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["connection", "record_type"],
+                name="unique_ns_field_catalogue_connection_record",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["connection", "record_type"],
+                name="ns_field_cat_conn_type_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.connection_id}:{self.record_type}"
+
 
 
 class NetSuiteOCRPosting(models.Model):

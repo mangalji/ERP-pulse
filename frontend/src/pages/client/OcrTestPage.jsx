@@ -308,6 +308,7 @@ export default function OcrTestPage() {
         '/netsuite/ocr/batch/validate/',
         {
           document_ids: ids,
+          connection_id: connection?.id || null,
         },
       )
 
@@ -886,25 +887,26 @@ export default function OcrTestPage() {
     let cancelled = false
     let objectUrl = null
 
-    const previewEndpoint =
-      activeResult?.preview_url ||
+    const previewEndpoint = 
+      activeResult?.preview_url || 
       (activeResult?.upload_id
         ? `/ocr/test-extract/uploads/${activeResult.upload_id}/preview/`
-        : null)
+        : null
+      )
 
-    const loadRemotePreview = async () => {
-      setPreviewError('')
-      setRemotePreviewUrl(null)
+      const loadRemotePreview = async () => {
+  setPreviewError('')
+  setRemotePreviewUrl(null)
 
-      if (!previewEndpoint) {
-        return
-      }
+  if (!previewEndpoint) {
+    return
+  }
 
-      try {
-        const response = await apiClient.get(
-          previewEndpoint,
-          { responseType: 'blob' },
-        )
+  try {
+    const response = await apiClient.get(
+      previewEndpoint,
+      { responseType: 'blob' },
+    )
 
         if (cancelled) {
           return
@@ -1422,7 +1424,7 @@ export default function OcrTestPage() {
                 <span className="text-xs text-amber-700">Save selected OCR results before posting.</span>
               )}
 
-              {selectedCompletedItems.length > 0 && (
+              {selectedPostIds.length > 0 && (
                 <Button
                   type="button"
                   intent="primary"
@@ -1430,7 +1432,7 @@ export default function OcrTestPage() {
                   onClick={handlePostSelected}
                   disabled={processing}
                 >
-                  {`Post (${selectedCompletedItems.length})`}
+                  {`Post (${selectedPostIds.length})`}
                 </Button>
               )}
 

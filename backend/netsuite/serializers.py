@@ -39,14 +39,30 @@ class NetSuiteConnectionCreateSerializer(serializers.Serializer):
         min_length=1, max_length=20, validators=[netsuite_account_id_validator],
     )
 
+
+class EmployeeConnectionSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.get_full_name', read_only=True)
+    employee_email = serializers.CharField(source='employee.email', read_only=True)
+
+    class Meta:
+        model = EmployeeConnection
+        fields = ('id', 'employee', 'employee_name', 'employee_email', 'connection', 'created_at')
+
+
 class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
     token_expires_in_seconds = serializers.SerializerMethodField()
     health = serializers.ReadOnlyField()
     company_name = serializers.CharField(source='company.name', read_only=True)
+    employee_assignments = EmployeeConnectionSerializer(
+        many=True,
+        read_only=True,
+    )
 
     class Meta:
         model = NetSuiteConnection
         fields = (
+ 
+ 
             "id",
             "client_name",
             "environment",
@@ -62,6 +78,7 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
             "token_expires_in_seconds",
             "company",
             "company_name",
+            "employee_assignments",
         )
 
     def get_token_expires_in_seconds(self, obj):
@@ -78,13 +95,6 @@ class NetSuiteConnectionSwitchSerializer(serializers.Serializer):
     pass
 
 
-class EmployeeConnectionSerializer(serializers.ModelSerializer):
-    employee_name = serializers.CharField(source='employee.get_full_name', read_only=True)
-    employee_email = serializers.CharField(source='employee.email', read_only=True)
-
-    class Meta:
-        model = EmployeeConnection
-        fields = ('id', 'employee', 'employee_name', 'employee_email', 'connection', 'created_at')
 
 
 class AssignEmployeeSerializer(serializers.Serializer):
@@ -178,19 +188,13 @@ class NetSuiteCustomFieldSerializer(serializers.ModelSerializer):
 
 class NetSuiteFieldCatalogueSerializer(serializers.Serializer):
     record_type = serializers.CharField()
-    # body_fields = serializers.ListField(
-    #     child=serializers.DictField(),
-    #     allow_empty=True,
-    # )
-    # line_fields = serializers.ListField(
-    #     child=serializers.DictField(),
-    #     allow_empty=True,
-    # )
     fields = serializers.DictField()
-    custom_fields = serializers.ListField(
-        child=serializers.DictField(),
-        allow_empty=True,
-    )
+    custom_fields = serializers.ListField(required=False, default=list)
+    fetched_at = serializers.CharField(required=False, allow_null=True, default=None)
+    source = serializers.CharField(required=False, default='database')
+    stale = serializers.BooleanField(required=False, default=False)
+    available = serializers.BooleanField(required=False, default=True)
+    error = serializers.CharField(required=False, allow_null=True, default=None)
 
 
 class MappingSourceFieldSerializer(serializers.Serializer):
@@ -198,10 +202,7 @@ class MappingSourceFieldSerializer(serializers.Serializer):
     field_key = serializers.CharField(required=False, allow_blank=False, max_length=150)
     label = serializers.CharField(required=False, allow_blank=True, max_length=255)
     field_label = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    scope = serializers.ChoiceField(
-        choices=('header', 'line'),
-        default='header',
-    )
+    scope = serializers.ChoiceField(choices=('header', 'line'), default='header')
     datatype = serializers.ChoiceField(
         choices=('text', 'number', 'date', 'boolean', 'currency'),
         default='text',
@@ -213,15 +214,12 @@ class MappingSourceFieldSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {'key': 'Either key or field_key is required.'}
             )
-
         label = attrs.get('label')
         if label is None or not label.strip():
             label = attrs.get('field_label') or key
-
         attrs['key'] = key
         attrs['label'] = label.strip()
         return attrs
-
 
 class MappingSuggestionRequestSerializer(serializers.Serializer):
     connection_id = serializers.UUIDField()
@@ -238,20 +236,12 @@ class MappingSuggestionRequestSerializer(serializers.Serializer):
 class MappingSuggestionSerializer(serializers.Serializer):
     source_field_key = serializers.CharField()
     source_field_label = serializers.CharField()
-    source_scope = serializers.ChoiceField(
-        choices=('header', 'line'),
-    )
+    source_scope = serializers.CharField()
     source_datatype = serializers.CharField()
-    status = serializers.ChoiceField(
-        choices=[c[0] for c in MappingStatus.choices],
-    )
-    suggested_target = serializers.DictField(
-        required=False,
-        allow_null=True,
-    )
-    candidates = serializers.ListField(
-        child=serializers.DictField(),
-    )
+    status = serializers.ChoiceField(choices=[c[0] for c in MappingStatus.choices])
+    suggested_target = serializers.DictField(required=False, allow_null=True)
+    candidates = serializers.ListField()
+
 
 
 class MappingSaveItemSerializer(serializers.Serializer):
@@ -295,33 +285,22 @@ class MappingSaveItemSerializer(serializers.Serializer):
 
 
 class SaveMappingRequestSerializer(serializers.Serializer):
-    connection_id = serializers.UUIDField()
-    record_type = serializers.CharField(
-        max_length=64,
-        default='vendorBill',
-    )
-    mappings = MappingSaveItemSerializer(
-        many=True,
+    record_type = serializers.CharField(default='vendorBill')
+    mappings = serializers.ListField(
+        child=serializers.DictField(),
         allow_empty=False,
     )
 
 
 class ValidateDocumentRequestSerializer(serializers.Serializer):
     document_id = serializers.UUIDField()
+    connection_id = serializers.UUIDField()
 
 
 class CreateCustomFieldRequestSerializer(serializers.Serializer):
-    connection_id = serializers.UUIDField()
-    record_type = serializers.CharField(
-        max_length=64,
-        default='vendorBill',
-    )
-    scope = serializers.ChoiceField(
-        choices=[c[0] for c in NetSuiteCustomField.SCOPE_CHOICES],
-    )
+    record_type = serializers.CharField(default='vendorBill')
+    scope = serializers.ChoiceField(choices=[c[0] for c in NetSuiteCustomField.SCOPE_CHOICES])
     field_label = serializers.CharField(max_length=255)
-    datatype = serializers.ChoiceField(
-        choices=[c[0] for c in NetSuiteCustomField.DATATYPE_CHOICES],
-    )
+    datatype = serializers.ChoiceField(choices=[c[0] for c in NetSuiteCustomField.DATATYPE_CHOICES])
     source_field_key = serializers.CharField(max_length=100)
     source_field_label = serializers.CharField(max_length=255)

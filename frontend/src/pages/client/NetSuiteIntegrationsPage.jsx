@@ -14,6 +14,7 @@ import { clientApi } from '../../services/client.js'
 export default function NetSuiteIntegrationsPage() {
   const { toasts, addToast, removeToast } = useToast()
   const [connections, setConnections] = useState([])
+  const [currentConnectionId, setCurrentConnectionId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [showForm, setShowForm] = useState(false)
@@ -28,12 +29,23 @@ export default function NetSuiteIntegrationsPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [connData, empData] = await Promise.all([
+      const [connData, empData, currentData] = await Promise.all([
         netsuiteApi.getCompanyConnections(),
         clientApi.listEmployees({ limit: 100 }),
+        netsuiteApi.getMyConnection().catch(() => null),
       ])
-      setConnections(connData || [])
+      const list = Array.isArray(connData)
+        ? connData
+        : (connData?.connections || connData?.results || [])
+
+      setConnections(list)
       setCompanyEmployees(empData?.results ?? empData ?? [])
+      setCurrentConnectionId(
+        currentData?.id ||
+        currentData?.connection_id ||
+        currentData?.connection?.id ||
+        null,
+      )
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to load connections', 'error')
     } finally {
@@ -60,6 +72,32 @@ export default function NetSuiteIntegrationsPage() {
       setSaving(false)
     }
   }
+
+  const handleUse = async (id) => {
+  if (!id || id === currentConnectionId) {
+    return
+  }
+
+  try {
+    await netsuiteApi.switchConnection(id)
+
+    setCurrentConnectionId(id)
+
+    addToast(
+      'NetSuite connection switched successfully',
+      'success',
+    )
+
+    await loadData()
+  } catch (err) {
+    addToast(
+      err.payload?.message ||
+        err.message ||
+        'Failed to switch NetSuite connection',
+      'error',
+    )
+  }
+}
 
   const handleTest = async (id) => {
     try {
@@ -95,6 +133,34 @@ export default function NetSuiteIntegrationsPage() {
       addToast(err.payload?.message || err.message || 'Failed to delete connection', 'error')
     }
   }
+
+  const handleRemoveEmployee = async (
+  connectionId,
+  employeeId,
+) => {
+  try {
+    await netsuiteApi.removeEmployee(
+      connectionId,
+      employeeId,
+    )
+
+    addToast(
+      'Employee removed from this NetSuite account',
+      'success',
+    )
+
+    await loadData()
+  } catch (err) {
+    addToast(
+      err.payload?.message ||
+        err.message ||
+        'Failed to remove employee',
+      'error',
+    )
+
+    throw err
+  }
+}
 
   if (loading) {
     return (
@@ -135,8 +201,11 @@ export default function NetSuiteIntegrationsPage() {
               <ConnectionCard
                 key={conn.id}
                 connection={conn}
+                isCurrent={conn.id === currentConnectionId}
+                onUse={handleUse}
                 onTest={handleTest}
                 onAssign={handleAssign}
+                onRemoveEmployee={handleRemoveEmployee}
                 onDelete={handleDelete}
                 onEdit={(c) => { setEditingId(c.id); setShowForm(true); }}
                 employees={conn.employee_assignments || []}
@@ -149,6 +218,12 @@ export default function NetSuiteIntegrationsPage() {
           <AssignEmployeesDialog
             connectionId={assigningId}
             employees={companyEmployees}
+            assignedEmployees={
+              connections.find(
+                (connection) =>
+                  connection.id === assigningId
+              )?.employee_assignments || []
+            }
             onClose={() => setAssigningId(null)}
             onAssigned={loadData}
           />

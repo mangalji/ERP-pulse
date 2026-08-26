@@ -34,6 +34,7 @@ from netsuite.views import (
     NetSuiteBatchValidateView,
     NetSuiteBatchPostView,
     NetSuiteBatchJobStatusView,
+    NetSuiteMyConnectionsView,
 )
 
 urlpatterns = [
@@ -69,4 +70,5 @@ urlpatterns = [
     path("ocr/batch/validate/", NetSuiteBatchValidateView.as_view(), name="netsuite_ocr_batch_validate"),
     path("ocr/batch/post/", NetSuiteBatchPostView.as_view(), name="netsuite_ocr_batch_post"),
     path("ocr/batch/jobs/<uuid:job_id>/", NetSuiteBatchJobStatusView.as_view(), name="netsuite_ocr_batch_job_status"),
+    path("my/connections/",NetSuiteMyConnectionsView.as_view(), name="netsuite-my-connections"),
 ]

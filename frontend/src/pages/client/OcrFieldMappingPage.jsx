@@ -263,6 +263,11 @@ export default function OcrFieldMappingPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [mapAttempt, setMapAttempt] = useState(0)
+  const [refreshingFields, setRefreshingFields] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [validationResult, setValidationResult] = useState(null)
+  const [posting, setPosting] = useState(false)
+  const [postingResult, setPostingResult] = useState(null)
 
   useEffect(() => {
     try {
@@ -287,6 +292,47 @@ export default function OcrFieldMappingPage() {
     () => getApplicationFields(context),
     [context],
   )
+  const documentId = useMemo(() => {
+  if (context?.document_id) {
+    return context.document_id
+  }
+
+  if (context?.document?.id) {
+    return context.document.id
+  }
+
+  try {
+    const raw = sessionStorage.getItem(
+      'ocr_test_result',
+    )
+
+    if (!raw) {
+      return null
+    }
+
+    const payload = JSON.parse(raw)
+
+    const matchingFile = Array.isArray(
+      payload?.files,
+    )
+      ? payload.files.find(
+          (file) =>
+            (
+              context?.upload_id &&
+              file?.upload_id === context.upload_id
+            ) ||
+            (
+              context?.filename &&
+              file?.filename === context.filename
+            ),
+        )
+      : null
+
+    return matchingFile?.document_id || null
+  } catch {
+    return null
+  }
+}, [context])
 
   const catalogueOptionsByScope = useMemo(() => {
     const body = catalogue.filter(
@@ -301,28 +347,49 @@ export default function OcrFieldMappingPage() {
     return { body, line }
   }, [catalogue])
 
-  const loadCatalogueAndSavedMappings = useCallback(async () => {
+  const loadCatalogueAndSavedMappings = useCallback(
+  async ({
+    forceRefresh = false,
+    runAiMapping = false,
+  } = {}) => {
     if (!context?.connection_id) {
-      setError(
-        'No NetSuite connection is available for this OCR result.',
-      )
-      return
+      const message = 'No NetSuite connection is available for this OCR result.'
+
+      setError(message)
+      throw new Error(message)
     }
 
     try {
-      setCatalogueLoading(true)
+      setCatalogueLoading(!forceRefresh)
+      setRefreshingFields(forceRefresh)
       setError('')
-
+      setNotice('')
+      
+      const requestTimeout = new Promise((_, reject) => {
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                'Timed out while loading NetSuite field mapping data.',
+              ),
+            ),
+          30000,
+        )
+      })
       const [catalogueResponse, savedResponse] =
-        await Promise.all([
+        await Promise.race([ 
+        Promise.all([
           netsuiteApi.getFieldCatalogue(
             context.connection_id,
             'vendorBill',
+            forceRefresh,
           ),
           netsuiteApi.listFieldMappings(
             context.connection_id,
             'vendorBill',
           ),
+          ]),
+          requestTimeout,
         ])
 
       const actualFields = normalizeCatalogue(catalogueResponse)
@@ -411,10 +478,96 @@ export default function OcrFieldMappingPage() {
         })),
       )
       throw err
-    } finally {
-      setCatalogueLoading(false)
     }
-  }, [context, applicationFields])
+    if (
+  runAiMapping &&
+  actualFields.length > 0 &&
+  applicationFields.length > 0
+) {
+  try {
+    const aiResponse =
+      await netsuiteApi.suggestFieldMappings(
+        context.connection_id,
+        'vendorBill',
+        applicationFields.map((field) => ({
+          key: field.key,
+          label: field.label,
+          scope: field.scope,
+          datatype: field.type,
+        })),
+      )
+
+    const aiPayload =
+      aiResponse?.data ??
+      aiResponse ??
+      {}
+
+    const aiMappings =
+      aiPayload?.mappings ??
+      aiPayload?.results ??
+      []
+
+    if (Array.isArray(aiMappings) && aiMappings.length) {
+      setMappings((current) =>
+        current.map((item) => {
+          const suggestion = aiMappings.find(
+            (mapping) =>
+              mapping.source_field_key ===
+                item.source_field_key ||
+              mapping.source_field ===
+                item.source_field_key,
+          )
+
+          if (!suggestion) {
+            return item
+          }
+          
+          const suggestedTarget =
+            suggestion.suggested_target ||
+            suggestion.target ||
+            null
+
+          const targetId =
+            suggestion.target_field_id ||
+            suggestion.target_field ||
+            suggestedTarget?.field_id ||
+            suggestedTarget?.id
+
+          const target = actualFields.find(
+            (field) =>
+              field.id === String(targetId),
+          )
+
+          return {
+            ...item,
+            target_field_id: target?.id || null,
+            target_field_label:
+              target?.label ||
+              suggestion.target_field_label ||
+              suggestedTarget?.label ||
+              null,
+            status:
+              suggestion.status ||
+              (target ? 'MAPPED' : 'UNRESOLVED'),
+            confidence:
+              suggestion.confidence ?? null,
+          }
+        }),
+      )
+    }
+  } catch (aiError) {
+    console.error(
+      'AI field mapping suggestion failed:',
+      aiError,
+    )
+  }
+  finally {
+    setCatalogueLoading(false)
+    setRefreshingFields(false)
+  }
+}
+}, [context, applicationFields])
+
 
   const handleMapFields = async () => {
     if (!context?.connection_id) {
@@ -426,10 +579,11 @@ export default function OcrFieldMappingPage() {
 
     try {
       setMapping(true)
-      setNotice('')
-      setError('')
 
-      await loadCatalogueAndSavedMappings()
+      await loadCatalogueAndSavedMappings({
+        forceRefresh: false,
+        runAiMapping: true,
+      })
 
       setMapAttempt((current) => Math.min(2, current + 1))
 
@@ -438,17 +592,41 @@ export default function OcrFieldMappingPage() {
       )
     } catch (err) {
       console.error('Field mapping load failed:', err)
-
       setError(
         err?.response?.data?.detail ||
           err?.response?.data?.error ||
           err?.message ||
-          'Field mapping failed.',
+          "Unable to load NetSuite Vendor Bill fields.",
       )
+      setNotice('')
     } finally {
       setMapping(false)
+      setCatalogueLoading(false)
+      setRefreshingFields(false)
     }
   }
+
+  const handleRefreshFields = async () => {
+  if (!context?.connection_id) {
+    setError(
+      'A connected NetSuite account is required before refreshing fields.',
+    )
+    return
+  }
+
+  try {
+    await loadCatalogueAndSavedMappings({
+      forceRefresh: true,
+      runAiMapping: false,
+    })
+
+    setNotice(
+      'NetSuite Vendor Bill fields were refreshed from the connected account.',
+    )
+  } catch (err) {
+    console.error('NetSuite field refresh failed:', err)
+  }
+}
 
   useEffect(() => {
     if (!catalogue.length || !applicationFields.length) {
@@ -587,17 +765,33 @@ export default function OcrFieldMappingPage() {
     }
   }
 
-  const handleContinue = () => {
-    const unresolved = mappings.filter(
-      (item) => !item.target_field_id,
+  const runValidation = async () => {
+  if (!context?.connection_id) {
+    setError(
+      'A NetSuite connection is required for validation.',
     )
+    return
+  }
 
-    if (unresolved.length) {
-      setError(
-        `Resolve all ${unresolved.length} unmapped field(s) before continuing to validation.`,
+  if (!documentId) {
+    setError(
+      'The OCR document ID is missing. Return to the OCR result and open Field Mapping again.',
+    )
+    return
+  }
+
+  try {
+    setValidating(true)
+    setError('')
+    setNotice('')
+
+    const result =
+      await netsuiteApi.validateDocument(
+        documentId,
+        context.connection_id,
       )
-      return
-    }
+
+    setValidationResult(result)
 
     sessionStorage.setItem(
       CONTEXT_KEY,
@@ -605,13 +799,153 @@ export default function OcrFieldMappingPage() {
         ...context,
         mappings,
         mapping_completed: true,
+        validation_result: result,
       }),
     )
 
-    setNotice(
-      'Mapping confirmed. The next step will be NetSuite Vendor/Item validation.',
+    if (result?.status === 'VALIDATED') {
+      setNotice(
+        '✓ NetSuite validation successful. The document is ready to post.',
+      )
+    } else {
+      setNotice(
+        'NetSuite validation failed. Review the errors and use Validate Again after correcting NetSuite data.',
+      )
+    }
+  } catch (err) {
+    console.error(
+      'NetSuite document validation failed:',
+      err,
     )
+
+    setError(
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to validate the document against NetSuite.',
+    )
+  } finally {
+    setValidating(false)
   }
+}
+const handleValidateAgain = async () => {
+  await runValidation()
+}
+const handlePost = async () => {
+  if (
+    validationResult?.status !==
+    'VALIDATED'
+  ) {
+    setError(
+      'The document must be successfully validated before posting.',
+    )
+    return
+  }
+
+  if (!documentId || !context?.connection_id) {
+    setError(
+      'The OCR document or NetSuite connection is missing.',
+    )
+    return
+  }
+
+  try {
+    setPosting(true)
+    setError('')
+    setNotice('')
+
+    const result =
+      await netsuiteApi.postOCRVendorBill(
+        documentId,
+        context.connection_id,
+      )
+
+    setPostingResult(result)
+
+    setNotice(
+      `✓ Vendor Bill posted successfully to NetSuite. Record ID: ${
+        result?.netsuite_record_id || 'created'
+      }`,
+    )
+  } catch (err) {
+    console.error(
+      'NetSuite Vendor Bill posting failed:',
+      err,
+    )
+
+    setError(
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to create the Vendor Bill in NetSuite.',
+    )
+  } finally {
+    setPosting(false)
+  }
+}
+  const handleContinue = async () => {
+  const unresolved = mappings.filter(
+    (item) => !item.target_field_id,
+  )
+
+  if (unresolved.length) {
+    setError(
+      `Resolve all ${unresolved.length} unmapped field(s) before continuing to validation.`,
+    )
+    return
+  }
+
+  if (!context?.connection_id){
+    setError(
+      'A NetSuite connection is required for validation.',
+    )
+    return 
+  }
+
+  if (!documentId) {
+    setError(
+      'The OCR document ID is missing. Return to the OCR result and open Field Mapping again.',
+    )
+    return
+  }
+
+  try {
+    setSaving(true)
+    setError('')
+    setNotice('')
+
+    await netsuiteApi.saveFieldMappings(
+      context.connection_id,
+      'vendorBill',
+      mappings.map((item) => ({
+        source_field_key: item.source_field_key,
+        source_field_label: item.source_label,
+        source_scope: item.source_scope,
+        target_field_id: item.target_field_id,
+        target_field_label: item.target_field_label,
+        mapping_status: item.status || 'MAPPED',
+        confidence: item.confidence,
+      })),
+    )
+    setSaving(false)
+
+    await runValidation()
+  } catch (err) {
+    console.error(
+      'Failed to save mapping before validation:',
+      err,
+    )
+
+    setError(
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to save mapping before validation.',
+    )
+  } finally {
+    setSaving(false)
+  }
+}
 
   if (loadingContext) {
     return (
@@ -669,6 +1003,141 @@ export default function OcrFieldMappingPage() {
             {notice}
           </div>
         )}
+        {validationResult && (
+  <Card className="p-5 sm:p-6">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="text-base font-semibold text-[var(--color-ink)]">
+          NetSuite Validation
+        </h2>
+
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          Vendor and Item existence was checked against the connected NetSuite account.
+        </p>
+      </div>
+
+      <span
+        className={
+          validationResult.status === 'VALIDATED'
+            ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+            : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
+        }
+      >
+        {validationResult.status === 'VALIDATED'
+          ? '✓ VALIDATION SUCCESSFUL'
+          : '✕ VALIDATION FAILED'}
+      </span>
+    </div>
+
+    <div className="mt-5 grid gap-3 md:grid-cols-2">
+      <div className="rounded-lg border p-4">
+        <p className="text-xs text-[var(--color-muted)]">
+          Vendor
+        </p>
+        <p className="mt-1 font-medium">
+          {validationResult.vendor?.matched
+            ? '✓ Found in NetSuite'
+            : '✕ Not found in NetSuite'}
+        </p>
+
+        {validationResult.vendor?.extracted_name && (
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {validationResult.vendor.extracted_name}
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-lg border p-4">
+        <p className="text-xs text-[var(--color-muted)]">
+          Items
+        </p>
+
+        <p className="mt-1 font-medium">
+          {
+            (validationResult.items || []).filter(
+              (item) => item.matched,
+            ).length
+          }
+          /
+          {(validationResult.items || []).length} matched
+        </p>
+      </div>
+    </div>
+
+    {(validationResult.errors || []).length > 0 && (
+      <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
+        <p className="text-sm font-semibold text-red-800">
+          Validation Errors
+        </p>
+
+        <div className="mt-2 space-y-2">
+          {validationResult.errors.map(
+            (item, index) => (
+              <p
+                key={`${item.type}-${index}`}
+                className="text-sm text-red-700"
+              >
+                {item.message}
+                {item.extracted_name
+                  ? ` — ${item.extracted_name}`
+                  : ''}
+              </p>
+            ),
+          )}
+        </div>
+      </div>
+    )}
+
+    <div className="mt-5 flex flex-wrap justify-end gap-3">
+      {validationResult.status ===
+        'VALIDATION_FAILED' && (
+        <Button
+          type="button"
+          intent="secondary"
+          onClick={handleValidateAgain}
+          disabled={
+            validating ||
+            saving ||
+            posting
+          }
+          isLoading={validating}
+        >
+          Validate Again
+        </Button>
+      )}
+
+      {validationResult.status ===
+        'VALIDATED' && (
+        <Button
+          type="button"
+          onClick={handlePost}
+          disabled={
+            posting ||
+            validating ||
+            Boolean(
+              postingResult?.netsuite_record_id,
+            )
+          }
+          isLoading={posting}
+        >
+          {postingResult?.netsuite_record_id
+            ? 'Posted to NetSuite'
+            : 'Post to NetSuite'}
+        </Button>
+      )}
+    </div>
+
+    {postingResult?.netsuite_record_id && (
+      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+        Vendor Bill created successfully.
+        <span className="ml-1 font-semibold">
+          NetSuite Record ID:
+        </span>{' '}
+        {postingResult.netsuite_record_id}
+      </div>
+    )}
+  </Card>
+)}
 
         <Card className="p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -680,8 +1149,46 @@ export default function OcrFieldMappingPage() {
                 Fetch the actual Vendor Bill fields from this NetSuite connection, then preselect the best match for every application field.
               </p>
             </div>
-
             <div className="flex items-center gap-2">
+  {mapAttempt > 0 && (
+    <span className="rounded-full bg-[var(--color-canvas)] px-3 py-1 text-xs font-medium text-[var(--color-muted)]">
+      Mapping attempt {mapAttempt} / 2
+    </span>
+  )}
+
+  <Button
+    type="button"
+    intent="secondary"
+    onClick={handleRefreshFields}
+    disabled={
+      refreshingFields ||
+      mapping ||
+      catalogueLoading ||
+      !context?.connection_id
+    }
+    isLoading={refreshingFields}
+  >
+    Refresh Fields
+  </Button>
+
+  <Button
+    type="button"
+    onClick={handleMapFields}
+    disabled={
+      mapping ||
+      catalogueLoading ||
+      refreshingFields ||
+      !context?.connection_id ||
+      mapAttempt >= 2
+    }
+    isLoading={mapping || catalogueLoading}
+  >
+    {mapAttempt === 0
+      ? 'Map Fields'
+      : 'Run Mapping Again'}
+  </Button>
+</div>
+            {/* <div className="flex items-center gap-2">
               {mapAttempt > 0 && (
                 <span className="rounded-full bg-[var(--color-canvas)] px-3 py-1 text-xs font-medium text-[var(--color-muted)]">
                   Mapping attempt {mapAttempt} / 2
@@ -703,7 +1210,7 @@ export default function OcrFieldMappingPage() {
                   ? 'Map Fields'
                   : 'Run Mapping Again'}
               </Button>
-            </div>
+            </div> */}
           </div>
 
           {!context?.connection_id && (
@@ -829,7 +1336,7 @@ export default function OcrFieldMappingPage() {
                 Save Mapping
               </Button>
 
-              <Button
+              {/* <Button
                 type="button"
                 onClick={handleContinue}
                 disabled={
@@ -842,7 +1349,27 @@ export default function OcrFieldMappingPage() {
                 }
               >
                 Continue to Validation →
-              </Button>
+              </Button> */}
+              <Button
+  type="button"
+  onClick={handleContinue}
+  disabled={
+    saving ||
+    mapping ||
+    validating ||
+    posting ||
+    !mappings.length ||
+    mappings.some(
+      (item) => !item.target_field_id,
+    ) ||
+    validationResult?.status === 'VALIDATED'
+  }
+  isLoading={validating}
+>
+  {validationResult?.status === 'VALIDATED'
+    ? 'Validated ✓'
+    : 'Continue to Validation →'}
+</Button>
             </div>
           )}
         </Card>
