@@ -1383,8 +1383,9 @@ class NetSuiteVendorBillPostingService:
                 #     ),
                 # )[0]
 
-                item_result = NetSuiteValidationService.resolve_item_for_posting(
-                    connection_id=str(connection.id),
+                item_result = NetSuiteValidationService().resolve_item_for_posting(
+                    # connection_id=str(connection.id),
+                    connection=connection,
                     item_name=item_name,
                     line_index=index,
                 )
@@ -2862,13 +2863,30 @@ class NetSuiteValidationService:
     AMBIGUITY_SCORE_GAP = 0.03
     MAX_SIMILAR_CANDIDATES = 5
 
+    # ITEM_RECORD_TYPES = (
+    #     NetSuiteRecordType.INVENTORY_ITEM,
+    #     NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
+    #     NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM,
+    #     NetSuiteRecordType.SERVICE_SALE_ITEM,
+    #     NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
+    #     NetSuiteRecordType.DESCRIPTION_ITEM,
+    #     NetSuiteRecordType.KIT_ITEM,
+    #     NetSuiteRecordType.ASSEMBLY_ITEM,
+    #     NetSuiteRecordType.MARKUP_ITEM,
+    #     NetSuiteRecordType.PAYMENT_ITEM,
+    #     NetSuiteRecordType.SUBTOTAL_ITEM,
+    #     NetSuiteRecordType.ITEM_GROUP,
+    # )
     ITEM_RECORD_TYPES = (
         NetSuiteRecordType.INVENTORY_ITEM,
         NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
+        NetSuiteRecordType.NON_INVENTORY_RESALE_ITEM,
         NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM,
         NetSuiteRecordType.SERVICE_SALE_ITEM,
+        NetSuiteRecordType.SERVICE_RESALE_ITEM,
         NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
         NetSuiteRecordType.DESCRIPTION_ITEM,
+        NetSuiteRecordType.DISCOUNT_ITEM,
         NetSuiteRecordType.KIT_ITEM,
         NetSuiteRecordType.ASSEMBLY_ITEM,
         NetSuiteRecordType.MARKUP_ITEM,
@@ -2876,6 +2894,23 @@ class NetSuiteValidationService:
         NetSuiteRecordType.SUBTOTAL_ITEM,
         NetSuiteRecordType.ITEM_GROUP,
     )
+    ITEM_SUITEQL_TABLES = {
+        NetSuiteRecordType.INVENTORY_ITEM: "inventoryitem",
+        NetSuiteRecordType.NON_INVENTORY_SALE_ITEM: "noninventoryitem",
+        NetSuiteRecordType.NON_INVENTORY_RESALE_ITEM: "noninventoryitem",
+        NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM: "noninventoryitem",
+        NetSuiteRecordType.SERVICE_SALE_ITEM: "serviceitem",
+        NetSuiteRecordType.SERVICE_RESALE_ITEM: "serviceitem",
+        NetSuiteRecordType.SERVICE_PURCHASE_ITEM: "serviceitem",
+        NetSuiteRecordType.DESCRIPTION_ITEM: "descriptionitem",
+        NetSuiteRecordType.DISCOUNT_ITEM: "discountitem",
+        NetSuiteRecordType.KIT_ITEM: "kititem",
+        NetSuiteRecordType.ASSEMBLY_ITEM: "assemblyitem",
+        NetSuiteRecordType.MARKUP_ITEM: "markupitem",
+        NetSuiteRecordType.PAYMENT_ITEM: "paymentitem",
+        NetSuiteRecordType.SUBTOTAL_ITEM: "subtotalitem",
+        NetSuiteRecordType.ITEM_GROUP: "itemgroup",
+    }
 
     def __init__(self, repository=None, token_manager=None):
         self.repository = repository or NetSuiteConnectionRepository()
@@ -3810,17 +3845,122 @@ class NetSuiteValidationService:
 
         return result
 
+    def _resolve_item_live_for_posting(
+        self,
+        *,
+        connection,
+        item_name,
+    ):
+        normalized = self._normalize_match_name(item_name)
+    
+        matches = []
+
+        table_names = list(
+            dict.fromkeys(
+                self.ITEM_SUITEQL_TABLES.get(record_type)
+                for record_type in self.ITEM_RECORD_TYPES
+                if self.ITEM_SUITEQL_TABLES.get(record_type)
+            )
+        )
+        query_literal = self._suiteql_literal(normalized)
+    
+        for table_name in table_names:
+            # table_name = self.ITEM_SUITEQL_TABLES.get(record_type)
+
+            # if not table_name:
+            #     continue
+
+            query = f"""
+                SELECT
+                    id,
+                    itemid,
+                    displayname,
+                    isinactive
+                FROM {table_name}
+                WHERE
+                    LOWER(itemid) = LOWER({query_literal})
+                    OR LOWER(displayname) = LOWER({query_literal})
+            """
+            try:
+                
+                response = self._execute_live_suiteql(
+                    connection=connection,
+                    query=query,
+                    limit=50,
+                )
+
+            except Exception as exc:
+                logger.warning(
+                    "Skipping unsupported/unavailable NetSuite item table "
+                    "during posting lookup — table=%s item=%s connection=%s error=%s",
+                    table_name,
+                    normalized,
+                    connection.id,
+                    exc,
+                )
+                continue
+            rows = (
+                response.get("items", [])
+                if isinstance(response, dict)
+                else []
+            )
+    
+            for row in rows:
+                if str(row.get("isinactive", "F")).upper() != "T":
+                    matches.append({
+                        "id": str(row.get("id")),
+                        "itemid": row.get("itemid"),
+                        "displayname": row.get("displayname"),
+                        "record_type": table_name,
+                    })
+    
+        unique = {
+            item["id"]: item
+            for item in matches
+            if item.get("id")
+        }
+    
+        matches = list(unique.values())
+    
+        if len(matches) == 1:
+            return {
+                "matched": True,
+                "ambiguous": False,
+                "netsuite_id": matches[0]["id"],
+                "record_type": matches[0]["record_type"],
+                "round":1,
+                "confidence":1.0,
+            }
+    
+        if len(matches) > 1:
+            return {
+                "matched": False,
+                "ambiguous": True,
+                "netsuite_id": None,
+                "candidates": matches[: self.MAX_SIMILAR_CANDIDATES],
+            }
+    
+        return {
+            "matched": False,
+            "ambiguous": False,
+            "netsuite_id": None,
+        }
+
     def resolve_item_for_posting(
         self,
         *,
-        connection_id,
+        connection,
         item_name,
         line_index,
     ):
-        result = self._validate_item(
-            connection_id=connection_id,
-            description=item_name,
-            line_index=line_index,
+        # result = self._validate_item(
+        #     connection_id=connection_id,
+        #     description=item_name,
+        #     line_index=line_index,
+        # )
+        result = self._resolve_item_live_for_posting(
+            connection=connection,
+            item_name=item_name,
         )
 
         if result.get("ambiguous"):
@@ -3835,18 +3975,24 @@ class NetSuiteValidationService:
                 f'"{item_name}" does not exist in the selected account.'
             )
 
+        item_id = result.get("netsuite_id")
+
+        if not item_id:
+            raise ValueError(
+                f'Line {line_index}: NetSuite item ID could not be resolved.'
+            )
+
         if result.get("round") != 1:
             raise ValueError(
                 f'Line {line_index}: item "{item_name}" was not an exact '
                 'NetSuite match. Please correct the item before posting.'
             )
+        # netsuite_id = result.get("netsuite_id")
 
-        netsuite_id = result.get("netsuite_id")
-
-        if not netsuite_id:
-            raise ValueError(
-                f'Line {line_index}: NetSuite item ID could not be resolved.'
-            )
+        # if not netsuite_id:
+        #     raise ValueError(
+        #         f'Line {line_index}: NetSuite item ID could not be resolved.'
+        #     )
 
         return result
 
