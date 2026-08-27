@@ -2863,20 +2863,6 @@ class NetSuiteValidationService:
     AMBIGUITY_SCORE_GAP = 0.03
     MAX_SIMILAR_CANDIDATES = 5
 
-    # ITEM_RECORD_TYPES = (
-    #     NetSuiteRecordType.INVENTORY_ITEM,
-    #     NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
-    #     NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM,
-    #     NetSuiteRecordType.SERVICE_SALE_ITEM,
-    #     NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
-    #     NetSuiteRecordType.DESCRIPTION_ITEM,
-    #     NetSuiteRecordType.KIT_ITEM,
-    #     NetSuiteRecordType.ASSEMBLY_ITEM,
-    #     NetSuiteRecordType.MARKUP_ITEM,
-    #     NetSuiteRecordType.PAYMENT_ITEM,
-    #     NetSuiteRecordType.SUBTOTAL_ITEM,
-    #     NetSuiteRecordType.ITEM_GROUP,
-    # )
     ITEM_RECORD_TYPES = (
         NetSuiteRecordType.INVENTORY_ITEM,
         NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
@@ -2886,13 +2872,18 @@ class NetSuiteValidationService:
         NetSuiteRecordType.SERVICE_RESALE_ITEM,
         NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
         NetSuiteRecordType.DESCRIPTION_ITEM,
-        NetSuiteRecordType.DISCOUNT_ITEM,
         NetSuiteRecordType.KIT_ITEM,
         NetSuiteRecordType.ASSEMBLY_ITEM,
-        NetSuiteRecordType.MARKUP_ITEM,
-        NetSuiteRecordType.PAYMENT_ITEM,
-        NetSuiteRecordType.SUBTOTAL_ITEM,
         NetSuiteRecordType.ITEM_GROUP,
+        # Deliberately excluded: DISCOUNT_ITEM, MARKUP_ITEM, PAYMENT_ITEM,
+        # SUBTOTAL_ITEM. These are NetSuite's special calculation-line
+        # types (used to apply a discount/markup/payment/subtotal amount
+        # on a transaction line) — they are never a real purchasable
+        # product, so matching a Vendor Bill line against them is always
+        # wrong. Including them here caused false "multiple items
+        # matched" ambiguity whenever one happened to share a name with
+        # a genuine item (e.g. a discount item literally named "Laptop"
+        # colliding with the real inventory item "Laptop").
     )
     ITEM_SUITEQL_TABLES = {
         NetSuiteRecordType.INVENTORY_ITEM: "inventoryitem",
@@ -2903,12 +2894,8 @@ class NetSuiteValidationService:
         NetSuiteRecordType.SERVICE_RESALE_ITEM: "serviceitem",
         NetSuiteRecordType.SERVICE_PURCHASE_ITEM: "serviceitem",
         NetSuiteRecordType.DESCRIPTION_ITEM: "descriptionitem",
-        NetSuiteRecordType.DISCOUNT_ITEM: "discountitem",
         NetSuiteRecordType.KIT_ITEM: "kititem",
         NetSuiteRecordType.ASSEMBLY_ITEM: "assemblyitem",
-        NetSuiteRecordType.MARKUP_ITEM: "markupitem",
-        NetSuiteRecordType.PAYMENT_ITEM: "paymentitem",
-        NetSuiteRecordType.SUBTOTAL_ITEM: "subtotalitem",
         NetSuiteRecordType.ITEM_GROUP: "itemgroup",
     }
 
@@ -3964,9 +3951,24 @@ class NetSuiteValidationService:
         )
 
         if result.get("ambiguous"):
+            candidates = result.get("candidates", [])
+            candidate_summary = ", ".join(
+                f'{c.get("id")} ({c.get("record_type")}: '
+                f'itemid={c.get("itemid")!r}, displayname={c.get("displayname")!r})'
+                for c in candidates
+            )
+            logger.warning(
+                "Ambiguous item match while posting — line=%s item=%r "
+                "connection=%s candidates=[%s]",
+                line_index,
+                item_name,
+                connection.id,
+                candidate_summary,
+            )
             raise ValueError(
                 f'Line {line_index}: multiple NetSuite items matched '
-                f'"{item_name}". Please correct the item.'
+                f'"{item_name}" ({len(candidates)} matches — see server logs '
+                f'for the matched item IDs). Please correct the item.'
             )
 
         if not result.get("matched"):
