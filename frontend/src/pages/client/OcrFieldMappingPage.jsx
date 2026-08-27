@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
+import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 
 const CONTEXT_KEY = 'ocr_field_mapping_context'
@@ -107,6 +108,13 @@ function getApplicationFields(context) {
 
   lineItemFields.forEach((key) => {
     if (!key) return
+    // Do NOT overwrite a field that was already explicitly defined as a
+    // header/custom field (e.g. requested.standard_fields). Line items
+    // often reuse common key names like "description", and letting the
+    // auto-detected line-item key silently flip an explicit header
+    // field's scope to 'line' causes a header-mapped selection to be
+    // saved with the wrong scope and get rejected by the backend.
+    if (deduped.has(key)) return
     deduped.set(key, {
       key,
       label: STANDARD_LABELS[key] || key,
@@ -121,10 +129,86 @@ function getApplicationFields(context) {
   return [...deduped.values()]
 }
 
+// function normalizeCatalogue(payload) {
+//   const raw = payload?.data ?? payload ?? {}
+
+//   const fieldContainer = raw?.fields
+//   const nestedFields =
+//     fieldContainer &&
+//     !Array.isArray(fieldContainer)
+//       ? [
+//           ...(Array.isArray(fieldContainer.body)
+//             ? fieldContainer.body
+//             : []),
+//           ...(Array.isArray(fieldContainer.column)
+//             ? fieldContainer.column
+//             : []),
+//         ]
+//       : []
+
+//   const candidates =
+//     nestedFields.length > 0
+//       ? nestedFields
+//       : Array.isArray(fieldContainer)
+//         ? fieldContainer
+//         : raw?.results ??
+//           raw?.items ??
+//           raw?.body_fields ??
+//           []
+
+//   const customFields = Array.isArray(raw?.custom_fields)
+//     ? raw.custom_fields
+//     : []
+
+//   const source = [...candidates, ...customFields]
+
+//   const normalized = []
+
+//   source.forEach((field) => {
+//     if (!field) return
+
+//     const id =
+//       field.id ||
+//       field.field_id ||
+//       field.internal_id ||
+//       field.script_id ||
+//       field.scriptId
+
+//     if (!id) return
+
+//     normalized.push({
+//       id: String(id),
+//       label:
+//         field.label ||
+//         field.display_label ||
+//         field.name ||
+//         String(id),
+//       type:
+//         field.type ||
+//         field.field_type ||
+//         field.datatype ||
+//         'text',
+//       scope:
+//         field.scope ||
+//         field.level ||
+//         (field.sublist_id || field.sublist ? 'line' : 'body'),
+//       reference_type:
+//         field.reference_type ||
+//         field.referenceRecordType ||
+//         null,
+//       custom:
+//         Boolean(field.custom || field.is_custom),
+//     })
+//   })
+
+//   return normalized
+// }
+
 function normalizeCatalogue(payload) {
   const raw = payload?.data ?? payload ?? {}
 
   const fieldContainer = raw?.fields
+
   const nestedFields =
     fieldContainer &&
     !Array.isArray(fieldContainer)
@@ -143,18 +227,23 @@ function normalizeCatalogue(payload) {
       ? nestedFields
       : Array.isArray(fieldContainer)
         ? fieldContainer
-        : raw?.results ??
-          raw?.items ??
-          raw?.body_fields ??
+        : raw?.results ||
+          raw?.items ||
+          raw?.body_fields ||
           []
 
-  const customFields = Array.isArray(raw?.custom_fields)
+  const customFields = Array.isArray(
+    raw?.custom_fields,
+  )
     ? raw.custom_fields
     : []
 
-  const source = [...candidates, ...customFields]
+  const source = [
+    ...candidates,
+    ...customFields,
+  ]
 
-  const normalized = []
+  const deduped = new Map()
 
   source.forEach((field) => {
     if (!field) return
@@ -168,87 +257,127 @@ function normalizeCatalogue(payload) {
 
     if (!id) return
 
-    normalized.push({
+    const rawScope = String(
+      field.scope ||
+      field.level ||
+      (
+        field.sublist_id ||
+        field.sublist
+          ? 'line'
+          : 'body'
+      ),
+    ).toLowerCase()
+
+    const scope = [
+      'line',
+      'column',
+      'sublist',
+    ].includes(rawScope)
+      ? 'line'
+      : 'body'
+
+    const normalized = {
       id: String(id),
+
       label:
         field.label ||
         field.display_label ||
         field.name ||
         String(id),
+
       type:
+        field.datatype ||
         field.type ||
         field.field_type ||
-        field.datatype ||
         'text',
-      scope:
-        field.scope ||
-        field.level ||
-        (field.sublist_id || field.sublist ? 'line' : 'body'),
+
+      scope,
+
       reference_type:
         field.reference_type ||
         field.referenceRecordType ||
         null,
-      custom:
-        Boolean(field.custom || field.is_custom),
-    })
+
+      is_required: Boolean(
+        field.is_required,
+      ),
+
+      is_custom: Boolean(
+        field.is_custom ??
+        field.custom,
+      ),
+
+      baseline: Boolean(
+        field.baseline,
+      ),
+
+      description:
+        field.description || '',
+    }
+
+    // Same ID may legitimately exist once in body
+    // and once in line scope.
+    const key = `${normalized.id}:${scope}`
+
+    deduped.set(key, normalized)
   })
 
-  return normalized
+  return [...deduped.values()]
 }
 
-function suggestTarget(applicationField, catalogue) {
-  if (!catalogue.length) return null
+// function suggestTarget(applicationField, catalogue) {
+//   if (!catalogue.length) return null
 
-  const source = normalize(applicationField.key)
-  const sourceLabel = normalize(applicationField.label)
+//   const source = normalize(applicationField.key)
+//   const sourceLabel = normalize(applicationField.label)
 
-  const scored = catalogue.map((field) => {
-    const target = normalize(field.id)
-    const targetLabel = normalize(field.label)
+//   const scored = catalogue.map((field) => {
+//     const target = normalize(field.id)
+//     const targetLabel = normalize(field.label)
 
-    let score = 0
+//     let score = 0
 
-    if (source === target || sourceLabel === targetLabel) {
-      score += 100
-    }
+//     if (source === target || sourceLabel === targetLabel) {
+//       score += 100
+//     }
 
-    if (source && target.includes(source)) score += 35
-    if (source && source.includes(target)) score += 25
+//     if (source && target.includes(source)) score += 35
+//     if (source && source.includes(target)) score += 25
 
-    const sourceWords = new Set(
-      `${source} ${sourceLabel}`.split(' ').filter(Boolean),
-    )
-    const targetWords = new Set(
-      `${target} ${targetLabel}`.split(' ').filter(Boolean),
-    )
+//     const sourceWords = new Set(
+//       `${source} ${sourceLabel}`.split(' ').filter(Boolean),
+//     )
+//     const targetWords = new Set(
+//       `${target} ${targetLabel}`.split(' ').filter(Boolean),
+//     )
 
-    const overlap = [...sourceWords].filter((word) =>
-      targetWords.has(word),
-    ).length
+//     const overlap = [...sourceWords].filter((word) =>
+//       targetWords.has(word),
+//     ).length
 
-    score += overlap * 10
+//     score += overlap * 10
 
-    if (
-      applicationField.scope === 'line' &&
-      String(field.scope).toLowerCase() === 'line'
-    ) {
-      score += 20
-    }
+//     if (
+//       applicationField.scope === 'line' &&
+//       String(field.scope).toLowerCase() === 'line'
+//     ) {
+//       score += 20
+//     }
 
-    if (
-      applicationField.scope !== 'line' &&
-      String(field.scope).toLowerCase() !== 'line'
-    ) {
-      score += 20
-    }
+//     if (
+//       applicationField.scope !== 'line' &&
+//       String(field.scope).toLowerCase() !== 'line'
+//     ) {
+//       score += 20
+//     }
 
-    return { field, score }
-  })
+//     return { field, score }
+//   })
 
-  scored.sort((a, b) => b.score - a.score)
+//   scored.sort((a, b) => b.score - a.score)
 
-  return scored[0]?.field || null
-}
+//   return scored[0]?.field || null
+// }
 
 export default function OcrFieldMappingPage() {
   const navigate = useNavigate()
@@ -292,47 +421,43 @@ export default function OcrFieldMappingPage() {
     () => getApplicationFields(context),
     [context],
   )
-  const documentId = useMemo(() => {
-  if (context?.document_id) {
-    return context.document_id
-  }
 
-  if (context?.document?.id) {
-    return context.document.id
-  }
-
-  try {
-    const raw = sessionStorage.getItem(
-      'ocr_test_result',
-    )
-
-    if (!raw) {
-      return null
+  const documentIds = useMemo(() => {
+    if (Array.isArray(context?.document_ids) && context.document_ids.length) {
+      return [
+        ...new Set(
+          context.document_ids
+            .filter(Boolean)
+            .map(String),
+        ),
+      ]
     }
 
-    const payload = JSON.parse(raw)
+    if (Array.isArray(context?.documents) && context.documents.length) {
+      return [
+        ...new Set(
+          context.documents
+            .map((item) => item?.document_id)
+            .filter(Boolean)
+            .map(String),
+        ),
+      ]
+    }
 
-    const matchingFile = Array.isArray(
-      payload?.files,
-    )
-      ? payload.files.find(
-          (file) =>
-            (
-              context?.upload_id &&
-              file?.upload_id === context.upload_id
-            ) ||
-            (
-              context?.filename &&
-              file?.filename === context.filename
-            ),
-        )
-      : null
+    if (context?.document_id) {
+      return [String(context.document_id)]
+    }
 
-    return matchingFile?.document_id || null
-  } catch {
-    return null
-  }
-}, [context])
+    if (context?.document?.id) {
+      return [String(context.document.id)]
+    }
+
+    return []
+  }, [context])
+
+  const documentId = documentIds.length === 1
+    ? documentIds[0]
+    : null
 
   const catalogueOptionsByScope = useMemo(() => {
     const body = catalogue.filter(
@@ -353,221 +478,374 @@ export default function OcrFieldMappingPage() {
     runAiMapping = false,
   } = {}) => {
     if (!context?.connection_id) {
-      const message = 'No NetSuite connection is available for this OCR result.'
+      const message =
+        'No NetSuite connection is available for this OCR result.'
 
       setError(message)
       throw new Error(message)
     }
 
-    try {
-      setCatalogueLoading(!forceRefresh)
-      setRefreshingFields(forceRefresh)
-      setError('')
-      setNotice('')
-      
-      const requestTimeout = new Promise((_, reject) => {
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                'Timed out while loading NetSuite field mapping data.',
-              ),
-            ),
-          30000,
-        )
-      })
-      const [catalogueResponse, savedResponse] =
-        await Promise.race([ 
-        Promise.all([
-          netsuiteApi.getFieldCatalogue(
-            context.connection_id,
-            'vendorBill',
-            forceRefresh,
-          ),
-          netsuiteApi.listFieldMappings(
-            context.connection_id,
-            'vendorBill',
-          ),
-          ]),
-          requestTimeout,
-        ])
+    setCatalogueLoading(!forceRefresh)
+    setRefreshingFields(forceRefresh)
+    setError('')
+    setNotice('')
 
-      const actualFields = normalizeCatalogue(catalogueResponse)
+    try {
+      const [
+        catalogueResponse,
+        savedResponse,
+      ] = await Promise.all([
+        netsuiteApi.getFieldCatalogue(
+          context.connection_id,
+          'vendorBill',
+          forceRefresh,
+        ),
+
+        netsuiteApi.listFieldMappings(
+          context.connection_id,
+          'vendorBill',
+        ),
+      ])
+
+      const actualFields =
+        normalizeCatalogue(
+          catalogueResponse,
+        )
+
       const savedPayload =
-        savedResponse?.data ?? savedResponse ?? {}
-      const saved = Array.isArray(savedPayload)
+        savedResponse?.data ??
+        savedResponse ??
+        {}
+
+      const saved = Array.isArray(
+        savedPayload,
+      )
         ? savedPayload
-        : savedPayload?.results ??
-          savedPayload?.mappings ??
-          []
+        : (
+            savedPayload?.results ||
+            savedPayload?.mappings ||
+            []
+          )
 
       setCatalogue(actualFields)
 
       const savedBySource = new Map(
         saved
-          .filter((item) => item?.source_field_key)
+          .filter(
+            (item) =>
+              item?.source_field_key,
+          )
           .map((item) => [
             item.source_field_key,
-            {
-              target_field_id:
-                item.target_field_id ||
-                item.target_field ||
-                null,
-              target_field_label:
-                item.target_field_label ||
-                item.target_field_name ||
-                null,
-              status:
-                item.mapping_status ||
-                item.status ||
-                'MAPPED',
-              confidence:
-                item.confidence ?? null,
-            },
+            item,
           ]),
       )
 
-      setMappings(
+      const initialMappings =
         applicationFields.map((field) => {
-          const savedMapping = savedBySource.get(field.key)
+          const savedMapping =
+            savedBySource.get(
+              field.key,
+            )
+
+          const expectedScope =
+            field.scope === 'line'
+              ? 'line'
+              : 'body'
+
+          const savedTargetId = String(
+            savedMapping?.target_field_id || '',
+          )
+
+          // Prefer a strict match (same id AND expected scope). If the
+          // saved target can't be found with that scope (stale data,
+          // catalogue changed, connection refreshed, etc.), fall back to
+          // matching the id in ANY scope so we can recover its real
+          // scope instead of guessing. Never keep a target_field_id
+          // whose scope we can't actually verify — a null/unknown scope
+          // silently defaults to "body" on the backend and produces a
+          // false "line field mapped to body field" error even when the
+          // source is genuinely unresolved or was saved correctly.
           const target =
-            savedMapping?.target_field_id
-              ? actualFields.find(
-                  (candidate) =>
-                    candidate.id ===
-                    String(savedMapping.target_field_id),
-                )
-              : null
+            (savedTargetId &&
+              actualFields.find(
+                (candidate) =>
+                  candidate.id === savedTargetId &&
+                  candidate.scope === expectedScope,
+              )) ||
+            (savedTargetId &&
+              actualFields.find(
+                (candidate) => candidate.id === savedTargetId,
+              )) ||
+            null
 
           return {
-            source_field_key: field.key,
-            source_label: field.label,
-            source_scope: field.scope,
+            source_field_key:
+              field.key,
+            source_field_label:
+              field.label,
+            source_scope:
+              field.scope,
+            source_datatype:
+              field.type,
+
+            // Only keep a target_field_id when we found it (with a
+            // known, verified scope) in the current catalogue. If it
+            // can't be found at all, treat the field as unresolved
+            // rather than carrying forward a broken reference.
             target_field_id:
-              target?.id || savedMapping?.target_field_id || null,
+              target?.id || null,
+
             target_field_label:
               target?.label ||
-              savedMapping?.target_field_label ||
+              (target ? savedMapping?.target_field_label : null) ||
               null,
+
+            target_scope:
+              target?.scope || null,
+
+            target_datatype:
+              target?.type || null,
+
+            is_required:
+              Boolean(
+                target?.is_required,
+              ),
+
+            is_custom:
+              Boolean(
+                target?.is_custom,
+              ),
+
+            reference_type:
+              target?.reference_type ||
+              null,
+
             status:
-              savedMapping?.status ||
-              (target ? 'MAPPED' : 'UNRESOLVED'),
+              target
+                ? (
+                    savedMapping?.mapping_status ||
+                    savedMapping?.status ||
+                    'MAPPED'
+                  )
+                : 'UNRESOLVED',
+
             confidence:
-              savedMapping?.confidence ?? null,
+              savedMapping?.confidence ??
+              null,
+
+            candidates:
+              [],
           }
-        }),
-      )
-    } catch (err) {
-      console.error('Failed to load NetSuite mapping metadata:', err)
-      const message = err?.response?.data?.detail ||
-        err?.response?.data?.error ||
-        err?.message ||
-        'Unable to load NetSuite Vendor Bill fields.'
-        setError(message)
-        setNotice('')
-      setCatalogue([])
-      setMappings(
-        applicationFields.map((field) => ({
-          source_field_key: field.key,
-          source_label: field.label,
-          source_scope: field.scope,
-          target_field_id: null,
-          target_field_label: null,
-          status: 'UNRESOLVED',
-          confidence: null,
-        })),
-      )
-      throw err
-    }
-    if (
-  runAiMapping &&
-  actualFields.length > 0 &&
-  applicationFields.length > 0
-) {
-  try {
-    const aiResponse =
-      await netsuiteApi.suggestFieldMappings(
-        context.connection_id,
-        'vendorBill',
-        applicationFields.map((field) => ({
-          key: field.key,
-          label: field.label,
-          scope: field.scope,
-          datatype: field.type,
-        })),
-      )
+        })
 
-    const aiPayload =
-      aiResponse?.data ??
-      aiResponse ??
-      {}
+      let nextMappings =
+        initialMappings
 
-    const aiMappings =
-      aiPayload?.mappings ??
-      aiPayload?.results ??
-      []
+      if (
+        runAiMapping &&
+        actualFields.length > 0 &&
+        applicationFields.length > 0
+      ) {
+        const aiResponse = await netsuiteApi.suggestFieldMappings(
+          context.connection_id,
+          'vendorBill',
+          applicationFields.map((field) => ({
+            key: field.key,
+            label: field.label,
+            description: field.description || '',
+            scope: field.scope === 'line' ? 'line' : 'header',
+            datatype: [
+              'text',
+              'number',
+              'date',
+              'boolean',
+              'currency',
+            ].includes(field.type)
+              ? field.type
+              : 'text',
+            is_custom: Boolean(field.is_custom),
+          })),
+        )
 
-    if (Array.isArray(aiMappings) && aiMappings.length) {
-      setMappings((current) =>
-        current.map((item) => {
+        const aiPayload = aiResponse?.data ?? aiResponse ?? {}
+        const aiMappings = Array.isArray(aiPayload)
+          ? aiPayload
+          : aiPayload?.mappings || aiPayload?.results || []
+
+        const targetsByKey = new Map(
+          actualFields.map((field) => [
+            `${String(field.id).toLowerCase()}:${field.scope}`,
+            field,
+          ]),
+        )
+
+        nextMappings = initialMappings.map((item) => {
+          // A mapping already saved for this source field is authoritative.
+          // AI should never silently replace a user's confirmed mapping.
+          const savedMapping = savedBySource.get(
+            item.source_field_key,
+          )
+          if (savedMapping?.target_field_id) {
+            return item
+          }
+
           const suggestion = aiMappings.find(
             (mapping) =>
-              mapping.source_field_key ===
-                item.source_field_key ||
-              mapping.source_field ===
-                item.source_field_key,
+              String(
+                mapping?.source_field_key ||
+                  mapping?.source_key ||
+                  mapping?.source_field ||
+                  '',
+              ) === item.source_field_key,
           )
 
           if (!suggestion) {
             return item
           }
-          
-          const suggestedTarget =
+
+          const status = String(
+            suggestion.status ||
+              suggestion.mapping_status ||
+              'UNRESOLVED',
+          ).toUpperCase()
+
+          let targetId =
+            suggestion.target_field_id ||
+            suggestion.suggested_target_id ||
+            suggestion.target_field ||
+            null
+
+          if (
+            targetId &&
+            typeof targetId === 'object'
+          ) {
+            targetId =
+              targetId.field_id ||
+              targetId.id ||
+              targetId.internal_id ||
+              null
+          }
+
+          const nestedTarget =
             suggestion.suggested_target ||
             suggestion.target ||
             null
 
-          const targetId =
-            suggestion.target_field_id ||
-            suggestion.target_field ||
-            suggestedTarget?.field_id ||
-            suggestedTarget?.id
+          if (
+            !targetId &&
+            nestedTarget &&
+            typeof nestedTarget === 'object'
+          ) {
+            targetId =
+              nestedTarget.field_id ||
+              nestedTarget.id ||
+              nestedTarget.internal_id ||
+              null
+          }
 
-          const target = actualFields.find(
-            (field) =>
-              field.id === String(targetId),
-          )
+          const expectedScope =
+            item.source_scope === 'line'
+              ? 'line'
+              : 'body'
+
+          const target = targetId
+            ? targetsByKey.get(
+                `${String(targetId).toLowerCase()}:${expectedScope}`,
+              )
+            : null
+
+          if (status !== 'MAPPED' || !target) {
+            return {
+              ...item,
+              target_field_id: null,
+              target_field_label: null,
+              target_scope: null,
+              target_datatype: null,
+              is_required: false,
+              is_custom: false,
+              reference_type: null,
+              status:
+                status === 'AMBIGUOUS'
+                  ? 'AMBIGUOUS'
+                  : 'UNRESOLVED',
+              confidence:
+                suggestion.confidence ?? null,
+              candidates:
+                suggestion.candidates || [],
+              metadata: suggestion.metadata || {},
+            }
+          }
 
           return {
             ...item,
-            target_field_id: target?.id || null,
-            target_field_label:
-              target?.label ||
-              suggestion.target_field_label ||
-              suggestedTarget?.label ||
-              null,
-            status:
-              suggestion.status ||
-              (target ? 'MAPPED' : 'UNRESOLVED'),
-            confidence:
-              suggestion.confidence ?? null,
+            target_field_id: target.id,
+            target_field_label: target.label,
+            target_scope: target.scope,
+            target_datatype: target.type,
+            is_required: Boolean(target.is_required),
+            is_custom: Boolean(target.is_custom),
+            reference_type: target.reference_type || null,
+            status: 'MAPPED',
+            confidence: suggestion.confidence ?? null,
+            candidates: suggestion.candidates || [],
+            metadata: suggestion.metadata || {},
           }
-        }),
-      )
-    }
-  } catch (aiError) {
-    console.error(
-      'AI field mapping suggestion failed:',
-      aiError,
-    )
-  }
-  finally {
-    setCatalogueLoading(false)
-    setRefreshingFields(false)
-  }
-}
-}, [context, applicationFields])
+        })
+      }
 
+      setMappings(nextMappings)
+    } catch (err) {
+      console.error(
+        'Failed to load NetSuite mapping metadata:',
+        err,
+      )
+
+      const message =
+        err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to load NetSuite Vendor Bill fields.'
+
+      setError(message)
+
+      setMappings(
+        applicationFields.map(
+          (field) => ({
+            source_field_key:
+              field.key,
+            source_field_label:
+              field.label,
+            source_scope:
+              field.scope,
+            source_datatype:
+              field.type,
+            target_field_id: null,
+            target_field_label:
+              null,
+            target_scope: null,
+            target_datatype: null,
+            is_required: false,
+            is_custom: false,
+            reference_type: null,
+            status: 'UNRESOLVED',
+            confidence: null,
+            candidates: [],
+          }),
+        ),
+      )
+
+      throw err
+    } finally {
+      setCatalogueLoading(false)
+      setRefreshingFields(false)
+    }
+  },
+  [
+    context,
+    applicationFields,
+  ],
+)
 
   const handleMapFields = async () => {
     if (!context?.connection_id) {
@@ -628,110 +906,230 @@ export default function OcrFieldMappingPage() {
   }
 }
 
-  useEffect(() => {
-    if (!catalogue.length || !applicationFields.length) {
-      return
-    }
+  // useEffect(() => {
+  //   if (!catalogue.length || !applicationFields.length) {
+  //     return
+  //   }
 
-    setMappings((current) => {
-      const existingBySource = new Map(
-        current.map((item) => [
+  //   setMappings((current) => {
+  //     const existingBySource = new Map(
+  //       current.map((item) => [
+  //         item.source_field_key,
+  //         item,
+  //       ]),
+  //     )
+
+  //     let changed = false
+
+  //     const next = applicationFields.map((field) => {
+  //       const existing = existingBySource.get(field.key)
+
+  //       if (existing?.target_field_id) {
+  //         return existing
+  //       }
+
+  //       const options =
+  //         field.scope === 'line'
+  //           ? catalogueOptionsByScope.line
+  //           : catalogueOptionsByScope.body
+
+  //       const suggestion = suggestTarget(field, options)
+
+  //       const nextItem = {
+  //         source_field_key: field.key,
+  //         source_label: field.label,
+  //         source_scope: field.scope,
+  //         target_field_id: suggestion?.id || null,
+  //         target_field_label: suggestion?.label || null,
+  //         status: suggestion ? 'MAPPED' : 'UNRESOLVED',
+  //         confidence: suggestion ? 0.75 : 0,
+  //       }
+
+  //       if (
+  //         !existing ||
+  //         existing.target_field_id !== nextItem.target_field_id ||
+  //         existing.status !== nextItem.status
+  //       ) {
+  //         changed = true
+  //       }
+
+  //       return existing || nextItem
+  //     })
+
+  //     if (
+  //       next.length !== current.length ||
+  //       !next.every(
+  //         (item, index) =>
+  //           item?.source_field_key ===
+  //           current?.[index]?.source_field_key,
+  //       )
+  //     ) {
+  //       changed = true
+  //     }
+
+  //     return changed ? next : current
+  //   })
+  // }, [
+  //   catalogue,
+  //   applicationFields,
+  //   catalogueOptionsByScope,
+  // ])
+
+  // const updateMapping = (sourceKey, targetId) => {
+  //   const allOptions = catalogue
+  //   const target = allOptions.find(
+  //     (field) => field.id === targetId,
+  //   )
+
+  //   setMappings((current) =>
+  //     current.map((item) =>
+  //       item.source_field_key === sourceKey
+  //         ? {
+  //             ...item,
+  //             target_field_id: target?.id || null,
+  //             target_field_label: target?.label || null,
+  //             status: target ? 'MAPPED' : 'UNRESOLVED',
+  //             confidence: target ? 1 : 0,
+  //           }
+  //         : item,
+  //     ),
+  //   )
+  //   setNotice('')
+  // }
+
+  const updateMapping = (
+  sourceKey,
+  targetId,
+) => {
+  const source =
+    mappings.find(
+      (item) =>
+        item.source_field_key ===
+        sourceKey,
+    )
+
+  const target = catalogue.find(
+    (field) =>
+      field.id === targetId &&
+      field.scope ===
+        (
+          source?.source_scope === 'line'
+            ? 'line'
+            : 'body'
+        ),
+  )
+
+  setValidationResult(null)
+  setPostingResult(null)
+
+  setMappings((current) =>
+    current.map((item) =>
+      item.source_field_key ===
+      sourceKey
+        ? {
+            ...item,
+
+            target_field_id:
+              target?.id || null,
+
+            target_field_label:
+              target?.label || null,
+
+            target_scope:
+              target?.scope || null,
+
+            target_datatype:
+              target?.type || null,
+
+            is_required:
+              Boolean(
+                target?.is_required,
+              ),
+
+            is_custom:
+              Boolean(
+                target?.is_custom,
+              ),
+
+            reference_type:
+              target?.reference_type ||
+              null,
+
+            status:
+              target
+                ? 'MAPPED'
+                : 'UNRESOLVED',
+
+            confidence:
+              target ? 1 : 0,
+          }
+        : item,
+    ),
+  )
+
+  setNotice('')
+}
+
+
+  const buildMappingPayload = useCallback(
+    (items) =>
+      items.map((item) => ({
+        source_field_key: item.source_field_key,
+        source_field_label:
+          item.source_field_label ||
+          item.source_label ||
           item.source_field_key,
-          item,
-        ]),
-      )
-
-      let changed = false
-
-      const next = applicationFields.map((field) => {
-        const existing = existingBySource.get(field.key)
-
-        if (existing?.target_field_id) {
-          return existing
-        }
-
-        const options =
-          field.scope === 'line'
-            ? catalogueOptionsByScope.line
-            : catalogueOptionsByScope.body
-
-        const suggestion = suggestTarget(field, options)
-
-        const nextItem = {
-          source_field_key: field.key,
-          source_label: field.label,
-          source_scope: field.scope,
-          target_field_id: suggestion?.id || null,
-          target_field_label: suggestion?.label || null,
-          status: suggestion ? 'MAPPED' : 'UNRESOLVED',
-          confidence: suggestion ? 0.75 : 0,
-        }
-
-        if (
-          !existing ||
-          existing.target_field_id !== nextItem.target_field_id ||
-          existing.status !== nextItem.status
-        ) {
-          changed = true
-        }
-
-        return existing || nextItem
-      })
-
-      if (
-        next.length !== current.length ||
-        !next.every(
-          (item, index) =>
-            item?.source_field_key ===
-            current?.[index]?.source_field_key,
-        )
-      ) {
-        changed = true
-      }
-
-      return changed ? next : current
-    })
-  }, [
-    catalogue,
-    applicationFields,
-    catalogueOptionsByScope,
-  ])
-
-  const updateMapping = (sourceKey, targetId) => {
-    const allOptions = catalogue
-    const target = allOptions.find(
-      (field) => field.id === targetId,
-    )
-
-    setMappings((current) =>
-      current.map((item) =>
-        item.source_field_key === sourceKey
-          ? {
-              ...item,
-              target_field_id: target?.id || null,
-              target_field_label: target?.label || null,
-              status: target ? 'MAPPED' : 'UNRESOLVED',
-              confidence: target ? 1 : 0,
-            }
-          : item,
-      ),
-    )
-    setNotice('')
-  }
+        source_scope:
+          item.source_scope === 'line'
+            ? 'line'
+            : 'header',
+        source_datatype:
+          item.source_datatype ||
+          'text',
+        target_field_id:
+          item.target_field_id || '',
+        target_field_label:
+          item.target_field_label || '',
+        target_scope:
+          item.target_scope ||
+          (item.source_scope === 'line'
+            ? 'column'
+            : 'body'),
+        target_datatype:
+          item.target_datatype ||
+          'text',
+        is_required: Boolean(
+          item.is_required,
+        ),
+        is_custom: Boolean(
+          item.is_custom,
+        ),
+        reference_type:
+          item.reference_type ||
+          null,
+        mapping_status:
+          item.target_field_id
+            ? 'MAPPED'
+            : 'UNRESOLVED',
+        confidence:
+          item.confidence ?? null,
+        metadata:
+          item.metadata || {},
+      })),
+    [],
+  )
 
   const handleSaveMapping = async () => {
     if (!context?.connection_id) {
-      setError('A NetSuite connection is required to save mapping.')
+      setError(
+        'A NetSuite connection is required to save mapping.',
+      )
       return
     }
 
-    const unresolved = mappings.filter(
-      (item) => !item.target_field_id,
-    )
-
-    if (unresolved.length) {
+    if (!mappings.some((item) => item.target_field_id)) {
       setError(
-        `Complete the mapping for ${unresolved.length} application field(s) before continuing.`,
+        'Map at least one application field before saving.',
       )
       return
     }
@@ -739,21 +1137,22 @@ export default function OcrFieldMappingPage() {
     try {
       setSaving(true)
       setError('')
+      setNotice('')
 
       await netsuiteApi.saveFieldMappings(
         context.connection_id,
         'vendorBill',
-        mappings.map((item) => ({
-          source_field_key: item.source_field_key,
-          target_field_id: item.target_field_id,
-          mapping_status: item.status || 'MAPPED',
-          confidence: item.confidence,
-        })),
+        buildMappingPayload(mappings),
       )
 
-      setNotice('Field mapping saved successfully.')
+      setNotice(
+        'Field mapping saved successfully.',
+      )
     } catch (err) {
-      console.error('Failed to save field mapping:', err)
+      console.error(
+        'Failed to save field mapping:',
+        err,
+      )
       setError(
         err?.response?.data?.detail ||
           err?.response?.data?.error ||
@@ -775,7 +1174,7 @@ export default function OcrFieldMappingPage() {
 
   if (!documentId) {
     setError(
-      'The OCR document ID is missing. Return to the OCR result and open Field Mapping again.',
+       'This OCR result has not been saved yet. Please save it before continuing.',
     )
     return
   }
@@ -884,68 +1283,122 @@ const handlePost = async () => {
   }
 }
   const handleContinue = async () => {
-  const unresolved = mappings.filter(
-    (item) => !item.target_field_id,
-  )
+    if (!context?.connection_id) {
+      setError(
+        'A NetSuite connection is required for validation.',
+      )
+      return
+    }
 
-  if (unresolved.length) {
-    setError(
-      `Resolve all ${unresolved.length} unmapped field(s) before continuing to validation.`,
+    if (!documentIds.length) {
+      setError(
+        'No saved OCR documents are available for validation.',
+      )
+      return
+    }
+
+    const vendorMapped = mappings.some(
+      (item) =>
+        item?.target_field_id &&
+        ['entity', 'vendor'].includes(
+          String(item.target_field_id).toLowerCase(),
+        ),
     )
-    return
+
+    const itemMapped = mappings.some(
+      (item) =>
+        item?.target_field_id === 'item' &&
+        item?.source_scope === 'line',
+    )
+
+    if (!vendorMapped || !itemMapped) {
+      setError(
+        'Vendor and Item fields must be mapped before continuing.',
+      )
+      return
+    }
+
+    try {
+      setSaving(true)
+      setError('')
+      setNotice('')
+
+      await netsuiteApi.saveFieldMappings(
+        context.connection_id,
+        'vendorBill',
+        buildMappingPayload(mappings),
+      )
+
+      const response = await apiClient.post(
+        '/netsuite/ocr/batch/validate/',
+        {
+          document_ids: documentIds,
+          connection_id: context.connection_id,
+        },
+      )
+
+      const queued =
+        response?.data?.data ??
+        response?.data ??
+        {}
+
+      const jobId = queued?.job_id
+
+      if (!jobId) {
+        throw new Error(
+          'NetSuite validation batch was created without a job ID.',
+        )
+      }
+
+      sessionStorage.setItem(
+        // CONTEXT_KEY,
+        'ocr_netsuite_validation_job',
+        JSON.stringify({
+          // ...context,
+          // document_ids: documentIds,
+          // mapping_completed: true,
+          // validation_job_id: String(jobId),
+          job_id: String(jobId),
+          connection_id: context.connection_id,
+          document_ids: documentIds,
+          created_at: Date.now(),
+        }),
+      )
+
+      sessionStorage.setItem(
+        CONTEXT_KEY,
+        JSON.stringify({
+          ...context,
+          documents: context.documents || [],
+          document_ids: documentIds,
+          mapping_completed: true,
+          validation_job_id: String(jobId),
+        })
+      )
+
+      navigate('/app/ocr-test', {
+        state: {
+          validationJobId: String(jobId),
+          documentIds,
+          connectionId: context.connection_id,
+        },
+      })
+    } catch (err) {
+      console.error(
+        'Failed to queue NetSuite reference validation:',
+        err,
+      )
+
+      setError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Unable to start NetSuite validation.',
+      )
+    } finally {
+      setSaving(false)
+    }
   }
-
-  if (!context?.connection_id){
-    setError(
-      'A NetSuite connection is required for validation.',
-    )
-    return 
-  }
-
-  if (!documentId) {
-    setError(
-      'The OCR document ID is missing. Return to the OCR result and open Field Mapping again.',
-    )
-    return
-  }
-
-  try {
-    setSaving(true)
-    setError('')
-    setNotice('')
-
-    await netsuiteApi.saveFieldMappings(
-      context.connection_id,
-      'vendorBill',
-      mappings.map((item) => ({
-        source_field_key: item.source_field_key,
-        source_field_label: item.source_label,
-        source_scope: item.source_scope,
-        target_field_id: item.target_field_id,
-        target_field_label: item.target_field_label,
-        mapping_status: item.status || 'MAPPED',
-        confidence: item.confidence,
-      })),
-    )
-    setSaving(false)
-
-    await runValidation()
-  } catch (err) {
-    console.error(
-      'Failed to save mapping before validation:',
-      err,
-    )
-
-    setError(
-      err?.response?.data?.detail ||
-        err?.response?.data?.error ||
-        err?.message ||
-        'Unable to save mapping before validation.',
-    )
-  } finally {
-    setSaving(false)
-  }
-}
 
   if (loadingContext) {
     return (
@@ -1089,7 +1542,7 @@ const handlePost = async () => {
     )}
 
     <div className="mt-5 flex flex-wrap justify-end gap-3">
-      {validationResult.status ===
+      { false && validationResult.status ===
         'VALIDATION_FAILED' && (
         <Button
           type="button"
@@ -1152,7 +1605,7 @@ const handlePost = async () => {
             <div className="flex items-center gap-2">
   {mapAttempt > 0 && (
     <span className="rounded-full bg-[var(--color-canvas)] px-3 py-1 text-xs font-medium text-[var(--color-muted)]">
-      Mapping attempt {mapAttempt} / 2
+      AI mapping uses up to 2 attempts automatically
     </span>
   )}
 
@@ -1185,32 +1638,9 @@ const handlePost = async () => {
   >
     {mapAttempt === 0
       ? 'Map Fields'
-      : 'Run Mapping Again'}
+      : 'Run AI Mapping Again'}
   </Button>
 </div>
-            {/* <div className="flex items-center gap-2">
-              {mapAttempt > 0 && (
-                <span className="rounded-full bg-[var(--color-canvas)] px-3 py-1 text-xs font-medium text-[var(--color-muted)]">
-                  Mapping attempt {mapAttempt} / 2
-                </span>
-              )}
-
-              <Button
-                type="button"
-                onClick={handleMapFields}
-                disabled={
-                  mapping ||
-                  catalogueLoading ||
-                  !context?.connection_id ||
-                  mapAttempt >= 2
-                }
-                isLoading={mapping || catalogueLoading}
-              >
-                {mapAttempt === 0
-                  ? 'Map Fields'
-                  : 'Run Mapping Again'}
-              </Button>
-            </div> */}
           </div>
 
           {!context?.connection_id && (
@@ -1336,40 +1766,18 @@ const handlePost = async () => {
                 Save Mapping
               </Button>
 
-              {/* <Button
+              <Button
                 type="button"
                 onClick={handleContinue}
                 disabled={
                   saving ||
                   mapping ||
-                  !mappings.length ||
-                  mappings.some(
-                    (item) => !item.target_field_id,
-                  )
+                  !mappings.length
                 }
+                isLoading={saving}
               >
-                Continue to Validation →
-              </Button> */}
-              <Button
-  type="button"
-  onClick={handleContinue}
-  disabled={
-    saving ||
-    mapping ||
-    validating ||
-    posting ||
-    !mappings.length ||
-    mappings.some(
-      (item) => !item.target_field_id,
-    ) ||
-    validationResult?.status === 'VALIDATED'
-  }
-  isLoading={validating}
->
-  {validationResult?.status === 'VALIDATED'
-    ? 'Validated ✓'
-    : 'Continue to Validation →'}
-</Button>
+                Continue →
+              </Button>
             </div>
           )}
         </Card>

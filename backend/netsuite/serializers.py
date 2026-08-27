@@ -285,7 +285,8 @@ class MappingSaveItemSerializer(serializers.Serializer):
 
 
 class SaveMappingRequestSerializer(serializers.Serializer):
-    record_type = serializers.CharField(default='vendorBill')
+    connection_id = serializers.UUIDField()
+    record_type = serializers.CharField(default='vendorBill',max_length=64)
     mappings = serializers.ListField(
         child=serializers.DictField(),
         allow_empty=False,
@@ -293,6 +294,10 @@ class SaveMappingRequestSerializer(serializers.Serializer):
 
 
 class ValidateDocumentRequestSerializer(serializers.Serializer):
+    document_id = serializers.UUIDField()
+    connection_id = serializers.UUIDField()
+
+class CheckOCRReferencesRequestSerializer(serializers.Serializer):
     document_id = serializers.UUIDField()
     connection_id = serializers.UUIDField()
 

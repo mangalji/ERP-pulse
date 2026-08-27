@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import apiClient, { unwrap } from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 import { useToast } from '../../components/ui/Toast.jsx'
@@ -25,7 +25,7 @@ const ALLOWED_TYPES = [
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff,.docx,.xlsx,.csv,.txt,application/pdf,image/png,image/jpeg,image/webp,image/gif,image/bmp,image/tiff,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain'
 const MAX_FILE_SIZE = 10 * 1024 * 1024
-const MAX_FILES = 20
+const MAX_FILES = 200
 
 function createPreview(file) {
   if (!file) return null
@@ -125,6 +125,7 @@ export default function OcrTestPage() {
   }, [])
 
   const navigate = useNavigate()
+  const location = useLocation()
   const inputRef = useRef(null)
   const { addToast } = useToast()
 
@@ -287,13 +288,6 @@ export default function OcrTestPage() {
     [selectedHistoryItems],
   )
 
-  // const refreshOcrHistory = useCallback(async () => {
-  //   await Promise.all([
-  //     loadHistory(historyOffset),
-  //     loadRecentHistory(recentHistoryOffset),
-  //   ])
-  // }, [loadHistory, loadRecentHistory, historyOffset, recentHistoryOffset])
-
   const handleBatchValidate = async (ids = [...selectedValidateIds]) => {
     if (!ids.length) {
       setError('Select at least one completed document that needs validation.')
@@ -317,10 +311,26 @@ export default function OcrTestPage() {
         queued?.job_id || queued?.id,
       )
 
-      const failedCount = Number(
-        job?.failed_count ??
-          job?.result?.failed_count ??
-          0,
+      const jobResults = Array.isArray(job?.results)
+        ? job.results
+        : Array.isArray(job?.result?.results)
+          ? job.result.results
+          : []
+
+      const resultFailedCount = jobResults.filter(
+        (item) =>
+          ['FAILED', 'VALIDATION_FAILED'].includes(
+            String(item?.status || '').toUpperCase(),
+          ),
+      ).length
+
+      const failedCount = Math.max(
+        Number(
+          job?.failed_count ??
+            job?.result?.failed_count ??
+            0,
+        ),
+        resultFailedCount,
       )
       const completedCount = Number(
         job?.completed_count ??
@@ -375,6 +385,7 @@ export default function OcrTestPage() {
         '/netsuite/ocr/batch/post/',
         {
           document_ids: ids,
+          connection_id: connection?.id || null,
         },
       )
 
@@ -496,18 +507,108 @@ export default function OcrTestPage() {
   }, [fetchHistoryPage])
 
   const refreshOcrHistory = useCallback(async () => {
-  await Promise.all([
-    loadHistory(historyOffset),
-    loadRecentHistory(recentHistoryOffset),
+    await Promise.all([
+      loadHistory(historyOffset),
+      loadRecentHistory(recentHistoryOffset),
+    ])
+  }, [
+    loadHistory,
+    loadRecentHistory,
+    historyOffset,
+    recentHistoryOffset,
   ])
+
+  useEffect(() => {
+  let cancelled = false
+
+  const stateJobId =
+    location.state?.validationJobId
+
+  const storedJob = (() => {
+    try {
+      const raw = sessionStorage.getItem(
+        'ocr_netsuite_validation_job',
+      )
+
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  })()
+
+  const jobId =
+    stateJobId ||
+    storedJob?.job_id ||
+    null
+
+  if (!jobId) {
+    return undefined
+  }
+
+  const monitor = async () => {
+    try {
+      const job = await waitForBatchJob(
+        String(jobId),
+      )
+
+      if (cancelled) {
+        return
+      }
+
+      const status = String(
+        job?.status || '',
+      ).toUpperCase()
+
+      if (status === 'SUCCESS') {
+        await refreshOcrHistory()
+      } else {
+        setError(
+          job?.error ||
+            'NetSuite validation batch did not complete successfully.',
+        )
+      }
+    } catch (err) {
+      if (!cancelled) {
+        console.error(
+          'NetSuite validation batch monitoring failed:',
+          err,
+        )
+
+        setError(
+          err?.response?.data?.detail ||
+            err?.response?.data?.error ||
+            err?.message ||
+            'Unable to complete NetSuite validation.',
+        )
+      }
+    } finally {
+      if (!cancelled) {
+        sessionStorage.removeItem(
+          'ocr_netsuite_validation_job',
+        )
+
+        navigate(
+          location.pathname,
+          {
+            replace: true,
+            state: {},
+          },
+        )
+      }
+    }
+  }
+
+  monitor()
+
+  return () => {
+    cancelled = true
+  }
 }, [
-  loadHistory,
-  loadRecentHistory,
-  historyOffset,
-  recentHistoryOffset,
+  location,
+  navigate,
+  refreshOcrHistory,
+  waitForBatchJob,
 ])
-
-
 
   useEffect(() => {
     loadHistory(0)
@@ -541,6 +642,66 @@ export default function OcrTestPage() {
       })
     }
   }, [selectedFiles])
+  // useEffect(() => {
+  //   const jobId = location.state?.validationJobId
+  //   if (!jobId) return undefined
+
+  //   let cancelled = false
+
+  //   const monitorValidationJob = async () => {
+  //     try {
+  //       setProcessing(true)
+  //       setError('')
+
+  //       const job = await waitForBatchJob(String(jobId))
+  //       if (cancelled) return
+
+  //       if (String(job?.status || '').toUpperCase() !== 'SUCCESS') {
+  //         setError(
+  //           job?.error ||
+  //             'NetSuite reference validation did not complete successfully.',
+  //         )
+  //         return
+  //       }
+
+  //       await refreshOcrHistory()
+  //     } catch (err) {
+  //       if (!cancelled) {
+  //         console.error(
+  //           'NetSuite reference validation monitoring failed:',
+  //           err,
+  //         )
+  //         setError(
+  //           err?.response?.data?.detail ||
+  //             err?.response?.data?.error ||
+  //             err?.message ||
+  //             'Unable to complete NetSuite validation.',
+  //         )
+  //       }
+  //     } finally {
+  //       if (!cancelled) {
+  //         setProcessing(false)
+  //         navigate(location.pathname, {
+  //           replace: true,
+  //           state: {},
+  //         })
+  //       }
+  //     }
+  //   }
+
+  //   monitorValidationJob()
+
+  //   return () => {
+  //     cancelled = true
+  //   }
+  // }, [
+  //   location.pathname,
+  //   location.state?.validationJobId,
+  //   navigate,
+  //   refreshOcrHistory,
+  //   waitForBatchJob,
+  // ])
+
 
   const validateFiles = useCallback((files) => {
     const incoming = Array.from(files || [])
@@ -837,29 +998,6 @@ export default function OcrTestPage() {
   }
 
   const activeResult = results[activeIndex] ?? null
-  const openFieldMapping = () => {
-    if (!activeResult) {
-      setError('Extract a file before opening Field Mapping.')
-      return
-    }
-
-    sessionStorage.setItem(
-      'ocr_field_mapping_context',
-      JSON.stringify({
-        connection_id: connection?.id || null,
-        record_type: 'vendorBill',
-        upload_id: activeResult.upload_id || null,
-        document_id: activeResult.document_id || null,
-        filename: activeResult.filename || null,
-        data: activeResult.data || {},
-        requested_fields:
-          extractionConfig?.requested_fields || null,
-      }),
-    )
-
-    navigate('/app/ocr-test/field-mapping')
-  }
-
 
   const activeSelectedItem = selectedFiles.find(({ file }) => {
     if (!activeResult?.filename) return false
@@ -879,34 +1017,25 @@ export default function OcrTestPage() {
     remotePreviewUrl ??
     activeSelectedItem?.previewUrl ??
     selectedFiles[activeIndex]?.previewUrl ??
-    (activeResult?.upload_id
-      ? `/ocr/test-extract/uploads/${activeResult.upload_id}/preview/`
-      : null)
+    null
 
   useEffect(() => {
     let cancelled = false
     let objectUrl = null
 
-    const previewEndpoint = 
-      activeResult?.preview_url || 
-      (activeResult?.upload_id
-        ? `/ocr/test-extract/uploads/${activeResult.upload_id}/preview/`
-        : null
-      )
+    const loadRemotePreview = async () => {
+      setPreviewError('')
+      setRemotePreviewUrl(null)
 
-      const loadRemotePreview = async () => {
-  setPreviewError('')
-  setRemotePreviewUrl(null)
+      if (!activeResult?.preview_url) {
+        return
+      }
 
-  if (!previewEndpoint) {
-    return
-  }
-
-  try {
-    const response = await apiClient.get(
-      previewEndpoint,
-      { responseType: 'blob' },
-    )
+      try {
+        const response = await apiClient.get(
+          activeResult.preview_url,
+          { responseType: 'blob' },
+        )
 
         if (cancelled) {
           return
@@ -936,7 +1065,7 @@ export default function OcrTestPage() {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [activeResult?.preview_url, activeResult?.upload_id])
+  }, [activeResult?.preview_url])
 
   const canSlide = results.length > 1
 
@@ -1219,8 +1348,7 @@ export default function OcrTestPage() {
 
                 {!previewError &&
                   !activeFile &&
-                  !activeResult?.preview_url &&
-                  !activeResult?.upload_id && (
+                  !activeResult?.preview_url && (
                     <p className="text-sm text-[var(--color-muted)]">
                       Select a file to preview it.
                     </p>
@@ -1266,18 +1394,6 @@ export default function OcrTestPage() {
                   </p>
                 </div>
 
-                {activeResult && (
-                  <Button
-                    type="button"
-                    intent="secondary"
-                    size="sm"
-                    onClick={openFieldMapping}
-                    disabled={!connection?.id}
-                  >
-                    Map Fields with NetSuite
-                  </Button>
-                )}
-
                 {activeResult?.status && (
                   <span
                     className={`shrink-0 text-xs font-semibold uppercase tracking-wide ${statusClass(activeResult.status)}`}
@@ -1291,6 +1407,7 @@ export default function OcrTestPage() {
                 {activeResult ? (
                   <OcrReviewWorkspace
                     result={activeResult}
+                    batchResults={results}
                     onSaved={(savedResult) => {
                       setResults((current) =>
                         current.map((item, index) =>
@@ -1313,7 +1430,6 @@ export default function OcrTestPage() {
                       ) || {}
                     }
                     connectionId={connection?.id || null}
-                    requestedFields={extractionConfig?.requested_fields || null}
                     validationResult={validationResult}
                     onValidate={async (documentId) => {
                       const result = await netsuiteApi.validateDocument(documentId)
@@ -1424,7 +1540,7 @@ export default function OcrTestPage() {
                 <span className="text-xs text-amber-700">Save selected OCR results before posting.</span>
               )}
 
-              {selectedPostIds.length > 0 && (
+              {selectedCompletedItems.length > 0 && (
                 <Button
                   type="button"
                   intent="primary"

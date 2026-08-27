@@ -672,6 +672,7 @@ class OCRReviewSaveView(APIView):
             user=user,
             result=original_result,
             reviewed_result=reviewed_result,
+            allow_company_admin=_is_company_admin(user),
         )
 
         return success_response(

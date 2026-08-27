@@ -72,7 +72,13 @@ def sync_netsuite_reference_data(self, connection_id: str) -> None:
             countdown=min(60 * (2 ** retries), 900),
         )
 
-BATCH_MAX_DOCUMENTS = 100
+BATCH_MAX_DOCUMENTS = int(
+    getattr(
+        settings,
+        "NETSUITE_OCR_BATCH_MAX_DOCUMENTS",
+        200,
+    )
+)
 BATCH_JOB_TTL_SECONDS = 60 * 60 * 24
 BATCH_ACTIONS = {"validate", "post"}
 
@@ -110,6 +116,45 @@ def get_batch_job_owner(task_id: str):
 
     return {"user_id": user_id, "action": action}
 
+def _is_batch_success(status: str) -> bool:
+    return status in {
+        "VALIDATED",
+        "POSTED",
+        "ALREADY_POSTED",
+    }
+
+
+def _is_batch_failure(
+    status: str,
+    error: str | None = None,
+) -> bool:
+    return (
+        bool(error)
+        or status in {
+            "FAILED",
+            "VALIDATION_FAILED",
+        }
+    )
+
+def _is_success_status(status: str) -> bool:
+    return status in {
+        "VALIDATED",
+        "POSTED",
+        "ALREADY_POSTED",
+    }
+
+
+def _is_failed_status(
+    status: str,
+    error=None,
+) -> bool:
+    return (
+        bool(error)
+        or status in {
+            "FAILED",
+            "VALIDATION_FAILED",
+        }
+    )
 
 def _run_netsuite_batch(
     *,
@@ -205,13 +250,21 @@ def _run_netsuite_batch(
                 "succeeded": sum(
                     1
                     for item in results
-                    if item["status"] in {
-                        "VALIDATED",
-                        "POSTED",
-                        "ALREADY_POSTED",
-                    }
+                    # if item["status"] in {
+                    #     "VALIDATED",
+                    #     "POSTED",
+                    #     "ALREADY_POSTED",
+                    # }
+                    if _is_success_status(
+                        item["status"]
+                    )
                 ),
-                "failed": sum(1 for item in results if item["error"]),
+                "failed": sum(
+                    1 for item in results if _is_batch_failure(
+                        item["status"],
+                        item.get("error")
+                    )
+                ),
                 "results": results[-25:],
             },
         )
@@ -224,13 +277,22 @@ def _run_netsuite_batch(
         "succeeded": sum(
             1
             for item in results
-            if item["status"] in {
-                "VALIDATED",
-                "POSTED",
-                "ALREADY_POSTED",
-            }
+            # if item["status"] in {
+            #     "VALIDATED",
+            #     "POSTED",
+            #     "ALREADY_POSTED",
+            # }
+            if _is_success_status(
+                item.get("status",""),
+                item.get("error")
+            )
         ),
-        "failed": sum(1 for item in results if item["error"]),
+        "failed": sum(
+            1 for item in results if _is_batch_failure(
+                item["status"],
+                item.get("error")
+            )
+        ),
         "results": results,
     }
 

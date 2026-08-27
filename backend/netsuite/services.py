@@ -14,6 +14,7 @@ import json
 import re
 import requests
 from accounts.models import User
+from django.db import transaction
 from django.conf import settings
 from netsuite.client import NetSuiteAuthClient
 from netsuite.constants import NetSuiteRecordType
@@ -27,6 +28,7 @@ from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCust
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionAuditLogRepository, NetSuiteConnectionRepository
 from netsuite.token_manager import NetSuiteTokenManager
+from netsuite.vendor_bill_baseline import VENDOR_BILL_BASELINE_FIELDS
 from tenancy.services import company_lifecycle_service
 from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, MappingStatus, ValidationStatus
 
@@ -264,14 +266,6 @@ class NetSuiteConnectionService:
             raise PermissionError(
             "Only Company Admin can delete NetSuite connections."
         )
-        # connection = (
-        #     NetSuiteConnection.objects
-        #     .filter(
-        #         id=connection_id,
-        #         company_id=user.company_id,
-        #     )
-        #     .first()
-        # )
         connection = self.repository.get_by_id(
             user,
             connection_id,
@@ -288,15 +282,6 @@ class NetSuiteConnectionService:
         )
 
         self.repository.delete(connection)
-
-        # connection = self.repository.get_by_id(user,connection_id)
-
-        # if connection is None:
-        #     raise NetSuiteConnectionNotFoundException("connection not found.")
-
-        # self.audit_log_repository.log(action='deleted', connection=connection)
-        # self.repository.delete(connection)
-        # return "connection removed succefully."
     
     def switch_connection(
             self,*,
@@ -304,12 +289,7 @@ class NetSuiteConnectionService:
             connection_id):
 
         self._ensure_user_company_operational(user=user)
-        # connection = NetSuiteConnection.objects.filter(
-        #     id=connection_id,
-        #     company_id=user.company_id,
-        #     status='connected',
-        #     is_active=True,
-        # ).first()
+
         connection = self.repository.get_authorized_for_user(
             user=user,
             connection_id=connection_id,
@@ -319,17 +299,6 @@ class NetSuiteConnectionService:
             raise NetSuiteConnectionNotFoundException(
                 "NetSuite connection is not available to this user."
             )
-        
-        # is_company_admin = self._is_company_admin(user)
-
-        # if not is_company_admin:
-        #     assigned = EmployeeConnection.objects.filter(
-        #     employee=user,
-        #     connection=connection).exists()
-        #     if not assigned:
-        #         raise NetSuiteConnectionNotFoundException(
-        #         "This NetSuite account is not assigned to you."
-        #         )
             
         preference, _ = (
             NetSuiteUserConnectionPreference.objects
@@ -397,9 +366,6 @@ class NetSuiteConnectionService:
             raise PermissionError(
                 "Only Company Admin can assign NetSuite connections."
             )
-        # connection = NetSuiteConnection.objects.select_related(
-        #         'company'
-        #     ).get(pk=connection_id)
         connection = (
             NetSuiteConnection.objects
             .filter(
@@ -428,16 +394,6 @@ class NetSuiteConnectionService:
             "Employee does not belong to this company."
             )
 
-        # if connection.company is not None:
-        #     company_lifecycle_service.ensure_operational(
-        #         company=connection.company
-        #     )
-
-        # employee = User.objects.get(pk=employee_id)
-
-        # if connection.company and employee.company_id != connection.company_id:
-        #     raise ValueError('Employee does not belong to the same company as this connection.')
-
         if self._is_company_admin(employee):
             raise ValueError(
                 'Company Admin does not need employee assignment.'
@@ -458,10 +414,6 @@ class NetSuiteConnectionService:
             raise PermissionError(
                 "Only Company Admin can remove NetSuite assignments."
             )
-        
-        # connection = NetSuiteConnection.objects.select_related(
-        #     'company'
-        # ).filter(pk=connection_id).first()
         connection = (
         NetSuiteConnection.objects
         .filter(
@@ -475,18 +427,6 @@ class NetSuiteConnectionService:
             raise NetSuiteConnectionNotFoundException(
                 "NetSuite connection not found."
             )
-
-        # if connection.company is not None:
-        #     company_lifecycle_service.ensure_operational(
-        #         company=connection.company
-        #     )
-
-
-
-        # EmployeeConnection.objects.filter(
-        #     connection=connection,
-        #     employee_id=employee_id,
-        # ).delete()
         deleted, _ = EmployeeConnection.objects.filter(
             connection=connection,
             employee_id=employee_id,
@@ -503,23 +443,6 @@ class NetSuiteConnectionService:
         user = User.objects.select_related("company").get(pk=employee_id)
 
         return self.repository.get_for_user(user)
-        # if self._is_company_admin(user):
-        #     return (
-        #     NetSuiteConnection.objects
-        #     .filter(
-        #         company=user.company,
-        #         status="connected",
-        #         is_active=True,
-        #     )
-        #     .order_by("-connected_at")
-        #     .first()
-        # )
-        # assignment = EmployeeConnection.objects.select_related('connection').filter(employee_id=employee_id).first()
-
-        # if not assignment:
-        #     return None
-
-        # return assignment.connection
 
     def test_connection(self, *, connection_id):
         connection = NetSuiteConnection.objects.select_related('company').get(pk=connection_id)
@@ -1534,267 +1457,8 @@ class NetSuiteVendorBillPostingService:
                     return tail[-1]
 
         return None
+
     
-
-# class NetSuiteFieldMappingService:
-#     """
-#     Manage OCR → NetSuite field mappings and AI-assisted suggestions.
-#     """
-
-#     def __init__(self, repository=None):
-#         self.repository = repository or NetSuiteConnectionRepository()
-
-#     def get_field_catalogue(self, *,company ,connection_id, record_type='vendorBill'):
-#         """
-#         Return available NetSuite fields for a record type from synced
-#         reference data and known metadata.
-#         """
-#         connection = self.repository.get_for_company(
-#             connection_id=connection_id,
-#             company=company,
-#         )
-#         if connection is None:
-#             raise NetSuiteConnectionNotFoundException(
-#                 "NetSuite connection not found or not accessible."
-#             )
-
-#         if (
-#             connection.status != "connected"
-#             or not connection.is_active
-#         ):
-#             raise NetSuiteConnectionNotFoundException(
-#                 "NetSuite connection is not active."
-#             )
-
-#         fields = self._build_standard_catalogue(record_type)
-#         custom_fields = list(
-#             NetSuiteCustomField.objects.filter(
-#                 company=connection.company,
-#                 connection=connection,
-#                 record_type=record_type,
-#             ).values(
-#                 'field_id', 'field_label', 'datatype', 'scope',
-#                 'source_field_key', 'source_field_label', 'status',
-#             )
-#         )
-#         return {
-#             'record_type': record_type,
-#             'fields': fields,
-#             'custom_fields': custom_fields,
-#         }
-
-#     def _build_standard_catalogue(self, record_type):
-#         """
-#         Hardcoded baseline catalogue of standard NetSuite Vendor Bill
-#         fields. In production this would be enriched from live NetSuite
-#         metadata; the baseline ensures the UI always has candidates.
-#         """
-#         body_fields = [
-#             {'field_id': 'entity', 'label': 'Vendor', 'datatype': 'select', 'scope': 'body', 'is_required': True, 'is_custom': False, 'reference_type': 'vendor'},
-#             {'field_id': 'tranid', 'label': 'Transaction ID / Reference', 'datatype': 'text', 'scope': 'body', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'trandate', 'label': 'Transaction Date', 'datatype': 'date', 'scope': 'body', 'is_required': True, 'is_custom': False},
-#             {'field_id': 'duedate', 'label': 'Due Date', 'datatype': 'date', 'scope': 'body', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'currency', 'label': 'Currency', 'datatype': 'select', 'scope': 'body', 'is_required': True, 'is_custom': False},
-#             {'field_id': 'memo', 'label': 'Memo', 'datatype': 'text', 'scope': 'body', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'otherrefnum', 'label': 'Other Reference Number', 'datatype': 'text', 'scope': 'body', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'subsidiary', 'label': 'Subsidiary', 'datatype': 'select', 'scope': 'body', 'is_required': True, 'is_custom': False},
-#             {'field_id': 'location', 'label': 'Location', 'datatype': 'select', 'scope': 'body', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'department', 'label': 'Department', 'datatype': 'select', 'scope': 'body', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'class', 'label': 'Class', 'datatype': 'select', 'scope': 'body', 'is_required': False, 'is_custom': False},
-#         ]
-
-#         item_fields = [
-#             {'field_id': 'item', 'label': 'Item', 'datatype': 'select', 'scope': 'column', 'is_required': True, 'is_custom': False, 'reference_type': 'item'},
-#             {'field_id': 'description', 'label': 'Item Description', 'datatype': 'text', 'scope': 'column', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'quantity', 'label': 'Quantity', 'datatype': 'decimal', 'scope': 'column', 'is_required': True, 'is_custom': False},
-#             {'field_id': 'rate', 'label': 'Rate', 'datatype': 'currency', 'scope': 'column', 'is_required': True, 'is_custom': False},
-#             {'field_id': 'amount', 'label': 'Amount', 'datatype': 'currency', 'scope': 'column', 'is_required': False, 'is_custom': False},
-#             {'field_id': 'custcol_hsnsac', 'label': 'HSN/SAC', 'datatype': 'text', 'scope': 'column', 'is_required': False, 'is_custom': True},
-#         ]
-
-#         return {
-#             'body': body_fields,
-#             'column': item_fields,
-#         }
-
-#     def suggest_mappings(self, *,company, connection_id, record_type, source_fields):
-#         """
-#         Return AI-assisted mapping suggestions for source fields.
-
-#         Uses rule-based semantic matching with datatype/scope compatibility
-#         checks. Falls back to UNRESOLVED when no safe candidate exists.
-#         """
-#         catalogue = self.get_field_catalogue(
-#             company=company,
-#             connection_id=connection_id,
-#             record_type=record_type,
-#         )
-#         all_targets = (
-#             catalogue.get('fields', {}).get('body', [])
-#             + catalogue.get('fields', {}).get('column', [])
-#             + catalogue.get('custom_fields', [])
-#         )
-
-#         suggestions = []
-#         for source in source_fields:
-#             source_key = source.get('key') or source.get('field_key')
-#             source_label = source.get('label') or source.get('field_label', source_key)
-#             source_scope = source.get('scope', 'header')
-#             source_datatype = source.get('datatype', 'text')
-
-#             candidates = self._rank_candidates(
-#                 source_label=source_label,
-#                 source_scope=source_scope,
-#                 source_datatype=source_datatype,
-#                 targets=all_targets,
-#             )
-
-#             if not candidates:
-#                 status = 'UNRESOLVED'
-#                 best = None
-#             elif len(candidates) == 1:
-#                 status = 'MAPPED'
-#                 best = candidates[0]
-#             elif candidates[0].get('score', 0) >= 0.8:
-#                 status = 'MAPPED'
-#                 best = candidates[0]
-#             else:
-#                 status = 'AMBIGUOUS'
-#                 best = candidates[0]
-
-#             suggestions.append({
-#                 'source_field_key': source_key,
-#                 'source_field_label': source_label,
-#                 'source_scope': source_scope,
-#                 'source_datatype': source_datatype,
-#                 'status': status,
-#                 'suggested_target': best,
-#                 'candidates': candidates[:5],
-#             })
-
-#         return suggestions
-
-#     def _rank_candidates(self, *, source_label, source_scope, source_datatype, targets):
-#         ranked = []
-#         source_lower = source_label.lower().strip()
-#         scope_map = {'header': 'body', 'line': 'column'}
-#         expected_scope = scope_map.get(source_scope, source_scope)
-
-#         for target in targets:
-#             target_scope = target.get('scope', 'body')
-#             if expected_scope != target_scope:
-#                 continue
-
-#             target_label = target.get('label', '').lower().strip()
-#             target_id = target.get('field_id', '').lower()
-#             target_dtype = target.get('datatype', 'text').lower()
-
-#             score = 0.0
-#             if source_lower == target_label or source_lower == target_id:
-#                 score = 1.0
-#             elif source_lower in target_label or target_label in source_lower:
-#                 score = 0.9
-#             elif self._semantic_similarity(source_lower, target_label) > 0.7:
-#                 score = 0.8
-#             elif source_lower in target_id or target_id in source_lower:
-#                 score = 0.7
-
-#             if not self._datatype_compatible(source_datatype, target_dtype):
-#                 score = max(0.0, score - 0.5)
-
-#             if score > 0:
-#                 ranked.append({**target, 'score': score})
-
-#         ranked.sort(key=lambda x: x.get('score', 0), reverse=True)
-#         return ranked
-
-#     @staticmethod
-#     def _semantic_similarity(a, b):
-#         """Rough word-overlap similarity for short labels."""
-#         a_words = set(a.split())
-#         b_words = set(b.split())
-#         if not a_words or not b_words:
-#             return 0.0
-#         intersection = a_words & b_words
-#         return len(intersection) / max(len(a_words | b_words), 1)
-
-#     @staticmethod
-#     def _datatype_compatible(source_dtype, target_dtype):
-#         compatible = {
-#             'text': {'text', 'select'},
-#             'number': {'decimal', 'integer', 'currency'},
-#             'date': {'date'},
-#             'boolean': {'checkbox'},
-#             'currency': {'currency', 'decimal'},
-#         }
-#         allowed = compatible.get(source_dtype.lower(), set())
-#         return target_dtype.lower() in allowed or target_dtype.lower() == 'text'
-
-#     def save_mappings(self, *, company, connection_id, record_type, mappings):
-#         """
-#         Persist confirmed field mappings. Replaces existing mappings for
-#         the same company/connection/record_type/source_field_key.
-#         """
-#         connection = self.repository.get_for_company(
-#             connection_id=connection_id,
-#             company=company,
-#         )
-#         if connection is None:
-#             raise NetSuiteConnectionNotFoundException(
-#                 "NetSuite connection not found or not accessible."
-#             )
-
-#         saved = []
-#         for mapping in mappings:
-#             source_key = mapping.get('source_field_key')
-#             if not source_key:
-#                 continue
-
-#             obj, _ = OCRNetSuiteFieldMapping.objects.update_or_create(
-#                 company=company,
-#                 connection=connection,
-#                 record_type=record_type,
-#                 source_field_key=source_key,
-#                 defaults={
-#                     'source_field_label': mapping.get('source_field_label', source_key),
-#                     'source_scope': mapping.get('source_scope', 'header'),
-#                     'source_datatype': mapping.get('source_datatype', 'text'),
-#                     'target_field_id': mapping.get('target_field_id', ''),
-#                     'target_field_label': mapping.get('target_field_label', ''),
-#                     'target_scope': mapping.get('target_scope', 'body'),
-#                     'target_datatype': mapping.get('target_datatype', 'text'),
-#                     'is_required': mapping.get('is_required', False),
-#                     'is_custom': mapping.get('is_custom', False),
-#                     'reference_type': mapping.get('reference_type'),
-#                     # 'mapping_status': mapping.get('status', 'MAPPED'),
-#                     'mapping_status': mapping.get(
-#                         'mapping_status',
-#                         'MAPPED' if mapping.get('target_field_id') else 'UNRESOLVED',
-#                     ),
-#                     'confidence': mapping.get('confidence'),
-#                     'metadata': mapping.get('metadata', {}),
-#                 },
-#             )
-#             saved.append(obj)
-#         return saved
-
-#     def get_mappings(self, *, company, connection_id, record_type):
-#         connection = self.repository.get_for_company(
-#             connection_id=connection_id,
-#             company=company,
-#             )
-#         if connection is None:
-#             return OCRNetSuiteFieldMapping.objects.none()
-#         return list(
-#             OCRNetSuiteFieldMapping.objects.filter(
-#                 company=company,
-#                 connection=connection,
-#                 record_type=record_type,
-#             ).select_related("company","connection")
-#             .order_by("created_at")
-#         )
-
-
 class NetSuiteFieldMappingService:
     """Manage OCR -> NetSuite field mappings and AI-assisted suggestions."""
 
@@ -1821,6 +1485,102 @@ class NetSuiteFieldMappingService:
         return connection
 
     @staticmethod
+    def _merge_baseline_fields(normalized):
+        """
+        Merge the static AGSuite Vendor Bill baseline with live NetSuite
+        metadata.
+
+        Rules:
+        - Baseline fields are always available as dropdown targets.
+        - Live metadata wins for duplicate field_id + scope.
+        - Live metadata supplies account-specific required/custom/reference info.
+        - Baseline fields remain optional unless live metadata says required.
+        """
+        live_body = list(normalized.get("body_fields") or [])
+        live_column = list(normalized.get("line_fields") or [])
+
+        live_fields = {}
+
+        for field in [*live_body, *live_column]:
+            field_id = str(field.get("field_id") or "").strip()
+            if not field_id:
+                continue
+
+            scope = (
+                "column"
+                if str(field.get("scope") or "").lower() in {"line", "column", "sublist"}
+                else "body"
+            )
+
+            live_fields[(field_id, scope)] = {
+                **field,
+                "field_id": field_id,
+                "scope": scope,
+            }
+
+        merged = {}
+
+        for field in VENDOR_BILL_BASELINE_FIELDS:
+            field_id = str(field["field_id"])
+            scope = (
+                "column"
+                if str(field.get("scope") or "").lower()
+                in {"line", "column", "sublist"}
+                else "body"
+            )
+
+            baseline_field = {
+                **field,
+                "field_id": field_id,
+                "scope": scope,
+                "is_required": False,
+                "baseline": True,
+            }
+
+            live_field = live_fields.pop(
+                (field_id, scope),
+                None,
+            )
+
+            merged[(field_id, scope)] = (
+                {
+                    **baseline_field,
+                    **live_field,
+                    "baseline": True,
+                }
+                if live_field
+                else baseline_field
+            )
+
+        # Preserve every account-specific/live field that was not in baseline.
+        for key, field in live_fields.items():
+            merged[key] = field
+
+        body_fields = [
+            field
+            for (field_id, scope), field in merged.items()
+            if scope == "body"
+        ]
+
+        column_fields = [
+            field
+            for (field_id, scope), field in merged.items()
+            if scope == "column"
+        ]
+
+        custom_fields = [
+            field
+            for field in [*body_fields, *column_fields]
+            if field.get("is_custom")
+        ]
+
+        return {
+            "body_fields": body_fields,
+            "line_fields": column_fields,
+            "custom_fields": custom_fields,
+        }
+
+    @staticmethod
     def _account_domain(connection):
         """Build the account-specific SuiteTalk domain from the stored account ID."""
         account_id = str(connection.netsuite_account_id or "").strip()
@@ -1832,24 +1592,6 @@ class NetSuiteFieldMappingService:
         domain_account = account_id.lower().replace("_", "-")
         domain_account = re.sub(r"[^a-z0-9-]", "", domain_account)
         return f"{domain_account}.suitetalk.api.netsuite.com"
-
-        # The connection form stores the base NetSuite account ID. For a
-        # sandbox, the account-specific SuiteTalk hostname also contains the
-        # sandbox suffix (for example 4151303-sb2). The project currently
-        # supports an optional NETSUITE_SANDBOX_SUFFIX setting; sb2 is the
-        # development default and can be changed without touching code.
-        # if (
-        #     str(getattr(connection, "environment", "")).lower() == "sandbox"
-        #     and not re.search(r"-sb\d+$", domain_account)
-        # ):
-        #     sandbox_suffix = str(
-        #         getattr(settings, "NETSUITE_SANDBOX_SUFFIX", "sb2")
-        #     ).strip().lower().replace("_", "-")
-        #     if sandbox_suffix and not sandbox_suffix.startswith("sb"):
-        #         sandbox_suffix = f"sb{sandbox_suffix}"
-        #     domain_account = f"{domain_account}-{sandbox_suffix}"
-
-        # return f"{domain_account}.suitetalk.api.netsuite.com"
 
     def _fetch_live_metadata(self, *, connection, record_type):
         """Fetch record metadata directly from NetSuite's REST Metadata Catalog."""
@@ -2075,13 +1817,22 @@ class NetSuiteFieldMappingService:
         }
 
     def _catalogue_payload(self, catalogue, *, source="database", stale=False, available=True, error=None):
+
+        merged = self._merge_baseline_fields(
+                {
+                "body_fields": catalogue.body_fields or [],
+                "line_fields": catalogue.line_fields or [],
+                "custom_fields": catalogue.custom_fields or [],
+            }
+        )
+
         return {
             "record_type": catalogue.record_type,
             "fields": {
-                "body": catalogue.body_fields or [],
-                "column": catalogue.line_fields or [],
+                "body": merged["body_fields"],
+                "column": merged["line_fields"],
             },
-            "custom_fields": catalogue.custom_fields or [],
+            "custom_fields": merged["custom_fields"],
             "fetched_at": catalogue.fetched_at.isoformat() if catalogue.fetched_at else None,
             "source": source,
             "stale": stale,
@@ -2117,7 +1868,12 @@ class NetSuiteFieldMappingService:
                 connection=connection,
                 record_type=record_type,
             )
-            normalized = self._normalise_metadata(raw, record_type)
+            # normalized = self._normalise_metadata(raw, record_type)
+            normalized = self._merge_baseline_fields(
+                self._normalise_metadata(
+                    raw,record_type,
+                )
+            )
 
             # Merge fields created by AGSuite if NetSuite metadata has not yet
             # surfaced them in the selected record schema.
@@ -2192,7 +1948,14 @@ class NetSuiteFieldMappingService:
 
             # Development-safe fallback: retain the current hardcoded baseline
             # so the mapping screen still works while the live API is repaired.
-            fields = self._build_standard_catalogue(record_type)
+            # fields = self._build_standard_catalogue(record_type)
+            fields = self._merge_baseline_fields(
+                {
+                    "body_fields": [],
+                    "line_fields": [],
+                    "custom_fields": [],
+                }
+            )
             custom_fields = list(
                 NetSuiteCustomField.objects.filter(
                     company=connection.company,
@@ -2239,39 +2002,101 @@ class NetSuiteFieldMappingService:
         ]
         return {'body': body_fields, 'column': item_fields}
 
-    def suggest_mappings(self, *, company, connection_id, record_type, source_fields):
-        """Generate AI mapping suggestions with a maximum of two AI attempts."""
+    def suggest_mappings(
+        self,
+        *,
+        company,
+        connection_id,
+        record_type,
+        source_fields,
+    ):
+        """Generate safe AI mappings with at most two targeted attempts."""
         catalogue = self.get_field_catalogue(
             company=company,
             connection_id=connection_id,
             record_type=record_type,
         )
+
+        # One authoritative target collection. Custom fields are already
+        # contained in body/column, so do not append custom_fields again.
         all_targets = (
-            catalogue.get('fields', {}).get('body', [])
-            + catalogue.get('fields', {}).get('column', [])
-            + catalogue.get('custom_fields', [])
+            catalogue.get("fields", {}).get("body", [])
+            + catalogue.get("fields", {}).get("column", [])
         )
 
-        # Try Gemini twice. If the API is unavailable (including quota issues),
-        # gracefully fall back to the deterministic matcher so the page remains usable.
-        previous = None
+        target_by_key = {}
+        for target in all_targets:
+            field_id = str(target.get("field_id") or "").strip()
+            if not field_id:
+                continue
+            target_scope = (
+                "column"
+                if str(target.get("scope") or "").lower()
+                in {"line", "column", "sublist"}
+                else "body"
+            )
+            target_by_key[(field_id.casefold(), target_scope)] = target
+
+        all_targets = list(target_by_key.values())
+        original_sources = list(source_fields or [])
+
+        if not original_sources:
+            return []
+
+        locked_mappings = {}
+        latest_unresolved = {}
+        pending_sources = original_sources
         last_error = None
+        attempts_used = 0
+
         for attempt in range(1, self.MAX_AI_MAPPING_ATTEMPTS + 1):
+            if not pending_sources:
+                break
+
+            attempts_used = attempt
+
             try:
+                # Previous successful mappings are LOCKED. The second attempt
+                # receives only the still unresolved source fields.
+                previous_attempt = list(locked_mappings.values())
+
                 result = self._ai_suggest_mappings(
-                    source_fields=source_fields,
+                    source_fields=pending_sources,
                     targets=all_targets,
                     record_type=record_type,
-                    previous_attempt=previous,
+                    previous_attempt=previous_attempt,
                 )
+
                 validated = self._validate_ai_mappings(
                     result,
-                    source_fields=source_fields,
+                    source_fields=pending_sources,
                     targets=all_targets,
                 )
-                if validated is not None:
-                    return validated
-                previous = result
+
+                for item in validated:
+                    source_key = item["source_field_key"]
+                    if item["status"] == "MAPPED":
+                        locked_mappings[source_key] = item
+                        latest_unresolved.pop(source_key, None)
+                    else:
+                        latest_unresolved[source_key] = item
+
+                pending_keys = {
+                    item["source_field_key"]
+                    for item in validated
+                    if item["status"] in {"AMBIGUOUS", "UNRESOLVED"}
+                }
+
+                pending_sources = [
+                    source
+                    for source in pending_sources
+                    if str(
+                        source.get("key")
+                        or source.get("field_key")
+                        or ""
+                    ) in pending_keys
+                ]
+
             except Exception as exc:
                 last_error = exc
                 logger.exception(
@@ -2281,18 +2106,77 @@ class NetSuiteFieldMappingService:
                     connection_id,
                 )
 
-        fallback = self._rule_based_suggestions(
-            source_fields=source_fields,
-            all_targets=all_targets,
-        )
-        if last_error:
+                # If the first call failed before producing a usable response,
+                # the second call is a genuine retry of the full remaining set.
+                if attempt == 1:
+                    pending_sources = [
+                        source
+                        for source in original_sources
+                        if str(
+                            source.get("key")
+                            or source.get("field_key")
+                            or ""
+                        ) not in locked_mappings
+                    ]
+
+        final_results = []
+        for source in original_sources:
+            source_key = str(
+                source.get("key")
+                or source.get("field_key")
+                or ""
+            )
+
+            item = locked_mappings.get(source_key)
+            if item is None:
+                item = latest_unresolved.get(source_key)
+
+            if item is None:
+                item = {
+                    "source_field_key": source_key,
+                    "source_field_label": source.get("label") or source_key,
+                    "source_scope": source.get("scope") or "header",
+                    "source_datatype": source.get("datatype") or "text",
+                    "target_field_id": None,
+                    "target_field_label": None,
+                    "target_scope": None,
+                    "target_datatype": None,
+                    "is_required": False,
+                    "is_custom": False,
+                    "reference_type": None,
+                    "status": "UNRESOLVED",
+                    "confidence": None,
+                    "suggested_target": None,
+                    "candidates": [],
+                }
+
+            item = dict(item)
+            metadata = dict(item.get("metadata") or {})
+            metadata["ai_attempts_used"] = attempts_used
+            item["metadata"] = metadata
+            final_results.append(item)
+
+        # Deterministic matching is used only when Gemini itself was unavailable
+        # or returned an unusable response. A valid AI response with unresolved
+        # fields remains unresolved rather than being silently guessed.
+        if last_error and not locked_mappings:
+            fallback = self._rule_based_suggestions(
+                source_fields=original_sources,
+                all_targets=all_targets,
+            )
             for item in fallback:
-                item.setdefault("metadata", {})
-                item["metadata"].update({
-                    "ai_fallback": True,
-                    "ai_error": str(last_error)[:500],
-                })
-        return fallback
+                metadata = dict(item.get("metadata") or {})
+                metadata.update(
+                    {
+                        "ai_fallback": True,
+                        "ai_error": str(last_error)[:500],
+                        "ai_attempts_used": attempts_used,
+                    }
+                )
+                item["metadata"] = metadata
+            return fallback
+
+        return final_results
 
     @staticmethod
     def _parse_ai_json(response_text):
@@ -2307,90 +2191,301 @@ class NetSuiteFieldMappingService:
             return parsed
         raise ValueError("AI mapping response did not contain a mappings list.")
 
-    def _ai_suggest_mappings(self, *, source_fields, targets, record_type, previous_attempt=None):
+    def _ai_suggest_mappings(
+        self,
+        *,
+        source_fields,
+        targets,
+        record_type,
+        previous_attempt=None,
+    ):
         from google import genai
         from google.genai import types
 
-        model = getattr(settings, "GEMINI_MAPPING_MODEL", None) or getattr(
-            settings, "GEMINI_MODEL", "gemini-2.5-flash"
+        model = (
+            getattr(settings, "GEMINI_MAPPING_MODEL", None)
+            or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
         )
-        client = genai.Client()
+
+        api_key = getattr(settings, "GEMINI_API_KEY", None)
+        if not api_key:
+            raise RuntimeError(
+                "Gemini API key is not configured for AI field mapping."
+            )
+
+        client = genai.Client(api_key=api_key)
+
         prompt = {
             "record_type": record_type,
             "instructions": [
-                "Map every application field to exactly one NetSuite target when there is a safe semantic match.",
-                "Only use target field IDs present in the supplied NetSuite catalogue.",
-                "Respect body/header versus line scope.",
-                "Respect datatype compatibility and reference type when present.",
-                "Never invent or rename a NetSuite field ID.",
-                "Use UNRESOLVED when no safe mapping exists.",
-                "Use AMBIGUOUS when two or more targets are similarly plausible.",
+                "Map AGSuite OCR application fields to NetSuite Vendor Bill fields.",
+                "Return exactly one mapping object for every supplied application field.",
+                "Use ONLY exact NetSuite field IDs present in the supplied catalogue.",
+                "Never invent, rename, shorten, normalize, or fabricate a NetSuite field ID.",
+                "Match by semantic meaning, not just word overlap.",
+                "Use these Vendor Bill semantic priors when applicable, but always verify the exact target against the supplied account catalogue:",
+                "vendor_name normally maps to the Vendor/entity reference.",
+                "invoice_date normally maps to trandate/transaction date.",
+                "due_date normally maps to duedate.",
+                "subsidiary normally maps to subsidiary.",
+                "currency normally maps to currency.",
+                "quantity normally maps to the item-line quantity field.",
+                "unit_price normally maps to the item-line rate field.",
+                "amount normally maps to the item-line amount field.",
+                "line description normally maps to the item-line description field; do not map a line description to the body memo unless no safe line field exists.",
+                "invoice_number is a transaction/reference concept; prefer an exact account field labelled for invoice/reference number over an unrelated custom field.",
+                "customer_name must not be treated as vendor_name; map it only when the account catalogue contains a semantically correct customer target.",
+                "A body/header application field may map only to a body NetSuite target.",
+                "A line application field may map only to a column/line NetSuite target.",
+                "Respect datatype compatibility and reference_type whenever provided.",
+                "Never map a field merely because the target is required.",
+                "For MAPPED, target_field_id must be an exact catalogue field ID.",
+                "For AMBIGUOUS, do not guess; leave target_field_id empty and return candidate target IDs when useful.",
+                "For UNRESOLVED, leave target_field_id empty.",
+                "On attempt 2, previous MAPPED mappings are locked and must not be changed.",
+                "On attempt 2, focus only on the currently supplied unresolved/ambiguous fields.",
+                "If the semantic match is not safe, prefer UNRESOLVED over an unsafe guess.",
             ],
+            "output_format": {
+                "status_values": ["MAPPED", "AMBIGUOUS", "UNRESOLVED"],
+                "fields": [
+                    "source_field_key",
+                    "status",
+                    "target_field_id",
+                    "confidence",
+                ],
+                "rule": "Return target_field_id as an empty string when status is AMBIGUOUS or UNRESOLVED.",
+            },
             "application_fields": source_fields,
             "netsuite_fields": targets,
             "previous_attempt": previous_attempt or [],
         }
+
         response = client.models.generate_content(
             model=model,
-            contents=json.dumps(prompt, ensure_ascii=False, default=str),
+            contents=json.dumps(
+                prompt,
+                ensure_ascii=False,
+                default=str,
+            ),
             config=types.GenerateContentConfig(
                 temperature=0,
                 response_mime_type="application/json",
+                response_schema={
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "source_field_key": {"type": "STRING"},
+                            "status": {
+                                "type": "STRING",
+                                "enum": [
+                                    "MAPPED",
+                                    "AMBIGUOUS",
+                                    "UNRESOLVED",
+                                ],
+                            },
+                            "target_field_id": {"type": "STRING"},
+                            "confidence": {"type": "NUMBER"},
+                        },
+                        "required": [
+                            "source_field_key",
+                            "status",
+                            "target_field_id",
+                            "confidence",
+                        ],
+                    },
+                },
             ),
         )
+
         return self._parse_ai_json(response.text)
 
     @staticmethod
     def _validate_ai_mappings(result, *, source_fields, targets):
-        target_map = {
-            str(target.get("field_id")): target
-            for target in targets
-            if target.get("field_id")
-        }
-        source_map = {
-            str(source.get("key") or source.get("field_key")): source
-            for source in source_fields
-        }
-        if not source_map or not isinstance(result, list):
-            return None
+        if not isinstance(result, list):
+            raise ValueError(
+                "AI mapping response must be a list."
+            )
 
-        by_source = {}
-        for item in result:
-            if not isinstance(item, dict):
-                return None
-            key = item.get("source_field_key") or item.get("source_key")
-            status = str(item.get("status") or "UNRESOLVED").upper()
-            target_id = item.get("target_field_id") or item.get("suggested_target_id")
-            if key not in source_map:
-                return None
-            if target_id is not None and str(target_id) not in target_map:
-                return None
-            by_source[str(key)] = {
-                "source_field_key": str(key),
-                "source_field_label": item.get("source_field_label") or source_map[key].get("label") or key,
-                "source_scope": source_map[key].get("scope", "header"),
-                "source_datatype": source_map[key].get("datatype", "text"),
-                "status": status if status in {"MAPPED", "AMBIGUOUS", "UNRESOLVED"} else "UNRESOLVED",
-                "suggested_target": target_map.get(str(target_id)) if target_id is not None else None,
-                "candidates": item.get("candidates") or [],
-            }
+        def normalize_scope(scope):
+            value = str(scope or "").strip().lower()
+            return "column" if value in {"line", "column", "sublist"} else "body"
+
+        source_map = {
+            str(
+                source.get("key")
+                or source.get("field_key")
+            ): source
+            for source in source_fields
+            if source.get("key") or source.get("field_key")
+        }
+
+        target_map = {}
+        for target in targets:
+            field_id = str(target.get("field_id") or "").strip()
+            if not field_id:
+                continue
+            scope = normalize_scope(target.get("scope"))
+            target_map[(field_id.casefold(), scope)] = target
 
         normalized = []
-        for key, source in source_map.items():
-            normalized.append(
-                by_source.get(
-                    key,
-                    {
-                        "source_field_key": key,
-                        "source_field_label": source.get("label") or key,
-                        "source_scope": source.get("scope", "header"),
-                        "source_datatype": source.get("datatype", "text"),
-                        "status": "UNRESOLVED",
-                        "suggested_target": None,
-                        "candidates": [],
-                    },
-                )
+        seen_sources = set()
+
+        for item in result:
+            if not isinstance(item, dict):
+                continue
+
+            source_key = (
+                item.get("source_field_key")
+                or item.get("source_key")
+                or item.get("source_field")
             )
+            if not source_key:
+                continue
+
+            source_key = str(source_key)
+            if source_key not in source_map:
+                # Ignore hallucinated source fields, but do not invalidate
+                # otherwise useful mappings.
+                continue
+
+            seen_sources.add(source_key)
+
+            source = source_map[source_key]
+            source_scope_raw = source.get("scope") or "header"
+            expected_target_scope = normalize_scope(source_scope_raw)
+
+            status = str(
+                item.get("status")
+                or item.get("mapping_status")
+                or "UNRESOLVED"
+            ).upper()
+            if status not in {"MAPPED", "AMBIGUOUS", "UNRESOLVED"}:
+                status = "UNRESOLVED"
+
+            confidence = item.get("confidence")
+            candidates = item.get("candidates") or []
+
+            target_id = (
+                item.get("target_field_id")
+                or item.get("suggested_target_id")
+                or item.get("target_field")
+            )
+
+            nested_target = (
+                item.get("suggested_target")
+                or item.get("target")
+            )
+
+            if isinstance(target_id, dict):
+                target_id = (
+                    target_id.get("field_id")
+                    or target_id.get("id")
+                    or target_id.get("internal_id")
+                )
+
+            if not target_id and isinstance(nested_target, dict):
+                target_id = (
+                    nested_target.get("field_id")
+                    or nested_target.get("id")
+                    or nested_target.get("internal_id")
+                )
+
+            if isinstance(target_id, str):
+                target_id = target_id.strip()
+
+            target = None
+            if target_id:
+                target = target_map.get(
+                    (
+                        str(target_id).casefold(),
+                        expected_target_scope,
+                    )
+                )
+
+            base = {
+                "source_field_key": source_key,
+                "source_field_label": (
+                    item.get("source_field_label")
+                    or source.get("label")
+                    or source_key
+                ),
+                "source_scope": source_scope_raw,
+                "source_datatype": (
+                    source.get("datatype")
+                    or "text"
+                ),
+                "target_field_id": None,
+                "target_field_label": None,
+                "target_scope": None,
+                "target_datatype": None,
+                "is_required": False,
+                "is_custom": False,
+                "reference_type": None,
+                "status": "UNRESOLVED",
+                "confidence": confidence,
+                "suggested_target": None,
+                "candidates": candidates,
+            }
+
+            if status == "MAPPED" and target is not None:
+                base.update(
+                    {
+                        "target_field_id": str(target["field_id"]),
+                        "target_field_label": (
+                            target.get("label")
+                            or target.get("field_id")
+                        ),
+                        "target_scope": target.get("scope") or expected_target_scope,
+                        "target_datatype": target.get("datatype") or "text",
+                        "is_required": bool(target.get("is_required")),
+                        "is_custom": bool(target.get("is_custom")),
+                        "reference_type": target.get("reference_type"),
+                        "status": "MAPPED",
+                        "suggested_target": target,
+                    }
+                )
+            elif status == "AMBIGUOUS":
+                base["status"] = "AMBIGUOUS"
+
+            normalized.append(base)
+
+        # AI is allowed to omit a source field; surface that as unresolved so
+        # the next attempt can explicitly retry it.
+        for source_key, source in source_map.items():
+            if source_key in seen_sources:
+                continue
+            normalized.append(
+                {
+                    "source_field_key": source_key,
+                    "source_field_label": source.get("label") or source_key,
+                    "source_scope": source.get("scope") or "header",
+                    "source_datatype": source.get("datatype") or "text",
+                    "target_field_id": None,
+                    "target_field_label": None,
+                    "target_scope": None,
+                    "target_datatype": None,
+                    "is_required": False,
+                    "is_custom": False,
+                    "reference_type": None,
+                    "status": "UNRESOLVED",
+                    "confidence": None,
+                    "suggested_target": None,
+                    "candidates": [],
+                }
+            )
+
+        order = {
+            key: index
+            for index, key in enumerate(source_map)
+        }
+        normalized.sort(
+            key=lambda item: order.get(
+                item["source_field_key"],
+                len(order),
+            )
+        )
         return normalized
 
     def _rule_based_suggestions(self, *, source_fields, all_targets):
@@ -2476,38 +2571,141 @@ class NetSuiteFieldMappingService:
         allowed = compatible.get(str(source_dtype).lower(), set())
         return str(target_dtype).lower() in allowed or str(target_dtype).lower() == 'text'
 
+    @transaction.atomic
     def save_mappings(self, *, company, connection_id, record_type, mappings):
-        connection = self._get_connection(company=company, connection_id=connection_id)
+        """Persist only valid, connection-specific mappings."""
+        connection = self._get_connection(
+            company=company,
+            connection_id=connection_id,
+        )
+
+        # Validate all target IDs against the same account that owns the mapping.
+        catalogue = self.get_field_catalogue(
+            company=company,
+            connection_id=connection.id,
+            record_type=record_type,
+        )
+        catalogue_fields = (
+            catalogue.get("fields", {}).get("body", [])
+            + catalogue.get("fields", {}).get("column", [])
+        )
+
+        def normalize_source_scope(scope):
+            return "line" if str(scope or "").lower() in {"line", "column", "sublist"} else "header"
+
+        def normalize_target_scope(scope):
+            return "column" if str(scope or "").lower() in {"line", "column", "sublist"} else "body"
+
+        target_map = {
+            (
+                str(field.get("field_id")).casefold(),
+                normalize_target_scope(field.get("scope")),
+            ): field
+            for field in catalogue_fields
+            if field.get("field_id")
+        }
+
         saved = []
+
         for mapping in mappings:
-            source_key = mapping.get('source_field_key')
+            source_key = str(
+                mapping.get("source_field_key") or ""
+            ).strip()
             if not source_key:
                 continue
+
+            target_field_id = str(
+                mapping.get("target_field_id") or ""
+            ).strip()
+
+            # Unresolved fields are intentionally not persisted because the DB
+            # requires a non-null target_field_id. Remove stale mappings instead.
+            if not target_field_id:
+                (
+                    OCRNetSuiteFieldMapping.objects
+                    .filter(
+                        company=company,
+                        connection=connection,
+                        record_type=record_type,
+                        source_field_key=source_key,
+                    )
+                    .delete()
+                )
+                continue
+
+            source_scope = normalize_source_scope(
+                mapping.get("source_scope")
+            )
+            target_scope = normalize_target_scope(
+                mapping.get("target_scope")
+            )
+
+            # The line/header relationship is authoritative: a line source must
+            # never be saved against a body target, and vice versa.
+            if target_scope == "column" and source_scope != "line":
+                raise ValueError(
+                    f"Invalid mapping scope for '{source_key}': a line NetSuite field requires a line application field."
+                )
+
+            if target_scope == "body" and source_scope == "line":
+                raise ValueError(
+                    f"Invalid mapping scope for '{source_key}': a line application field cannot map to a body NetSuite field."
+                )
+
+            target = target_map.get(
+                (target_field_id.casefold(), target_scope)
+            )
+            if target is None:
+                raise ValueError(
+                    f"NetSuite field '{target_field_id}' is not available in the selected connection."
+                )
+
             obj, _ = OCRNetSuiteFieldMapping.objects.update_or_create(
                 company=company,
                 connection=connection,
                 record_type=record_type,
                 source_field_key=source_key,
                 defaults={
-                    'source_field_label': mapping.get('source_field_label', source_key),
-                    'source_scope': mapping.get('source_scope', 'header'),
-                    'source_datatype': mapping.get('source_datatype', 'text'),
-                    'target_field_id': mapping.get('target_field_id', ''),
-                    'target_field_label': mapping.get('target_field_label', ''),
-                    'target_scope': mapping.get('target_scope', 'body'),
-                    'target_datatype': mapping.get('target_datatype', 'text'),
-                    'is_required': mapping.get('is_required', False),
-                    'is_custom': mapping.get('is_custom', False),
-                    'reference_type': mapping.get('reference_type'),
-                    'mapping_status': mapping.get(
-                        'mapping_status',
-                        'MAPPED' if mapping.get('target_field_id') else 'UNRESOLVED',
+                    "source_field_label": (
+                        mapping.get("source_field_label")
+                        or source_key
                     ),
-                    'confidence': mapping.get('confidence'),
-                    'metadata': mapping.get('metadata', {}),
+                    "source_scope": source_scope,
+                    "source_datatype": (
+                        mapping.get("source_datatype")
+                        or "text"
+                    ),
+                    "target_field_id": str(target["field_id"]),
+                    "target_field_label": (
+                        target.get("label")
+                        or target["field_id"]
+                    ),
+                    "target_scope": target_scope,
+                    "target_datatype": (
+                        target.get("datatype")
+                        or "text"
+                    ),
+                    # Account-specific metadata is authoritative.
+                    "is_required": bool(
+                        target.get("is_required")
+                    ),
+                    "is_custom": bool(
+                        target.get("is_custom")
+                    ),
+                    "reference_type": target.get(
+                        "reference_type"
+                    ),
+                    "mapping_status": "MAPPED",
+                    "confidence": mapping.get(
+                        "confidence"
+                    ),
+                    "metadata": mapping.get(
+                        "metadata"
+                    ) or {},
                 },
             )
             saved.append(obj)
+
         return saved
 
     def get_mappings(self, *, company, connection_id, record_type):
@@ -2516,7 +2714,10 @@ class NetSuiteFieldMappingService:
             company=company,
         )
         if connection is None:
-            raise NetSuiteConnectionNotFoundException("NetSuite connection not found.")
+            raise NetSuiteConnectionNotFoundException(
+                "NetSuite connection not found."
+            )
+
         return (
             OCRNetSuiteFieldMapping.objects
             .filter(
@@ -2525,9 +2726,8 @@ class NetSuiteFieldMappingService:
                 record_type=record_type,
             )
             .select_related("company", "connection")
-            .order_by("created_at")
+            .order_by("updated_at", "source_field_key")
         )
-
 
 class NetSuiteValidationService:
     """
@@ -2567,7 +2767,7 @@ class NetSuiteValidationService:
         self.token_manager = token_manager or NetSuiteTokenManager(
             repository=self.repository,
         )
-
+    
     @staticmethod
     def _is_company_admin(user) -> bool:
         try:
@@ -2780,8 +2980,299 @@ class NetSuiteValidationService:
 
         return base
 
-    def validate_document(self, *, document_id, connection_id, user):
-        from ocr.models import OCRDocument, OCRDocumentVersion, OCRLineItem
+    # def validate_document(self, *, document_id, connection_id, user):
+    #     from ocr.models import OCRDocument, OCRDocumentVersion, OCRLineItem
+
+    #     company = getattr(user, "company", None)
+    #     if company is None:
+    #         raise ValueError(
+    #             "Your account is not associated with a company."
+    #         )
+
+    #     company_lifecycle_service.ensure_operational(company=company)
+
+    #     if self._is_company_admin(user):
+    #         document = (
+    #             OCRDocument.objects
+    #             .filter(
+    #                 pk=document_id,
+    #                 company_id=user.company_id,
+    #             )
+    #             .first()
+    #         )
+    #     else:
+    #         document = (
+    #             OCRDocument.objects
+    #             .filter(
+    #                 pk=document_id,
+    #                 company_id=user.company_id,
+    #                 user=user,
+    #             )
+    #             .first()
+    #         )
+
+    #     if document is None:
+    #         raise ValueError(
+    #             "OCR document not found or access is not allowed."
+    #         )
+
+    #     version = (
+    #         OCRDocumentVersion.objects
+    #         .filter(document=document)
+    #         .order_by("-version_number")
+    #         .first()
+    #     )
+
+    #     if version is None:
+    #         raise ValueError("No OCR version exists for this document.")
+
+    #     data = (
+    #         version.reviewed_json
+    #         if isinstance(version.reviewed_json, dict)
+    #         and version.reviewed_json
+    #         else version.normalized_json
+    #     )
+
+    #     if not isinstance(data, dict):
+    #         raise ValueError("OCR data is not valid JSON.")
+
+    #     connection = self.repository.get_for_company(
+    #         connection_id=connection_id,
+    #         company=user.company,
+    #     )
+    #     if connection is None:
+    #         raise ValueError("No NetSuite connection available.")
+
+    #     if (
+    #         connection.status != "connected"
+    #         or not connection.is_active
+    #     ):
+    #         raise ValueError(
+    #             "NetSuite connection is not active."
+    #         )
+
+    #     # vendor_name = data.get("vendor_name")
+    #     # line_items = data.get("line_items") or []
+
+    #     mappings = list(
+    #         OCRNetSuiteFieldMapping.objects.filter(
+    #             company=company,
+    #             connection=connection,
+    #             record_type="vendorBill",
+    #             mapping_status="MAPPED",
+    #         )
+    #     )
+
+    #     field_mapping_service = NetSuiteFieldMappingService(
+    #         repository=self.repository,
+    #         token_manager=self.token_manager,
+    #     )
+
+    #     catalogue = field_mapping_service.get_field_catalogue(
+    #         company=company,
+    #         connection_id=connection.id,
+    #         record_type="vendorBill",
+    #     )
+
+    #     catalogue_fields = (
+    #         catalogue.get("fields", {}).get("body", [])
+    #         + catalogue.get("fields", {}).get("column", [])
+    #     )
+
+    #     required_target_ids = {
+    #         str(field.get("field_id"))
+    #         for field in catalogue_fields
+    #         if field.get("is_required")
+    #         and field.get("field_id")
+    #     }
+
+    #     mapped_target_ids = {
+    #         str(mapping.target_field_id)
+    #         for mapping in mappings
+    #         if mapping.target_field_id
+    #     }
+
+    #     missing_required = sorted(
+    #         required_target_ids - mapped_target_ids
+    #     )
+
+    #     if missing_required:
+    #         labels_by_id = {
+    #             str(field.get("field_id")):
+    #             field.get("label") or field.get("field_id")
+    #             for field in catalogue_fields
+    #         }
+
+    #         missing_labels = [
+    #             labels_by_id.get(
+    #                 field_id,
+    #                 field_id,
+    #             )
+    #             for field_id in missing_required
+    #         ]
+
+    #         raise ValueError(
+    #             "Required NetSuite fields are not mapped: "
+    #             + ", ".join(missing_labels)
+    #         )
+
+    #     vendor_mapping = next(
+    #         (
+    #             mapping
+    #             for mapping in mappings
+    #             if mapping.target_field_id in {"entity", "vendor"}
+    #         ),
+    #         None,
+    #     )
+
+    #     item_mapping = next(
+    #         (
+    #             mapping
+    #             for mapping in mappings
+    #             if mapping.target_field_id == "item"
+    #             and mapping.source_scope == "line"
+    #         ),
+    #         None,
+    #     )
+
+    #     if vendor_mapping is None:
+    #         raise ValueError(
+    #             "Vendor field mapping is required before validation."
+    #         )
+
+    #     if item_mapping is None:
+    #         raise ValueError(
+    #             "Item field mapping is required before validation."
+    #         )
+
+    #     vendor_name = data.get(
+    #         vendor_mapping.source_field_key,
+    #     )
+
+    #     line_items = data.get("line_items") or []
+
+    #     if not isinstance(line_items, list):
+    #         raise ValueError(
+    #             "OCR line_items must be a list."
+    #         )
+
+    #     # vendor_result = self._validate_vendor(
+    #     #     connection_id=connection.id,
+    #     #     vendor_name=vendor_name,
+    #     # )
+
+    #     # item_results = []
+
+    #     vendor_result = self._validate_vendor_live(
+    #         connection=connection,
+    #         vendor_name=vendor_name,
+    #     )
+
+    #     item_results = self._validate_items_live(
+    #         connection=connection,
+    #         line_items=line_items,
+    #         source_field_key=item_mapping.source_field_key,
+    #     )
+
+    #     errors = []
+    #     status = ValidationStatus.VALIDATED
+
+    #     if vendor_result.get("ambiguous"):
+    #         status = ValidationStatus.VALIDATION_FAILED
+    #         errors.append(
+    #             {
+    #                 "type": "VENDOR_AMBIGUOUS",
+    #                 "message": (
+    #                     "Multiple possible vendors matched. "
+    #                     "Please confirm the vendor mapping."
+    #                 ),
+    #                 "extracted_name": vendor_name,
+    #                 "candidates": vendor_result.get("candidates", []),
+    #             }
+    #         )
+    #     elif not vendor_result.get("matched"):
+    #         status = ValidationStatus.VALIDATION_FAILED
+    #         errors.append(
+    #             {
+    #                 "type": "VENDOR_NOT_FOUND",
+    #                 "message": "This vendor is not existed",
+    #                 "extracted_name": vendor_name,
+    #             }
+    #         )
+
+    #     for item in item_results:
+    #         if item.get("ambiguous"):
+    #             status = ValidationStatus.VALIDATION_FAILED
+    #             errors.append(
+    #                 {
+    #                     "type": "ITEM_AMBIGUOUS",
+    #                     "message": (
+    #                         "Multiple possible items matched. "
+    #                         "Please confirm the item mapping."
+    #                     ),
+    #                     "extracted_name": item.get("extracted_name"),
+    #                     "line_index": item.get("line_index"),
+    #                     "candidates": item.get("candidates", []),
+    #                 }
+    #             )
+    #         elif not item.get("matched"):
+    #             status = ValidationStatus.VALIDATION_FAILED
+    #             errors.append(
+    #                 {
+    #                     "type": "ITEM_NOT_FOUND",
+    #                     "message": "Item not existed",
+    #                     "extracted_name": item.get("extracted_name"),
+    #                     "line_index": item.get("line_index"),
+    #                 }
+    #             )
+
+    #     result = OCRValidationResult.objects.create(
+    #         document=document,
+    #         version=version,
+    #         connection=connection,
+    #         status=status,
+    #         vendor_extracted_name=vendor_name or "",
+    #         vendor_matched=bool(vendor_result.get("matched")),
+    #         vendor_netsuite_id=vendor_result.get("netsuite_id"),
+    #         items=item_results,
+    #         errors=errors,
+    #     )
+
+    #     return {
+    #         "validation_id": str(result.id),
+    #         "status": status,
+    #         "vendor": vendor_result,
+    #         "items": item_results,
+    #         "errors": errors,
+    #     }
+    def validate_document(
+        self,
+        *,
+        document_id,
+        connection_id,
+        user,
+    ):
+        """
+        Reuse the same Vendor + Item reference validation used by
+        the Continue preflight and by Validate Again.
+    
+        Keep both entry points on one validation implementation so
+        their matching behavior cannot drift apart.
+        """
+        return self.check_references(
+            document_id=document_id,
+            connection_id=connection_id,
+            user=user,
+        )
+
+    def check_references(
+        self,
+        *,
+        document_id,
+        connection_id,
+        user,
+    ):
+        from ocr.models import OCRDocument, OCRDocumentVersion
 
         company = getattr(user, "company", None)
         if company is None:
@@ -2836,9 +3327,9 @@ class NetSuiteValidationService:
         if not isinstance(data, dict):
             raise ValueError("OCR data is not valid JSON.")
 
-        connection = self.repository.get_for_company(
+        connection = self.repository.get_authorized_for_user(
+            user=user,
             connection_id=connection_id,
-            company=user.company,
         )
         if connection is None:
             raise ValueError("No NetSuite connection available.")
@@ -2850,9 +3341,6 @@ class NetSuiteValidationService:
             raise ValueError(
                 "NetSuite connection is not active."
             )
-
-        # vendor_name = data.get("vendor_name")
-        # line_items = data.get("line_items") or []
 
         mappings = list(
             OCRNetSuiteFieldMapping.objects.filter(
@@ -2867,7 +3355,10 @@ class NetSuiteValidationService:
             (
                 mapping
                 for mapping in mappings
-                if mapping.target_field_id in {"entity", "vendor"}
+                if str(mapping.target_field_id).lower()
+                in {"entity", "vendor"}
+                and str(mapping.source_scope).lower()
+                in {"header", "body"}
             ),
             None,
         )
@@ -2876,144 +3367,112 @@ class NetSuiteValidationService:
             (
                 mapping
                 for mapping in mappings
-                if mapping.target_field_id == "item"
-                and mapping.source_scope == "line"
+                if str(mapping.target_field_id).lower() == "item"
+                and str(mapping.source_scope).lower() == "line"
             ),
             None,
         )
 
         if vendor_mapping is None:
             raise ValueError(
-                "Vendor field mapping is required before validation."
+                "Vendor field mapping is required before NetSuite reference validation."
             )
 
         if item_mapping is None:
             raise ValueError(
-                "Item field mapping is required before validation."
+                "Item field mapping is required before NetSuite reference validation."
             )
 
-        vendor_name = data.get(
-            vendor_mapping.source_field_key,
-        )
-
+        vendor_name = data.get(vendor_mapping.source_field_key)
         line_items = data.get("line_items") or []
-
+        
         if not isinstance(line_items, list):
-            raise ValueError(
-                "OCR line_items must be a list."
-            )
-
-        # vendor_result = self._validate_vendor(
-        #     connection_id=connection.id,
-        #     vendor_name=vendor_name,
-        # )
-
-        # item_results = []
-
+            raise ValueError("OCR line_items must be a list.")
+        
         vendor_result = self._validate_vendor_live(
             connection=connection,
             vendor_name=vendor_name,
         )
-
         item_results = self._validate_items_live(
             connection=connection,
             line_items=line_items,
             source_field_key=item_mapping.source_field_key,
         )
-
-        # for index, line in enumerate(line_items, start=1):
-        #     if not isinstance(line, dict):
-        #         item_results.append(
-        #             {
-        #                 "matched": False,
-        #                 "ambiguous": False,
-        #                 "netsuite_id": None,
-        #                 "extracted_name": None,
-        #                 "line_index": index,
-        #                 "round": 0,
-        #             }
-        #         )
-        #         continue
-
-        #     description = (
-        #         line.get("description")
-        #         or line.get("item_name")
-        #     )
-
-        #     item_results.append(
-        #         self._validate_item(
-        #             connection_id=connection.id,
-        #             description=description,
-        #             line_index=index,
-        #         )
-        #     )
-
+    
         errors = []
-        status = ValidationStatus.VALIDATED
-
-        if vendor_result.get("ambiguous"):
-            status = ValidationStatus.VALIDATION_FAILED
-            errors.append(
-                {
-                    "type": "VENDOR_AMBIGUOUS",
-                    "message": (
-                        "Multiple possible vendors matched. "
-                        "Please confirm the vendor mapping."
-                    ),
-                    "extracted_name": vendor_name,
-                    "candidates": vendor_result.get("candidates", []),
-                }
-            )
+    
+        if not vendor_name or not str(vendor_name).strip():
+            errors.append({
+                "type": "VENDOR_VALUE_MISSING",
+                "message": "No vendor value was found in the saved OCR data.",
+                "extracted_name": None,
+            })
+        elif vendor_result.get("ambiguous"):
+            errors.append({
+                "type": "VENDOR_AMBIGUOUS",
+                "message": "Multiple possible vendors matched. Please confirm the vendor value.",
+                "extracted_name": vendor_name,
+                "candidates": vendor_result.get("candidates", []),
+            })
         elif not vendor_result.get("matched"):
-            status = ValidationStatus.VALIDATION_FAILED
-            errors.append(
-                {
-                    "type": "VENDOR_NOT_FOUND",
-                    "message": "This vendor is not existed",
-                    "extracted_name": vendor_name,
-                }
-            )
-
+            errors.append({
+                "type": "VENDOR_NOT_FOUND",
+                "message": "Vendor does not exist in the selected NetSuite account.",
+                "extracted_name": vendor_name,
+            })
+    
         for item in item_results:
-            if item.get("ambiguous"):
-                status = ValidationStatus.VALIDATION_FAILED
-                errors.append(
-                    {
-                        "type": "ITEM_AMBIGUOUS",
-                        "message": (
-                            "Multiple possible items matched. "
-                            "Please confirm the item mapping."
-                        ),
-                        "extracted_name": item.get("extracted_name"),
-                        "line_index": item.get("line_index"),
-                        "candidates": item.get("candidates", []),
-                    }
-                )
+            extracted_name = item.get("extracted_name")
+            line_index = item.get("line_index")
+            if not extracted_name:
+                errors.append({
+                    "type": "ITEM_VALUE_MISSING",
+                    "message": f"No item value was found for line {line_index}.",
+                    "extracted_name": None,
+                    "line_index": line_index,
+                })
+            elif item.get("ambiguous"):
+                errors.append({
+                    "type": "ITEM_AMBIGUOUS",
+                    "message": "Multiple possible items matched. Please confirm the item value.",
+                    "extracted_name": extracted_name,
+                    "line_index": line_index,
+                    "candidates": item.get("candidates", []),
+                })
             elif not item.get("matched"):
-                status = ValidationStatus.VALIDATION_FAILED
-                errors.append(
-                    {
-                        "type": "ITEM_NOT_FOUND",
-                        "message": "Item not existed",
-                        "extracted_name": item.get("extracted_name"),
-                        "line_index": item.get("line_index"),
-                    }
-                )
+                errors.append({
+                    "type": "ITEM_NOT_FOUND",
+                    "message": "Item does not exist in the selected NetSuite account.",
+                    "extracted_name": extracted_name,
+                    "line_index": line_index,
+                })
 
-        result = OCRValidationResult.objects.create(
+        status = (
+            ValidationStatus.VALIDATED
+            if not errors
+            else ValidationStatus.VALIDATION_FAILED
+        )
+
+        validation = OCRValidationResult.objects.create(
             document=document,
             version=version,
             connection=connection,
             status=status,
-            vendor_extracted_name=vendor_name or "",
+            vendor_extracted_name=
+            # vendor_name or "",
+            (
+                str(vendor_name).strip()
+                if vendor_name is not None else ""
+            ),
             vendor_matched=bool(vendor_result.get("matched")),
             vendor_netsuite_id=vendor_result.get("netsuite_id"),
+            
             items=item_results,
             errors=errors,
         )
 
         return {
-            "validation_id": str(result.id),
+            "validation_id": str(validation.id),
             "status": status,
             "vendor": vendor_result,
             "items": item_results,

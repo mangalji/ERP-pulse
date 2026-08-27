@@ -40,6 +40,7 @@ from netsuite.serializers import (
     OCRNetSuiteFieldMappingSerializer,
     OCRValidationResultSerializer,
     ValidateDocumentRequestSerializer,
+    CheckOCRReferencesRequestSerializer,
     CreateCustomFieldRequestSerializer,
     NetSuiteCustomFieldSerializer,
     NetSuiteConnectionTestSerializer,
@@ -744,6 +745,46 @@ class NetSuiteRemoveEmployeeView(APIView):
             return success_response(message='Employee removed successfully.')
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+class NetSuiteCheckOCRReferencesView(APIView):
+    """
+    Lightweight preflight check for Vendor + Item master data.
+
+    This does NOT create OCRValidationResult.
+    It only checks whether Vendor and Item records exist
+    in the explicitly selected NetSuite connection.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = CheckOCRReferencesRequestSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        document_id = serializer.validated_data['document_id']
+        connection_id = serializer.validated_data['connection_id']
+
+        try:
+            service = NetSuiteValidationService()
+
+            result = service.check_references(
+                document_id=document_id,
+                connection_id=connection_id,
+                user=request.user,
+            )
+
+            return success_response(
+                message="NetSuite reference check completed.",
+                data=result,
+            )
+
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 class NetSuiteTestConnectionView(APIView):

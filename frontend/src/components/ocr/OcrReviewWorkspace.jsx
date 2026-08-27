@@ -173,6 +173,7 @@ function FieldInput({ field, value, editable, onChange }) {
 
 export default function OcrReviewWorkspace({
   result,
+  batchResults = [],
   onSaved,
   showPost = true,
   compact = false,
@@ -297,17 +298,20 @@ export default function OcrReviewWorkspace({
       const savedResult = {
         ...result,
         document_id: responseData?.document_id || result.document_id || null,
+        upload_id: responseData?.upload_id || result.upload_id || null,
+
         version_id: responseData?.version_id || result.version_id || null,
         version_number:
           responseData?.version_number || result.version_number || null,
+
         status: responseData?.status || 'APPROVED',
         data: responseData?.data || payload.data,
       }
+      onSaved?.(savedResult)
 
       setData(cloneData(savedResult.data))
       setEditing(false)
       addToast('OCR result saved successfully.')
-      onSaved?.(savedResult)
     } catch (err) {
       console.error('Failed to save OCR result:', err)
       addToast(
@@ -323,40 +327,97 @@ export default function OcrReviewWorkspace({
   }
 
   const handleOpenFieldMapping = () => {
-  if (!result?.document_id) {
-    addToast(
-      'Save the OCR result before opening Field Mapping.',
-      'error',
+    if (!result?.document_id) {
+      addToast(
+        'Save the OCR result before opening Field Mapping.',
+        'error',
+      )
+      return
+    }
+
+    if (!connectionId) {
+      addToast(
+        'A connected NetSuite account is required for Field Mapping.',
+        'error',
+      )
+      return
+    }
+
+    const documents = [
+      ...(Array.isArray(batchResults) ? batchResults : []),
+      result,
+    ]
+      // .filter(
+      //   (item) =>
+      //     // item?.status === 'COMPLETED' &&
+      //     item?.document_id && (
+      //       item?.status === 'COMPLETED' ||
+      //   item?.status === 'APPROVED' ||
+      //   item === result
+      //     ),
+      // )
+      .filter((item) => {
+        if (!item?.document_id) {
+          return false
+        }
+        const status = String(
+          item?.status || '',
+        ).toUpperCase()
+
+        return [
+          'COMPLETED',
+      'APPROVED',
+      'SAVED',
+        ].includes(status)
+      })
+      .reduce((map, item) => {
+        const id = String(item.document_id)
+        if (!map.has(id)) {
+          map.set(id, {
+            document_id: id,
+            upload_id: item.upload_id || null,
+            version_id: item.version_id || null,
+            filename: item.filename || null,
+          })
+        }
+        return map
+      }, new Map())
+
+    const normalizedDocuments = Array.from(
+      documents.values(),
     )
-    return
-  }
 
-  if (!connectionId) {
-    addToast(
-      'A connected NetSuite account is required for Field Mapping.',
-      'error',
+    if (!normalizedDocuments.length) {
+      addToast(
+        'Save at least one completed OCR result before opening Field Mapping.',
+        'error',
+      )
+      return
+    }
+
+    sessionStorage.setItem(
+      'ocr_field_mapping_context',
+      JSON.stringify({
+        connection_id: connectionId,
+        record_type: 'vendorBill',
+        documents: normalizedDocuments,
+        document_ids: normalizedDocuments.map(
+          (item) => item.document_id,
+        ),
+        upload_id: result.upload_id || null,
+    document_id: result.document_id || null,
+    version_id: result.version_id || null,
+    filename: result.filename || null,
+    data: data || {},
+        // documents: normalizedDocuments,
+        requested_fields:
+          result.requested_fields || null,
+        source: 'ocr-batch',
+      }),
     )
-    return
+
+    navigate('/app/ocr-test/field-mapping')
   }
-
-  sessionStorage.setItem(
-    'ocr_field_mapping_context',
-    JSON.stringify({
-      connection_id: connectionId,
-      record_type: 'vendorBill',
-      upload_id: result.upload_id || null,
-      document_id: result.document_id || null,
-      version_id: result.version_id || null,
-      filename: result.filename || null,
-      data: data || {},
-      requested_fields:
-        result.requested_fields || null,
-      source: 'ocr-history',
-    }),
-  )
-
-  navigate('/app/ocr-test/field-mapping')
-}
 
 
   const handlePost = async () => {

@@ -35,6 +35,7 @@ from netsuite.views import (
     NetSuiteBatchPostView,
     NetSuiteBatchJobStatusView,
     NetSuiteMyConnectionsView,
+    NetSuiteCheckOCRReferencesView,
 )
 
 urlpatterns = [
@@ -65,6 +66,7 @@ urlpatterns = [
     path("ocr/field-catalogue/", NetSuiteFieldCatalogueView.as_view(), name="netsuite_ocr_field_catalogue"),
     path("ocr/suggest-mapping/", NetSuiteSuggestMappingView.as_view(), name="netsuite_ocr_suggest_mapping"),
     path("ocr/field-mappings/", NetSuiteFieldMappingListCreateView.as_view(), name="netsuite_ocr_field_mappings"),
+    path("ocr/check-references/", NetSuiteCheckOCRReferencesView.as_view(),name="netsuite_ocr_check_references"),
     path("ocr/validate/", NetSuiteValidateDocumentView.as_view(), name="netsuite_ocr_validate"),
     path("ocr/custom-fields/", NetSuiteCreateCustomFieldView.as_view(), name="netsuite_ocr_custom_fields"),
     path("ocr/batch/validate/", NetSuiteBatchValidateView.as_view(), name="netsuite_ocr_batch_validate"),
