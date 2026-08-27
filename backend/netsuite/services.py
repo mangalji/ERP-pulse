@@ -1253,15 +1253,19 @@ class NetSuiteVendorBillPostingService:
         data = self._reviewed_data(version)
         line_items = data.get("line_items") or []
 
-        if not data.get("vendor_name"):
-            raise ValueError(
-                "Vendor Name is required before posting."
-            )
 
-        if not line_items:
-            raise ValueError(
-                "At least one OCR item line is required before posting."
-            )
+        # Vendor presence is already enforced during NetSuite reference validation.
+        # Posting uses the exact validated NetSuite vendor ID.
+        
+        # if not data.get("vendor_name"):
+        #     raise ValueError(
+        #         "Vendor Name is required before posting."
+        #     )
+
+        # if not line_items:
+        #     raise ValueError(
+        #         "At least one OCR item line is required before posting."
+        #     )
 
         existing = self.repository.get_ocr_posting(
             document_id=document.id,
@@ -1284,11 +1288,27 @@ class NetSuiteVendorBillPostingService:
 
         item_validation_results = validation.items or []
 
-        if len(item_validation_results) != len(line_items):
-            raise ValueError(
-                "Validation result does not match the current OCR line items. "
-                "Please validate the document again."
+        item_mapping = (
+            OCRNetSuiteFieldMapping.objects
+            .filter(
+                company=company,
+                connection=connection,
+                record_type="vendorBill",
+                mapping_status="MAPPED",
+                target_field_id__iexact="item",
             )
+            .filter(
+                source_scope__iexact="line",
+            )
+            .order_by("created_at")
+            .first()
+        )
+
+        # if len(item_validation_results) != len(line_items):
+        #     raise ValueError(
+        #         "Validation result does not match the current OCR line items. "
+        #         "Please validate the document again."
+        #     )
 
         vendor = {
             "internal_id": str(validated_vendor_id),
@@ -1296,56 +1316,145 @@ class NetSuiteVendorBillPostingService:
 
         payload_items = []
 
-        for index, line in enumerate(line_items, start=1):
-            if not isinstance(line, dict):
-                raise ValueError(
-                    f"Line {index}: OCR line item is invalid."
-                )
-
-            description = line.get("description")
-            quantity = line.get("quantity")
-            rate = line.get("unit_price")
-
-            if not description:
-                raise ValueError(
-                    f"Line {index}: item description is required."
-                )
-
-            if quantity in (None, ""):
-                raise ValueError(
-                    f"Line {index}: quantity is required."
-                )
-
-            if rate in (None, ""):
-                raise ValueError(
-                    f"Line {index}: unit price is required."
-                )
-
-            validated_item = item_validation_results[index - 1]
-
-            if not validated_item.get("matched"):
-                raise ValueError(
-                    f"Line {index}: item is no longer validated."
-                )
-
-            item_id = validated_item.get("netsuite_id")
-            if not item_id:
-                raise ValueError(
-                    f"Line {index}: validation did not return a NetSuite item ID."
-                )
-
-            payload_items.append(
-                {
-                    "item": {"id": str(item_id)},
-                    "quantity": quantity,
-                    "rate": rate,
-                }
+        if line_items:
+            posting_item_source_key = (
+                item_mapping.source_field_key
+                if item_mapping is not None
+                else None
             )
+
+        # item_validation_results:
+
+            for index, line in enumerate(line_items, start=1):
+                if not isinstance(line, dict):
+                    # continue
+                    raise ValueError(
+                f"Line {index}: OCR line item is invalid."
+            )
+                if posting_item_source_key:
+                    item_name = line.get(posting_item_source_key)
+
+                else:
+                    item_name = (
+                        line.get("item") or line.get("item_name") or line.get("itemName") or line.get("description")
+                    )
+
+                if isinstance(item_name, str):
+                    item_name = item_name.strip()
+
+                if not item_name:
+                    raise ValueError(
+                        f"Line {index}: item value is missing."
+                    )
+                
+                # validated_item = (
+                #     item_validation_results[index - 1]
+                #     if index - 1 < len(item_validation_results)
+                #     else None
+                #     )
+                # if not validated_item or not validated_item.get("matched"):
+                #     continue
+                #     # raise ValueError(
+                #     #     f"Line {index}: item is no longer validated."
+                #     # )
+
+                # item_id = validated_item.get("netsuite_id")
+
+                # if not item_id:
+                #     continue
+                # item_result = NetSuiteValidationService()._validate_items_live(
+                #     connection=connection,
+                #     line_items=[line],
+                #     source_field_key=(
+                #         posting_item_source_key
+                #         or (
+                #             "item"
+                #             if line.get("item")
+                #             else (
+                #                 "item_name"
+                #                 if line.get("item_name")
+                #                 else (
+                #                     "itemName"
+                #                     if line.get("itemName")
+                #                     else "description"
+                #                 )
+                #             )
+                #         )
+                #     ),
+                # )[0]
+
+                item_result = NetSuiteValidationService.resolve_item_for_posting(
+                    connection_id=str(connection.id),
+                    item_name=item_name,
+                    line_index=index,
+                )
+
+                if not item_result.get("matched"):
+                    if item_result.get("ambiguous"):
+                        raise ValueError(
+                            f'Line {index}: multiple NetSuite items matched '
+                            f'"{item_name}". Please correct the item.'
+                        )
+
+                    raise ValueError(
+                        f'Line {index}: NetSuite item '
+                        f'"{item_name}" does not exist in the selected account.'
+                    )
+
+                item_id = item_result.get("netsuite_id")
+
+                if not item_id:
+                    raise ValueError(
+                        f'Line {index}: NetSuite item ID could not be resolved.'
+                    )
+
+                item_payload = {
+                    "item":{
+                        "id":str(item_id)
+                    }
+                }
+                description = line.get("description")
+                quantity = line.get("quantity")
+                rate = line.get("unit_price")
+
+
+
+                # if not item_id:
+                #     raise ValueError(
+                #         f"Line {index}: validation did not return a NetSuite item ID."
+                #     )
+                # item_payload = {
+                #     "item": {
+                #         "id": str(item_id),
+                #     },
+                # }
+                if quantity not in (None, ""):
+                    item_payload["quantity"] = quantity
+
+                if rate not in (None, ""):
+                    item_payload["rate"] = rate
+
+                if description not in (None, ""):
+                    item_payload["description"] = description
+
+                payload_items.append(item_payload)
+                # payload_items.append(
+                #     {
+                #         "item": {"id": str(item_id)},
+                #         "quantity": quantity,
+                #         "rate": rate,
+                #     }
+                # )
 
         payload = {
             "entity": {"id": vendor["internal_id"]},
-            "item": {"items": payload_items},
+            # "item": {"items": payload_items},
         }
+
+        if payload_items:
+            payload["item"] = {
+                "items": payload_items,
+            }
 
         if data.get("invoice_number"):
             payload["tranid"] = data["invoice_number"]
@@ -2760,6 +2869,12 @@ class NetSuiteValidationService:
         NetSuiteRecordType.SERVICE_SALE_ITEM,
         NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
         NetSuiteRecordType.DESCRIPTION_ITEM,
+        NetSuiteRecordType.KIT_ITEM,
+        NetSuiteRecordType.ASSEMBLY_ITEM,
+        NetSuiteRecordType.MARKUP_ITEM,
+        NetSuiteRecordType.PAYMENT_ITEM,
+        NetSuiteRecordType.SUBTOTAL_ITEM,
+        NetSuiteRecordType.ITEM_GROUP,
     )
 
     def __init__(self, repository=None, token_manager=None):
@@ -2979,272 +3094,7 @@ class NetSuiteValidationService:
         )
 
         return base
-
-    # def validate_document(self, *, document_id, connection_id, user):
-    #     from ocr.models import OCRDocument, OCRDocumentVersion, OCRLineItem
-
-    #     company = getattr(user, "company", None)
-    #     if company is None:
-    #         raise ValueError(
-    #             "Your account is not associated with a company."
-    #         )
-
-    #     company_lifecycle_service.ensure_operational(company=company)
-
-    #     if self._is_company_admin(user):
-    #         document = (
-    #             OCRDocument.objects
-    #             .filter(
-    #                 pk=document_id,
-    #                 company_id=user.company_id,
-    #             )
-    #             .first()
-    #         )
-    #     else:
-    #         document = (
-    #             OCRDocument.objects
-    #             .filter(
-    #                 pk=document_id,
-    #                 company_id=user.company_id,
-    #                 user=user,
-    #             )
-    #             .first()
-    #         )
-
-    #     if document is None:
-    #         raise ValueError(
-    #             "OCR document not found or access is not allowed."
-    #         )
-
-    #     version = (
-    #         OCRDocumentVersion.objects
-    #         .filter(document=document)
-    #         .order_by("-version_number")
-    #         .first()
-    #     )
-
-    #     if version is None:
-    #         raise ValueError("No OCR version exists for this document.")
-
-    #     data = (
-    #         version.reviewed_json
-    #         if isinstance(version.reviewed_json, dict)
-    #         and version.reviewed_json
-    #         else version.normalized_json
-    #     )
-
-    #     if not isinstance(data, dict):
-    #         raise ValueError("OCR data is not valid JSON.")
-
-    #     connection = self.repository.get_for_company(
-    #         connection_id=connection_id,
-    #         company=user.company,
-    #     )
-    #     if connection is None:
-    #         raise ValueError("No NetSuite connection available.")
-
-    #     if (
-    #         connection.status != "connected"
-    #         or not connection.is_active
-    #     ):
-    #         raise ValueError(
-    #             "NetSuite connection is not active."
-    #         )
-
-    #     # vendor_name = data.get("vendor_name")
-    #     # line_items = data.get("line_items") or []
-
-    #     mappings = list(
-    #         OCRNetSuiteFieldMapping.objects.filter(
-    #             company=company,
-    #             connection=connection,
-    #             record_type="vendorBill",
-    #             mapping_status="MAPPED",
-    #         )
-    #     )
-
-    #     field_mapping_service = NetSuiteFieldMappingService(
-    #         repository=self.repository,
-    #         token_manager=self.token_manager,
-    #     )
-
-    #     catalogue = field_mapping_service.get_field_catalogue(
-    #         company=company,
-    #         connection_id=connection.id,
-    #         record_type="vendorBill",
-    #     )
-
-    #     catalogue_fields = (
-    #         catalogue.get("fields", {}).get("body", [])
-    #         + catalogue.get("fields", {}).get("column", [])
-    #     )
-
-    #     required_target_ids = {
-    #         str(field.get("field_id"))
-    #         for field in catalogue_fields
-    #         if field.get("is_required")
-    #         and field.get("field_id")
-    #     }
-
-    #     mapped_target_ids = {
-    #         str(mapping.target_field_id)
-    #         for mapping in mappings
-    #         if mapping.target_field_id
-    #     }
-
-    #     missing_required = sorted(
-    #         required_target_ids - mapped_target_ids
-    #     )
-
-    #     if missing_required:
-    #         labels_by_id = {
-    #             str(field.get("field_id")):
-    #             field.get("label") or field.get("field_id")
-    #             for field in catalogue_fields
-    #         }
-
-    #         missing_labels = [
-    #             labels_by_id.get(
-    #                 field_id,
-    #                 field_id,
-    #             )
-    #             for field_id in missing_required
-    #         ]
-
-    #         raise ValueError(
-    #             "Required NetSuite fields are not mapped: "
-    #             + ", ".join(missing_labels)
-    #         )
-
-    #     vendor_mapping = next(
-    #         (
-    #             mapping
-    #             for mapping in mappings
-    #             if mapping.target_field_id in {"entity", "vendor"}
-    #         ),
-    #         None,
-    #     )
-
-    #     item_mapping = next(
-    #         (
-    #             mapping
-    #             for mapping in mappings
-    #             if mapping.target_field_id == "item"
-    #             and mapping.source_scope == "line"
-    #         ),
-    #         None,
-    #     )
-
-    #     if vendor_mapping is None:
-    #         raise ValueError(
-    #             "Vendor field mapping is required before validation."
-    #         )
-
-    #     if item_mapping is None:
-    #         raise ValueError(
-    #             "Item field mapping is required before validation."
-    #         )
-
-    #     vendor_name = data.get(
-    #         vendor_mapping.source_field_key,
-    #     )
-
-    #     line_items = data.get("line_items") or []
-
-    #     if not isinstance(line_items, list):
-    #         raise ValueError(
-    #             "OCR line_items must be a list."
-    #         )
-
-    #     # vendor_result = self._validate_vendor(
-    #     #     connection_id=connection.id,
-    #     #     vendor_name=vendor_name,
-    #     # )
-
-    #     # item_results = []
-
-    #     vendor_result = self._validate_vendor_live(
-    #         connection=connection,
-    #         vendor_name=vendor_name,
-    #     )
-
-    #     item_results = self._validate_items_live(
-    #         connection=connection,
-    #         line_items=line_items,
-    #         source_field_key=item_mapping.source_field_key,
-    #     )
-
-    #     errors = []
-    #     status = ValidationStatus.VALIDATED
-
-    #     if vendor_result.get("ambiguous"):
-    #         status = ValidationStatus.VALIDATION_FAILED
-    #         errors.append(
-    #             {
-    #                 "type": "VENDOR_AMBIGUOUS",
-    #                 "message": (
-    #                     "Multiple possible vendors matched. "
-    #                     "Please confirm the vendor mapping."
-    #                 ),
-    #                 "extracted_name": vendor_name,
-    #                 "candidates": vendor_result.get("candidates", []),
-    #             }
-    #         )
-    #     elif not vendor_result.get("matched"):
-    #         status = ValidationStatus.VALIDATION_FAILED
-    #         errors.append(
-    #             {
-    #                 "type": "VENDOR_NOT_FOUND",
-    #                 "message": "This vendor is not existed",
-    #                 "extracted_name": vendor_name,
-    #             }
-    #         )
-
-    #     for item in item_results:
-    #         if item.get("ambiguous"):
-    #             status = ValidationStatus.VALIDATION_FAILED
-    #             errors.append(
-    #                 {
-    #                     "type": "ITEM_AMBIGUOUS",
-    #                     "message": (
-    #                         "Multiple possible items matched. "
-    #                         "Please confirm the item mapping."
-    #                     ),
-    #                     "extracted_name": item.get("extracted_name"),
-    #                     "line_index": item.get("line_index"),
-    #                     "candidates": item.get("candidates", []),
-    #                 }
-    #             )
-    #         elif not item.get("matched"):
-    #             status = ValidationStatus.VALIDATION_FAILED
-    #             errors.append(
-    #                 {
-    #                     "type": "ITEM_NOT_FOUND",
-    #                     "message": "Item not existed",
-    #                     "extracted_name": item.get("extracted_name"),
-    #                     "line_index": item.get("line_index"),
-    #                 }
-    #             )
-
-    #     result = OCRValidationResult.objects.create(
-    #         document=document,
-    #         version=version,
-    #         connection=connection,
-    #         status=status,
-    #         vendor_extracted_name=vendor_name or "",
-    #         vendor_matched=bool(vendor_result.get("matched")),
-    #         vendor_netsuite_id=vendor_result.get("netsuite_id"),
-    #         items=item_results,
-    #         errors=errors,
-    #     )
-
-    #     return {
-    #         "validation_id": str(result.id),
-    #         "status": status,
-    #         "vendor": vendor_result,
-    #         "items": item_results,
-    #         "errors": errors,
-    #     }
+    
     def validate_document(
         self,
         *,
@@ -3378,26 +3228,54 @@ class NetSuiteValidationService:
                 "Vendor field mapping is required before NetSuite reference validation."
             )
 
-        if item_mapping is None:
-            raise ValueError(
-                "Item field mapping is required before NetSuite reference validation."
-            )
+        # if item_mapping is None:
+        #     raise ValueError(
+        #         "Item field mapping is required before NetSuite reference validation."
+        #     )
 
         vendor_name = data.get(vendor_mapping.source_field_key)
+
+        if isinstance(vendor_name,str):
+            vendor_name = vendor_name.strip()
+
+        if not vendor_name:
+            # raise ValueError(
+            #     "Vendor value is required before NetSuite reference validation."
+            # )
+            vendor_name = data.get("vendor_name")
+
+        if isinstance(vendor_name,str):
+            vendor_name = vendor_name.strip()
+
+        if not vendor_name:
+            raise ValueError(
+                f'Vendor value is required. '
+                f'Expected value in OCR field "{vendor_mapping.source_field_key}".'
+            )
+
         line_items = data.get("line_items") or []
         
+        # if not isinstance(line_items, list) or not line_items:
+        #     raise ValueError("At least one line item is required before NetSuite reference validation.")
+
         if not isinstance(line_items, list):
-            raise ValueError("OCR line_items must be a list.")
+            line_items = []
         
         vendor_result = self._validate_vendor_live(
             connection=connection,
             vendor_name=vendor_name,
         )
-        item_results = self._validate_items_live(
-            connection=connection,
-            line_items=line_items,
-            source_field_key=item_mapping.source_field_key,
-        )
+
+        # if item_mapping is not None:
+        #     item_results = self._validate_items_live(
+        #         connection=connection,
+        #         line_items=line_items,
+        #         source_field_key=item_mapping.source_field_key,
+        #     )
+
+        # else:
+        item_results = []
+
     
         errors = []
     
@@ -3420,32 +3298,36 @@ class NetSuiteValidationService:
                 "message": "Vendor does not exist in the selected NetSuite account.",
                 "extracted_name": vendor_name,
             })
-    
-        for item in item_results:
-            extracted_name = item.get("extracted_name")
-            line_index = item.get("line_index")
-            if not extracted_name:
-                errors.append({
-                    "type": "ITEM_VALUE_MISSING",
-                    "message": f"No item value was found for line {line_index}.",
-                    "extracted_name": None,
-                    "line_index": line_index,
-                })
-            elif item.get("ambiguous"):
-                errors.append({
-                    "type": "ITEM_AMBIGUOUS",
-                    "message": "Multiple possible items matched. Please confirm the item value.",
-                    "extracted_name": extracted_name,
-                    "line_index": line_index,
-                    "candidates": item.get("candidates", []),
-                })
-            elif not item.get("matched"):
-                errors.append({
-                    "type": "ITEM_NOT_FOUND",
-                    "message": "Item does not exist in the selected NetSuite account.",
-                    "extracted_name": extracted_name,
-                    "line_index": line_index,
-                })
+
+        # if item_mapping is not None:    
+        #     for item in item_results:
+        #         extracted_name = item.get("extracted_name")
+        #         line_index = item.get("line_index")
+        #         if not extracted_name:
+        #             continue
+        #             # errors.append({
+        #             #     "type": "ITEM_VALUE_MISSING",
+        #             #     "message": f"No item value was found for line {line_index}.",
+        #             #     "extracted_name": None,
+        #             #     "line_index": line_index,
+        #             # })
+        #         elif item.get("ambiguous"):
+        #             continue
+        #             # errors.append({
+        #             #     "type": "ITEM_AMBIGUOUS",
+        #             #     "message": "Multiple possible items matched. Please confirm the item value.",
+        #             #     "extracted_name": extracted_name,
+        #             #     "line_index": line_index,
+        #             #     "candidates": item.get("candidates", []),
+        #             # })
+        #         elif not item.get("matched"):
+        #             continue
+        #             # errors.append({
+        #             #     "type": "ITEM_NOT_FOUND",
+        #             #     "message": "Item does not exist in the selected NetSuite account.",
+        #             #     "extracted_name": extracted_name,
+        #             #     "line_index": line_index,
+        #             # })
 
         status = (
             ValidationStatus.VALIDATED
@@ -3928,6 +3810,45 @@ class NetSuiteValidationService:
 
         return result
 
+    def resolve_item_for_posting(
+        self,
+        *,
+        connection_id,
+        item_name,
+        line_index,
+    ):
+        result = self._validate_item(
+            connection_id=connection_id,
+            description=item_name,
+            line_index=line_index,
+        )
+
+        if result.get("ambiguous"):
+            raise ValueError(
+                f'Line {line_index}: multiple NetSuite items matched '
+                f'"{item_name}". Please correct the item.'
+            )
+
+        if not result.get("matched"):
+            raise ValueError(
+                f'Line {line_index}: NetSuite item '
+                f'"{item_name}" does not exist in the selected account.'
+            )
+
+        if result.get("round") != 1:
+            raise ValueError(
+                f'Line {line_index}: item "{item_name}" was not an exact '
+                'NetSuite match. Please correct the item before posting.'
+            )
+
+        netsuite_id = result.get("netsuite_id")
+
+        if not netsuite_id:
+            raise ValueError(
+                f'Line {line_index}: NetSuite item ID could not be resolved.'
+            )
+
+        return result
 
 class NetSuiteCustomFieldService:
     """

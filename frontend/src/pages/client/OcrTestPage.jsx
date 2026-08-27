@@ -170,10 +170,24 @@ export default function OcrTestPage() {
     return history
   }, [history, validationFilter])
 
-  const selectableHistory = useMemo(
-    () => filteredHistory.filter((item) => item?.status === 'COMPLETED'),
-    [filteredHistory],
-  )
+ const selectableHistory = useMemo(
+  () =>
+    filteredHistory.filter((item) => {
+      const hasDocument = Boolean(item?.document_id)
+
+      const canRetryValidation =
+        item?.validation_status === 'VALIDATION_FAILED'
+
+      const isCompleted =
+        item?.status === 'COMPLETED'
+
+      return (
+        hasDocument &&
+        (isCompleted || canRetryValidation)
+      )
+    }),
+  [filteredHistory],
+)
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((current) => {
@@ -219,18 +233,23 @@ export default function OcrTestPage() {
     [filteredHistory, selectedIds],
   )
 
-  const selectedValidateIds = useMemo(
-    () =>
-      selectedHistoryItems
-        .filter(
-          (item) =>
-            item.status === 'COMPLETED' &&
-            item.document_id &&
-            item.validation_status !== 'VALIDATED',
-        )
-        .map((item) => item.document_id),
-    [selectedHistoryItems],
-  )
+const selectedValidateIds = useMemo(
+  () =>
+    selectedHistoryItems
+      .filter(
+        (item) =>
+          item?.document_id &&
+          (
+            item?.validation_status === 'VALIDATION_FAILED' ||
+            (
+              item?.status === 'COMPLETED' &&
+              !item?.validation_status
+            )
+          ),
+      )
+      .map((item) => item.document_id),
+  [selectedHistoryItems],
+)
 
   const selectedCompletedItems = useMemo(
     () =>
@@ -1587,7 +1606,8 @@ export default function OcrTestPage() {
                     const itemId = item?.document_id || item?.upload_id
                     const isSelected = selectedIds.has(itemId)
                     const isCompleted = item?.status === 'COMPLETED'
-                    const isSelectable = isCompleted && Boolean(itemId)
+                    const isValidationFailed = item?.validation_status === 'VALIDATION_FAILED'
+                    const isSelectable = Boolean(item?.document_id) && (isCompleted || isValidationFailed)
 
                     return (
                       <div

@@ -283,14 +283,16 @@ def _run_netsuite_batch(
             #     "ALREADY_POSTED",
             # }
             if _is_success_status(
-                item.get("status",""),
-                item.get("error")
+                # item.get("status",""),
+                # item["status"]
+                item.get("status")
             )
         ),
         "failed": sum(
             1 for item in results if _is_batch_failure(
-                item["status"],
-                item.get("error")
+                # item["status"],
+                item.get("status",""),
+                item.get("error"),
             )
         ),
         "results": results,
