@@ -1457,11 +1457,99 @@ class NetSuiteVendorBillPostingService:
                 "items": payload_items,
             }
 
-        if data.get("invoice_number"):
+        # Apply every other saved, MAPPED, non-custom BODY field mapping
+        # (subsidiary, currency, memo, location, department, class,
+        # terms, tranid/trandate/duedate if explicitly mapped, etc.) —
+        # not just the two hardcoded date fields below. Without this,
+        # any account that requires fields NetSuite itself marks
+        # required on Vendor Bill (subsidiary and currency on every
+        # OneWorld/multi-subsidiary account) will have every single
+        # post rejected regardless of vendor/item correctness, since
+        # those fields were previously never sent at all.
+        standard_field_mappings = (
+            OCRNetSuiteFieldMapping.objects
+            .filter(
+                company=company,
+                connection=connection,
+                record_type="vendorBill",
+                mapping_status="MAPPED",
+                is_custom=False,
+                target_scope__iexact="body",
+            )
+            .exclude(target_field_id__iexact="entity")
+            .order_by("created_at")
+        )
+
+        validation_service = NetSuiteValidationService()
+
+        for mapping in standard_field_mappings:
+            target_field_id = mapping.target_field_id
+            if not target_field_id or target_field_id in payload:
+                # Already set explicitly above (entity/item), or a
+                # duplicate mapping row — first mapping wins.
+                continue
+
+            raw_value = data.get(mapping.source_field_key)
+            if isinstance(raw_value, str):
+                raw_value = raw_value.strip()
+            if raw_value in (None, ""):
+                continue
+
+            table_config = validation_service.SELECT_FIELD_SUITEQL_TABLES.get(
+                target_field_id.strip().lower()
+            )
+
+            if table_config is not None:
+                resolved_id = validation_service._resolve_select_field_live(
+                    connection=connection,
+                    target_field_id=target_field_id,
+                    value=raw_value,
+                )
+                if resolved_id:
+                    payload[target_field_id] = {"id": resolved_id}
+                    continue
+
+                if mapping.is_required:
+                    raise ValueError(
+                        f'"{raw_value}" could not be matched to an active '
+                        f'NetSuite {mapping.target_field_label or target_field_id} '
+                        "record. Create or correct it in NetSuite, then "
+                        "validate and post again."
+                    )
+
+                logger.warning(
+                    "Skipping unresolved optional NetSuite select field "
+                    "on Vendor Bill posting — field=%s value=%r "
+                    "connection=%s",
+                    target_field_id,
+                    raw_value,
+                    connection.id,
+                )
+                continue
+
+            if (mapping.target_datatype or "").strip().lower() == "select":
+                # A select/reference field we don't know how to resolve
+                # (no SuiteQL table mapping above). Sending raw OCR text
+                # for a reference field would be rejected by NetSuite,
+                # so skip rather than guess — required ones will still
+                # surface as a clear NetSuite-side rejection.
+                logger.warning(
+                    "Skipping NetSuite select field with no known "
+                    "SuiteQL lookup table — field=%s connection=%s",
+                    target_field_id,
+                    connection.id,
+                )
+                continue
+
+            payload[target_field_id] = raw_value
+
+        # Fallback defaults for the most common header fields, only if
+        # not already supplied by an explicit field mapping above.
+        if "tranid" not in payload and data.get("invoice_number"):
             payload["tranid"] = data["invoice_number"]
-        if data.get("invoice_date"):
+        if "trandate" not in payload and data.get("invoice_date"):
             payload["trandate"] = data["invoice_date"]
-        if data.get("due_date"):
+        if "duedate" not in payload and data.get("due_date"):
             payload["duedate"] = data["due_date"]
 
         custom_fields = self._apply_custom_fields(
@@ -2982,6 +3070,132 @@ class NetSuiteValidationService:
             raise NetSuiteRecordFetchException(
                 "Unable to validate OCR data against NetSuite."
             ) from exc
+
+    # NetSuite "select"/reference body fields commonly mapped on a Vendor
+    # Bill. Each entry is (SuiteQL table name, columns to match the OCR
+    # text value against). Required on OneWorld (multi-subsidiary)
+    # accounts: creating ANY transaction record without a valid
+    # `subsidiary` reference is rejected by NetSuite, and `currency` is
+    # very often required too — this table lets us resolve the mapped
+    # OCR text value into the internal ID NetSuite's REST API expects
+    # ({"id": "<internal id>"}), the same way vendor/item are already
+    # resolved live via SuiteQL rather than the (currently unpopulated)
+    # NetSuiteReferenceRecord cache.
+    SELECT_FIELD_SUITEQL_TABLES = {
+        "subsidiary": ("subsidiary", ("name",)),
+        "currency": ("currency", ("name", "symbol")),
+        "location": ("location", ("name",)),
+        "department": ("department", ("name",)),
+        "class": ("classification", ("name",)),
+        "terms": ("term", ("name",)),
+        "term": ("term", ("name",)),
+    }
+
+    def _resolve_select_field_live(
+        self,
+        *,
+        connection,
+        target_field_id,
+        value,
+    ):
+        """
+        Resolve a mapped NetSuite "select" body field (Subsidiary,
+        Currency, Location, Department, Class, Terms) from its OCR text
+        value to a NetSuite internal ID.
+
+        Returns the internal ID string on a single unambiguous match,
+        None if the field isn't a recognized reference field or no
+        active match was found, and raises NetSuiteRecordFetchException
+        only on an actual NetSuite/network failure (never on "not
+        found" — that is a data problem for the caller to report
+        clearly, not a transport error).
+        """
+        table_config = self.SELECT_FIELD_SUITEQL_TABLES.get(
+            str(target_field_id or "").strip().lower()
+        )
+        if table_config is None:
+            return None
+
+        table, match_columns = table_config
+
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return None
+
+        literal = self._suiteql_literal(raw_value)
+        if literal is None:
+            return None
+
+        where_clause = " OR ".join(
+            f"LOWER({column}) = LOWER({literal})"
+            for column in match_columns
+        )
+
+        query = f"""
+            SELECT id, {", ".join(match_columns)}, isinactive
+            FROM {table}
+            WHERE {where_clause}
+            ORDER BY id
+        """
+
+        try:
+            response = self._execute_live_suiteql(
+                connection=connection,
+                query=query,
+                limit=10,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Live NetSuite %s lookup failed — connection=%s value=%r",
+                table,
+                connection.id,
+                raw_value,
+            )
+            raise NetSuiteRecordFetchException(
+                f'Unable to look up NetSuite {table} "{raw_value}" '
+                "in the selected account."
+            ) from exc
+
+        rows = (
+            response.get("items", [])
+            if isinstance(response, dict)
+            else []
+        )
+
+        matches = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("isinactive", "F")).upper() == "T":
+                continue
+            record_id = row.get("id")
+            if record_id is None:
+                continue
+            matches.append(str(record_id))
+
+        # Same internal ID can appear once per matched column; dedupe.
+        matches = list(dict.fromkeys(matches))
+
+        if not matches:
+            logger.info(
+                "No active NetSuite %s match found — connection=%s value=%r",
+                table,
+                connection.id,
+                raw_value,
+            )
+            return None
+
+        if len(matches) > 1:
+            logger.warning(
+                "Multiple NetSuite %s matches found; using first — "
+                "value=%r ids=%s connection=%s",
+                table,
+                raw_value,
+                matches,
+                connection.id,
+            )
+
+        return matches[0]
 
     @staticmethod
     def _normalize_match_name(value):
