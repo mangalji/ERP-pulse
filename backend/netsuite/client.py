@@ -172,6 +172,13 @@ class NetSuiteAuthClient:
             access_token=access_token,
             data=data,
             retryable=False,
+            # Record creation can trigger NetSuite-side workflows/
+            # SuiteScripts and mandatory-field processing, which is
+            # routinely slower than a read — especially on sandbox
+            # accounts. Give it a longer budget than the default read
+            # timeout instead of failing a request NetSuite may still
+            # be successfully processing.
+            timeout=http.WRITE_TIMEOUT_SECONDS,
         )
 
     def get_customers(self, *, access_token: str | None = None) -> dict:
@@ -266,6 +273,7 @@ class NetSuiteAuthClient:
         headers: dict | None = None,
         params: dict | None = None,
         retryable: bool = True,
+        timeout: int | None = None,
     ) -> dict:
         """
         Generic authenticated POST helper.
@@ -275,6 +283,11 @@ class NetSuiteAuthClient:
         idempotent/read-only, which holds for SuiteQL — if this helper is
         ever used for a mutating POST, that call site should pass its own
         non-retrying path instead of reusing this one as-is.
+
+        `timeout` overrides the default request timeout — pass
+        http.WRITE_TIMEOUT_SECONDS for a record create/update, since
+        those can legitimately take longer than a read (NetSuite may run
+        workflows/SuiteScripts on save, especially on sandbox accounts).
         """
         token = access_token or self.access_token
 
@@ -299,6 +312,7 @@ class NetSuiteAuthClient:
                 params=params,
                 retryable=retryable,
                 correlation_id=correlation_id,
+                timeout=timeout,
             )
         except Exception as exc:
             logger.exception(

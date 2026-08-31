@@ -27,6 +27,15 @@ import requests
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_SECONDS = 15
+
+# NetSuite record CREATE/UPDATE calls can trigger server-side workflows,
+# SuiteScripts, and mandatory-field calculations (subsidiary/tax/line
+# processing) — this is routinely much slower than a read, especially on
+# sandbox accounts. A 15s timeout was observed timing out real, valid
+# Vendor Bill creates that NetSuite was still processing. Mutating calls
+# get a longer budget; nothing here makes them retryable — retryable
+# stays governed by the `retryable` flag, unrelated to timeout length.
+WRITE_TIMEOUT_SECONDS = 55
 MAX_RETRIES = 2
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 BACKOFF_BASE_SECONDS = 0.5
@@ -47,10 +56,15 @@ def send(
     auth=None,
     retryable: bool = False,
     correlation_id: str | None = None,
+    timeout: int | None = None,
 ) -> requests.Response:
     """
     Send one HTTP request, tagged with a correlation ID header, retrying
     on 429/5xx (and on transport-level failures) when retryable=True.
+
+    `timeout` overrides the default REQUEST_TIMEOUT_SECONDS for this call
+    (e.g. WRITE_TIMEOUT_SECONDS for a record create/update, which can
+    legitimately take longer than a read).
 
     Raises requests.RequestException on transport failure (connection
     error, timeout) exactly like a bare `requests.request()` call would —
@@ -60,6 +74,7 @@ def send(
     correlation_id = correlation_id or new_correlation_id()
     request_headers = dict(headers or {})
     request_headers.setdefault('X-Correlation-Id', correlation_id)
+    effective_timeout = timeout or REQUEST_TIMEOUT_SECONDS
 
     attempt = 0
     while True:
@@ -73,7 +88,7 @@ def send(
                 data=data,
                 json=json,
                 auth=auth,
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                timeout=effective_timeout,
             )
         except requests.RequestException:
             if retryable and attempt <= MAX_RETRIES:
