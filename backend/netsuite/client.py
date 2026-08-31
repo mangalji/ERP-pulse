@@ -346,6 +346,22 @@ class NetSuiteAuthClient:
                 'NetSuite token endpoint returned %s. correlation_id=%s',
                 response.status_code, correlation_id,
             )
+
+            try:
+                diagnostic_payload = response.json()
+            except ValueError:
+                diagnostic_payload = {}
+
+            logger.error(
+                "NetSuite token response diagnostic — "
+                "status=%s error=%s error_description=%s correlation_id=%s",
+                response.status_code,
+                diagnostic_payload.get("error"),
+                diagnostic_payload.get("error_description"),
+                correlation_id,
+            )
+            
+
         errors.raise_for_token_response(response)
 
         payload = response.json()

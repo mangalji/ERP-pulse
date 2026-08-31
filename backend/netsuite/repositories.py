@@ -151,6 +151,55 @@ class NetSuiteConnectionRepository:
             employee_assignments__employee=user
         ).distinct()
 
+    def get_posting_authorized_connection(
+        self,
+        *,
+        user: User,
+        connection_id,
+    ) -> NetSuiteConnection | None:
+        """
+        Return a NetSuite connection the user is authorized to POST to.
+
+        Authorization is based on:
+        - same company
+        - active connection
+        - Company Admin/superuser OR EmployeeConnection assignment
+
+        Connection health/status is deliberately NOT used here.
+        Token validity is checked immediately before the live NetSuite call
+        by NetSuiteTokenManager.
+        """
+
+        connection = (
+            NetSuiteConnection.objects
+            .filter(
+                id=connection_id,
+                company_id=user.company_id,
+                is_active=True,
+            )
+            .first()
+        )
+        if connection is None:
+            return None
+
+        is_company_admin = (
+            getattr(user, "is_superuser", False)
+            or user.user_roles.filter(
+                role__name__iexact="Company Admin",
+            ).exists()
+        )
+        if is_company_admin:
+            return connection
+
+        if EmployeeConnection.objects.filter(
+            employee=user,
+            connection=connection,
+        ).exists():
+            return connection
+
+        return None
+
+
     def update_tokens(
         self,
         connection: NetSuiteConnection,
@@ -176,6 +225,44 @@ class NetSuiteConnectionRepository:
         )
         return connection
 
+    def mark_token_invalid(
+        self,
+        connection: NetSuiteConnection,
+        *,
+        error_message: str,
+    ) -> NetSuiteConnection:
+        """
+        Mark stored OAuth tokens unusable after a permanent authentication
+        failure such as invalid_grant.
+    
+        The connection remains active so Company Admin can still see it and
+        start the reconnect flow. Health/status becomes 'error'.
+        """
+    
+        connection.access_token = None
+        connection.refresh_token = None
+        connection.access_token_expires_at = None
+        connection.refresh_token_expires_at = None
+    
+        connection.status = "error"
+        connection.last_error = error_message[:2000]
+        connection.consecutive_failures = 0
+    
+        connection.save(
+            update_fields=[
+                "access_token",
+                "refresh_token",
+                "access_token_expires_at",
+                "refresh_token_expires_at",
+                "status",
+                "last_error",
+                "consecutive_failures",
+                "updated_at",
+            ]
+        )
+    
+        return connection
+
     def deactivate(self, connection: NetSuiteConnection) -> NetSuiteConnection:
         """Mark a connection inactive (e.g. on disconnect) without deleting history."""
         connection.is_active = False
@@ -183,7 +270,7 @@ class NetSuiteConnectionRepository:
         return connection
 
     def list_by_user(self,user:User):
-        # return NetSuiteConnection.objects.filter(user=user).order_by("-is_active","-connected_at")
+
         return self.list_available_for_user(user)
     
     def get_by_id(self,user:User,connection_id)-> NetSuiteConnection | None:

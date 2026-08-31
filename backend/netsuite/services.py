@@ -22,7 +22,8 @@ from netsuite.exceptions import (
     NetSuiteStateMismatchException, 
     NetSuiteConnectionNotFoundException, 
     NetSuiteConnectionAlreadyExistsException,
-    NetSuiteRecordFetchException
+    NetSuiteRecordFetchException,
+    NetSuiteTokenExchangeException,
 )
 from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting, NetSuiteReferenceRecord, NetSuiteFieldCatalogue, NetSuiteUserConnectionPreference
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
@@ -48,9 +49,11 @@ class NetSuiteConnectionService:
         repository: NetSuiteConnectionRepository | None = None,
         client: NetSuiteAuthClient | None = None,
         audit_log_repository: NetSuiteConnectionAuditLogRepository | None = None,
+        token_manager: NetSuiteTokenManager | None=None,
     ):
         self.repository = repository or NetSuiteConnectionRepository()
         self.audit_log_repository = audit_log_repository or NetSuiteConnectionAuditLogRepository()
+        self.token_manager = token_manager or NetSuiteTokenManager(repository=self.repository)
 
     def _ensure_user_company_operational(self, *, user: User) -> None:
         company = getattr(user, 'company', None)
@@ -450,10 +453,51 @@ class NetSuiteConnectionService:
             company_lifecycle_service.ensure_operational(
                 company=connection.company
             )
+
+        try:
+            access_token = self.token_manager.get_valid_access_token(connection)
+
+        except NetSuiteTokenExchangeException as exc:
+            message = str(exc)
+
+            if message.startswith("NETSUITE_INVALID_GRANT:"):
+                return {
+                    'success': False,
+                    'message': (
+                        'NetSuite authorization has expired. '
+                        'Please reconnect this account.'
+                    ),
+                }
+            connection.status = 'error'
+            connection.last_error = message[:2000]
+            connection.consecutive_failures += 1
+            connection.save(update_fields=['status','last_error','consecutive_failures','updated_at'])
+            return {'success':False,'message':message}
+
+        except Exception as exc:
+            connection.status = 'error'
+            connection.last_error = str(exc)[:2000]
+            connection.consecutive_failures += 1
+
+            connection.save(
+                update_fields=[
+                    'status',
+                    'last_error',
+                    'consecutive_failures',
+                    'updated_at'
+                ]
+            )
+
+            return {
+                'success': False,
+                'message': str(exc),
+            }
+        
         client = NetSuiteAuthClient(
             account_id=connection.netsuite_account_id,
             client_id=connection.client_id,
             client_secret=connection.client_secret,
+            access_token=access_token,
         )
         try:
             client.get_records(record_type='customer', limit=1)
@@ -1082,6 +1126,104 @@ class NetSuiteVendorBillPostingService:
     def _normalization_key(value) -> str:
         return " ".join(str(value or "").strip().lower().split())
 
+    def _resolve_posting_location_id(self, *, connection) -> str:
+        """
+        Resolve the temporary/default Vendor Bill posting Location.
+
+        Current development rule:
+            Use the active NetSuite Location named "Pune".
+
+        IMPORTANT:
+            We do NOT hardcode the NetSuite internal ID because internal IDs
+            are account-specific. We resolve "Pune" against the selected
+            NetSuite connection and use the returned internal ID.
+
+        Production:
+            Replace only this method's selection strategy with the actual
+            company/connection/user business rule. The rest of the posting
+            flow should remain unchanged.
+        """
+        location_name = "Pune"
+
+        query_literal = NetSuiteValidationService._suiteql_literal(
+            location_name
+        )
+
+        query = f"""
+            SELECT
+                id,
+                name,
+                isinactive
+            FROM location
+            WHERE
+                LOWER(name) = LOWER({query_literal})
+                AND isinactive = 'F'
+            ORDER BY id
+        """
+
+        try:
+            response = NetSuiteValidationService()._execute_live_suiteql(
+                connection=connection,
+                query=query,
+                limit=50,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to resolve posting Location — "
+                "connection=%s location=%r",
+                connection.id,
+                location_name,
+            )
+            raise NetSuiteRecordFetchException(
+                f'Unable to resolve NetSuite Location "{location_name}" '
+                "in the selected account."
+            ) from exc
+
+        rows = (
+            response.get("items", [])
+            if isinstance(response, dict)
+            else []
+        )
+
+        active_matches = []
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            if str(row.get("isinactive", "F")).upper() == "T":
+                continue
+
+            location_id = row.get("id")
+            if location_id is None:
+                continue
+
+            active_matches.append(str(location_id))
+
+        if not active_matches:
+            raise ValueError(
+                f'NetSuite Location "{location_name}" does not exist '
+                "or is inactive in the selected account."
+            )
+
+        # Temporary development rule:
+        # use the first active Pune record if the account somehow contains
+        # duplicate Location names.
+        location_id = active_matches[0]
+
+        if len(active_matches) > 1:
+            logger.warning(
+                "Multiple active NetSuite Locations matched %r; "
+                "using first match — id=%s candidates=%s connection=%s",
+                location_name,
+                location_id,
+                len(active_matches),
+                connection.id,
+            )
+
+        return location_id
+
+
     def _resolve_unique_reference(
         self,
         *,
@@ -1227,21 +1369,52 @@ class NetSuiteVendorBillPostingService:
 
         # If the caller supplied a connection, it must be company-authorized
         # and must exactly match the connection used for validation.
-        if connection_id:
-            connection = self.repository.get_authorized_for_user(
-                user=user,
-                connection_id=connection_id,
+        # if connection_id:
+        #     connection = self.repository.get_authorized_for_user(
+        #         user=user,
+        #         connection_id=connection_id,
+        #     )
+        #     if connection is None:
+        #         raise ValueError(
+        #             "NetSuite connection not found or not accessible."
+        #         )
+        # else:
+        #     connection = validation.connection
+
+        # if connection is None:
+        #     raise ValueError(
+        #         "The validated NetSuite connection is no longer available."
+        #     )
+
+        # if validation.connection_id != connection.id:
+        #     raise ValueError(
+        #         "The selected NetSuite connection does not match the "
+        #         "connection used for validation."
+        #     )
+
+        # Posting must use the exact NetSuite connection against which
+        # this OCR version was validated.
+        #
+        # Authorization is checked separately from connection health:
+        # - Company Admin can use any active company connection.
+        # - Employee can use only an assigned active connection.
+        # - Token validity/status is handled by NetSuiteTokenManager.
+
+        validated_connection_id = validation.connection_id
+
+        if validated_connection_id is None:
+            raise ValueError(
+                "The validation result is missing its NetSuite connection."
             )
-            if connection is None:
-                raise ValueError(
-                    "NetSuite connection not found or not accessible."
-                )
-        else:
-            connection = validation.connection
+
+        connection = self.repository.get_posting_authorized_connection(
+            user=user,
+            connection_id=validated_connection_id,
+        )
 
         if connection is None:
             raise ValueError(
-                "The validated NetSuite connection is no longer available."
+                "The validated NetSuite connection is not available to this user."
             )
 
         if validation.connection_id != connection.id:
@@ -1249,6 +1422,7 @@ class NetSuiteVendorBillPostingService:
                 "The selected NetSuite connection does not match the "
                 "connection used for validation."
             )
+
 
         data = self._reviewed_data(version)
         line_items = data.get("line_items") or []
@@ -1314,7 +1488,22 @@ class NetSuiteVendorBillPostingService:
             "internal_id": str(validated_vendor_id),
         }
 
+        posting_location_id = self._resolve_posting_location_id(
+            connection=connection,
+        )
+
         payload_items = []
+
+
+        # Same NetSuite item matched by multiple OCR line rows (e.g. OCR
+        # extracted "Laptop" 3 times for one line, or several rows
+        # string-matched to the same item) would otherwise post as
+        # duplicate lines on the Vendor Bill. For now, keep only the
+        # first occurrence of a given NetSuite item ID and skip the
+        # rest — one real line per item until we have a proper reason
+        # to treat repeats as intentional (e.g. distinct rate/quantity
+        # combinations).
+        seen_item_ids = set()
 
         if line_items:
             posting_item_source_key = (
@@ -1409,26 +1598,61 @@ class NetSuiteVendorBillPostingService:
                         f'Line {index}: NetSuite item ID could not be resolved.'
                     )
 
-                item_payload = {
-                    "item":{
-                        "id":str(item_id)
-                    }
-                }
+                if item_id in seen_item_ids:
+                    logger.warning("Skipping line %s ('%s') on Vendor Bill posting — "
+                        "NetSuite item %s already used by an earlier line "
+                        "on this bill (keeping the first occurrence only) "
+                        "— connection=%s",
+                        index,
+                        item_name,
+                        item_id,
+                        connection.id,
+                    )
+                    continue
+                seen_item_ids.add(item_id)
+
+                # item_payload = {
+                #     "item":{
+                #         "id":str(item_id)
+                #     }
+                # }
                 description = line.get("description")
                 quantity = line.get("quantity")
                 rate = line.get("unit_price")
 
+                # A line with a matched NetSuite item ID but no quantity
+                # and no rate isn't a real purchased line — it's usually
+                # OCR text (a GL account name, a tax/TDS/GST breakdown
+                # row, etc.) that happened to string-match some NetSuite
+                # item record. NetSuite itself rejects a Vendor Bill line
+                # with neither quantity nor rate (400 INVALID_CONTENT on
+                # the whole request, not a per-line error), and posting
+                # it even if NetSuite allowed it would be a fake/wrong
+                # line item on the bill. So skip it here instead of
+                # sending it — only lines with at least a quantity or a
+                # rate are treated as real items and go to NetSuite.
 
+                if quantity in (None, "") and rate in (None, ""):
+                    logger.warning(
+                        "Skipping line %s ('%s') on Vendor Bill posting — "
+                        "matched NetSuite item %s but has no quantity or "
+                        "rate, so it isn't a real line item — connection=%s",
+                        index,
+                        description or item_name,
+                        item_id,
+                        connection.id,
+                    )
+                    continue
 
-                # if not item_id:
-                #     raise ValueError(
-                #         f"Line {index}: validation did not return a NetSuite item ID."
-                #     )
-                # item_payload = {
-                #     "item": {
-                #         "id": str(item_id),
-                #     },
-                # }
+                item_payload = {
+                    "item":{
+                        "id":str(item_id)
+                    },
+                    "location":{
+                        "id":str(posting_location_id),
+                    },
+                }
+
                 if quantity not in (None, ""):
                     item_payload["quantity"] = quantity
 
@@ -1439,16 +1663,12 @@ class NetSuiteVendorBillPostingService:
                     item_payload["description"] = description
 
                 payload_items.append(item_payload)
-                # payload_items.append(
-                #     {
-                #         "item": {"id": str(item_id)},
-                #         "quantity": quantity,
-                #         "rate": rate,
-                #     }
-                # )
 
         payload = {
             "entity": {"id": vendor["internal_id"]},
+            "location":{
+                "id":str(posting_location_id),
+            },
             # "item": {"items": payload_items},
         }
 
@@ -1482,11 +1702,41 @@ class NetSuiteVendorBillPostingService:
 
         validation_service = NetSuiteValidationService()
 
+        # NetSuite computes these Vendor Bill fields itself from the line
+        # items / tax details sublist — they're read-only on the record,
+        # not something the REST API accepts as direct input. If a field
+        # mapping (configured on the Field Mapping page) ever targets one
+        # of these, sending it crashes the whole post with a generic 400
+        # INVALID_CONTENT that gives no indication which field caused it.
+        # Skip them here unconditionally so a bad mapping can't silently
+        # break posting for every document — NetSuite calculates the
+        # real value regardless of what we'd have sent.
+        NETSUITE_COMPUTED_READONLY_FIELDS = {
+            "taxtotal",
+            "total",
+            "subtotal",
+            "balance",
+            "amountremaining",
+            "amountpaid",
+        }
+
         for mapping in standard_field_mappings:
             target_field_id = mapping.target_field_id
             if not target_field_id or target_field_id in payload:
                 # Already set explicitly above (entity/item), or a
                 # duplicate mapping row — first mapping wins.
+                continue
+
+            if target_field_id.strip().lower() in NETSUITE_COMPUTED_READONLY_FIELDS:
+                logger.warning(
+                    "Skipping NetSuite-computed read-only field mapping "
+                    "on Vendor Bill posting — field=%s connection=%s. "
+                    "NetSuite calculates this from line items/tax details; "
+                    "it cannot be set directly. Consider removing this "
+                    "mapping on the Field Mapping page.",
+                    target_field_id,
+                    connection.id,
+                )
                 continue
 
             raw_value = data.get(mapping.source_field_key)
@@ -1545,11 +1795,15 @@ class NetSuiteVendorBillPostingService:
 
         # Fallback defaults for the most common header fields, only if
         # not already supplied by an explicit field mapping above.
-        if "tranid" not in payload and data.get("invoice_number"):
+        payload_keys_lower = {key.lower() for key in payload}
+
+        if "tranid" not in payload_keys_lower and data.get("invoice_number"):
             payload["tranid"] = data["invoice_number"]
-        if "trandate" not in payload and data.get("invoice_date"):
+
+        if "trandate" not in payload_keys_lower and data.get("invoice_date"):
             payload["trandate"] = data["invoice_date"]
-        if "duedate" not in payload and data.get("due_date"):
+
+        if "duedate" not in payload_keys_lower and data.get("due_date"):
             payload["duedate"] = data["due_date"]
 
         custom_fields = self._apply_custom_fields(
