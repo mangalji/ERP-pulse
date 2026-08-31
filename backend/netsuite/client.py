@@ -221,6 +221,7 @@ class NetSuiteAuthClient:
             headers={
                 "Prefer": "transient",
             },
+            retryable=True,
         )
 
     # -----------------------------------------------------------------
@@ -264,6 +265,7 @@ class NetSuiteAuthClient:
         data: dict | None = None,
         headers: dict | None = None,
         params: dict | None = None,
+        retryable: bool = True,
     ) -> dict:
         """
         Generic authenticated POST helper.
@@ -295,7 +297,7 @@ class NetSuiteAuthClient:
                 headers=request_headers,
                 json=data,
                 params=params,
-                retryable=True,
+                retryable=retryable,
                 correlation_id=correlation_id,
             )
         except Exception as exc:

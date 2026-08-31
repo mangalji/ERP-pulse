@@ -2863,6 +2863,20 @@ class NetSuiteValidationService:
     AMBIGUITY_SCORE_GAP = 0.03
     MAX_SIMILAR_CANDIDATES = 5
 
+    # ITEM_RECORD_TYPES = (
+    #     NetSuiteRecordType.INVENTORY_ITEM,
+    #     NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
+    #     NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM,
+    #     NetSuiteRecordType.SERVICE_SALE_ITEM,
+    #     NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
+    #     NetSuiteRecordType.DESCRIPTION_ITEM,
+    #     NetSuiteRecordType.KIT_ITEM,
+    #     NetSuiteRecordType.ASSEMBLY_ITEM,
+    #     NetSuiteRecordType.MARKUP_ITEM,
+    #     NetSuiteRecordType.PAYMENT_ITEM,
+    #     NetSuiteRecordType.SUBTOTAL_ITEM,
+    #     NetSuiteRecordType.ITEM_GROUP,
+    # )
     ITEM_RECORD_TYPES = (
         NetSuiteRecordType.INVENTORY_ITEM,
         NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
@@ -2872,18 +2886,13 @@ class NetSuiteValidationService:
         NetSuiteRecordType.SERVICE_RESALE_ITEM,
         NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
         NetSuiteRecordType.DESCRIPTION_ITEM,
+        NetSuiteRecordType.DISCOUNT_ITEM,
         NetSuiteRecordType.KIT_ITEM,
         NetSuiteRecordType.ASSEMBLY_ITEM,
+        NetSuiteRecordType.MARKUP_ITEM,
+        NetSuiteRecordType.PAYMENT_ITEM,
+        NetSuiteRecordType.SUBTOTAL_ITEM,
         NetSuiteRecordType.ITEM_GROUP,
-        # Deliberately excluded: DISCOUNT_ITEM, MARKUP_ITEM, PAYMENT_ITEM,
-        # SUBTOTAL_ITEM. These are NetSuite's special calculation-line
-        # types (used to apply a discount/markup/payment/subtotal amount
-        # on a transaction line) — they are never a real purchasable
-        # product, so matching a Vendor Bill line against them is always
-        # wrong. Including them here caused false "multiple items
-        # matched" ambiguity whenever one happened to share a name with
-        # a genuine item (e.g. a discount item literally named "Laptop"
-        # colliding with the real inventory item "Laptop").
     )
     ITEM_SUITEQL_TABLES = {
         NetSuiteRecordType.INVENTORY_ITEM: "inventoryitem",
@@ -2894,8 +2903,12 @@ class NetSuiteValidationService:
         NetSuiteRecordType.SERVICE_RESALE_ITEM: "serviceitem",
         NetSuiteRecordType.SERVICE_PURCHASE_ITEM: "serviceitem",
         NetSuiteRecordType.DESCRIPTION_ITEM: "descriptionitem",
+        NetSuiteRecordType.DISCOUNT_ITEM: "discountitem",
         NetSuiteRecordType.KIT_ITEM: "kititem",
         NetSuiteRecordType.ASSEMBLY_ITEM: "assemblyitem",
+        NetSuiteRecordType.MARKUP_ITEM: "markupitem",
+        NetSuiteRecordType.PAYMENT_ITEM: "paymentitem",
+        NetSuiteRecordType.SUBTOTAL_ITEM: "subtotalitem",
         NetSuiteRecordType.ITEM_GROUP: "itemgroup",
     }
 
@@ -3838,99 +3851,433 @@ class NetSuiteValidationService:
         connection,
         item_name,
     ):
-        normalized = self._normalize_match_name(item_name)
-    
-        matches = []
+        """Resolve a Vendor Bill item against the selected NetSuite account.
 
-        table_names = list(
-            dict.fromkeys(
-                self.ITEM_SUITEQL_TABLES.get(record_type)
-                for record_type in self.ITEM_RECORD_TYPES
-                if self.ITEM_SUITEQL_TABLES.get(record_type)
-            )
-        )
-        query_literal = self._suiteql_literal(normalized)
-    
-        for table_name in table_names:
-            # table_name = self.ITEM_SUITEQL_TABLES.get(record_type)
+        NetSuite exposes a consolidated ``Item`` SuiteQL record source.
+        Using it avoids probing individual item subtype tables (many of
+        which are not queryable in every account) and also prevents the
+        same underlying item table from being queried repeatedly.
 
-            # if not table_name:
-            #     continue
+        Posting requires an exact normalized name/ID match. Fuzzy matching
+        is intentionally not used here because this method runs immediately
+        before creating a financial transaction.
 
-            query = f"""
-                SELECT
-                    id,
-                    itemid,
-                    displayname,
-                    isinactive
-                FROM {table_name}
-                WHERE
-                    LOWER(itemid) = LOWER({query_literal})
-                    OR LOWER(displayname) = LOWER({query_literal})
-            """
-            try:
-                
-                response = self._execute_live_suiteql(
-                    connection=connection,
-                    query=query,
-                    limit=50,
-                )
-
-            except Exception as exc:
-                logger.warning(
-                    "Skipping unsupported/unavailable NetSuite item table "
-                    "during posting lookup — table=%s item=%s connection=%s error=%s",
-                    table_name,
-                    normalized,
-                    connection.id,
-                    exc,
-                )
-                continue
-            rows = (
-                response.get("items", [])
-                if isinstance(response, dict)
-                else []
-            )
-    
-            for row in rows:
-                if str(row.get("isinactive", "F")).upper() != "T":
-                    matches.append({
-                        "id": str(row.get("id")),
-                        "itemid": row.get("itemid"),
-                        "displayname": row.get("displayname"),
-                        "record_type": table_name,
-                    })
-    
-        unique = {
-            item["id"]: item
-            for item in matches
-            if item.get("id")
-        }
-    
-        matches = list(unique.values())
-    
-        if len(matches) == 1:
-            return {
-                "matched": True,
-                "ambiguous": False,
-                "netsuite_id": matches[0]["id"],
-                "record_type": matches[0]["record_type"],
-                "round":1,
-                "confidence":1.0,
-            }
-    
-        if len(matches) > 1:
+        Rules:
+        - Ignore empty item names.
+        - Use NetSuite's consolidated `item` SuiteQL source.
+        - Match against itemid/displayname.
+        - Ignore inactive items.
+        - Normalize both sides in Python for punctuation/spacing differences.
+        - Deduplicate by NetSuite internal ID.
+        - If multiple exact/normalized matches exist, use first active match.
+        - Never place booleans/non-dict values into the match collection.
+        """
+        raw_item_name = str(item_name or "").strip()
+        if not raw_item_name:
             return {
                 "matched": False,
-                "ambiguous": True,
+                "ambiguous": False,
                 "netsuite_id": None,
-                "candidates": matches[: self.MAX_SIMILAR_CANDIDATES],
             }
-    
+
+        normalized_input = self._normalize_match_name(raw_item_name)
+
+        # def _build_match(row):
+        #     if not isinstance(row,dict):
+        #         return None
+
+        #     if str(row.get("isinactive", "F")).upper() == "T":
+        #         return None
+
+        #     record_id = row.get("id")
+
+        #     if record_id is None:
+        #         return None
+
+        #     # itemid = row.get("itemid")
+        #     # displayname = row.get("displayname")
+
+        #     return {
+        #         "id": str(record_id),
+        #         "itemid": row.get("itemid"),
+        #         "displayname": row.get("displayname"),
+        #         "record_type": "item",
+        #     }
+
+        # def _result(matches):
+        #     unique = {}
+        #     for match in matches:
+        #         if not isinstance(match,dict):
+        #             logger.warning(
+        #                 "Ignoring invalid NetSuite item match — "
+        #                 "item=%r match_type=%s match=%r",
+        #                 raw_item_name,
+        #                 type(match).__name__,
+        #                 match,
+        #                 )
+        #             continue
+
+        #         record_id = match.get("id")
+
+        #         if not record_id:
+        #             continue
+
+        #         if str(record_id) not in unique:
+        #             unique[str(record_id)] = match
+
+        #     matches = list(unique.values())
+
+        #         # if match and match['id'] not in unique:
+        #         #     unique[match['id']] = match
+
+        #     if not matches:
+        #         return {
+        #             "matched": False,
+        #             "ambiguous": False,
+        #             "netsuite_id": None,
+        #         }
+
+        #     first_match = matches[0]
+
+        #     if len(matches) > 1:
+        #         logger.warning(
+        #             "Multiple NetSuite item matches found; using first active "
+        #             "match for posting — item=%r id=%s candidates=%s "
+        #             "connection=%s",
+        #             raw_item_name,
+        #             first_match.get("id"),
+        #             first_match.get("record_type"),
+        #             # len(matches),
+        #             connection.id,
+        #         )
+
+        #     return {
+        #         "matched": True,
+        #         "ambiguous": False,
+        #         "netsuite_id": first_match["id"],
+        #         "record_type": first_match["record_type"],
+        #         "round": 1,
+        #         "confidence": 1.0,
+        #     }
+
+        
+        # ---------------------------------------------------------
+        # Round 1: exact case-insensitive match
+        # ---------------------------------------------------------
+
+        if not normalized_input:
+            return {
+                "matched":False,
+                "ambiguous":False,
+                "netsuite_id":None,
+            }
+
+        query_literal  = self._suiteql_literal(raw_item_name)
+
+        # NetSuite's consolidated Item source covers item records across
+        # supported item subtypes. Oracle's SuiteQL examples use `item` as
+        # the item record source, so do not derive the SQL table name from
+        # REST record-type constants such as `inventoryItem`.
+        query  = f"""
+            SELECT
+                id,
+                itemid,
+                displayname,
+                isinactive
+            FROM item
+            WHERE
+                (
+                    LOWER(itemid) = LOWER({query_literal})
+                    OR LOWER(displayname) = LOWER({query_literal})
+                )
+            ORDER BY id
+        """
+
+        try:
+            response = self._execute_live_suiteql(
+                connection=connection,
+                query=query,
+                limit=50,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Live NetSuite consolidated item lookup failed — "
+                "connection=%s item=%r",
+                connection.id,
+                raw_item_name,
+            )
+            raise NetSuiteRecordFetchException(
+                f'Unable to look up NetSuite item "{raw_item_name}" in the selected account.'
+            ) from exc
+
+        rows = (
+            response.get("items", [])
+            if isinstance(response, dict)
+            else []
+        )
+
+        matches = []
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            if str(row.get("isinactive", "F")).upper() == "T":
+                continue
+
+            record_id = row.get("id")
+            if record_id is None:
+                continue
+
+            itemid = row.get("itemid")
+            displayname = row.get("displayname")
+
+            # Final application-side normalization check.
+            itemid_normalized = (
+                self._normalize_match_name(itemid)
+                if itemid
+                else ""
+            )
+
+            displayname_normalized = (
+                self._normalize_match_name(displayname)
+                if displayname
+                else ""
+            )
+
+            if normalized_input not in (
+                itemid_normalized,
+                displayname_normalized,
+            ):
+                continue
+
+            matches.append(
+                {
+                    "id": str(record_id),
+                    "itemid": itemid,
+                    "displayname": displayname,
+                    "record_type": "item",
+                }
+            )
+        # exact_result = _result(exact_matches)
+
+        # if exact_result["matched"]:
+        #     return exact_result
+
+
+        # ---------------------------------------------------------
+        # Round 2: candidate lookup + application-side normalization
+        # ---------------------------------------------------------
+        #
+        # This handles cases such as:
+        #   10302 TDS Payable-194C
+        #   10302 TDS Payable 194C
+        #   10302 TDS Payable/194C
+        #
+        # without depending on SQL punctuation behavior.
+        #
+        # Use a conservative candidate query instead of loading the
+        # entire item table.
+        
+
+        # safe_literal = self._suiteql_literal(
+        #     raw_item_name.replace("-", " ")
+        # )
+
+        # fallback_query = f"""
+        #     SELECT
+        #         id,
+        #         itemid,
+        #         displayname,
+        #         isinactive
+        #     FROM item
+        #     WHERE
+        #         LOWER(itemid) LIKE LOWER('%' || {safe_literal} || '%')
+        #         OR LOWER(displayname) LIKE LOWER('%' || {safe_literal} || '%')
+        #     ORDER BY id
+        # """
+
+        # try:
+        #     response = self._execute_live_suiteql(
+        #         connection=connection,
+        #         query=fallback_query,
+        #         limit=50,
+        #     )
+        # except Exception as exc:
+        #     logger.warning(
+        #         "Fallback NetSuite item lookup failed — "
+        #         "connection=%s item=%r error=%s",
+        #         connection.id,
+        #         raw_item_name,
+        #         exc,
+        #     )
+        #     return {
+        #         "matched": False,
+        #         "ambiguous": False,
+        #         "netsuite_id": None,
+        #     }
+
+        # rows = (
+        #     response.get("items", [])
+        #     if isinstance(response, dict)
+        #     else []
+        # )
+
+        # normalized_matches = []
+
+        # for row in rows:
+        #     match = _build_match(row)
+
+        #     if match is not None:
+        #         normalized_matches.append(match)
+
+        #     if not match:
+        #         continue
+
+        #     candidates = (
+        #         match.get("itemid"),
+        #         match.get("displayname"),
+        #     )
+
+        #     if any(
+        #         self._normalize_match_name(candidate) == normalized
+        #         for candidate in candidates
+        #         if candidate
+        #     ):
+        #         normalized_matches.append(match)
+
+        # return _result(normalized_matches)
+
+        # for row in rows:
+        #     if not isinstance(row, dict):
+        #         continue
+
+        #     # Do not allow inactive items to be selected for posting.
+        #     if str(row.get("isinactive", "F")).upper() == "T":
+        #         continue
+
+        #     record_id = row.get("id")
+        #     if record_id is None:
+        #         continue
+
+        #     matches.append(
+        #         {
+        #             "id": str(record_id),
+        #             "itemid": row.get("itemid"),
+        #             "displayname": row.get("displayname"),
+        #             "record_type": "item",
+        #         }
+        #     )
+
+        # The same internal ID can never be treated as two different
+        # candidates merely because both itemid and displayname matched.
+        # unique = {
+        #     item["id"]: item
+        #     for item in matches
+        # }
+        # matches = list(unique.values())
+
+        # if len(matches) == 1:
+        #     match = matches[0]
+        #     return {
+        #         "matched": True,
+        #         "ambiguous": False,
+        #         "netsuite_id": match["id"],
+        #         "record_type": match["record_type"],
+        #         "round": 1,
+        #         "confidence": 1.0,
+        #     }
+
+        # if len(matches) > 1:
+        #     first_match = matches[0]
+
+        #     logger.warning(
+        #         "Multiple exact NetSuite item matches found; using first active "
+        #         "match for posting — item=%r id=%s record_type=%s connection=%s",
+        #         item_name,
+        #         first_match.get("id"),
+        #         first_match.get("record_type"),
+        #         connection.id,
+        #     )
+
+        #     return {
+        #         "matched": True,
+        #         "ambiguous": False,
+        #         "netsuite_id": first_match["id"],
+        #         "record_type":first_match.get("record_type"),
+        #         "round":1,
+        #         "confidence":1.0,
+        #         # "candidates": [
+        #         #     {
+        #         #         "netsuite_id": item["id"],
+        #         #         "name": item.get("displayname") or item.get("itemid"),
+        #         #         "itemid": item.get("itemid"),
+        #         #         "displayname": item.get("displayname"),
+        #         #         "record_type": item.get("record_type"),
+        #         #         "score": 1.0,
+        #         #     }
+        #         #     for item in matches[: self.MAX_SIMILAR_CANDIDATES]
+        #         # ],
+        #     }
+
+        # return {
+        #     "matched": False,
+        #     "ambiguous": False,
+        #     "netsuite_id": None,
+        # }
+
+        unique_matches = {}
+
+        for match in matches:
+            # if not isinstance(match, dict):
+            #     continue
+
+            record_id = match.get("id")
+            if not record_id:
+                continue
+
+            unique_matches.setdefault(
+                str(record_id),
+                match,
+            )
+
+        matches = list(unique_matches.values())
+
+        if not matches:
+            logger.info(
+                "No active NetSuite item match found — "
+                "connection=%s item=%r",
+                connection.id,
+                raw_item_name,
+            )
+            return {
+                "matched": False,
+                "ambiguous": False,
+                "netsuite_id": None,
+            }
+
+        # Current requirement:
+        # first active exact/normalized match wins.
+        first_match = matches[0]
+
+        if len(matches) > 1:
+            logger.warning(
+                "Multiple NetSuite item matches found; using first active "
+                "match for posting — item=%r id=%s candidates=%s "
+                "connection=%s",
+                raw_item_name,
+                first_match["id"],
+                len(matches),
+                connection.id,
+            )
+
         return {
-            "matched": False,
+            "matched": True,
             "ambiguous": False,
-            "netsuite_id": None,
+            "netsuite_id": first_match["id"],
+            "record_type": "item",
+            "round": 1,
+            "confidence": 1.0,
         }
 
     def resolve_item_for_posting(
@@ -3951,24 +4298,9 @@ class NetSuiteValidationService:
         )
 
         if result.get("ambiguous"):
-            candidates = result.get("candidates", [])
-            candidate_summary = ", ".join(
-                f'{c.get("id")} ({c.get("record_type")}: '
-                f'itemid={c.get("itemid")!r}, displayname={c.get("displayname")!r})'
-                for c in candidates
-            )
-            logger.warning(
-                "Ambiguous item match while posting — line=%s item=%r "
-                "connection=%s candidates=[%s]",
-                line_index,
-                item_name,
-                connection.id,
-                candidate_summary,
-            )
             raise ValueError(
                 f'Line {line_index}: multiple NetSuite items matched '
-                f'"{item_name}" ({len(candidates)} matches — see server logs '
-                f'for the matched item IDs). Please correct the item.'
+                f'"{item_name}". Please correct the item.'
             )
 
         if not result.get("matched"):

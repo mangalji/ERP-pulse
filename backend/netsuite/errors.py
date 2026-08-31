@@ -14,22 +14,50 @@ broadly here since NetSuite error bodies can echo back request details.
 """
 
 import requests
-
+import logging
 from netsuite.exceptions import (
     NetSuiteRecordFetchException,
     NetSuiteRecordNotFoundException,
     NetSuiteTokenExchangeException,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def raise_for_record_response(response: requests.Response, *, path: str) -> None:
     """Used by both the record GET endpoints and the generic POST (SuiteQL)."""
+    if 200 <= response.status_code < 300:
+        return
+    try:
+        payload=response.json()
+    except ValueError:
+        payload = None
+    logger.error(
+        "NetSuite API rejected request — "
+        "status=%s path=%s response=%r",
+        response.status_code,
+        path,
+        payload if payload is not None else response.text,
+    )
+
+    if isinstance(payload, dict):
+        message = (
+            payload.get("message")
+            or payload.get("detail")
+            or payload.get("o:errorCode")
+            or payload.get("title")
+            or str(payload)
+        )
+    else:
+        message = response.text.strip()
+
     if response.status_code == 404:
         raise NetSuiteRecordNotFoundException('The requested NetSuite record was not found.')
-    if not response.ok:
-        raise NetSuiteRecordFetchException(
-            'NetSuite rejected the record request. Please reconnect your account.'
-        )
+    
+    raise NetSuiteRecordFetchException(
+        f"NetSuite rejected request ({response.status_code}) "
+        f"for {path}: {message}"
+    )
 
 
 def raise_for_token_response(response: requests.Response) -> None:
