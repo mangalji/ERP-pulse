@@ -1367,31 +1367,6 @@ class NetSuiteVendorBillPostingService:
                 "Validate the document successfully before posting."
             )
 
-        # If the caller supplied a connection, it must be company-authorized
-        # and must exactly match the connection used for validation.
-        # if connection_id:
-        #     connection = self.repository.get_authorized_for_user(
-        #         user=user,
-        #         connection_id=connection_id,
-        #     )
-        #     if connection is None:
-        #         raise ValueError(
-        #             "NetSuite connection not found or not accessible."
-        #         )
-        # else:
-        #     connection = validation.connection
-
-        # if connection is None:
-        #     raise ValueError(
-        #         "The validated NetSuite connection is no longer available."
-        #     )
-
-        # if validation.connection_id != connection.id:
-        #     raise ValueError(
-        #         "The selected NetSuite connection does not match the "
-        #         "connection used for validation."
-        #     )
-
         # Posting must use the exact NetSuite connection against which
         # this OCR version was validated.
         #
@@ -1430,16 +1405,6 @@ class NetSuiteVendorBillPostingService:
 
         # Vendor presence is already enforced during NetSuite reference validation.
         # Posting uses the exact validated NetSuite vendor ID.
-        
-        # if not data.get("vendor_name"):
-        #     raise ValueError(
-        #         "Vendor Name is required before posting."
-        #     )
-
-        # if not line_items:
-        #     raise ValueError(
-        #         "At least one OCR item line is required before posting."
-        #     )
 
         existing = self.repository.get_ocr_posting(
             document_id=document.id,
@@ -1478,12 +1443,6 @@ class NetSuiteVendorBillPostingService:
             .first()
         )
 
-        # if len(item_validation_results) != len(line_items):
-        #     raise ValueError(
-        #         "Validation result does not match the current OCR line items. "
-        #         "Please validate the document again."
-        #     )
-
         vendor = {
             "internal_id": str(validated_vendor_id),
         }
@@ -1512,8 +1471,6 @@ class NetSuiteVendorBillPostingService:
                 else None
             )
 
-        # item_validation_results:
-
             for index, line in enumerate(line_items, start=1):
                 if not isinstance(line, dict):
                     # continue
@@ -1535,43 +1492,6 @@ class NetSuiteVendorBillPostingService:
                     raise ValueError(
                         f"Line {index}: item value is missing."
                     )
-                
-                # validated_item = (
-                #     item_validation_results[index - 1]
-                #     if index - 1 < len(item_validation_results)
-                #     else None
-                #     )
-                # if not validated_item or not validated_item.get("matched"):
-                #     continue
-                #     # raise ValueError(
-                #     #     f"Line {index}: item is no longer validated."
-                #     # )
-
-                # item_id = validated_item.get("netsuite_id")
-
-                # if not item_id:
-                #     continue
-                # item_result = NetSuiteValidationService()._validate_items_live(
-                #     connection=connection,
-                #     line_items=[line],
-                #     source_field_key=(
-                #         posting_item_source_key
-                #         or (
-                #             "item"
-                #             if line.get("item")
-                #             else (
-                #                 "item_name"
-                #                 if line.get("item_name")
-                #                 else (
-                #                     "itemName"
-                #                     if line.get("itemName")
-                #                     else "description"
-                #                 )
-                #             )
-                #         )
-                #     ),
-                # )[0]
-
                 item_result = NetSuiteValidationService().resolve_item_for_posting(
                     # connection_id=str(connection.id),
                     connection=connection,
@@ -1610,12 +1530,6 @@ class NetSuiteVendorBillPostingService:
                     )
                     continue
                 seen_item_ids.add(item_id)
-
-                # item_payload = {
-                #     "item":{
-                #         "id":str(item_id)
-                #     }
-                # }
                 description = line.get("description")
                 quantity = line.get("quantity")
                 rate = line.get("unit_price")
@@ -1669,7 +1583,6 @@ class NetSuiteVendorBillPostingService:
             "location":{
                 "id":str(posting_location_id),
             },
-            # "item": {"items": payload_items},
         }
 
         if payload_items:
@@ -3205,20 +3118,6 @@ class NetSuiteValidationService:
     AMBIGUITY_SCORE_GAP = 0.03
     MAX_SIMILAR_CANDIDATES = 5
 
-    # ITEM_RECORD_TYPES = (
-    #     NetSuiteRecordType.INVENTORY_ITEM,
-    #     NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
-    #     NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM,
-    #     NetSuiteRecordType.SERVICE_SALE_ITEM,
-    #     NetSuiteRecordType.SERVICE_PURCHASE_ITEM,
-    #     NetSuiteRecordType.DESCRIPTION_ITEM,
-    #     NetSuiteRecordType.KIT_ITEM,
-    #     NetSuiteRecordType.ASSEMBLY_ITEM,
-    #     NetSuiteRecordType.MARKUP_ITEM,
-    #     NetSuiteRecordType.PAYMENT_ITEM,
-    #     NetSuiteRecordType.SUBTOTAL_ITEM,
-    #     NetSuiteRecordType.ITEM_GROUP,
-    # )
     ITEM_RECORD_TYPES = (
         NetSuiteRecordType.INVENTORY_ITEM,
         NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
@@ -3757,9 +3656,6 @@ class NetSuiteValidationService:
             )
 
         line_items = data.get("line_items") or []
-        
-        # if not isinstance(line_items, list) or not line_items:
-        #     raise ValueError("At least one line item is required before NetSuite reference validation.")
 
         if not isinstance(line_items, list):
             line_items = []
@@ -3768,18 +3664,7 @@ class NetSuiteValidationService:
             connection=connection,
             vendor_name=vendor_name,
         )
-
-        # if item_mapping is not None:
-        #     item_results = self._validate_items_live(
-        #         connection=connection,
-        #         line_items=line_items,
-        #         source_field_key=item_mapping.source_field_key,
-        #     )
-
-        # else:
         item_results = []
-
-    
         errors = []
     
         if not vendor_name or not str(vendor_name).strip():
@@ -3801,37 +3686,6 @@ class NetSuiteValidationService:
                 "message": "Vendor does not exist in the selected NetSuite account.",
                 "extracted_name": vendor_name,
             })
-
-        # if item_mapping is not None:    
-        #     for item in item_results:
-        #         extracted_name = item.get("extracted_name")
-        #         line_index = item.get("line_index")
-        #         if not extracted_name:
-        #             continue
-        #             # errors.append({
-        #             #     "type": "ITEM_VALUE_MISSING",
-        #             #     "message": f"No item value was found for line {line_index}.",
-        #             #     "extracted_name": None,
-        #             #     "line_index": line_index,
-        #             # })
-        #         elif item.get("ambiguous"):
-        #             continue
-        #             # errors.append({
-        #             #     "type": "ITEM_AMBIGUOUS",
-        #             #     "message": "Multiple possible items matched. Please confirm the item value.",
-        #             #     "extracted_name": extracted_name,
-        #             #     "line_index": line_index,
-        #             #     "candidates": item.get("candidates", []),
-        #             # })
-        #         elif not item.get("matched"):
-        #             continue
-        #             # errors.append({
-        #             #     "type": "ITEM_NOT_FOUND",
-        #             #     "message": "Item does not exist in the selected NetSuite account.",
-        #             #     "extracted_name": extracted_name,
-        #             #     "line_index": line_index,
-        #             # })
-
         status = (
             ValidationStatus.VALIDATED
             if not errors
@@ -4349,85 +4203,6 @@ class NetSuiteValidationService:
             }
 
         normalized_input = self._normalize_match_name(raw_item_name)
-
-        # def _build_match(row):
-        #     if not isinstance(row,dict):
-        #         return None
-
-        #     if str(row.get("isinactive", "F")).upper() == "T":
-        #         return None
-
-        #     record_id = row.get("id")
-
-        #     if record_id is None:
-        #         return None
-
-        #     # itemid = row.get("itemid")
-        #     # displayname = row.get("displayname")
-
-        #     return {
-        #         "id": str(record_id),
-        #         "itemid": row.get("itemid"),
-        #         "displayname": row.get("displayname"),
-        #         "record_type": "item",
-        #     }
-
-        # def _result(matches):
-        #     unique = {}
-        #     for match in matches:
-        #         if not isinstance(match,dict):
-        #             logger.warning(
-        #                 "Ignoring invalid NetSuite item match — "
-        #                 "item=%r match_type=%s match=%r",
-        #                 raw_item_name,
-        #                 type(match).__name__,
-        #                 match,
-        #                 )
-        #             continue
-
-        #         record_id = match.get("id")
-
-        #         if not record_id:
-        #             continue
-
-        #         if str(record_id) not in unique:
-        #             unique[str(record_id)] = match
-
-        #     matches = list(unique.values())
-
-        #         # if match and match['id'] not in unique:
-        #         #     unique[match['id']] = match
-
-        #     if not matches:
-        #         return {
-        #             "matched": False,
-        #             "ambiguous": False,
-        #             "netsuite_id": None,
-        #         }
-
-        #     first_match = matches[0]
-
-        #     if len(matches) > 1:
-        #         logger.warning(
-        #             "Multiple NetSuite item matches found; using first active "
-        #             "match for posting — item=%r id=%s candidates=%s "
-        #             "connection=%s",
-        #             raw_item_name,
-        #             first_match.get("id"),
-        #             first_match.get("record_type"),
-        #             # len(matches),
-        #             connection.id,
-        #         )
-
-        #     return {
-        #         "matched": True,
-        #         "ambiguous": False,
-        #         "netsuite_id": first_match["id"],
-        #         "record_type": first_match["record_type"],
-        #         "round": 1,
-        #         "confidence": 1.0,
-        #     }
-
         
         # ---------------------------------------------------------
         # Round 1: exact case-insensitive match
@@ -4527,173 +4302,6 @@ class NetSuiteValidationService:
                     "record_type": "item",
                 }
             )
-        # exact_result = _result(exact_matches)
-
-        # if exact_result["matched"]:
-        #     return exact_result
-
-
-        # ---------------------------------------------------------
-        # Round 2: candidate lookup + application-side normalization
-        # ---------------------------------------------------------
-        #
-        # This handles cases such as:
-        #   10302 TDS Payable-194C
-        #   10302 TDS Payable 194C
-        #   10302 TDS Payable/194C
-        #
-        # without depending on SQL punctuation behavior.
-        #
-        # Use a conservative candidate query instead of loading the
-        # entire item table.
-        
-
-        # safe_literal = self._suiteql_literal(
-        #     raw_item_name.replace("-", " ")
-        # )
-
-        # fallback_query = f"""
-        #     SELECT
-        #         id,
-        #         itemid,
-        #         displayname,
-        #         isinactive
-        #     FROM item
-        #     WHERE
-        #         LOWER(itemid) LIKE LOWER('%' || {safe_literal} || '%')
-        #         OR LOWER(displayname) LIKE LOWER('%' || {safe_literal} || '%')
-        #     ORDER BY id
-        # """
-
-        # try:
-        #     response = self._execute_live_suiteql(
-        #         connection=connection,
-        #         query=fallback_query,
-        #         limit=50,
-        #     )
-        # except Exception as exc:
-        #     logger.warning(
-        #         "Fallback NetSuite item lookup failed — "
-        #         "connection=%s item=%r error=%s",
-        #         connection.id,
-        #         raw_item_name,
-        #         exc,
-        #     )
-        #     return {
-        #         "matched": False,
-        #         "ambiguous": False,
-        #         "netsuite_id": None,
-        #     }
-
-        # rows = (
-        #     response.get("items", [])
-        #     if isinstance(response, dict)
-        #     else []
-        # )
-
-        # normalized_matches = []
-
-        # for row in rows:
-        #     match = _build_match(row)
-
-        #     if match is not None:
-        #         normalized_matches.append(match)
-
-        #     if not match:
-        #         continue
-
-        #     candidates = (
-        #         match.get("itemid"),
-        #         match.get("displayname"),
-        #     )
-
-        #     if any(
-        #         self._normalize_match_name(candidate) == normalized
-        #         for candidate in candidates
-        #         if candidate
-        #     ):
-        #         normalized_matches.append(match)
-
-        # return _result(normalized_matches)
-
-        # for row in rows:
-        #     if not isinstance(row, dict):
-        #         continue
-
-        #     # Do not allow inactive items to be selected for posting.
-        #     if str(row.get("isinactive", "F")).upper() == "T":
-        #         continue
-
-        #     record_id = row.get("id")
-        #     if record_id is None:
-        #         continue
-
-        #     matches.append(
-        #         {
-        #             "id": str(record_id),
-        #             "itemid": row.get("itemid"),
-        #             "displayname": row.get("displayname"),
-        #             "record_type": "item",
-        #         }
-        #     )
-
-        # The same internal ID can never be treated as two different
-        # candidates merely because both itemid and displayname matched.
-        # unique = {
-        #     item["id"]: item
-        #     for item in matches
-        # }
-        # matches = list(unique.values())
-
-        # if len(matches) == 1:
-        #     match = matches[0]
-        #     return {
-        #         "matched": True,
-        #         "ambiguous": False,
-        #         "netsuite_id": match["id"],
-        #         "record_type": match["record_type"],
-        #         "round": 1,
-        #         "confidence": 1.0,
-        #     }
-
-        # if len(matches) > 1:
-        #     first_match = matches[0]
-
-        #     logger.warning(
-        #         "Multiple exact NetSuite item matches found; using first active "
-        #         "match for posting — item=%r id=%s record_type=%s connection=%s",
-        #         item_name,
-        #         first_match.get("id"),
-        #         first_match.get("record_type"),
-        #         connection.id,
-        #     )
-
-        #     return {
-        #         "matched": True,
-        #         "ambiguous": False,
-        #         "netsuite_id": first_match["id"],
-        #         "record_type":first_match.get("record_type"),
-        #         "round":1,
-        #         "confidence":1.0,
-        #         # "candidates": [
-        #         #     {
-        #         #         "netsuite_id": item["id"],
-        #         #         "name": item.get("displayname") or item.get("itemid"),
-        #         #         "itemid": item.get("itemid"),
-        #         #         "displayname": item.get("displayname"),
-        #         #         "record_type": item.get("record_type"),
-        #         #         "score": 1.0,
-        #         #     }
-        #         #     for item in matches[: self.MAX_SIMILAR_CANDIDATES]
-        #         # ],
-        #     }
-
-        # return {
-        #     "matched": False,
-        #     "ambiguous": False,
-        #     "netsuite_id": None,
-        # }
-
         unique_matches = {}
 
         for match in matches:
@@ -4755,11 +4363,6 @@ class NetSuiteValidationService:
         item_name,
         line_index,
     ):
-        # result = self._validate_item(
-        #     connection_id=connection_id,
-        #     description=item_name,
-        #     line_index=line_index,
-        # )
         result = self._resolve_item_live_for_posting(
             connection=connection,
             item_name=item_name,
@@ -4789,12 +4392,6 @@ class NetSuiteValidationService:
                 f'Line {line_index}: item "{item_name}" was not an exact '
                 'NetSuite match. Please correct the item before posting.'
             )
-        # netsuite_id = result.get("netsuite_id")
-
-        # if not netsuite_id:
-        #     raise ValueError(
-        #         f'Line {line_index}: NetSuite item ID could not be resolved.'
-        #     )
 
         return result
 

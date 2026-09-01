@@ -3,24 +3,6 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
-/**
- * All possible sidebar items. Each item maps to a module code.
- * Items without a module_code are always shown (Dashboard, Profile, Notifications, Settings).
- */
-// const ALL_NAV_ITEMS = [
-//   { to: '/app', label: 'Dashboard', icon: DashboardIcon, end: true, module: null },
-//   { to: '/app/invoice-reader', label: 'Invoice Reader', icon: InvoiceIcon, module: 'invoice_reader' },
-//   { to: '/app/ocr-jobs', label: 'OCR Jobs', icon: OcrIcon, module: 'ocr' },
-//   { to: '/app/ai-assistant', label: 'AI Assistant', icon: SparkleIcon, module: 'ai' },
-//   { to: '/app/employees', label: 'Employees', icon: EmployeesIcon, module: 'employees' },
-//   { to: '/app/reports', label: 'Reports', icon: ReportIcon, module: 'reports' },
-//   { to: '/app/reports-engine', label: 'Reports Engine', icon: ReportEngineIcon, module: 'reports' },
-//   { to: '/app/analytics', label: 'Analytics', icon: AnalyticsIcon, module: 'bi' },
-//   { to: '/app/notifications', label: 'Notifications', icon: BellIcon, module: 'notifications' },
-//   { to: '/app/settings', label: 'Company Settings', icon: GearIcon, module: null },
-  
-// ]
-
 const ALL_NAV_ITEMS = [
   {
     to: '/app',
@@ -76,45 +58,6 @@ const ALL_NAV_ITEMS = [
 /* Employee-only items that always show for any authenticated user */
 const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
 
-// const QUICK_ACTIONS = [
-//   {
-//     to: '/app/invoice-reader',
-//     label: 'Upload Invoice',
-//     icon: InvoiceIcon,
-//     module: 'invoice_reader',
-//     permission: 'ocr.upload',
-//   },
-//   {
-//     to: '/app/employees',
-//     label: 'Add Employee',
-//     icon: EmployeesIcon,
-//     module: 'employees',
-//     permission: 'employee.manage',
-//   },
-
-//   {
-//   to: '/app/ocr-test',
-//   label: 'OCR',
-//   icon: OcrIcon,
-//   module: null,
-//   permission: null,
-// },
-//   {
-//     to: '/app/reports-engine/generate',
-//     label: 'Generate Report',
-//     icon: ReportEngineIcon,
-//     module: 'reports',
-//     permission: 'reports.view',
-//   },
-//   {
-//     to: '/app/ai-assistant',
-//     label: 'Open AI Assistant',
-//     icon: SparkleIcon,
-//     module: 'ai',
-//     permission: 'ai.chat',
-//   },
-// ]
-
 /**
  * Reusable Client Company Portal layout.
  * Top navbar + sidebar + breadcrumb + page header + profile menu + notifications.
@@ -130,6 +73,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState([])
   const [availableModules, setAvailableModules] = useState([])
+  const [companyName, setCompanyName] = useState('')
   const userMenuRef = useRef(null)
   const notifRef = useRef(null)
 
@@ -158,15 +102,21 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   }, [])
 
   useEffect(() => {
-    const loadModules = async () => {
+    const loadClientProfile = async () => {
       try {
         const res = await clientApi.getMe()
         setAvailableModules(res?.modules || [])
+        setCompanyName(
+          res?.company_name ||
+          res?.company?.name ||
+          '',
+        )
       } catch {
         setAvailableModules([])
+        setCompanyName('')
       }
     }
-    loadModules()
+    loadClientProfile()
   }, [])
 
   useEffect(() => {
@@ -251,36 +201,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   icon: NetSuiteIcon,
 }
 
-  // const visibleQuickActions = QUICK_ACTIONS.filter((action) => {
-  //     // Company Admin can see all quick actions.
-  //     if (isCompanyAdmin) return true
-
-  //     // Employees must not see employee-management actions.
-  //     if (
-  //       action.label === 'Add Employee' ||
-  //       action.label === 'Invite Employee'
-  //     ) {
-  //       return false
-  //     }
-    
-  //     // For all other actions, respect the employee's
-  //     // module and permission assignments.
-  //     if (!action.module && !action.permission) return true
-    
-  //     const hasModule = userModules.some(
-  //       (m) => m.module_code === action.module,
-  //     )
-    
-  //     if (!hasModule) return false
-    
-  //     if (action.permission) {
-  //       return userPermissions.includes(action.permission)
-  //     }
-    
-  //     return true
-  //   })    
-
-    const netSuiteQuickAction = {
+  const netSuiteQuickAction = {
   to: isCompanyAdmin
     ? '/app/integrations/netsuite'
     : '/app/netsuite',
@@ -306,28 +227,24 @@ export default function ClientLayout({ title, breadcrumb, children }) {
             transition-transform lg:static lg:translate-x-0
             ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
         >
-          <div className="mb-8 flex items-center gap-2 px-2"><NavLink
-  to="/app"
-  onClick={() => setSidebarOpen(false)}
-  className="mb-8 flex items-center gap-2 px-2"
-  aria-label="Go to Dashboard"
->
-  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
-    E
-  </span>
+          <div className="mb-8 px-2">
+            <NavLink
+              to="/app"
+              onClick={() => setSidebarOpen(false)}
+              className="flex items-center gap-2"
+              aria-label="Go to Dashboard"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
+                E
+              </span>
 
-  <span className="font-[var(--font-display)] text-lg font-semibold text-white">
-    AGSuite ERP
-  </span>
-</NavLink>
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
-              E
-            </span>
-            <span className="font-[var(--font-display)] text-lg font-semibold text-white">AGSuite ERP</span>
+              <span className="font-[var(--font-display)] text-lg font-semibold text-white">
+                AGSuite ERP
+              </span>
+            </NavLink>
           </div>
   
           <nav className="flex flex-1 flex-col gap-1">
-            {/* {visibleNav.map(({ to, label, icon: Icon, end }) => ( */}
             {[...visibleNav, netSuiteNavItem].map(({ to, label, icon: Icon, end }) => (
               <NavLink
                 key={to}
@@ -346,27 +263,6 @@ export default function ClientLayout({ title, breadcrumb, children }) {
                 {label}
               </NavLink>
             ))}
-                    {/* {visibleQuickActions.length > 0 && (
-              <div className="mt-5 border-t border-[var(--color-sidebar-soft)] pt-4">
-                <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-sidebar-ink)]">
-                  Quick Actions
-                </p>
-                <div className="flex flex-col gap-1">
-                  {[...visibleQuickActions, netSuiteQuickAction].map(
-  ({ to, label, icon: Icon }) => (
-                    <NavLink
-                      key={`${to}-${label}`}
-                      to={to}
-                      onClick={() => setSidebarOpen(false)}
-                      className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-sidebar-ink)] transition-colors hover:bg-[var(--color-sidebar-soft)] hover:text-white"
-                    >
-                      <Icon className="h-4.5 w-4.5 shrink-0" />
-                      {label}
-                    </NavLink>
-                  ))}
-                </div>
-              </div>
-            )} */}
           </nav>
   
           <div className="mt-4 flex flex-col gap-1">
@@ -393,7 +289,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
         {/* Main column */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Top navbar */}
-          <header className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
+          <header className="relative flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
@@ -404,9 +300,17 @@ export default function ClientLayout({ title, breadcrumb, children }) {
                   <path d="M4 7h16M4 12h16M4 17h16" />
                 </svg>
               </button>
-              <span className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-                {title}
-              </span>
+              <div className="absolute left-1/2 top-1/2 flex -translate-y-1/2 flex-col items-center text-center">
+                {companyName && (
+                  <span className="max-w-[80vw] truncate text-2xl font-bold leading-tight capitalize text-[var(--color-ink)] sm:text-3xl lg:text-4xl">
+                    {companyName}
+                  </span>
+                )}
+
+                {/* <span className="text-xs font-medium text-[var(--color-muted)] sm:text-sm">
+                  {title}
+                </span> */}
+              </div>
             </div>
   
             <div className="flex items-center gap-3">
@@ -507,15 +411,15 @@ export default function ClientLayout({ title, breadcrumb, children }) {
           </header>
   
           {/* Breadcrumb */}
-          <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:px-6">
+          {/* <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:px-6">
             <nav className="text-xs text-[var(--color-muted)]">
               <span>Client Portal</span>
               <span className="mx-1.5">/</span>
               <span className="font-medium text-[var(--color-ink)]">{breadcrumb || activeNav?.label || title}</span>
             </nav>
-          </div>
+          </div> */}
   
-          <main className="min-w-0 flex-1 px-3 py-4 sm:px-6 sm:py-6 lg:px-8">{children}</main>
+          <main className="min-w-0 flex-1 px-1 py-1 sm:px-2 sm:py-2 lg:px-1">{children}</main>
         </div>
       </div>
     )

@@ -161,10 +161,6 @@ class NetSuiteTokenManager:
             message = str(exc)
 
             if message.startswith("NETSUITE_INVALID_GRANT:"):
-                # self.repository.mark_token_invalid(
-                #     connection,
-                #     error_message=self._invalid_grant_message(),
-                # )
                 raise
 
             self.repository.record_sync_failure(

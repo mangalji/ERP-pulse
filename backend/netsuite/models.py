@@ -42,8 +42,6 @@ class NetSuiteConnection(models.Model):
         'tenancy.Company',
         on_delete=models.CASCADE,
         related_name='netsuite_connections',
-        # null=True,
-        # blank=True,
     )
     client_name = models.CharField(max_length=255,null=True,blank=True)
     environment = models.CharField(

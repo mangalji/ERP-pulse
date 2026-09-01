@@ -168,18 +168,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
                 }
             )
         company.status = effective_status
-        # company.suspension_reason = CompanySuspensionReason.NONE
         company.save(update_fields=['status','suspension_reason'])
-        # audit_service.log(
-        #     module=AuditModule.TENANCY,
-        #     action=AuditAction.UPDATE,
-        #     entity='Company',
-        #     entity_id=str(company.id),
-        #     company=company,
-        #     user=request.user,
-        #     # old_value={'status': Company.Status.SUSPENDED},
-        #     new_value={'status': company.status},
-        # )
+
         return success_response(message='Company activated successfully.', data={'id': str(company.id),'status':company.status})
 
     @action(detail=True, methods=['post'])
@@ -191,23 +181,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         company.status = Company.Status.SUSPENDED
         company.suspension_reason = CompanySuspensionReason.DELETED
         company.save(update_fields=['is_deleted','deleted_at','status','suspension_reason'])
-        # audit_service.log(
-        #     module=AuditModule.TENANCY,
-        #     action=AuditAction.DELETE,
-        #     entity='Company',
-        #     entity_id=str(company.id),
-        #     company=company,
-        #     user=request.user,
-        #     old_value={
-        #         'status': company.status,
-        #         'is_deleted': False,
-        #     },
-        #     new_value={
-        #         'status': Company.Status.SUSPENDED,
-        #         'is_deleted': True,
-        #         'deleted_at': now.isoformat(),
-        #     },
-        #     )
+
         return success_response(message='Company soft deleted successfully.', 
             data={
             'id': str(company.id),
@@ -258,20 +232,6 @@ class CompanyViewSet(viewsets.ModelViewSet):
                 'suspension_reason',
             ]
         )
-
-        # audit_service.log(
-        #     module=AuditModule.TENANCY,
-        #     action=AuditAction.UPDATE,
-        #     entity='Company',
-        #     entity_id=str(company.id),
-        #     company=company,
-        #     user=request.user,
-        #     new_value={
-        #         'status': company.status,
-        #         'is_deleted': False,
-        #     },
-        # )
-
         return success_response(
             message='Company restored successfully.',
             data={

@@ -585,36 +585,6 @@ class ExtractionLockStatus(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
-# def acquire_extraction_lock(file_hash: str, requested_fields: Any) -> tuple[ExtractionLockStatus, str | None]:
-#     """
-#     Acquire a Redis lock for the given extraction identity.
-
-#     Uses Redis SET NX EX (atomic) to ensure only one worker can hold
-#     the lock for a given extraction identity at a time.
-
-#     Returns:
-#         Ownership token on success, None if lock is already held.
-
-#     The lock has a finite TTL so crashed workers cannot block forever.
-#     """
-#     try:
-#         lock_key = _build_lock_key(file_hash, requested_fields)
-#         token = f"{timezone.now().timestamp()}:{uuid.uuid4().hex[:8]}"
-#         # SET NX EX — atomic, only succeeds if key does not exist
-#         acquired = _redis_client().set(
-#             lock_key,
-#             token,
-#             nx=True,
-#             ex=OCR_EXTRACTION_LOCK_TTL_SECONDS,
-#         )
-#         return token if acquired else None
-#     except Exception:
-#         logger.exception(
-#             "OCR extraction lock acquisition failed — file_hash=%s",
-#             file_hash,
-#         )
-#         return None
-
 def acquire_extraction_lock(
     file_hash: str,
     requested_fields: Any,
@@ -760,32 +730,6 @@ def release_extraction_lock(file_hash: str, requested_fields: Any, token: str | 
             "OCR extraction lock release failed — file_hash=%s",
             file_hash,
         )
-
-
-# def wait_for_extraction_lock(
-#     file_hash: str,
-#     requested_fields: Any,
-#     timeout: int = OCR_EXTRACTION_LOCK_MAX_WAIT_SECONDS,
-#     poll_interval: int = OCR_EXTRACTION_LOCK_POLL_INTERVAL_SECONDS,
-# ) -> dict | None:
-#     """
-#     Wait for another worker to complete an extraction and write its
-#     cache result.
-
-#     Polls the cache at the given interval until:
-#     - A valid completed result appears (return it)
-#     - The lock disappears (another worker may have failed, return None)
-#     - Timeout expires (return None)
-
-#     Never blocks indefinitely.
-#     """
-#     deadline = timezone.now().timestamp() + timeout
-#     while timezone.now().timestamp() < deadline:
-#         result = read_valid_cached_result(file_hash, requested_fields)
-#         if result is not None:
-#             return result
-#         time.sleep(poll_interval)
-#     return None
 
 def wait_for_extraction_lock(
     file_hash: str,
