@@ -324,6 +324,42 @@ class NetSuiteAuthClient:
 
         errors.raise_for_record_response(response, path=path)
 
+        # NetSuite's REST Record API returns 204 No Content (empty body)
+        # on a successful record CREATE — the new record's URL/ID comes
+        # back in the Location header instead of a JSON body. Calling
+        # response.json() on that empty body raises a JSONDecodeError,
+        # which previously got reported as "NetSuite returned an invalid
+        # response" — even though the record was created successfully.
+        # Synthesize the same {"id": ..., "links": [...]}-shaped dict a
+        # JSON body would have had, so callers (e.g. _extract_record_id)
+        # don't need to know about this special case.
+
+        if response.status_code == 204 or not (response.text or "").strip():
+            location = (
+                response.headers.get("Location") or response.headers.get("location")
+            )
+            record_id = None
+            if location:
+                tail = location.rstrip("/").split("/")
+                if tail and tail[-1].isdigit():
+                    record_id = tail[-1]
+
+            if location and not record_id:
+                logger.warning(
+                    "NetSuite returned an empty body with a Location "
+                    "header we couldn't parse an ID from — "
+                    "location=%r correlation_id=%s",
+                    location,
+                    correlation_id,
+                )
+
+            return {
+                "id":record_id,
+                "links":(
+                    [{"rel":"self","href":location}] if location else[]
+                ),
+            }
+
         try:
             return response.json()
         except ValueError as exc:
