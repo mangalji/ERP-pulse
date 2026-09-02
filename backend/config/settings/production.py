@@ -32,7 +32,11 @@ JWT_AUTH_COOKIE_SAMESITE = os.environ.get("JWT_AUTH_COOKIE_SAMESITE", "None")
 JWT_AUTH_COOKIE_SECURE = os.environ.get("JWT_AUTH_COOKIE_SECURE", "True").lower() in ("true", "1", "yes")
 
 # Redirect all HTTP to HTTPS
-SECURE_SSL_REDIRECT = True
+# SECURE_SSL_REDIRECT = True
+SECURE_SSL_REDIRECT = os.environ.get(
+    "SECURE_SSL_REDIRECT",
+    "True",
+).lower() in ("true", "1", "yes")
 
 # HSTS: tell browsers to always use HTTPS for this domain
 SECURE_HSTS_SECONDS = 31536000  # 1 year

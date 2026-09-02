@@ -20,16 +20,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # Local Development Database
 # ------------------------------------------------------------
 
-LOCAL_DATABASE = {
-    "ENGINE": "django.db.backends.sqlite3",
-    "NAME": config(
-        "LOCAL_DB_NAME",
-        default=str(BASE_DIR / "db.sqlite3"),
-    ),
-    "OPTIONS": {
-        "timeout": 30,
-    },
-}
+LOCAL_DATABASE = dj_database_url.config(
+    default=config("LOCAL_DATABASE_URL", default="")
+)
 
 # ------------------------------------------------------------
 # Test Database

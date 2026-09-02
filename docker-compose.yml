@@ -1,0 +1,140 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+
+    image: agsuite-backend:latest
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/monitoring/health/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    env_file:
+      - ./.env.docker
+
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      SECURE_SSL_REDIRECT: "False"
+      DATABASE_URL: postgresql://agsuite_user:Indore2001@postgres:5432/agsuite_erp
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+
+    expose:
+      - "8000"
+
+    volumes:
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+
+    command: >
+      gunicorn config.wsgi:application
+      --bind 0.0.0.0:8000
+
+  postgres:
+    
+    image: postgres:18
+    
+    env_file:
+    - ./.env.docker
+
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agsuite_user -d agsuite_erp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  celery_worker:
+      image: agsuite-backend:latest
+
+      depends_on:
+        postgres:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+  
+      env_file:
+        - ./.env.docker
+  
+      environment:
+        DJANGO_SETTINGS_MODULE: config.settings.production
+        SECURE_SSL_REDIRECT: "False"
+        DATABASE_URL: postgresql://agsuite_user:Indore2001@postgres:5432/agsuite_erp
+        CELERY_BROKER_URL: redis://redis:6379/0
+        CELERY_RESULT_BACKEND: redis://redis:6379/0
+  
+      volumes:
+        - media_data:/app/media
+        - static_data:/app/staticfiles
+  
+      command: >
+        celery -A config.celery
+        worker
+        --loglevel=info
+
+  celery_beat:
+    image: agsuite-backend:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./.env.docker
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      SECURE_SSL_REDIRECT: "False"
+      DATABASE_URL: postgresql://agsuite_user:Indore2001@postgres:5432/agsuite_erp
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    volumes:
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+
+    command: >
+      celery -A config.celery
+      beat
+      --loglevel=info
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: agsuite-frontend:latest
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - static_data:/app/staticfiles:ro
+      - media_data:/app/media:ro
+
+volumes:
+  media_data:
+  static_data:
+  postgres_data:
+  redis_data:

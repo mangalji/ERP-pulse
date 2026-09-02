@@ -136,3 +136,5 @@ project_*
 frontend/ROUTING_AUDIT_REPORT.md
 .kilo
 patch_files
+.env.docker
+user_cred.txt

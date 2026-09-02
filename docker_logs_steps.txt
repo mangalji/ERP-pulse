@@ -1,0 +1,4 @@
+docker compose logs -f backend
+docker compose logs --tail=100 backend
+docker compose logs -f celery_worker
+docker compose logs -f celery_beat

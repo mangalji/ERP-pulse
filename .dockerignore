@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environment / secrets
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Python
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Django local/generated files
+backend/db.sqlite3
+backend/static
+backend/staticfiles
+backend/media
+media
+
+# Node
+frontend/node_modules
+frontend/dist
+.vite
+.cache
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Project archives / temporary files
+*.zip
+*.rar
+*.7z
+*.tar.gz
+patch_files
+
+# Documentation / local project files
+extra_info.md
+implementation_plan.md
+proejct_context.md
+task_completed.md
+TODO.md
+FIX_PLAN.md
