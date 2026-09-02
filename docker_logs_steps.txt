@@ -45,3 +45,10 @@ docker-compose.yml	        docker compose up -d / --force-recreate if needed
 Dockerfile	                affected image rebuild
 Django migration	        backend startup se automatic migration already ho rahi hai
 seed_rbac/entrypoint	    backend image rebuild + recreate
+
+
+
+
+if want to rebuild every service:
+    docker compose up -d --build
+    docker compose ps
