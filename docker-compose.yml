@@ -6,11 +6,15 @@ services:
 
     image: agsuite-backend:latest
 
+    user: "appuser"
+
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      static_init:
+        condition: service_completed_successfully
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/monitoring/health/"]
@@ -25,7 +29,6 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       SECURE_SSL_REDIRECT: "False"
-      DATABASE_URL: postgresql://agsuite_user:Indore2001@postgres:5432/agsuite_erp
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
 
@@ -40,12 +43,14 @@ services:
       gunicorn config.wsgi:application
       --bind 0.0.0.0:8000
 
+    restart: unless-stopped
+
   postgres:
     
     image: postgres:18
     
     env_file:
-    - ./.env.docker
+    - ./.env.postgres
 
     volumes:
       - postgres_data:/var/lib/postgresql
@@ -55,6 +60,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+    restart: unless-stopped
+
+  static_init:
+    image: alpine:3.22
+    command: >
+      sh -c "chown -R 1000:1000 /app/staticfiles"
+    volumes:
+      - static_data:/app/staticfiles
+    restart: "no"
 
   redis:
     image: redis:7-alpine
@@ -67,8 +82,12 @@ services:
       timeout: 5s
       retries: 5
 
+    restart: unless-stopped
+
   celery_worker:
       image: agsuite-backend:latest
+      user: "appuser"
+      entrypoint: []
 
       depends_on:
         postgres:
@@ -82,21 +101,23 @@ services:
       environment:
         DJANGO_SETTINGS_MODULE: config.settings.production
         SECURE_SSL_REDIRECT: "False"
-        DATABASE_URL: postgresql://agsuite_user:Indore2001@postgres:5432/agsuite_erp
         CELERY_BROKER_URL: redis://redis:6379/0
         CELERY_RESULT_BACKEND: redis://redis:6379/0
   
       volumes:
         - media_data:/app/media
-        - static_data:/app/staticfiles
   
       command: >
         celery -A config.celery
         worker
         --loglevel=info
+      
+      restart: unless-stopped
 
   celery_beat:
     image: agsuite-backend:latest
+    user: "appuser"
+    entrypoint: []
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,17 +128,17 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       SECURE_SSL_REDIRECT: "False"
-      DATABASE_URL: postgresql://agsuite_user:Indore2001@postgres:5432/agsuite_erp
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
     volumes:
       - media_data:/app/media
-      - static_data:/app/staticfiles
 
     command: >
       celery -A config.celery
       beat
       --loglevel=info
+    
+    restart: unless-stopped
 
   frontend:
     build:
@@ -132,6 +153,8 @@ services:
     volumes:
       - static_data:/app/staticfiles:ro
       - media_data:/app/media:ro
+
+    restart: unless-stopped
 
 volumes:
   media_data:

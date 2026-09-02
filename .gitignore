@@ -138,3 +138,6 @@ frontend/ROUTING_AUDIT_REPORT.md
 patch_files
 .env.docker
 user_cred.txt
+.env.postgres
+agsuite-backend.tar
+agsuite-frontend.tar

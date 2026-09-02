@@ -381,7 +381,7 @@ class SuperAdminService:
     def complete_transaction(self, *, transaction_id):
         transaction = Transaction.objects.select_related('company', 'plan').filter(
             transaction_id=transaction_id,
-        ).select_for_update().first()
+        ).select_for_update(of=("self",)).first()
 
         if not transaction:
             raise ValueError('Transaction not found.')
