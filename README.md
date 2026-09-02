@@ -728,25 +728,6 @@ npm run lint        # oxlint
 
 ---
 
-## Long-Term Vision
-
-AGSuite ERP aims to become a complete **ERP aggregation platform** — one dashboard, every ERP:
-
-```
-                User
-                  │
-                  ▼
-            AGSuite ERP
-                  │
-   ┌──────┬──────┬──────┬──────┬──────┬──────┐
-   ▼      ▼      ▼      ▼      ▼      ▼      ▼
-NetSuite SAP   Zoho   Tally  QuickBooks  MS Dynamics  ...
-```
-
-**One subscription. Every ERP. One unified dashboard.**
-
----
-
 ## License
 
 This project is under active development. All rights reserved.
