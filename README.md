@@ -712,11 +712,6 @@ npm run lint        # oxlint
 - 🔄 Production background job processing on Render (worker deployment deferred until required)
 - 🔄 Connection reconnect flow when refresh tokens expire
 
-### Planned
-- 📋 Additional ERP connectors (SAP, Zoho, Tally, QuickBooks, Microsoft Dynamics)
-- 📋 Real-time analytics streaming
-- 📋 White-labeling for partners
-
 ---
 
 ## Design Principles (recap)
