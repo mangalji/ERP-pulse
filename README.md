@@ -542,31 +542,109 @@ The Docker environment includes separate services for:
 - Celery Worker
 - Celery Beat
 
-### Start the complete Docker environment
+### Prerequisites
+
+Only **Docker Desktop** is required on the host machine.
+
+You do **not** need to install Python, Node.js, Django, PostgreSQL, Redis, or Celery separately. These dependencies run inside the Docker containers.
+
+### 1. Clone the repository
+
+```bash
+git clone <your-repo-url> agsuite-erp
+cd agsuite-erp
+```
+
+You can also download the repository as a ZIP and extract it locally.
+
+### 2. Create Docker environment files
+
+The actual Docker environment files are intentionally excluded from Git because they may contain secrets.
+
+Copy the provided example files:
+
+```text
+.env.docker.example   →   .env.docker
+.env.postgres.example →   .env.postgres
+```
+
+Fill in the required values in the new files.
+
+For `SECRET_KEY`, generate a Django secret:
+
+```bash
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+For `FIELD_ENCRYPTION_KEY`, generate a Fernet key:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Do not reuse production secrets for another local installation.
+
+### 3. Start the complete Docker environment
+
+From the project root:
 
 ```bash
 docker compose up -d --build
 ```
 
-### Check running containers
+Docker Compose will build the application images and start the complete local environment, including PostgreSQL and Redis.
+
+On the first startup, Django migrations, RBAC seeding, and static-file collection are performed automatically by the backend container.
+
+### 4. Check running containers
 
 ```bash
 docker compose ps
 ```
 
-### Stop the Docker environment
+All required services should be running.
 
-```bash
-docker compose down
-```
+### 5. Open the application
 
-### The application is available at:
+The application is available at:
 
 ```text
 http://localhost
 ```
 
-The Docker setup provides isolated and reproducible local services while keeping the development environment consistent across machines.
+Health check:
+
+```text
+http://localhost/api/v1/monitoring/health/
+```
+
+### 6. Stop the Docker environment
+
+```bash
+docker compose down
+```
+
+This stops and removes the containers while preserving Docker volumes such as the local PostgreSQL database.
+
+### 7. Start again without rebuilding
+
+When no code, dependency, or Docker configuration changes were made:
+
+```bash
+docker compose up -d
+```
+
+### 8. Rebuild after code or Docker changes
+
+After changing application code, dependencies, Dockerfiles, or Docker Compose configuration:
+
+```bash
+docker compose up -d --build
+```
+
+> **Important:** Do not use `docker compose down -v` unless you intentionally want to remove Docker volumes and reset the local PostgreSQL/Redis data.
+
+The Docker setup provides an isolated and reproducible local environment that can be run on another machine with Docker Desktop, without installing the application's runtime dependencies directly on the host.
 
 ---
 
