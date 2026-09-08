@@ -1,51 +1,27 @@
-# Generated manually for safe BIGINT -> UUID migration.
-# This migration preserves existing navigation relationships.
+# Generated manually for BIGINT -> UUID migration.
+#
+# Converts existing navigation primary keys and foreign keys from
+# BIGINT to UUID while preserving all existing data and relationships.
+#
+# PostgreSQL only.
+# Irreversible by design.
 
 import uuid
 
 from django.db import migrations, models
 
 
-TARGET_TABLES = {
+TARGET_TABLES = (
     "navigation_transaction_menu",
     "navigation_transaction_menu_item",
     "dynamic_top_level_tab",
     "dynamic_level2_tab",
     "dynamic_level3_tab",
     "navigation_user_access",
-}
+)
 
 
-def _get_table_fks(cursor, table_name, column_names):
-    cursor.execute(
-        """
-        SELECT DISTINCT c.conname
-        FROM pg_constraint c
-        JOIN pg_class t
-          ON t.oid = c.conrelid
-        JOIN pg_namespace n
-          ON n.oid = t.relnamespace
-        JOIN pg_attribute a
-          ON a.attrelid = c.conrelid
-         AND a.attnum = ANY(c.conkey)
-        WHERE c.contype = 'f'
-          AND n.nspname = current_schema()
-          AND t.relname = %s
-          AND a.attname = ANY(%s);
-        """,
-        [table_name, list(column_names)],
-    )
-    return [row[0] for row in cursor.fetchall()]
-
-
-def _drop_constraint(cursor, schema_editor, table_name, constraint_name):
-    cursor.execute(
-        f"ALTER TABLE {schema_editor.quote_name(table_name)} "
-        f"DROP CONSTRAINT {schema_editor.quote_name(constraint_name)}"
-    )
-
-
-def _get_pk_constraint(cursor, table_name):
+def _pk_constraint(cursor, table_name):
     cursor.execute(
         """
         SELECT c.conname
@@ -64,68 +40,56 @@ def _get_pk_constraint(cursor, table_name):
     return row[0] if row else None
 
 
-def _check_for_external_fks(cursor):
+def _fk_constraints(cursor, table_name):
     cursor.execute(
         """
-        SELECT
-            child.relname AS child_table,
-            c.conname AS constraint_name,
-            parent.relname AS parent_table
+        SELECT DISTINCT c.conname
         FROM pg_constraint c
-        JOIN pg_class child
-          ON child.oid = c.conrelid
-        JOIN pg_namespace child_ns
-          ON child_ns.oid = child.relnamespace
-        JOIN pg_class parent
-          ON parent.oid = c.confrelid
-        JOIN pg_namespace parent_ns
-          ON parent_ns.oid = parent.relnamespace
+        JOIN pg_class t
+          ON t.oid = c.conrelid
+        JOIN pg_namespace n
+          ON n.oid = t.relnamespace
         WHERE c.contype = 'f'
-          AND child_ns.nspname = current_schema()
-          AND parent_ns.nspname = current_schema()
-          AND parent.relname = ANY(%s)
-          AND NOT (
-              child.relname = ANY(%s)
-          );
+          AND n.nspname = current_schema()
+          AND t.relname = %s;
         """,
-        [list(TARGET_TABLES), list(TARGET_TABLES)],
+        [table_name],
     )
-
-    rows = cursor.fetchall()
-
-    if rows:
-        details = ", ".join(
-            f"{child}.{constraint} -> {parent}"
-            for child, constraint, parent in rows
-        )
-        raise RuntimeError(
-            "Navigation UUID migration stopped because external foreign keys "
-            f"reference navigation tables: {details}"
-        )
+    return [row[0] for row in cursor.fetchall()]
 
 
-def _build_id_map(cursor, table_name):
+def _drop_constraint(cursor, schema_editor, table_name, constraint_name):
     cursor.execute(
-        f"SELECT id FROM {table_name} ORDER BY id"
+        f"""
+        ALTER TABLE {schema_editor.quote_name(table_name)}
+        DROP CONSTRAINT {schema_editor.quote_name(constraint_name)}
+        """
     )
-    rows = cursor.fetchall()
-
-    mapping = {}
-
-    for (old_id,) in rows:
-        mapping[old_id] = uuid.uuid4()
-
-    return mapping
 
 
-def _populate_uuid_ids(cursor, table_name, mapping):
-    values = [
+def _build_mapping(cursor, table_name):
+    cursor.execute(
+        f"""
+        SELECT id
+        FROM {table_name}
+        ORDER BY id
+        """
+    )
+
+    return {
+        old_id: uuid.uuid4()
+        for (old_id,) in cursor.fetchall()
+    }
+
+
+def _populate_ids(cursor, table_name, mapping):
+    if not mapping:
+        return
+
+    rows = [
         (new_id, old_id)
         for old_id, new_id in mapping.items()
     ]
-
-    if not values:
-        return
 
     cursor.executemany(
         f"""
@@ -133,11 +97,17 @@ def _populate_uuid_ids(cursor, table_name, mapping):
         SET id_uuid = %s
         WHERE id = %s
         """,
-        values,
+        rows,
     )
 
 
-def _populate_fk_column(cursor, table_name, old_column, new_column, mapping):
+def _populate_fk(
+    cursor,
+    table_name,
+    old_column,
+    new_column,
+    mapping,
+):
     cursor.execute(
         f"""
         SELECT {old_column}
@@ -146,110 +116,384 @@ def _populate_fk_column(cursor, table_name, old_column, new_column, mapping):
         """
     )
 
-    old_values = [row[0] for row in cursor.fetchall()]
+    values = [row[0] for row in cursor.fetchall()]
 
-    missing = [value for value in old_values if value not in mapping]
+    missing = [
+        value
+        for value in values
+        if value not in mapping
+    ]
 
     if missing:
         raise RuntimeError(
-            f"Missing UUID mapping for {table_name}.{old_column}: {missing}"
+            f"Missing UUID mapping for "
+            f"{table_name}.{old_column}: {missing}"
         )
 
-    for old_value in old_values:
-        cursor.execute(
-            f"""
-            UPDATE {table_name}
-            SET {new_column} = %s
-            WHERE {old_column} = %s
-            """,
-            [mapping[old_value], old_value],
-        )
+    cursor.executemany(
+        f"""
+        UPDATE {table_name}
+        SET {new_column} = %s
+        WHERE {old_column} = %s
+        """,
+        [
+            (mapping[value], value)
+            for value in set(values)
+        ],
+    )
+
 
 def _forwards(apps, schema_editor):
     connection = schema_editor.connection
 
     if connection.vendor != "postgresql":
         raise RuntimeError(
-            "This navigation UUID migration requires PostgreSQL."
+            "Navigation UUID migration requires PostgreSQL."
         )
 
     with connection.cursor() as cursor:
-        # =============================================================
-        # IMPORTANT:
-        # This is a recovery/continuation migration.
-        #
-        # The original migration already ran partially:
-        # - UUID shadow columns already exist.
-        # - UUID values are already populated.
-        # - Some old BIGINT columns are already dropped.
-        # - Old PK/FK constraints have already been removed.
-        #
-        # Therefore DO NOT recreate UUID columns or UUID mappings here.
-        # =============================================================
 
-        # -------------------------------------------------------------
-        # 1. Remove the dependent view before replacing
-        #    dynamic_top_level_tab.id
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------
+        # 1. Create temporary UUID columns
+        # ---------------------------------------------------------
+
         cursor.execute(
             """
-            DROP VIEW IF EXISTS active_tabs;
+            ALTER TABLE navigation_transaction_menu
+            ADD COLUMN id_uuid uuid;
             """
         )
 
-        # -------------------------------------------------------------
-        # 2. Finish dropping remaining old BIGINT columns
-        # -------------------------------------------------------------
+        cursor.execute(
+            """
+            ALTER TABLE navigation_transaction_menu_item
+            ADD COLUMN id_uuid uuid,
+            ADD COLUMN menu_uuid uuid,
+            ADD COLUMN parent_item_uuid uuid;
+            """
+        )
 
-        # navigation_transaction_menu
-        # id is already gone; id_uuid is the final ID column.
-
-        # navigation_transaction_menu_item
-        # id/menu_id/parent_item_id are already gone;
-        # id_uuid/menu_uuid/parent_item_uuid remain.
-
-        # dynamic_top_level_tab
         cursor.execute(
             """
             ALTER TABLE dynamic_top_level_tab
-            DROP COLUMN IF EXISTS id;
+            ADD COLUMN id_uuid uuid;
             """
         )
 
-        # dynamic_level2_tab
         cursor.execute(
             """
             ALTER TABLE dynamic_level2_tab
-            DROP COLUMN IF EXISTS id,
-            DROP COLUMN IF EXISTS parent_tab_id;
+            ADD COLUMN id_uuid uuid,
+            ADD COLUMN parent_tab_uuid uuid;
             """
         )
 
-        # dynamic_level3_tab
         cursor.execute(
             """
             ALTER TABLE dynamic_level3_tab
-            DROP COLUMN IF EXISTS id,
-            DROP COLUMN IF EXISTS parent_tab_id;
+            ADD COLUMN id_uuid uuid,
+            ADD COLUMN parent_tab_uuid uuid;
             """
         )
 
-        # navigation_user_access
         cursor.execute(
             """
             ALTER TABLE navigation_user_access
-            DROP COLUMN IF EXISTS id,
-            DROP COLUMN IF EXISTS top_level_tab_id,
-            DROP COLUMN IF EXISTS level2_tab_id,
-            DROP COLUMN IF EXISTS level3_tab_id;
+            ADD COLUMN id_uuid uuid,
+            ADD COLUMN top_level_tab_uuid uuid,
+            ADD COLUMN level2_tab_uuid uuid,
+            ADD COLUMN level3_tab_uuid uuid;
             """
         )
 
-        # -------------------------------------------------------------
-        # 3. Rename UUID shadow columns to final Django column names
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------
+        # 2. Build stable BIGINT -> UUID mappings
+        # ---------------------------------------------------------
 
-        # navigation_transaction_menu
+        transaction_menu_map = _build_mapping(
+            cursor,
+            "navigation_transaction_menu",
+        )
+
+        transaction_menu_item_map = _build_mapping(
+            cursor,
+            "navigation_transaction_menu_item",
+        )
+
+        top_level_map = _build_mapping(
+            cursor,
+            "dynamic_top_level_tab",
+        )
+
+        level2_map = _build_mapping(
+            cursor,
+            "dynamic_level2_tab",
+        )
+
+        level3_map = _build_mapping(
+            cursor,
+            "dynamic_level3_tab",
+        )
+
+        user_access_map = _build_mapping(
+            cursor,
+            "navigation_user_access",
+        )
+
+        # ---------------------------------------------------------
+        # 3. Populate UUID primary-key columns
+        # ---------------------------------------------------------
+
+        _populate_ids(
+            cursor,
+            "navigation_transaction_menu",
+            transaction_menu_map,
+        )
+
+        _populate_ids(
+            cursor,
+            "navigation_transaction_menu_item",
+            transaction_menu_item_map,
+        )
+
+        _populate_ids(
+            cursor,
+            "dynamic_top_level_tab",
+            top_level_map,
+        )
+
+        _populate_ids(
+            cursor,
+            "dynamic_level2_tab",
+            level2_map,
+        )
+
+        _populate_ids(
+            cursor,
+            "dynamic_level3_tab",
+            level3_map,
+        )
+
+        _populate_ids(
+            cursor,
+            "navigation_user_access",
+            user_access_map,
+        )
+
+        # ---------------------------------------------------------
+        # 4. Populate UUID foreign-key columns
+        # ---------------------------------------------------------
+
+        _populate_fk(
+            cursor,
+            "navigation_transaction_menu_item",
+            "menu_id",
+            "menu_uuid",
+            transaction_menu_map,
+        )
+
+        _populate_fk(
+            cursor,
+            "navigation_transaction_menu_item",
+            "parent_item_id",
+            "parent_item_uuid",
+            transaction_menu_item_map,
+        )
+
+        _populate_fk(
+            cursor,
+            "dynamic_level2_tab",
+            "parent_tab_id",
+            "parent_tab_uuid",
+            top_level_map,
+        )
+
+        _populate_fk(
+            cursor,
+            "dynamic_level3_tab",
+            "parent_tab_id",
+            "parent_tab_uuid",
+            level2_map,
+        )
+
+        _populate_fk(
+            cursor,
+            "navigation_user_access",
+            "top_level_tab_id",
+            "top_level_tab_uuid",
+            top_level_map,
+        )
+
+        _populate_fk(
+            cursor,
+            "navigation_user_access",
+            "level2_tab_id",
+            "level2_tab_uuid",
+            level2_map,
+        )
+
+        _populate_fk(
+            cursor,
+            "navigation_user_access",
+            "level3_tab_id",
+            "level3_tab_uuid",
+            level3_map,
+        )
+
+        # ---------------------------------------------------------
+        # 5. Validate every UUID mapping before destructive changes
+        # ---------------------------------------------------------
+
+        validation_columns = (
+            (
+                "navigation_transaction_menu",
+                "id_uuid",
+            ),
+            (
+                "navigation_transaction_menu_item",
+                "id_uuid",
+            ),
+            (
+                "navigation_transaction_menu_item",
+                "menu_uuid",
+            ),
+            (
+                "dynamic_top_level_tab",
+                "id_uuid",
+            ),
+            (
+                "dynamic_level2_tab",
+                "id_uuid",
+            ),
+            (
+                "dynamic_level2_tab",
+                "parent_tab_uuid",
+            ),
+            (
+                "dynamic_level3_tab",
+                "id_uuid",
+            ),
+            (
+                "dynamic_level3_tab",
+                "parent_tab_uuid",
+            ),
+            (
+                "navigation_user_access",
+                "id_uuid",
+            ),
+        )
+
+        for table_name, column_name in validation_columns:
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM {table_name}
+                WHERE {column_name} IS NULL
+                """
+            )
+
+            count = cursor.fetchone()[0]
+
+            if count:
+                raise RuntimeError(
+                    f"UUID migration validation failed: "
+                    f"{table_name}.{column_name} "
+                    f"contains {count} NULL values."
+                )
+
+        cursor.execute("SET CONSTRAINTS ALL IMMEDIATE;")
+
+        # ---------------------------------------------------------
+        # 6. Drop existing foreign-key constraints FIRST
+        # ---------------------------------------------------------
+
+        for table_name in TARGET_TABLES:
+            for constraint_name in _fk_constraints(
+                cursor,
+                table_name,
+            ):
+                _drop_constraint(
+                    cursor,
+                    schema_editor,
+                    table_name,
+                    constraint_name,
+                )
+
+        # ---------------------------------------------------------
+        # 7. Drop existing primary-key constraints
+        # ---------------------------------------------------------
+
+        for table_name in TARGET_TABLES:
+            constraint_name = _pk_constraint(
+                cursor,
+                table_name,
+            )
+
+            if constraint_name:
+                _drop_constraint(
+                    cursor,
+                    schema_editor,
+                    table_name,
+                    constraint_name,
+                )
+
+        # ---------------------------------------------------------
+        # 8. Drop old BIGINT columns
+        # ---------------------------------------------------------
+
+        cursor.execute(
+            """
+            ALTER TABLE navigation_transaction_menu
+            DROP COLUMN id;
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE navigation_transaction_menu_item
+            DROP COLUMN id,
+            DROP COLUMN menu_id,
+            DROP COLUMN parent_item_id;
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE dynamic_top_level_tab
+            DROP COLUMN id;
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE dynamic_level2_tab
+            DROP COLUMN id,
+            DROP COLUMN parent_tab_id;
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE dynamic_level3_tab
+            DROP COLUMN id,
+            DROP COLUMN parent_tab_id;
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE navigation_user_access
+            DROP COLUMN id,
+            DROP COLUMN top_level_tab_id,
+            DROP COLUMN level2_tab_id,
+            DROP COLUMN level3_tab_id;
+            """
+        )
+
+        # ---------------------------------------------------------
+        # 9. Rename UUID columns to Django's final column names
+        # ---------------------------------------------------------
+
         cursor.execute(
             """
             ALTER TABLE navigation_transaction_menu
@@ -257,7 +501,6 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # navigation_transaction_menu_item
         cursor.execute(
             """
             ALTER TABLE navigation_transaction_menu_item
@@ -271,7 +514,6 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # dynamic_top_level_tab
         cursor.execute(
             """
             ALTER TABLE dynamic_top_level_tab
@@ -279,7 +521,6 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # dynamic_level2_tab
         cursor.execute(
             """
             ALTER TABLE dynamic_level2_tab
@@ -290,7 +531,6 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # dynamic_level3_tab
         cursor.execute(
             """
             ALTER TABLE dynamic_level3_tab
@@ -301,7 +541,6 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # navigation_user_access
         cursor.execute(
             """
             ALTER TABLE navigation_user_access
@@ -318,10 +557,11 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # -------------------------------------------------------------
-        # 4. Ensure UUID columns are NOT NULL
-        # -------------------------------------------------------------
-        required_uuid_columns = [
+        # ---------------------------------------------------------
+        # 10. Set required columns NOT NULL
+        # ---------------------------------------------------------
+
+        required_columns = (
             ("navigation_transaction_menu", "id"),
             ("navigation_transaction_menu_item", "id"),
             ("navigation_transaction_menu_item", "menu_id"),
@@ -331,9 +571,9 @@ def _forwards(apps, schema_editor):
             ("dynamic_level3_tab", "id"),
             ("dynamic_level3_tab", "parent_tab_id"),
             ("navigation_user_access", "id"),
-        ]
+        )
 
-        for table_name, column_name in required_uuid_columns:
+        for table_name, column_name in required_columns:
             cursor.execute(
                 f"""
                 ALTER TABLE {table_name}
@@ -342,19 +582,11 @@ def _forwards(apps, schema_editor):
                 """
             )
 
-        # -------------------------------------------------------------
-        # 5. Recreate primary keys
-        # -------------------------------------------------------------
-        target_tables = [
-            "navigation_transaction_menu",
-            "navigation_transaction_menu_item",
-            "dynamic_top_level_tab",
-            "dynamic_level2_tab",
-            "dynamic_level3_tab",
-            "navigation_user_access",
-        ]
+        # ---------------------------------------------------------
+        # 11. Recreate primary keys
+        # ---------------------------------------------------------
 
-        for table_name in target_tables:
+        for table_name in TARGET_TABLES:
             cursor.execute(
                 f"""
                 ALTER TABLE {table_name}
@@ -362,83 +594,97 @@ def _forwards(apps, schema_editor):
                 """
             )
 
-        # -------------------------------------------------------------
-        # 6. Recreate foreign keys
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------
+        # 12. Recreate foreign keys
+        # ---------------------------------------------------------
 
         cursor.execute(
             """
             ALTER TABLE navigation_transaction_menu_item
-            ADD CONSTRAINT navigation_transaction_menu_item_menu_fk
+            ADD CONSTRAINT
+            navigation_transaction_menu_item_menu_fk
             FOREIGN KEY (menu_id)
             REFERENCES navigation_transaction_menu(id)
-            ON DELETE CASCADE;
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
             """
         )
 
         cursor.execute(
             """
             ALTER TABLE navigation_transaction_menu_item
-            ADD CONSTRAINT navigation_transaction_menu_item_parent_fk
+            ADD CONSTRAINT
+            navigation_transaction_menu_item_parent_fk
             FOREIGN KEY (parent_item_id)
             REFERENCES navigation_transaction_menu_item(id)
-            ON DELETE CASCADE;
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
             """
         )
 
         cursor.execute(
             """
             ALTER TABLE dynamic_level2_tab
-            ADD CONSTRAINT dynamic_level2_tab_parent_fk
+            ADD CONSTRAINT
+            dynamic_level2_tab_parent_fk
             FOREIGN KEY (parent_tab_id)
             REFERENCES dynamic_top_level_tab(id)
-            ON DELETE CASCADE;
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
             """
         )
 
         cursor.execute(
             """
             ALTER TABLE dynamic_level3_tab
-            ADD CONSTRAINT dynamic_level3_tab_parent_fk
+            ADD CONSTRAINT
+            dynamic_level3_tab_parent_fk
             FOREIGN KEY (parent_tab_id)
             REFERENCES dynamic_level2_tab(id)
-            ON DELETE CASCADE;
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
             """
         )
 
         cursor.execute(
             """
             ALTER TABLE navigation_user_access
-            ADD CONSTRAINT navigation_user_access_top_fk
+            ADD CONSTRAINT
+            navigation_user_access_top_fk
             FOREIGN KEY (top_level_tab_id)
             REFERENCES dynamic_top_level_tab(id)
-            ON DELETE CASCADE;
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
             """
         )
 
         cursor.execute(
             """
             ALTER TABLE navigation_user_access
-            ADD CONSTRAINT navigation_user_access_l2_fk
+            ADD CONSTRAINT
+            navigation_user_access_l2_fk
             FOREIGN KEY (level2_tab_id)
             REFERENCES dynamic_level2_tab(id)
-            ON DELETE CASCADE;
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
             """
         )
 
         cursor.execute(
             """
             ALTER TABLE navigation_user_access
-            ADD CONSTRAINT navigation_user_access_l3_fk
+            ADD CONSTRAINT
+            navigation_user_access_l3_fk
             FOREIGN KEY (level3_tab_id)
             REFERENCES dynamic_level3_tab(id)
-            ON DELETE CASCADE;
+            ON DELETE CASCADE
+            DEFERRABLE INITIALLY DEFERRED;
             """
         )
 
-        # -------------------------------------------------------------
-        # 7. Recreate indexes
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------
+        # 13. Recreate indexes
+        # ---------------------------------------------------------
 
         cursor.execute(
             """
@@ -472,9 +718,9 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # -------------------------------------------------------------
-        # 8. Recreate NavigationUserAccess constraint
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------
+        # 14. Recreate NavigationUserAccess check constraint
+        # ---------------------------------------------------------
 
         cursor.execute(
             """
@@ -502,9 +748,9 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # -------------------------------------------------------------
-        # 9. Recreate unique user-navigation indexes
-        # -------------------------------------------------------------
+        # ---------------------------------------------------------
+        # 15. Recreate partial unique indexes
+        # ---------------------------------------------------------
 
         cursor.execute(
             """
@@ -530,88 +776,23 @@ def _forwards(apps, schema_editor):
             """
         )
 
-        # -------------------------------------------------------------
-        # 10. Restore UUID defaults
-        # -------------------------------------------------------------
-
-        cursor.execute(
-            """
-            ALTER TABLE navigation_transaction_menu
-            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-            """
-        )
-
-        cursor.execute(
-            """
-            ALTER TABLE navigation_transaction_menu_item
-            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-            """
-        )
-
-        cursor.execute(
-            """
-            ALTER TABLE dynamic_top_level_tab
-            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-            """
-        )
-
-        cursor.execute(
-            """
-            ALTER TABLE dynamic_level2_tab
-            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-            """
-        )
-
-        cursor.execute(
-            """
-            ALTER TABLE dynamic_level3_tab
-            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-            """
-        )
-
-        cursor.execute(
-            """
-            ALTER TABLE navigation_user_access
-            ALTER COLUMN id SET DEFAULT gen_random_uuid();
-            """
-        )
-
-        # -------------------------------------------------------------
-        # 11. Recreate the active_tabs view
-        # -------------------------------------------------------------
-        cursor.execute(
-            """
-            CREATE VIEW active_tabs AS
-            SELECT
-                id,
-                name,
-                key,
-                route,
-                query_params,
-                feature_code,
-                icon,
-                sort_order,
-                is_active,
-                created_at,
-                updated_at
-            FROM dynamic_top_level_tab
-            WHERE is_active = true;
-            """
-        )
 
 def _backwards(apps, schema_editor):
     raise RuntimeError(
-        "Navigation UUID migration is irreversible because the original "
-        "BIGINT -> UUID mappings are intentionally not retained."
+        "This migration is irreversible because the generated "
+        "BIGINT -> UUID mappings are not retained."
     )
 
 
 class Migration(migrations.Migration):
 
-    atomic = False
+    atomic = True
 
     dependencies = [
-        ("navigation", "0006_dynamiclevel3tab_and_more"),
+        (
+            "navigation",
+            "0006_dynamiclevel3tab_and_more",
+        ),
     ]
 
     operations = [
@@ -619,10 +800,19 @@ class Migration(migrations.Migration):
             _forwards,
             _backwards,
         ),
-
         migrations.SeparateDatabaseAndState(
             database_operations=[],
             state_operations=[
+                migrations.AlterField(
+                    model_name="dynamictopleveltab",
+                    name="id",
+                    field=models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
                 migrations.AlterField(
                     model_name="dynamiclevel2tab",
                     name="id",
@@ -635,16 +825,6 @@ class Migration(migrations.Migration):
                 ),
                 migrations.AlterField(
                     model_name="dynamiclevel3tab",
-                    name="id",
-                    field=models.UUIDField(
-                        default=uuid.uuid4,
-                        editable=False,
-                        primary_key=True,
-                        serialize=False,
-                    ),
-                ),
-                migrations.AlterField(
-                    model_name="dynamictopleveltab",
                     name="id",
                     field=models.UUIDField(
                         default=uuid.uuid4,
