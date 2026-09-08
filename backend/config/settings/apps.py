@@ -23,7 +23,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "core",
     "tenancy",
-    "rbac",
+    "rbac.apps.RbacConfig",
     "audit",
     "notifications",
     "common",
