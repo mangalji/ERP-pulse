@@ -494,22 +494,79 @@ class NetSuiteInvoicesView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [NetSuiteSyncThrottle]
 
-    def get(self,request):
+    # def get(self,request):
+    #     try:
+    #         offset = int(request.query_params.get("offset", 0))
+    #     except (ValueError, TypeError):
+    #         offset = 0
+    #     try:
+    #         limit = int(request.query_params.get("limit", 20))
+    #     except (ValueError, TypeError):
+    #         limit = 20
+    #     offset = max(0, offset)
+    #     limit = max(1, min(limit, 100))
+
+    #     source_record_type = request.query_params.get("source_record_type")
+    #     service = NetSuiteDataService()
+
+    #     if source_record_type == "salesOrder":
+    #         invoices = service.list_sales_order_invoices(
+    #             user=request.user,
+    #             offset=offset,
+    #             limit=limit,
+    #         )
+    #         message = "NetSuite Sales Order invoices fetched successfully."
+
+    #     elif source_record_type == "purchaseOrder":
+    #         invoices = service.list_purchase_order_vendor_bills(
+    #             user=request.user,
+    #             offset=offset,
+    #             limit=limit,
+    #         )
+    #         message = "NetSuite Purchase Order vendor bills fetched successfully."
+
+    #     else:
+    #         invoices = service.list_invoices(
+    #             user=request.user,
+    #             offset=offset,
+    #             limit=limit,
+    #         )
+    #         message = "NetSuite Invoices fetched successfully."
+
+    #     items = invoices.get("items", [])
+    #     total = invoices.get("totalResults", len(items))
+
+    #     return paginated_response(
+    #         message=message,
+    #         results=items,
+    #         count=total,
+    #         request=request,
+    #         offset=offset,
+    #         limit=limit,
+    #     )
+
+    def get(self, request):
         try:
             offset = int(request.query_params.get("offset", 0))
         except (ValueError, TypeError):
             offset = 0
+    
         try:
             limit = int(request.query_params.get("limit", 20))
         except (ValueError, TypeError):
             limit = 20
+    
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
-
-        invoices = NetSuiteDataService().list_invoices(user=request.user, offset=offset, limit=limit)
+    
+        invoices = NetSuiteDataService().list_invoices(
+            user=request.user,
+            offset=offset,
+            limit=limit,
+        )
         items = invoices.get('items', [])
         total = invoices.get('totalResults', len(items))
-
+    
         return paginated_response(
             message='NetSuite Invoices fetched successfully.',
             results=items,
@@ -518,7 +575,6 @@ class NetSuiteInvoicesView(APIView):
             offset=offset,
             limit=limit,
         )
-
 
 class NetSuiteInvoiceDetailView(APIView):
     """

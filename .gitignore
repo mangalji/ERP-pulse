@@ -141,3 +141,4 @@ user_cred.txt
 .env.postgres
 agsuite-backend.tar
 agsuite-frontend.tar
+agsuite-docker-images.tar

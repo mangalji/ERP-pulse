@@ -37,7 +37,7 @@ from netsuite.views import (
     NetSuiteMyConnectionsView,
     NetSuiteCheckOCRReferencesView,
 )
-
+from netsuite.transaction_views import NetSuiteTransactionsView
 urlpatterns = [
     path('callback/', NetSuiteCallbackView.as_view(), name='netsuite-callback'),
     path('customers/', NetSuiteCustomersView.as_view(), name='netsuite-customers'),
@@ -73,4 +73,5 @@ urlpatterns = [
     path("ocr/batch/post/", NetSuiteBatchPostView.as_view(), name="netsuite_ocr_batch_post"),
     path("ocr/batch/jobs/<uuid:job_id>/", NetSuiteBatchJobStatusView.as_view(), name="netsuite_ocr_batch_job_status"),
     path("my/connections/",NetSuiteMyConnectionsView.as_view(), name="netsuite-my-connections"),
+    path("transactions/", NetSuiteTransactionsView.as_view(), name="netsuite-transactions"),
 ]

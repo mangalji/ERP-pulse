@@ -3,60 +3,64 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
-const ALL_NAV_ITEMS = [
-  {
-    to: '/app',
-    label: 'Dashboard',
-    icon: DashboardIcon,
-    end: true,
-    module: null,
-  },
-  {
-    to: '/app/ocr-test',
-    label: 'OCR',
-    icon: OcrIcon,
-    module: null,
-  },
-  {
-    to: '/app/ai-assistant',
-    label: 'AI Assistant',
-    icon: SparkleIcon,
-    module: 'ai',
-  },
-  {
-    to: '/app/employees',
-    label: 'Employees',
-    icon: EmployeesIcon,
-    module: 'employees',
-  },
-  {
-    to: '/app/reports-engine/generate',
-    label: 'Generate Report',
-    icon: ReportEngineIcon,
-    module: 'reports',
-  },
-  {
-    to: '/app/analytics',
-    label: 'Analytics',
-    icon: AnalyticsIcon,
-    module: 'bi',
-  },
-  {
-    to: '/app/notifications',
-    label: 'Notifications',
-    icon: BellIcon,
-    module: 'notifications',
-  },
-  {
-    to: '/app/settings',
-    label: 'Company Settings',
-    icon: GearIcon,
-    module: null,
-  },
-]
+// const ALL_NAV_ITEMS = [
+//   {
+//     to: '/app',
+//     label: 'Dashboard',
+//     icon: DashboardIcon,
+//     end: true,
+//     module: null,
+//   },
+//   {
+//     to: '/app/ocr-test',
+//     label: 'OCR',
+//     icon: OcrIcon,
+//     module: null,
+//   },
+//   {
+//     to: '/app/ai-assistant',
+//     label: 'AI Assistant',
+//     icon: SparkleIcon,
+//     module: 'ai',
+//   },
+//   {
+//     to: '/app/employees',
+//     label: 'Employees',
+//     icon: EmployeesIcon,
+//     module: 'employees',
+//   },
+//   {
+//     to: '/app/reports-engine/generate',
+//     label: 'Generate Report',
+//     icon: ReportEngineIcon,
+//     module: 'reports',
+//   },
+//   {
+//     to: '/app/analytics',
+//     label: 'Analytics',
+//     icon: AnalyticsIcon,
+//     module: 'bi',
+//   },
+//   {
+//     to: '/app/notifications',
+//     label: 'Notifications',
+//     icon: BellIcon,
+//     module: 'notifications',
+//   },
+//   {
+//     to: '/app/settings',
+//     label: 'Company Settings',
+//     icon: GearIcon,
+//     module: null,
+//   },
+// ]
+const SYSTEM_NAV_KEYS = {
+  employees: 'employees',
+  settings: 'settings',
+}
 
 /* Employee-only items that always show for any authenticated user */
-const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
+// const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
 
 /**
  * Reusable Client Company Portal layout.
@@ -67,13 +71,15 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  // const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState([])
   const [availableModules, setAvailableModules] = useState([])
   const [companyName, setCompanyName] = useState('')
+  const [databaseNavItems, setDatabaseNavItems] = useState([])
+  // const [expandedMenuItems, setExpandedMenuItems] = useState({})
   const userMenuRef = useRef(null)
   const notifRef = useRef(null)
 
@@ -120,6 +126,23 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   }, [])
 
   useEffect(() => {
+    const loadNavigationMenu = async () => {
+      try {
+        const res = await clientApi.getNavigationMenu()
+        // console.log("database navigation:", res)
+        setDatabaseNavItems(Array.isArray(res) ? res: [])
+        // const menu = Array.isArray(res) ? (res[0] || null) : res
+        // setDatabaseNavItems(menu ? [menu] : [])
+      } catch (error) {
+        console.error('Failed to load transaction navigation:', error)
+        setDatabaseNavItems([])
+      }
+    }
+
+    loadNavigationMenu()
+  }, [])
+
+  useEffect(() => {
     function handleClickOutside(event) {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
         setUserMenuOpen(false)
@@ -158,38 +181,101 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     ? `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`.toUpperCase() || 'U'
     : 'U'
 
-  const currentPath = location.pathname
-  const activeNav = ALL_NAV_ITEMS.find((item) =>
-    item.end ? currentPath === item.to : currentPath.startsWith(item.to),
-  )
+  // const currentPath = location.pathname
+  // const activeNav = ALL_NAV_ITEMS.find((item) =>
+  // item.end ? currentPath === item.to : currentPath.startsWith(item.to),
+  // )
 
-  const userModules = user?.modules || availableModules
-  const userPermissions = user?.permissions || []
+  // const userModules = user?.modules || availableModules
+  // const userPermissions = user?.permissions || []
 
-  const visibleNav = ALL_NAV_ITEMS.filter((item) => {
-    if (!item.module) return true
-    if (isCompanyAdmin) return true
-    const hasModule = userModules.some((m) => m.module_code === item.module)
-    if (!hasModule) return false
-    // TASK 5: Employee Module Access — even if the company has the module,
-    // the employee's role must grant the corresponding permission.
-    // We map module codes to permission codes for this check.
-    const modulePermissionMap = {
-      'invoice_reader': 'ocr.upload',
-      'ocr': 'ocr.upload',
-      'ai': 'ai.chat',
-      'employees': 'employee.manage',
-      'reports': 'reports.view',
-      'reports_engine': 'reports.view',
-      'analytics': 'reports.view',
-      'dashboard': 'dashboard.view',
+  // const visibleNav = ALL_NAV_ITEMS.filter((item) => {
+  //   if (!item.module) return true
+  //   if (isCompanyAdmin) return true
+  //   const hasModule = userModules.some((m) => m.module_code === item.module)
+  //   if (!hasModule) return false
+  //   const modulePermissionMap = {
+  //     'invoice_reader': 'ocr.upload',
+  //     'ocr': 'ocr.upload',
+  //     'ai': 'ai.chat',
+  //     'employees': 'employee.manage',
+  //     'reports': 'reports.view',
+  //     'reports_engine': 'reports.view',
+  //     'analytics': 'reports.view',
+  //     'dashboard': 'dashboard.view',
+  //   }
+  //   const permCode = modulePermissionMap[item.module]
+  //   if (permCode) {
+  //     return userPermissions.includes(permCode)
+  //   }
+  //   return true
+  // })
+
+  // const toggleDatabaseMenu = (key) => {
+  //   setExpandedMenuItems((prev) => ({
+  //     ...prev,
+  //     [key]: !(prev[key] ?? true),
+  //   }))
+  // }
+
+  const buildMenuSearch = (queryParams = {}) => {
+    const search = new URLSearchParams()
+    Object.entries(queryParams || {}).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== '') {
+        search.set(key, String(value))
+      }
+    })
+    const text = search.toString()
+    return text ? `?${text}` : ''
+  }
+
+  const renderDatabaseMenuItem = (item, level = 0) => {
+    const children = Array.isArray(item?.children) ? item.children : []
+    const hasChildren = children.length > 0
+    const route = item.route ? `${item.route}${buildMenuSearch(item.query_params)}` : ''
+    // const isExpanded = expandedMenuItems[item.key] ?? true
+
+    // if (hasChildren) {
+    if (level===0){
+      return (
+        <div key={item.key} className="group/top relative shrink-0">
+          {hasChildren ? (
+            <button type="button" className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]">
+              <span>{item.name}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+          ) : (
+            <NavLink to={route || '/app'} className={({ isActive }) => `flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'}`}>{item.name}</NavLink>
+          )}
+          {hasChildren && (
+            <div className="invisible absolute left-0 top-full z-50 mt-1 min-w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 opacity-0 shadow-xl transition-all group-hover/top:visible group-hover/top:opacity-100 group-focus-within/top:visible group-focus-within/top:opacity-100">
+              {children.map((child) => renderDatabaseMenuItem(child, 1))}
+            </div>
+          )}
+        </div>
+      )
     }
-    const permCode = modulePermissionMap[item.module]
-    if (permCode) {
-      return userPermissions.includes(permCode)
-    }
-    return true
-  })
+
+    // if (!item.route) return null
+
+    return (
+      <div key={item.key} className="group/submenu relative">
+        {route && !hasChildren ? (
+          <NavLink to={route} className={({ isActive }) => `flex items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-canvas)]'}`}>{item.name}</NavLink>
+        ) : (
+          <button type="button" className="flex w-full items-center justify-between gap-4 rounded-md px-3 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]">
+            <span>{item.name}</span>
+            {hasChildren && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5 shrink-0"><path d="m9 6 6 6-6 6" /></svg>}
+          </button>
+        )}
+        {hasChildren && (
+          <div className="invisible absolute left-full top-0 z-50 ml-1 min-w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 opacity-0 shadow-xl transition-all group-hover/submenu:visible group-hover/submenu:opacity-100 group-focus-within/submenu:visible group-focus-within/submenu:opacity-100">
+            {children.map((child) => renderDatabaseMenuItem(child, level + 1))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const netSuiteNavItem = {
   to: isCompanyAdmin
@@ -212,215 +298,68 @@ export default function ClientLayout({ title, breadcrumb, children }) {
 }
 
     return (
-      <div className="flex min-h-screen bg-[var(--color-canvas)]">
-        {sidebarOpen && (
-          <button
-            aria-label="Close menu"
-            onClick={() => setSidebarOpen(false)}
-            className="fixed inset-0 z-30 bg-black/30 lg:hidden"
-          />
-        )}
-  
-        {/* Sidebar */}
-        <aside
-          className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-[var(--color-sidebar)] px-4 py-6
-            transition-transform lg:static lg:translate-x-0
-            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
-        >
-          <div className="mb-8 px-2">
-            <NavLink
-              to="/app"
-              onClick={() => setSidebarOpen(false)}
-              className="flex items-center gap-2"
-              aria-label="Go to Dashboard"
-            >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
-                E
-              </span>
-
-              <span className="font-[var(--font-display)] text-lg font-semibold text-white">
-                AGSuite ERP
-              </span>
-            </NavLink>
-          </div>
-  
-          <nav className="flex flex-1 flex-col gap-1">
-            {[...visibleNav, netSuiteNavItem].map(({ to, label, icon: Icon, end }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={end}
-                onClick={() => setSidebarOpen(false)}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-[var(--color-sidebar-soft)] text-white'
-                      : 'text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white'
-                  }`
-                }
-              >
-                <Icon className="h-4.5 w-4.5 shrink-0" />
-                {label}
+      <div className="flex min-h-screen flex-col bg-[var(--color-canvas)]">
+        <header className="relative z-50 border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+          <div className="flex min-h-16 items-center justify-between gap-4 px-3 sm:px-6">
+            <div className="flex min-w-0 flex-1 items-center gap-4">
+              <NavLink to="/app" className="flex shrink-0 items-center gap-2" aria-label="Go to Dashboard">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">E</span>
+                <span className="hidden font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)] sm:inline">AGSuite ERP</span>
               </NavLink>
-            ))}
-          </nav>
-  
-          <div className="mt-4 flex flex-col gap-1">
-            <NavLink
-              to="/app/profile"
-              onClick={() => setSidebarOpen(false)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white"
-            >
-              <ProfileIcon className="h-4.5 w-4.5 shrink-0" />
-              Profile
-            </NavLink>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-negative)] hover:bg-[var(--color-sidebar-soft)]"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4.5 w-4.5 shrink-0">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-              </svg>
-              Logout
-            </button>
-          </div>
-        </aside>
-  
-        {/* Main column */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          {/* Top navbar */}
-          <header className="relative flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setSidebarOpen(true)}
-                aria-label="Open menu"
-                className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] lg:hidden"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-                  <path d="M4 7h16M4 12h16M4 17h16" />
-                </svg>
-              </button>
-              <div className="absolute left-1/2 top-1/2 flex -translate-y-1/2 flex-col items-center text-center">
-                {companyName && (
-                  <span className="max-w-[80vw] truncate text-2xl font-bold leading-tight capitalize text-[var(--color-ink)] sm:text-3xl lg:text-4xl">
-                    {companyName}
-                  </span>
+              {/* <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-1" aria-label="Main navigation">
+                {databaseNavItems.length > 0 ? databaseNavItems.map((item) => renderDatabaseMenuItem(item, 0)) : (
+                  [...visibleNav, netSuiteNavItem].map(({ to, label, end }) => (
+                    <NavLink key={to} to={to} end={end} className={({ isActive }) => `shrink-0 rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'}`}>{label}</NavLink>
+                  ))
                 )}
-
-                {/* <span className="text-xs font-medium text-[var(--color-muted)] sm:text-sm">
-                  {title}
-                </span> */}
-              </div>
+              </nav> */}
+              {/* <nav className="flex flex-1 flex-col gap-1">
+  {databaseNavItems.map((item) => renderDatabaseMenuItem(item, 0))}
+</nav> */}
+<nav
+  className="flex min-w-0 flex-1 items-center gap-2 overflow-visible"
+  aria-label="Main navigation"
+>
+  {databaseNavItems.map((item) => renderDatabaseMenuItem(item, 0))}
+</nav>
             </div>
-  
-            <div className="flex items-center gap-3">
-              {/* Notification bell */}
+            <div className="flex shrink-0 items-center gap-3">
+              <div className="hidden max-w-48 truncate text-right lg:block">{companyName && <span className="text-sm font-semibold capitalize text-[var(--color-ink)]">{companyName}</span>}</div>
               <div className="relative" ref={notifRef}>
-                <button
-                  onClick={handleNotifToggle}
-                  aria-label="Notifications"
-                  className="relative rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-                    <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-                  </svg>
-                  {unreadCount > 0 && (
-                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-negative)] px-1 text-[10px] font-bold text-white">
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
+                <button onClick={handleNotifToggle} aria-label="Notifications" className="relative rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]">
+                  <BellIcon className="h-5 w-5" />
+                  {unreadCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-negative)] px-1 text-[10px] font-bold text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
                 </button>
                 {notifOpen && (
                   <div className="absolute right-0 mt-2 w-[calc(100vw-1.5rem)] max-w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
-                    <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
-                      <p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p>
-                      <button
-                        onClick={handleMarkAllRead}
-                        className="text-xs font-medium text-[var(--color-primary)] hover:underline"
-                      >
-                        Mark all read
-                      </button>
-                    </div>
+                    <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3"><p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p><button onClick={handleMarkAllRead} className="text-xs font-medium text-[var(--color-primary)] hover:underline">Mark all read</button></div>
                     <div className="max-h-80 overflow-y-auto">
-                      {notifications.length === 0 ? (
-                        <p className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">No notifications</p>
-                      ) : (
-                        notifications.map((n) => (
-                          <div
-                            key={n.id}
-                            className={`border-b border-[var(--color-border)] px-4 py-3 last:border-0 ${n.is_read ? '' : 'bg-[var(--color-primary-soft)]'}`}
-                          >
-                            <p className="text-sm font-medium text-[var(--color-ink)]">{n.title}</p>
-                            {n.message && <p className="mt-0.5 text-xs text-[var(--color-muted)]">{n.message}</p>}
-                          </div>
-                        ))
-                      )}
+                      {notifications.length === 0 ? <p className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">No notifications</p> : notifications.map((n) => (
+                        <div key={n.id} className={`border-b border-[var(--color-border)] px-4 py-3 last:border-0 ${n.is_read ? '' : 'bg-[var(--color-primary-soft)]'}`}><p className="text-sm font-medium text-[var(--color-ink)]">{n.title}</p>{n.message && <p className="mt-0.5 text-xs text-[var(--color-muted)]">{n.message}</p>}</div>
+                      ))}
                     </div>
-                    <NavLink
-                      to="/app/notifications"
-                      onClick={() => setNotifOpen(false)}
-                      className="block border-t border-[var(--color-border)] px-4 py-2 text-center text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-canvas)]"
-                    >
-                      View all
-                    </NavLink>
+                    <NavLink to="/app/notifications" onClick={() => setNotifOpen(false)} className="block border-t border-[var(--color-border)] px-4 py-2 text-center text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-canvas)]">View all</NavLink>
                   </div>
                 )}
               </div>
-  
-              {/* User menu */}
               <div className="relative" ref={userMenuRef}>
-                <button
-                  onClick={() => setUserMenuOpen((prev) => !prev)}
-                  className="flex items-center gap-2 rounded-full bg-[var(--color-primary-soft)] px-2 py-1 pr-1 text-sm font-semibold text-[var(--color-primary-dark)] hover:bg-[var(--color-primary-soft)] transition-colors"
-                  aria-label="User menu"
-                >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">
-                    {initials}
-                  </span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3 w-3">
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
+                <button onClick={() => setUserMenuOpen((prev) => !prev)} className="flex items-center gap-2 rounded-full bg-[var(--color-primary-soft)] px-2 py-1 pr-1 text-sm font-semibold text-[var(--color-primary-dark)]" aria-label="User menu">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">{initials}</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3 w-3"><path d="M6 9l6 6 6-6" /></svg>
                 </button>
                 {userMenuOpen && (
                   <div className="absolute right-0 mt-2 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2 shadow-lg">
-                    <div className="px-4 py-3">
-                      <p className="text-sm font-semibold text-[var(--color-ink)]">
-                        {user ? `${user.first_name} ${user.last_name}`.trim() : 'User'}
-                      </p>
-                      <p className="mt-0.5 text-xs text-[var(--color-muted)]">{user?.email || ''}</p>
-                    </div>
+                    <div className="px-4 py-3"><p className="text-sm font-semibold text-[var(--color-ink)]">{user ? `${user.first_name} ${user.last_name}`.trim() : 'User'}</p><p className="mt-0.5 text-xs text-[var(--color-muted)]">{user?.email || ''}</p></div>
                     <div className="border-t border-[var(--color-border)]" />
-                    <NavLink
-                      to="/app/profile"
-                      onClick={() => setUserMenuOpen(false)}
-                      className="block w-full px-4 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]"
-                    >
-                      Profile
-                    </NavLink>
-                    <button
-                      onClick={handleLogout}
-                      className="block w-full px-4 py-2 text-left text-sm text-[var(--color-negative)] hover:bg-[var(--color-canvas)]"
-                    >
-                      Logout
-                    </button>
+                    <NavLink to="/app/profile" onClick={() => setUserMenuOpen(false)} className="block w-full px-4 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]">Profile</NavLink>
+                    <button onClick={handleLogout} className="block w-full px-4 py-2 text-left text-sm text-[var(--color-negative)] hover:bg-[var(--color-canvas)]">Logout</button>
                   </div>
                 )}
               </div>
             </div>
-          </header>
-  
-          {/* Breadcrumb */}
-          {/* <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:px-6">
-            <nav className="text-xs text-[var(--color-muted)]">
-              <span>Client Portal</span>
-              <span className="mx-1.5">/</span>
-              <span className="font-medium text-[var(--color-ink)]">{breadcrumb || activeNav?.label || title}</span>
-            </nav>
-          </div> */}
-  
-          <main className="min-w-0 flex-1 px-1 py-1 sm:px-2 sm:py-2 lg:px-1">{children}</main>
-        </div>
+          </div>
+        </header>
+        <main className="min-w-0 flex-1 px-1 py-1 sm:px-2 sm:py-2 lg:px-1">{children}</main>
       </div>
     )
   }

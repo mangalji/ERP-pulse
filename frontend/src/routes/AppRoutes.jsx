@@ -44,10 +44,14 @@ import ClientReportsPage from '../pages/client/ReportsPage.jsx'
 import ClientAnalyticsPage from '../pages/client/AnalyticsPage.jsx'
 import ClientNotificationsPage from '../pages/client/NotificationsPage.jsx'
 import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
+import CustomizeNavigationPage from '../pages/client/CustomizeNavigationPage.jsx'
+import CenterTabsPage from '../pages/client/CenterTabsPage.jsx'
+import CenterCategoriesPage from '../pages/client/CenterCategoriesPage.jsx'
 import ClientProfilePage from '../pages/client/ProfilePage.jsx'
 import ClientSubscriptionPage from '../pages/client/SubscriptionPage.jsx'
 import NetSuiteIntegrationsPage from '../pages/client/NetSuiteIntegrationsPage.jsx'
 import EmployeeNetSuitePage from '../pages/client/EmployeeNetSuitePage.jsx'
+import TransactionsPage from '../pages/client/TransactionsPage.jsx'
 
 // Executive BI Portal
 import BIDashboardPage from '../pages/bi/DashboardPage.jsx'
@@ -75,6 +79,22 @@ import OcrBatchHistoryPage from '../pages/client/OcrBatchHistoryPage.jsx'
 
 function PublicRoute({ children }) {
   return <PublicLayout>{children}</PublicLayout>
+}
+function CompanyAdminRoute({ children }) {
+  const { user } = useAuth()
+
+  const isCompanyAdmin =
+    user?.is_superuser ||
+    user?.is_staff ||
+    (user?.roles || []).some(
+      (role) => String(role).toLowerCase() === 'company_admin'
+    )
+
+  if (!isCompanyAdmin) {
+    return <Navigate to="/app/settings" replace />
+  }
+
+  return children
 }
 
 function CatchAllRoute() {
@@ -124,6 +144,14 @@ export default function AppRoutes() {
       <Route path="/history" element={<Navigate to="/app" replace />} />
       <Route path="/settings" element={<Navigate to="/app/settings" replace />} />
       <Route path="/system-health" element={<Navigate to="/app" replace />} />
+
+      {/* Single transaction page; DB menu supplies the view query param. */}
+      <Route path="/app/transactions" element={
+        <ProtectedRoute requiredRole="client">
+          <TransactionsPage />
+        </ProtectedRoute>
+      } />
+
 
       {/* AGSuite Super Admin Portal */}
       <Route
@@ -371,6 +399,16 @@ export default function AppRoutes() {
         }
       />
       <Route
+        path="/app/settings/customize"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <CompanyAdminRoute>
+            <CustomizeNavigationPage />
+            </CompanyAdminRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/app/profile"
         element={
           <ProtectedRoute requiredRole="client">
@@ -378,6 +416,22 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+        <Route
+          path="/app/settings/customize/center-categories"
+          element={
+            <ProtectedRoute requiredRole="client">
+              <CenterCategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/app/settings/customize/center-tabs"
+          element={
+            <ProtectedRoute requiredRole="client">
+              <CenterTabsPage />
+            </ProtectedRoute>
+          }
+        />
       <Route
         path="/app/subscription"
         element={

@@ -83,4 +83,81 @@ export const clientApi = {
     apiClient.post(CLIENT_ENDPOINTS.notificationMarkRead(id)).then(unwrap),
   markAllNotificationsRead: () =>
     apiClient.post(CLIENT_ENDPOINTS.notificationMarkAllRead).then(unwrap),
+
+  // ── Transaction navigation (DB-driven) ─────────────────────
+  getNavigationMenu: () =>
+    apiClient.get('/navigation/menu/').then(unwrap),
+  
+  getNavigationCustomizeData: (params = {}) =>
+    apiClient.get('/navigation/customize/', { params }).then(unwrap),
+  
+  updateNavigationAccess: (payload) =>
+    apiClient.post('/navigation/customize/access/', payload).then(unwrap),
+  
+  createNavigationTab: (payload) =>
+    apiClient.post('/navigation/customize/tab/', payload).then(unwrap),
+  
+  updateNavigationTab: (tabLevel, tabId, payload) =>
+    apiClient.patch(`/navigation/customize/tab/${tabLevel}/${tabId}/`, payload).then(unwrap),
+
+  getCenterTabs: (page = 1) =>
+    apiClient.get('/navigation/center-tabs/', {
+      params: { page },
+    }).then(unwrap),
+
+  getCenterCategories: (page = 1) =>
+  apiClient
+    .get('/navigation/center-categories/', {
+      params: { page },
+    })
+    .then(unwrap),
+
+  createCenterCategory: (payload) =>
+    apiClient
+      .post('/navigation/center-categories/', payload)
+      .then(unwrap),
+
+  getCenterCategoryChildren: (categoryId) =>
+    apiClient
+      .get(`/navigation/center-categories/${categoryId}/children/`)
+      .then(unwrap),
+
+  createCenterCategoryChild: (categoryId, payload) =>
+    apiClient
+      .post(
+        `/navigation/center-categories/${categoryId}/children/`,
+        payload,
+      )
+      .then(unwrap),
+
+  createCenterTab: (payload) =>
+    apiClient.post('/navigation/center-tabs/', payload).then(unwrap),
+
+  deleteCenterTabs: (ids) =>
+    apiClient
+      .post('/navigation/center-tabs/bulk-delete/', { ids })
+      .then(unwrap),
+
+  deleteCenterCategories: (ids) =>
+    apiClient
+      .post('/navigation/center-categories/bulk-delete/', { ids })
+      .then(unwrap),
+
+  deleteNavigationTab: (tabLevel, tabId) =>
+    apiClient.delete(`/navigation/customize/tab/${tabLevel}/${tabId}/`).then(unwrap),
+  
+  getNetsuiteTransactions: (params) =>
+    apiClient.get('/api/v1/netsuite/transactions/', { params }).then(unwrap),
+  
+  getTransactions: (params) =>
+    apiClient.get('/transactions/', { params }).then(unwrap),
+
+  createTransaction: ({ transactionType, recordType, payload }) =>
+    apiClient.post('/transactions/', payload, {
+      params: {
+        transaction_type: transactionType,
+        record_type: recordType,
+      },
+    }).then(unwrap),
+
 }

@@ -872,6 +872,111 @@ class NetSuiteDataService:
     def list_invoices(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
         return self._list_transactions_via_suiteql(user=user, transaction_type='CustInvc', limit=limit, offset=offset)
 
+    # def list_sales_order_invoices(self,*,user:User,limit:int=20,offset:int=0) -> dict:
+    #     raw = self._list_via_suiteql(
+    #         user=user, limit=limit, offset=offset,
+    #         query="""
+    #             SELECT
+    #             child.id,
+    #             child.tranid,
+    #             child.entity,
+    #             BUILTIN.DF(child.entity) AS entityname,
+    #             BUILTIN.DF(child.status) AS status,
+    #             child.foreigntotal,
+    #             child.trandate,
+    #             child.createdfrom
+    #         FROM transaction child
+    #         INNER JOIN transaction parent
+    #             ON child.createdfrom = parent.id
+    #         WHERE child.type = 'CustInvc'
+    #           AND parent.type = 'SalesOrd'
+    #         ORDER BY child.id
+    #         """,
+    #     ) 
+    #     raw['items'] = [
+    #         {
+    #             'id': row.get('id'),
+    #             'tranId': row.get('tranid'),
+    #             'entity': {
+    #             'id': row.get('entity'),
+    #             'name': row.get('entityname'),
+    #             },
+    #             'status': row.get('status'),
+    #             'total': row.get('foreigntotal'),
+    #             'createdDate': row.get('trandate'),
+    #             'sourceRecordId': row.get('createdfrom'),
+    #         }
+    #         for row in raw["items"]        
+    #     ]
+    #     return raw
+
+    # def list_purchase_order_vendor_bills( self, *, user: User, limit: int = 20, offset: int = 0, ) -> dict:
+    #     raw = self._list_via_suiteql(
+    #         user=user,
+    #         limit=limit,
+    #         offset=offset,
+    #         query="""
+    #             SELECT
+    #                 child.id,
+    #                 child.tranid,
+    #                 child.entity,
+    #                 BUILTIN.DF(child.entity) AS entityname,
+    #                 BUILTIN.DF(child.status) AS status,
+    #                 child.foreigntotal,
+    #                 child.trandate,
+    #                 child.createdfrom
+    #             FROM transaction child
+    #             INNER JOIN transaction parent
+    #                 ON child.createdfrom = parent.id
+    #             WHERE child.type = 'VendBill'
+    #               AND parent.type = 'PurchOrd'
+    #             ORDER BY child.id
+    #         """,
+    #     )
+
+    #     raw['items'] = [
+    #         {
+    #             'id': row.get('id'),
+    #             'tranId': row.get('tranid'),
+    #             'entity': {
+    #                 'id': row.get('entity'),
+    #                 'name': row.get('entityname'),
+    #             },
+    #             'status': row.get('status'),
+    #             'total': row.get('foreigntotal'),
+    #             'createdDate': row.get('trandate'),
+    #             'sourceRecordId': row.get('createdfrom'),
+    #         }
+    #         for row in raw['items']
+    #     ]
+
+    #     return raw
+
+    def list_cash_sales(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        return self._list_transactions_via_suiteql(
+            user=user,
+            transaction_type='CashSale',
+            limit=limit,
+            offset=offset,
+        )
+    
+    def list_vendor_bills(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        return self._list_transactions_via_suiteql(
+            user=user,
+            transaction_type='VendBill',
+            limit=limit,
+            offset=offset,
+        )
+    
+    def list_vendor_payments(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+        return self._list_transactions_via_suiteql(
+            user=user,
+            transaction_type='VendPymt',
+            limit=limit,
+            offset=offset,
+        )
+        
+
     def _require_connection(self, user: User):  
 
         connection = self.repository.get_for_user(user)

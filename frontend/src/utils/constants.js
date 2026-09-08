@@ -42,17 +42,6 @@ export const REPORTS_ENDPOINTS = {
   salesTrend: '/reports/sales-trend/',
 }
 
-// export const NETSUITE_ENDPOINTS = {
-//   connections: '/netsuite/connections/',
-//   callback: '/netsuite/callback/',
-//   customers: '/netsuite/customers/',
-//   employees: '/netsuite/employees/',
-//   vendors: '/netsuite/vendors/',
-//   items: '/netsuite/items/',
-//   salesOrders: '/netsuite/sales-orders/',
-//   purchaseOrders: '/netsuite/purchase-orders/',
-//   invoices: '/netsuite/invoices/',
-// }
 export const NETSUITE_ENDPOINTS = {
   connections: '/netsuite/connections/',
   companyConnections: '/netsuite/company/connections/',

@@ -37,6 +37,7 @@ LOCAL_APPS = [
     "sync",
     "analytics",
     "ocr",
+    "transactions",
     "superadmin",
     "bi",
     "reports_engine",
@@ -44,6 +45,7 @@ LOCAL_APPS = [
     "invitations",
     "subscriptions",
     'django_extensions',
+    'navigation',
 ]
 
 INSTALLED_APPS = (
