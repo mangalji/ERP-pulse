@@ -5,14 +5,15 @@ import { clientApi } from '../../services/client.js'
 
 const PAGE_SIZE = 20
 
-const EMPTY_FORM = {
-  tran_id: '',
-  tran_date: '',
-  entity: '',
-  name: '',
-  invoice: '',
-  amount: '',
-}
+// const EMPTY_FORM = {
+  // tran_id: '',
+  // tran_date: '',
+  // entity: '',
+  // name: '',
+  // invoice: '',
+  // amount: '',
+// }
+const EMPTY_FORM = {}
 
 export default function TransactionsPage() {
   const [searchParams] = useSearchParams()
@@ -20,10 +21,11 @@ export default function TransactionsPage() {
   const transactionType = searchParams.get('transaction_type') || ''
   const recordType = searchParams.get('record_type') || ''
 
-  const title = recordType || 'Transactions'
+  const title = recordType || transactionType || 'Transactions'
 
   const [rows, setRows] = useState([])
   const [count, setCount] = useState(0)
+  const [schema, setSchema] = useState({ fields: [] })
   const [offset, setOffset] = useState(0)
 
   const [loading, setLoading] = useState(false)
@@ -34,20 +36,13 @@ export default function TransactionsPage() {
   const [form, setForm] = useState(EMPTY_FORM)
 
   const loadTransactions = useCallback(async () => {
-    if (!transactionType || !recordType) {
-      setRows([])
-      setCount(0)
-      setError('Transaction type and record type are required.')
-      return
-    }
-
     setLoading(true)
     setError('')
 
     try {
       const response = await clientApi.getTransactions({
-        transaction_type: transactionType,
-        record_type: recordType,
+        ...(transactionType ? { transaction_type: transactionType } : {}),
+        ...(recordType ? { record_type: recordType } : {}),
         limit: PAGE_SIZE,
         offset,
       })
@@ -72,6 +67,22 @@ export default function TransactionsPage() {
     }
   }, [transactionType, recordType, offset])
 
+  const loadSchema = useCallback(async () => {
+  try {
+    const response = await clientApi.getTransactions({
+      schema: 'true',
+    })
+
+    setSchema(response || { fields: [] })
+  } catch (err) {
+    setSchema({ fields: [] })
+  }
+}, [])
+
+useEffect(() => {
+  loadSchema()
+}, [loadSchema])
+
   useEffect(() => {
     setOffset(0)
   }, [transactionType, recordType])
@@ -83,19 +94,28 @@ export default function TransactionsPage() {
   const hasPrevious = offset > 0
   const hasNext = offset + rows.length < count
 
-const openNewForm = () => {
-  const today = new Date()
-  const day = String(today.getDate()).padStart(2, '0')
-  const month = String(today.getMonth() + 1).padStart(2, '0')
-  const year = today.getFullYear()
+  const openNewForm = () => {
+    // setForm({
+    //   ...EMPTY_FORM,
+    //   tran_date: new Date().toISOString().slice(0, 10),
+    // })
+    const initialForm = {}
 
-  setForm({
-    ...EMPTY_FORM,
-    tran_date: `${day}/${month}/${year}`,
-  })
-  setError('')
-  setNewOpen(true)
-}
+    formFields.forEach((field) => {
+      if (field.name === 'tran_date') {
+        initialForm[field.name] = new Date().toISOString().slice(0, 10)
+      } else if (field.default !== undefined && field.default !== null) {
+        initialForm[field.name] = field.default
+      } else {
+        initialForm[field.name] = ''
+      }
+    })
+    
+    setForm(initialForm)
+    setError('')
+    setNewOpen(true)
+  }
+
   const closeNewForm = () => {
     if (saving) {
       return
@@ -112,6 +132,14 @@ const openNewForm = () => {
     }))
   }
 
+  const tableFields = schema.fields || []
+
+  const formFields = tableFields.filter(
+    (field) =>
+      !field.read_only &&
+      !['company', 'transaction_type', 'record_type'].includes(field.name),
+  )
+
   const handleCreate = async (event) => {
     event.preventDefault()
 
@@ -120,32 +148,14 @@ const openNewForm = () => {
       return
     }
 
-    const dateParts = form.tran_date.split('/')
-
-    if (
-      dateParts.length !== 3 ||
-      dateParts[0].length !== 2 ||
-      dateParts[1].length !== 2 ||
-      dateParts[2].length !== 4
-    ) {
-      setError('Tran Date must be in DD/MM/YYYY format.')
-      return
-    }
-
     setSaving(true)
     setError('')
 
     try {
-      const [day,month,year] = form.tran_date.split('/')
-      const payload = {
-        ...form,
-        tran_date: `${year}-${month}-${day}`,
-      }
-
       await clientApi.createTransaction({
         transactionType,
         recordType,
-        payload,
+        payload:form,
       })
 
       setNewOpen(false)
@@ -189,14 +199,15 @@ const openNewForm = () => {
               {count} record{count === 1 ? '' : 's'}
             </div>
 
-            <button
-              type="button"
-              onClick={openNewForm}
-              disabled={!transactionType || !recordType}
-              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              New
-            </button>
+            {transactionType && recordType && (
+              <button
+                type="button"
+                onClick={openNewForm}
+                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+              >
+                New
+              </button>
+            )}
           </div>
         </div>
 
@@ -209,7 +220,7 @@ const openNewForm = () => {
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="border-b border-[var(--color-border)] bg-[var(--color-background)]">
+              {/* <thead className="border-b border-[var(--color-border)] bg-[var(--color-background)]">
                 <tr>
                   {[
                     'Tran ID',
@@ -227,13 +238,26 @@ const openNewForm = () => {
                     </th>
                   ))}
                 </tr>
+              </thead> */}
+
+              <thead className="border-b border-[var(--color-border)] bg-[var(--color-background)]">
+                <tr>
+                  {tableFields.map((field) => (
+                    <th
+                      key={field.name}
+                      className="px-4 py-3 text-left font-medium text-[var(--color-muted)]"
+                    >
+                      {field.label}
+                    </th>
+                  ))}
+                </tr>
               </thead>
 
               <tbody>
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={Math.max(tableFields.length, 1)}
                       className="px-4 py-10 text-center text-[var(--color-muted)]"
                     >
                       Loading transactions…
@@ -242,7 +266,7 @@ const openNewForm = () => {
                 ) : rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={Math.max(tableFields.length, 1)}
                       className="px-4 py-10 text-center text-[var(--color-muted)]"
                     >
                       No transactions found.
@@ -254,7 +278,7 @@ const openNewForm = () => {
                       key={row.id}
                       className="border-b border-[var(--color-border)] last:border-0"
                     >
-                      <td className="px-4 py-3 font-medium text-[var(--color-ink)]">
+                      {/* <td className="px-4 py-3 font-medium text-[var(--color-ink)]">
                         {row.tran_id || '—'}
                       </td>
 
@@ -276,7 +300,15 @@ const openNewForm = () => {
 
                       <td className="px-4 py-3 font-medium text-[var(--color-ink)]">
                         {row.amount ?? '—'}
+                      </td> */}
+                      {tableFields.map((field) => (
+                      <td
+                        key={field.name}
+                        className="px-4 py-3 text-[var(--color-ink)]"
+                      >
+                        {row[field.name] ?? '—'}
                       </td>
+                    ))}
                     </tr>
                   ))
                 )}
@@ -348,7 +380,7 @@ const openNewForm = () => {
               </div>
 
               <form onSubmit={handleCreate} className="space-y-5 p-5">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {/* <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
                       Tran ID
@@ -445,6 +477,38 @@ const openNewForm = () => {
                       className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
                     />
                   </div>
+                </div> */}
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {formFields.map((field) => {
+                    const value = form[field.name] ?? ''
+                  
+                    let inputType = 'text'
+                  
+                    if (field.type === 'DateField') {
+                      inputType = 'date'
+                    } else if (field.type === 'DecimalField' || field.type === 'IntegerField') {
+                      inputType = 'number'
+                    }
+                  
+                    return (
+                      <div key={field.name}>
+                        <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
+                          {field.label}
+                        </label>
+                    
+                        <input
+                          type={inputType}
+                          value={value}
+                          onChange={(event) =>
+                            updateField(field.name, event.target.value)
+                          }
+                          required={field.required}
+                          step={inputType === 'number' ? 'any' : undefined}
+                          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                        />
+                      </div>
+                    )
+                  })}
                 </div>
 
                 <div className="flex justify-end gap-3 border-t border-[var(--color-border)] pt-4">

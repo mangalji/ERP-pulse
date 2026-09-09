@@ -239,13 +239,20 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     if (level===0){
       return (
         <div key={item.key} className="group/top relative shrink-0">
-          {hasChildren ? (
+          {route ? (
+            <NavLink to={route} className={({ isActive }) => `flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'}`}>
+              <span>{item.name}</span>
+              {hasChildren && (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
+              )}
+            </NavLink>
+          ) : (
             <button type="button" className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]">
               <span>{item.name}</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
+              {hasChildren && (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
+              )}
             </button>
-          ) : (
-            <NavLink to={route || '/app'} className={({ isActive }) => `flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'}`}>{item.name}</NavLink>
           )}
           {hasChildren && (
             <div className="invisible absolute left-0 top-full z-50 mt-1 min-w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 opacity-0 shadow-xl transition-all group-hover/top:visible group-hover/top:opacity-100 group-focus-within/top:visible group-focus-within/top:opacity-100">
@@ -260,8 +267,11 @@ export default function ClientLayout({ title, breadcrumb, children }) {
 
     return (
       <div key={item.key} className="group/submenu relative">
-        {route && !hasChildren ? (
-          <NavLink to={route} className={({ isActive }) => `flex items-center justify-between rounded-md px-3 py-2 text-sm transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-canvas)]'}`}>{item.name}</NavLink>
+        {route ? (
+          <NavLink to={route} className={({ isActive }) => `flex w-full items-center justify-between gap-4 rounded-md px-3 py-2 text-left text-sm transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-canvas)]'}`}>
+            <span>{item.name}</span>
+            {hasChildren && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5 shrink-0"><path d="m9 6 6 6-6 6" /></svg>}
+          </NavLink>
         ) : (
           <button type="button" className="flex w-full items-center justify-between gap-4 rounded-md px-3 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]">
             <span>{item.name}</span>

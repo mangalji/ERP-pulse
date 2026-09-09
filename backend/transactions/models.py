@@ -2,6 +2,20 @@ from decimal import Decimal
 
 from django.db import models
 
+def get_model_schema(model):
+    fields = []
+
+    for field in model._meta.fields:
+        fields.append({
+            "name": field.name,
+            "label": str(field.verbose_name).replace("_", " ").title(),
+            "type": field.get_internal_type(),
+            "required": not field.blank and not field.null and field.default is models.NOT_PROVIDED,
+            "read_only": field.auto_created or field.primary_key,
+        })
+
+    return fields
+
 
 class Transaction(models.Model):
     id = models.BigAutoField(primary_key=True)

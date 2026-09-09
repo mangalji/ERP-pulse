@@ -8,23 +8,27 @@ class TransactionRepository:
         self,
         *,
         user,
-        transaction_type,
-        record_type,
-        limit,
-        offset,
+        transaction_type=None,
+        record_type=None,
+        limit=20,
+        offset=0,
     ):
         company = getattr(user, "company", None)
 
         if company is None:
             return [], 0
 
+        filters = {"company": company}
+
+        if transaction_type:
+            filters["transaction_type"] = transaction_type
+
+        if record_type:
+            filters["record_type"] = record_type
+
         queryset = (
             Transaction.objects
-            .filter(
-                company=company,
-                transaction_type=transaction_type,
-                record_type=record_type,
-            )
+            .filter(**filters)
             .annotate(line_count=models.Count("lines"))
             .order_by("-tran_date", "-id")
         )

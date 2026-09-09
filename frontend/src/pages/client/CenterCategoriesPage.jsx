@@ -1,61 +1,47 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
 
 const EMPTY_CATEGORY_FORM = {
   name: '',
   route: '',
+  query_param: '',
   center_tab_id: '',
+  sort_order: '',
 }
 
-const EMPTY_CHILD_FORM = {
-  name: '',
-  route: '',
+const EMPTY_PAGINATION = {
+  page: 1,
+  page_size: 10,
+  total: 0,
+  total_pages: 1,
+  has_next: false,
+  has_previous: false,
 }
+
+const firstQueryParamKey = (queryParams) =>
+  queryParams && typeof queryParams === 'object'
+    ? Object.keys(queryParams)[0] || ''
+    : ''
 
 export default function CenterCategoriesPage() {
+  const navigate = useNavigate()
+
   const [categories, setCategories] = useState([])
   const [centerTabs, setCenterTabs] = useState([])
-
   const [page, setPage] = useState(1)
-
-  const [pagination, setPagination] = useState({
-    page: 1,
-    page_size: 10,
-    total: 0,
-    total_pages: 1,
-    has_next: false,
-    has_previous: false,
-  })
-
-  const [selectedCategory, setSelectedCategory] = useState(null)
-  const [children, setChildren] = useState([])
+  const [pagination, setPagination] = useState(EMPTY_PAGINATION)
 
   const [loading, setLoading] = useState(true)
-  const [loadingChildren, setLoadingChildren] = useState(false)
-
   const [savingCategory, setSavingCategory] = useState(false)
-  const [savingChild, setSavingChild] = useState(false)
-
   const [showCategoryForm, setShowCategoryForm] = useState(false)
-  const [showChildForm, setShowChildForm] = useState(false)
-
-  const [categoryForm, setCategoryForm] = useState(
-    EMPTY_CATEGORY_FORM,
-  )
-
-  const [childForm, setChildForm] = useState(
-    EMPTY_CHILD_FORM,
-  )
-
+  const [editingCategoryId, setEditingCategoryId] = useState(null)
+  const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const [deleteMode, setDeleteMode] = useState(false)
-  const [selectedIds, setSelectedIds] = useState([])
-  const [deleting, setDeleting] = useState(false)
-
-  const loadCategories = async (nextPage = 1) => {
+  const loadCategories = async (nextPage = page) => {
     setLoading(true)
     setError('')
 
@@ -63,25 +49,13 @@ export default function CenterCategoriesPage() {
       const result = await clientApi.getCenterCategories(nextPage)
 
       const nextCategories = result?.results || []
-      const nextPagination = result?.pagination || {
-        page: nextPage,
-        page_size: 10,
-        total: 0,
-        total_pages: 1,
-        has_next: false,
-        has_previous: false,
-      }
-
       setCategories(nextCategories)
       setCenterTabs(result?.center_tabs || [])
-      setPagination(nextPagination)
-      setSelectedIds((current) =>
-        current.filter((id) =>
-          nextCategories.some(
-            (category) => String(category.id) === String(id)
-          )
-        )
-      )
+      setPagination(result?.pagination || {
+        ...EMPTY_PAGINATION,
+        page: nextPage,
+      })
+
     } catch (err) {
       setError(
         err?.payload?.message ||
@@ -98,116 +72,50 @@ export default function CenterCategoriesPage() {
     loadCategories(page)
   }, [page])
 
-  const toggleCategorySelection = (categoryId) => {
-    const id = String(categoryId)
-
-    setSelectedIds((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id],
-    )
-  }
-
-  const toggleSelectAll = (checked) => {
-    if (checked) {
-      setSelectedIds(
-        categories.map((category) => String(category.id))
-      )
-    } else {
-      setSelectedIds([])
-    }
-  }
-
-  const exitDeleteMode = () => {
-    setDeleteMode(false)
-    setSelectedIds([])
-    setError('')
-  }
-
-  const deleteSelectedCategories = async () => {
-    if (!selectedIds.length || deleting) {
-      return
-    }
-
-    if (
-      !window.confirm(
-        `Delete ${selectedIds.length} selected Center Category(s)?`,
-      )
-    ) {
-      return
-    }
-
-    setDeleting(true)
+  const startCreateCategory = () => {
+    setEditingCategoryId(null)
+    setCategoryForm(EMPTY_CATEGORY_FORM)
+    setShowCategoryForm(true)
     setError('')
     setMessage('')
-
-    try {
-      await clientApi.deleteCenterCategories(selectedIds)
-
-      const deletingCurrentCategory =
-        selectedCategory &&
-        selectedIds.includes(String(selectedCategory.id))
-
-      const nextPage =
-        categories.length === selectedIds.length && page > 1
-          ? page - 1
-          : page
-
-      setSelectedIds([])
-      setDeleteMode(false)
-
-      if (deletingCurrentCategory) {
-        setSelectedCategory(null)
-        setChildren([])
-        setShowChildForm(false)
-        setChildForm(EMPTY_CHILD_FORM)
-      }
-
-      if (nextPage !== page) {
-        setPage(nextPage)
-      } else {
-        await loadCategories(page)
-      }
-
-      setMessage('Selected Center Categories deleted successfully.')
-    } catch (err) {
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to delete selected Center Categories.',
-      )
-    } finally {
-      setDeleting(false)
-    }
   }
 
-  const selectCategory = async (category) => {
-    setSelectedCategory(category)
-    setChildren([])
-    setShowChildForm(false)
-    setChildForm(EMPTY_CHILD_FORM)
-
-    setLoadingChildren(true)
+  const startEditCategory = (category) => {
+    setEditingCategoryId(category.id)
+    setCategoryForm({
+      name: category.name || '',
+      route: category.route || '',
+      query_param:
+        category.query_param ||
+        firstQueryParamKey(category.query_params),
+      center_tab_id: category.center_tab?.id || '',
+      sort_order:
+        category.sort_order === null ||
+        category.sort_order === undefined
+          ? ''
+          : String(category.sort_order),
+    })
+    setShowCategoryForm(true)
     setError('')
-
-    try {
-      const result =
-        await clientApi.getCenterCategoryChildren(category.id)
-
-      setChildren(result?.results || [])
-    } catch (err) {
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to load Level-3 items.',
-      )
-    } finally {
-      setLoadingChildren(false)
-    }
+    setMessage('')
   }
 
-  const createCategory = async () => {
+  const parseSortOrder = (value) => {
+    if (value.trim() === '') {
+      return null
+    }
+
+    const parsed = Number(value)
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return null
+    }
+
+    return parsed
+  }
+
+  const submitCategory = async () => {
     const name = categoryForm.name.trim()
+    const queryParam = categoryForm.query_param.trim()
 
     if (!name) {
       setError('Center Category name is required.')
@@ -219,80 +127,69 @@ export default function CenterCategoriesPage() {
       return
     }
 
+    const sortOrder = parseSortOrder(categoryForm.sort_order)
+    if (
+      categoryForm.sort_order.trim() !== '' &&
+      sortOrder === null
+    ) {
+      setError('Sort Order must be a non-negative integer.')
+      return
+    }
+
     setSavingCategory(true)
     setError('')
     setMessage('')
 
     try {
-      await clientApi.createCenterCategory({
-        name,
-        route: categoryForm.route.trim(),
-        center_tab_id: categoryForm.center_tab_id,
-      })
+      if (editingCategoryId) {
+        const payload = {
+          name,
+          route: '',
+          query_param: queryParam,
+        }
+
+        if (sortOrder !== null) {
+          payload.sort_order = sortOrder
+        }
+
+        await clientApi.updateNavigationTab(
+          'level2',
+          editingCategoryId,
+          payload,
+        )
+
+        setMessage('Center Category updated successfully.')
+      } else {
+        const payload = {
+          name,
+          route,
+          center_tab_id: categoryForm.center_tab_id,
+          query_param: queryParam,
+        }
+
+        if (sortOrder !== null) {
+          payload.sort_order = sortOrder
+        }
+
+        await clientApi.createCenterCategory(payload)
+        setMessage('Center Category created successfully.')
+      }
 
       setCategoryForm(EMPTY_CATEGORY_FORM)
+      setEditingCategoryId(null)
       setShowCategoryForm(false)
-      setMessage('Center Category created successfully.')
 
-      if (page !== 1) {
-        setPage(1)
-      } else {
-        await loadCategories(1)
-      }
+      await loadCategories(page)
     } catch (err) {
       setError(
         err?.payload?.message ||
           err?.message ||
-          'Unable to create Center Category.',
+          `Unable to ${
+            editingCategoryId ? 'update' : 'create'
+          } Center Category.`,
       )
     } finally {
       setSavingCategory(false)
-    }
-  }
-
-  const createChild = async () => {
-    if (!selectedCategory) {
-      return
-    }
-
-    const name = childForm.name.trim()
-
-    if (!name) {
-      setError('Level-3 name is required.')
-      return
-    }
-
-    setSavingChild(true)
-    setError('')
-    setMessage('')
-
-    try {
-      await clientApi.createCenterCategoryChild(
-        selectedCategory.id,
-        {
-          name,
-          route: childForm.route.trim(),
-        },
-      )
-
-      setChildForm(EMPTY_CHILD_FORM)
-      setShowChildForm(false)
-      setMessage('Level-3 item created successfully.')
-
-      const result =
-        await clientApi.getCenterCategoryChildren(
-          selectedCategory.id,
-        )
-
-      setChildren(result?.results || [])
-    } catch (err) {
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to create Level-3 item.',
-      )
-    } finally {
-      setSavingChild(false)
     }
   }
 
@@ -301,81 +198,47 @@ export default function CenterCategoriesPage() {
       title="Center Categories"
       breadcrumb="Settings / Customize / Center Categories"
     >
-      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold text-[var(--color-ink)]">
               Center Categories
             </h1>
-
             <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Manage categories under Center Tabs.
+              Manage Level-2 categories and their Level-3 navigation items.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setShowCategoryForm((current) => !current)
-                setCategoryForm(EMPTY_CATEGORY_FORM)
-                setError('')
-                setMessage('')
-              }}
-              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white"
-            >
-              New Center Category
-            </button>
-
-            {!deleteMode ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setDeleteMode(true)
-                  setSelectedIds([])
-                  setError('')
-                  setMessage('')
-                }}
-                className="rounded-lg border border-red-300 px-4 py-2 text-sm font-semibold text-red-600"
-              >
-                Delete
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={exitDeleteMode}
-                  disabled={deleting}
-                  className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold text-[var(--color-ink-soft)] disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="button"
-                  onClick={deleteSelectedCategories}
-                  disabled={!selectedIds.length || deleting}
-                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  {deleting ? 'Deleting...' : 'Delete Selected'}
-                </button>
-              </>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={startCreateCategory}
+            className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white"
+          >
+            New Center Category
+          </button>
         </div>
 
         {showCategoryForm && (
           <div className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-            <h2 className="text-sm font-semibold text-[var(--color-ink)]">
-              Create Center Category
-            </h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-[var(--color-ink)]">
+                {editingCategoryId
+                  ? 'Edit Center Category'
+                  : 'Create Center Category'}
+              </h2>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              {editingCategoryId && (
+                <span className="text-xs text-[var(--color-muted)]">
+                  Key and Internal ID cannot be changed.
+                </span>
+              )}
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-5">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">
                   Center Category Name
                 </label>
-
                 <input
                   value={categoryForm.name}
                   onChange={(event) =>
@@ -384,7 +247,7 @@ export default function CenterCategoriesPage() {
                       name: event.target.value,
                     }))
                   }
-                  placeholder="e.g. Sales"
+                  placeholder="e.g. Transactions"
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm"
                 />
               </div>
@@ -393,7 +256,6 @@ export default function CenterCategoriesPage() {
                 <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">
                   Center Tab
                 </label>
-
                 <select
                   value={categoryForm.center_tab_id}
                   onChange={(event) =>
@@ -402,12 +264,10 @@ export default function CenterCategoriesPage() {
                       center_tab_id: event.target.value,
                     }))
                   }
-                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm"
+                  disabled={Boolean(editingCategoryId)}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm disabled:opacity-60"
                 >
-                  <option value="">
-                    Select Center Tab
-                  </option>
-
+                  <option value="">Select Center Tab</option>
                   {centerTabs.map((tab) => (
                     <option key={tab.id} value={tab.id}>
                       {tab.name}
@@ -416,30 +276,55 @@ export default function CenterCategoriesPage() {
                 </select>
               </div>
 
+
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">
-                  Path (optional)
+                  Query Param (key only)
                 </label>
-
                 <input
-                  value={categoryForm.route}
+                  value={categoryForm.query_param}
                   onChange={(event) =>
                     setCategoryForm((current) => ({
                       ...current,
-                      route: event.target.value,
+                      query_param: event.target.value,
                     }))
                   }
-                  placeholder="e.g. /app/sales"
+                  placeholder="e.g. transaction_type"
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">
+                  Sort Order
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={categoryForm.sort_order}
+                  onChange={(event) =>
+                    setCategoryForm((current) => ({
+                      ...current,
+                      sort_order: event.target.value,
+                    }))
+                  }
+                  placeholder="Auto"
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm"
                 />
               </div>
             </div>
+
+            <p className="mt-3 text-xs text-[var(--color-muted)]">
+              Query Param is only the key. Its value is automatically the current category name.
+            </p>
 
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => {
                   setShowCategoryForm(false)
+                  setEditingCategoryId(null)
                   setCategoryForm(EMPTY_CATEGORY_FORM)
                 }}
                 className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold"
@@ -450,12 +335,14 @@ export default function CenterCategoriesPage() {
               <button
                 type="button"
                 disabled={savingCategory}
-                onClick={createCategory}
+                onClick={submitCategory}
                 className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {savingCategory
-                  ? 'Creating...'
-                  : 'Create Center Category'}
+                  ? 'Saving...'
+                  : editingCategoryId
+                    ? 'Save Changes'
+                    : 'Create Center Category'}
               </button>
             </div>
           </div>
@@ -478,34 +365,26 @@ export default function CenterCategoriesPage() {
             <table className="min-w-full text-sm">
               <thead className="border-b border-[var(--color-border)] bg-[var(--color-canvas)]">
                 <tr>
-                  {deleteMode && (
-                    <th className="w-12 px-4 py-3">
-                      <input
-                        type="checkbox"
-                        aria-label="Select all Center Categories on this page"
-                        checked={
-                          categories.length > 0 &&
-                          categories.every((category) =>
-                            selectedIds.includes(String(category.id))
-                          )
-                        }
-                        onChange={(event) =>
-                          toggleSelectAll(event.target.checked)
-                        }
-                      />
-                    </th>
-                  )}
-
                   <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
-                    Center Category Name
+                    Internal ID
                   </th>
-
+                  <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
+                    Name
+                  </th>
                   <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
                     Center Tab
                   </th>
-
                   <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
                     Path
+                  </th>
+                  <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
+                    Query Param
+                  </th>
+                  <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
+                    Sort Order
+                  </th>
+                  <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
+                    Actions
                   </th>
                 </tr>
               </thead>
@@ -514,7 +393,7 @@ export default function CenterCategoriesPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={deleteMode ? 4 : 3}
+                      colSpan={7}
                       className="px-4 py-8 text-center text-[var(--color-muted)]"
                     >
                       Loading Center Categories...
@@ -523,7 +402,7 @@ export default function CenterCategoriesPage() {
                 ) : categories.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={deleteMode ? 4 : 3}
+                      colSpan={7}
                       className="px-4 py-8 text-center text-[var(--color-muted)]"
                     >
                       No Center Categories found.
@@ -533,35 +412,31 @@ export default function CenterCategoriesPage() {
                   categories.map((category) => (
                     <tr
                       key={category.id}
-                      className={`border-b border-[var(--color-border)] last:border-b-0 ${
-                        selectedCategory?.id === category.id
-                          ? 'bg-[var(--color-canvas)]'
-                          : ''
-                      }`}
+                      className="border-b border-[var(--color-border)] last:border-b-0"
                     >
-                      {deleteMode && (
-                        <td className="w-12 px-4 py-3">
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${category.name}`}
-                            checked={selectedIds.includes(String(category.id))}
-                            onChange={() =>
-                              toggleCategorySelection(category.id)
-                            }
-                          />
-                        </td>
-                      )}
+                      <td className="px-4 py-3 text-[var(--color-ink-soft)]">
+                        {category.internal_id}
+                      </td>
 
                       <td className="px-4 py-3 font-medium">
                         <button
                           type="button"
-                          onClick={() =>
-                            selectCategory(category)
-                          }
+                          onClick={() => {
+                            setError('')
+                            setMessage('')
+                            navigate(
+                              `/app/settings/customize/center-categories/${category.id}`,
+                            )
+                          }}
                           className="text-[var(--color-primary)]"
                         >
                           {category.name}
                         </button>
+                        {category.system && (
+                          <span className="ml-2 rounded-full bg-[var(--color-canvas)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-muted)]">
+                            System
+                          </span>
+                        )}
                       </td>
 
                       <td className="px-4 py-3 text-[var(--color-ink-soft)]">
@@ -569,7 +444,26 @@ export default function CenterCategoriesPage() {
                       </td>
 
                       <td className="px-4 py-3 text-[var(--color-ink-soft)]">
-                        {category.route || '—'}
+                        {category.effective_route || category.route || '—'}
+                      </td>
+
+                      <td className="px-4 py-3 text-[var(--color-ink-soft)]">
+                        {category.query_param || '—'}
+                      </td>
+
+                      <td className="px-4 py-3 text-[var(--color-ink-soft)]">
+                        {category.sort_order}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          disabled={category.system}
+                          onClick={() => startEditCategory(category)}
+                          className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold text-[var(--color-ink)] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Edit
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -587,9 +481,7 @@ export default function CenterCategoriesPage() {
               <button
                 type="button"
                 disabled={!pagination.has_previous || loading}
-                onClick={() =>
-                  setPage((current) => current - 1)
-                }
+                onClick={() => setPage((current) => current - 1)}
                 className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
               >
                 Previous
@@ -598,9 +490,7 @@ export default function CenterCategoriesPage() {
               <button
                 type="button"
                 disabled={!pagination.has_next || loading}
-                onClick={() =>
-                  setPage((current) => current + 1)
-                }
+                onClick={() => setPage((current) => current + 1)}
                 className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
               >
                 Next
@@ -609,138 +499,6 @@ export default function CenterCategoriesPage() {
           </div>
         </div>
 
-        {selectedCategory && (
-          <div className="mt-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-4">
-              <div>
-                <h2 className="text-sm font-semibold text-[var(--color-ink)]">
-                  {selectedCategory.name}
-                </h2>
-
-                <p className="mt-1 text-xs text-[var(--color-muted)]">
-                  Level-3 items
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowChildForm((current) => !current)
-                  setChildForm(EMPTY_CHILD_FORM)
-                  setError('')
-                }}
-                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white"
-              >
-                New
-              </button>
-            </div>
-
-            {showChildForm && (
-              <div className="border-b border-[var(--color-border)] p-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">
-                      Name
-                    </label>
-
-                    <input
-                      value={childForm.name}
-                      onChange={(event) =>
-                        setChildForm((current) => ({
-                          ...current,
-                          name: event.target.value,
-                        }))
-                      }
-                      placeholder="Enter Level-3 name"
-                      className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">
-                      Path (optional)
-                    </label>
-
-                    <input
-                      value={childForm.route}
-                      onChange={(event) =>
-                        setChildForm((current) => ({
-                          ...current,
-                          route: event.target.value,
-                        }))
-                      }
-                      placeholder="Enter path"
-                      className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-4 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowChildForm(false)
-                      setChildForm(EMPTY_CHILD_FORM)
-                    }}
-                    className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold"
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={savingChild}
-                    onClick={createChild}
-                    className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                  >
-                    {savingChild ? 'Creating...' : 'Create'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {loadingChildren ? (
-              <div className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
-                Loading Level-3 items...
-              </div>
-            ) : children.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
-                No Level-3 items found.
-              </div>
-            ) : (
-              <table className="min-w-full text-sm">
-                <thead className="border-b border-[var(--color-border)] bg-[var(--color-canvas)]">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
-                      Name
-                    </th>
-
-                    <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
-                      Path
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {children.map((child) => (
-                    <tr
-                      key={child.id}
-                      className="border-b border-[var(--color-border)] last:border-b-0"
-                    >
-                      <td className="px-4 py-3 font-medium text-[var(--color-ink)]">
-                        {child.name}
-                      </td>
-
-                      <td className="px-4 py-3 text-[var(--color-ink-soft)]">
-                        {child.route || '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
       </div>
     </ClientLayout>
   )

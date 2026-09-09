@@ -26,11 +26,11 @@ import InvitationAcceptPage from '../pages/invitations/InvitationAcceptPage.jsx'
 
 // Public Website
 import PublicHomePage from '../pages/public/HomePage.jsx'
-import PublicFeaturesPage from '../pages/public/FeaturesPage.jsx'
-import PublicPricingPage from '../pages/public/PricingPage.jsx'
-import PublicAboutPage from '../pages/public/AboutPage.jsx'
-import PublicContactPage from '../pages/public/ContactPage.jsx'
-import PublicRequestDemoPage from '../pages/public/RequestDemoPage.jsx'
+// import PublicFeaturesPage from '../pages/public/FeaturesPage.jsx'
+// import PublicPricingPage from '../pages/public/PricingPage.jsx'
+// import PublicAboutPage from '../pages/public/AboutPage.jsx'
+// import PublicContactPage from '../pages/public/ContactPage.jsx'
+// import PublicRequestDemoPage from '../pages/public/RequestDemoPage.jsx'
 
 // Client Company Portal
 import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
@@ -47,6 +47,8 @@ import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
 import CustomizeNavigationPage from '../pages/client/CustomizeNavigationPage.jsx'
 import CenterTabsPage from '../pages/client/CenterTabsPage.jsx'
 import CenterCategoriesPage from '../pages/client/CenterCategoriesPage.jsx'
+import CenterTabDetailPage from '../pages/client/CenterTabDetailPage.jsx'
+import CenterCategoryDetailPage from '../pages/client/CenterCategoryDetailPage.jsx'
 import ClientProfilePage from '../pages/client/ProfilePage.jsx'
 import ClientSubscriptionPage from '../pages/client/SubscriptionPage.jsx'
 import NetSuiteIntegrationsPage from '../pages/client/NetSuiteIntegrationsPage.jsx'
@@ -109,11 +111,11 @@ export default function AppRoutes() {
     <Routes>
       {/* Public Website */}
       <Route path="/" element={<PublicRoute><PublicHomePage /></PublicRoute>} />
-      <Route path="/features" element={<PublicRoute><PublicFeaturesPage /></PublicRoute>} />
+      {/* <Route path="/features" element={<PublicRoute><PublicFeaturesPage /></PublicRoute>} />
       <Route path="/pricing" element={<PublicRoute><PublicPricingPage /></PublicRoute>} />
       <Route path="/about" element={<PublicRoute><PublicAboutPage /></PublicRoute>} />
       <Route path="/contact" element={<PublicRoute><PublicContactPage /></PublicRoute>} />
-      <Route path="/request-demo" element={<PublicRoute><PublicRequestDemoPage /></PublicRoute>} />
+      <Route path="/request-demo" element={<PublicRoute><PublicRequestDemoPage /></PublicRoute>} /> */}
 
       {/* Authentication */}
       <Route path="/login" element={<LoginPage />} />
@@ -147,6 +149,12 @@ export default function AppRoutes() {
 
       {/* Single transaction page; DB menu supplies the view query param. */}
       <Route path="/app/transactions" element={
+        <ProtectedRoute requiredRole="client">
+          <TransactionsPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/app/transaction" element={
         <ProtectedRoute requiredRole="client">
           <TransactionsPage />
         </ProtectedRoute>
@@ -425,10 +433,26 @@ export default function AppRoutes() {
           }
         />
         <Route
+          path="/app/settings/customize/center-categories/:categoryId"
+          element={
+            <ProtectedRoute requiredRole="client">
+              <CenterCategoryDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/app/settings/customize/center-tabs"
           element={
             <ProtectedRoute requiredRole="client">
               <CenterTabsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/app/settings/customize/center-tabs/:tabId"
+          element={
+            <ProtectedRoute requiredRole="client">
+              <CenterTabDetailPage />
             </ProtectedRoute>
           }
         />
@@ -556,7 +580,6 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
-
       {/* Catch-all: route to portal if authenticated, login if not */}
       <Route path="*" element={<CatchAllRoute />} />
     </Routes>

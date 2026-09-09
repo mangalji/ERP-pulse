@@ -105,6 +105,9 @@ export const clientApi = {
       params: { page },
     }).then(unwrap),
 
+  getCenterTabChildren: (tabId) =>
+    apiClient.get(`/navigation/center-tabs/${tabId}/children/`).then(unwrap),
+
   getCenterCategories: (page = 1) =>
   apiClient
     .get('/navigation/center-categories/', {
@@ -128,6 +131,11 @@ export const clientApi = {
         `/navigation/center-categories/${categoryId}/children/`,
         payload,
       )
+      .then(unwrap),
+
+  deleteCenterCategoryChildren: (categoryId, ids) =>
+    apiClient
+      .post(`/navigation/center-categories/${categoryId}/children/bulk-delete/`, { ids })
       .then(unwrap),
 
   createCenterTab: (payload) =>
@@ -159,5 +167,4 @@ export const clientApi = {
         record_type: recordType,
       },
     }).then(unwrap),
-
 }

@@ -9,16 +9,15 @@ class TransactionService:
         self,
         *,
         user,
-        transaction_type,
-        record_type,
+        transaction_type=None,
+        record_type=None,
         limit=20,
         offset=0,
     ):
-        if not transaction_type:
-            raise ValueError("transaction_type is required.")
-
-        if not record_type:
-            raise ValueError("record_type is required.")
+        if record_type and not transaction_type:
+            raise ValueError(
+                "transaction_type is required when record_type is provided."
+            )
 
         rows, count = self.repository.list_for_user(
             user=user,

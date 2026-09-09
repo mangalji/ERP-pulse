@@ -1,3 +1,4 @@
+import re
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils.text import slugify
@@ -7,8 +8,6 @@ from rest_framework import status
 from rest_framework.views import APIView
 from uuid import UUID
 from common.utils.response import success_response
-from navigation.serializers import TransactionMenuSerializer
-from navigation.services import transaction_menu_service
 from django.core.paginator import Paginator
 from .models import (
     DynamicTopLevelTab,
@@ -18,33 +17,6 @@ from .models import (
 )
 
 User = get_user_model()
-
-class TransactionMenuView(APIView):
-    """
-    GET /api/v1/navigation/menu/
-
-    Returns the transaction navigation tree for a company user with an
-    authorized/current NetSuite connection.
-
-    Super Admin users are excluded from the transaction menu by the
-    company requirement: users without request.user.company receive no menu.
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        menu = transaction_menu_service.get_menu_for_user(user=request.user)
-
-        if menu is None:
-            return success_response(
-                message="Transaction menu is not available for this user.",
-                data=[],
-            )
-
-        return success_response(
-            message="Transaction menu fetched successfully.",
-            data=TransactionMenuSerializer(menu).data,
-        )
 
 class DynamicNavigationMenuView(APIView):
     """Return the active 3-level navigation tree for the current user."""
@@ -76,17 +48,97 @@ class DynamicNavigationMenuView(APIView):
         return top, level2, level3
 
     @staticmethod
-    def _tab_data(tab):
+    def _tab_data(
+        tab,
+        inherited_route="",
+        inherited_query_params=None,
+    ):
+        effective_route = tab.route or inherited_route
+
+        effective_query_params = dict(inherited_query_params or {})
+        for key in (tab.query_params or {}):
+            effective_query_params[key] = tab.name
+
         return {
             "id": str(tab.id),
+            "internal_id": tab.internal_id,
             "name": tab.name,
             "key": tab.key,
-            "route": tab.route,
-            # "query_params": tab.query_params or {},
-            # "feature_code": tab.feature_code,
-            # "icon": tab.icon,
+            "route": effective_route,
+            "query_params": effective_query_params,
+            "sort_order": tab.sort_order,
         }
 
+    def _build_level3_data(
+        self,
+        level2_tab,
+        inherited_route,
+        inherited_query_params,
+        level3_visibility,
+    ):
+        data = []
+
+        for level3_tab in (
+            level2_tab.level3_tabs
+            .filter(is_active=True)
+            .order_by("sort_order", "internal_id", "name")
+        ):
+            if level3_visibility.get(level3_tab.id, True) is False:
+                continue
+
+            data.append(
+                self._tab_data(
+                    level3_tab,
+                    inherited_route=inherited_route,
+                    inherited_query_params=inherited_query_params,
+                )
+            )
+
+        return data
+
+    def _build_level2_data(
+        self,
+        top_tab,
+        inherited_route,
+        inherited_query_params,
+        level2_visibility,
+        level3_visibility,
+        is_admin,
+    ):
+        data = []
+
+        for level2_tab in (
+            top_tab.level2_tabs
+            .filter(is_active=True)
+            .order_by("sort_order", "internal_id", "name")
+        ):
+            if (
+                level2_tab.key == "settings-customize"
+                and not is_admin
+            ):
+                continue
+
+            if level2_visibility.get(level2_tab.id, True) is False:
+                continue
+
+            level2_node = self._tab_data(
+                level2_tab,
+                inherited_route=inherited_route,
+                inherited_query_params=inherited_query_params,
+            )
+
+            level2_route = level2_node["route"]
+            level2_query_params = level2_node["query_params"]
+
+            level2_node["children"] = self._build_level3_data(
+                level2_tab,
+                inherited_route=level2_route,
+                inherited_query_params=level2_query_params,
+                level3_visibility=level3_visibility,
+            )
+            data.append(level2_node)
+
+        return data
 
     def get(self, request):
         _ensure_system_tabs()
@@ -100,73 +152,166 @@ class DynamicNavigationMenuView(APIView):
         top_level_tabs = (
             DynamicTopLevelTab.objects
             .filter(is_active=True)
-            .prefetch_related(
-                "level2_tabs__level3_tabs",
-            )
-            .order_by("sort_order", "name")
+            .prefetch_related("level2_tabs__level3_tabs")
+            .order_by("sort_order", "internal_id", "name")
         )
 
         data = []
 
         for top_tab in top_level_tabs:
-
-            # Employees is a system tab:
-            # visible only to Company Admin.
             if top_tab.key == "employees" and not is_admin:
                 continue
 
-            # Settings is always visible.
             if (
                 top_tab.key != "settings"
                 and top_visibility.get(top_tab.id, True) is False
             ):
                 continue
 
-            level2_data = []
+            top_node = self._tab_data(
+                top_tab,
+                inherited_route="",
+                inherited_query_params={},
+            )
 
-            for level2_tab in (
-                top_tab.level2_tabs
-                .filter(is_active=True)
-                .order_by("sort_order", "name")
-            ):
-                if (
-                    level2_tab.key == "settings-customize"
-                    and not is_admin
-                ):
-                    continue
+            top_node["children"] = self._build_level2_data(
+                top_tab,
+                inherited_route=top_node["route"],
+                inherited_query_params=top_node["query_params"],
+                level2_visibility=level2_visibility,
+                level3_visibility=level3_visibility,
+                is_admin=is_admin,
+            )
 
-                if level2_visibility.get(level2_tab.id, True) is False:
-                    continue
-
-                level3_data = []
-
-                for level3_tab in (
-                    level2_tab.level3_tabs
-                    .filter(is_active=True)
-                    .order_by("sort_order", "name")
-                ):
-                    if level3_visibility.get(level3_tab.id, True) is False:
-                        continue
-
-                    level3_data.append(
-                        self._tab_data(level3_tab)
-                    )
-
-                level2_data.append({
-                    **self._tab_data(level2_tab),
-                    "children": level3_data,
-                })
-
-            data.append({
-                **self._tab_data(top_tab),
-                "children": level2_data,
-            })
+            data.append(top_node)
 
         return success_response(
             message="Navigation menu fetched successfully.",
             data=data,
         )
-    
+
+
+CUSTOM_KEY_PREFIX = "cust_"
+
+SYSTEM_KEYS = {
+    "employees",
+    "settings",
+    "settings-company-info",
+    "settings-customize",
+    "settings-personal-info",
+    "center-tabs",
+    "center-categories",
+}
+
+
+def _build_custom_key(model, name):
+    slug = slugify(name) or "tab"
+
+    base = f"{CUSTOM_KEY_PREFIX}{slug}"[:120]
+    key = base
+    suffix = 2
+
+    while model.objects.filter(key=key).exists():
+        suffix_text = f"-{suffix}"
+        key = (
+            f"{base[:120 - len(suffix_text)]}"
+            f"{suffix_text}"
+        )
+        suffix += 1
+
+    return key
+
+
+def _validate_query_param_key(value):
+    key = str(value or "").strip()
+
+    if not key:
+        return ""
+
+    if not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_.-]*",
+        key,
+    ):
+        raise ValueError(
+            "Query Param must contain only letters, numbers, "
+            "underscore, dot, or hyphen, and cannot start with "
+            "a number."
+        )
+
+    return key
+
+
+def _normalize_route(route, required=True):
+    route = str(route or "").strip()
+
+    if not route:
+        if required:
+            raise ValueError("Path is required.")
+        return ""
+
+    if "?" in route or "#" in route:
+        raise ValueError(
+            "Do not enter query parameters in Path. "
+            "Use the Query Param field instead."
+        )
+
+    if route.startswith(("http://", "https://")):
+        raise ValueError(
+            "Only internal /app/ paths are allowed."
+        )
+
+    if route == "/app":
+        raise ValueError(
+            "Path must contain a dynamic path after /app/."
+        )
+
+    if route.startswith("/app/"):
+        dynamic_path = route[len("/app/"):].strip("/")
+    else:
+        dynamic_path = route.strip("/")
+
+    if not dynamic_path:
+        raise ValueError(
+            "Path must contain a dynamic path after /app/."
+        )
+
+    return f"/app/{dynamic_path}"
+
+
+def _build_query_params(name, query_param, allow_query_param=True):
+    if not allow_query_param:
+        return {}
+
+    query_param = _validate_query_param_key(query_param)
+
+    if not query_param:
+        return {}
+
+    return {
+        query_param: name,
+    }
+
+
+def _parse_sort_order(raw_value, queryset):
+    if raw_value in (None, ""):
+        latest_sort_order = (
+            queryset
+            .order_by("-sort_order")
+            .values_list("sort_order", flat=True)
+            .first()
+        )
+        return (latest_sort_order or 0) + 10
+
+    try:
+        sort_order = int(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError("sort_order must be an integer.")
+
+    if sort_order < 0:
+        raise ValueError("sort_order cannot be negative.")
+
+    return sort_order
+
 
 def _is_company_admin(user):
     if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
@@ -382,9 +527,10 @@ class CenterTabsView(APIView):
         Returns active top-level tabs, 10 per page.
 
     POST:
-        Creates a new top-level tab using only:
+        Creates a top-level tab using:
         - name
-        - route (optional)
+        - route/path (required)
+        - sort_order (optional; auto-incremented when omitted)
     """
 
     permission_classes = [IsAuthenticated]
@@ -403,7 +549,7 @@ class CenterTabsView(APIView):
         tabs = (
             DynamicTopLevelTab.objects
             .filter(is_active=True)
-            .order_by("sort_order", "name", "id")
+            .order_by("sort_order", "internal_id", "name", "id")
         )
 
         paginator = Paginator(tabs, 10)
@@ -415,8 +561,13 @@ class CenterTabsView(APIView):
                 "results": [
                     {
                         "id": str(tab.id),
+                        "internal_id": tab.internal_id,
                         "name": tab.name,
+                        "key": tab.key,
                         "route": tab.route or "",
+                        "query_params": tab.query_params or {},
+                        "sort_order": tab.sort_order,
+                        "system": tab.key in {"employees", "settings"},
                     }
                     for tab in page.object_list
                 ],
@@ -432,8 +583,13 @@ class CenterTabsView(APIView):
         )
 
     def post(self, request):
+        if not _is_company_admin(request.user):
+            return Response(
+                {"detail": "Only Company Admin can add Center Tabs."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         name = str(request.data.get("name") or "").strip()
-        route = str(request.data.get("route") or "").strip()
 
         if not name:
             return Response(
@@ -441,27 +597,34 @@ class CenterTabsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        base_key = slugify(name) or "tab"
-        key = base_key
-        suffix = 2
+        # Center Tab path is required.
+        try:
+            route = _normalize_route(
+                request.data.get("route"),
+                required=True,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        while DynamicTopLevelTab.objects.filter(key=key).exists():
-            key = f"{base_key}-{suffix}"
-            suffix += 1
-
-        latest_sort_order = (
-            DynamicTopLevelTab.objects
-            .order_by("-sort_order")
-            .values_list("sort_order", flat=True)
-            .first()
-        )
-
-        sort_order = (latest_sort_order or 0) + 10
+        try:
+            sort_order = _parse_sort_order(
+                request.data.get("sort_order"),
+                DynamicTopLevelTab.objects.all(),
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         tab = DynamicTopLevelTab.objects.create(
             name=name,
-            key=key,
+            key=_build_custom_key(DynamicTopLevelTab, name),
             route=route,
+            query_params={},
             sort_order=sort_order,
             is_active=True,
         )
@@ -470,10 +633,15 @@ class CenterTabsView(APIView):
             message="Center Tab created successfully.",
             data={
                 "id": str(tab.id),
+                "internal_id": tab.internal_id,
                 "name": tab.name,
-                "route": tab.route or "",
+                "key": tab.key,
+                "route": tab.route,
+                "query_params": tab.query_params or {},
+                "sort_order": tab.sort_order,
             },
         )
+
 
 class CenterTabsBulkDeleteView(APIView):
     """
@@ -752,7 +920,8 @@ class NavigationCustomizationDataView(APIView):
                 "name": top.name,
                 "key": top.key,
                 "route": top.route,
-                # "query_params": top.query_params or {},
+                "query_params": top.query_params or {},
+                "query_param": next(iter(top.query_params or {}), ""),
                 # "feature_code": top.feature_code,
                 # "icon": top.icon,
                 "level": "top",
@@ -798,7 +967,8 @@ class NavigationCustomizationDataView(APIView):
                         "name": l3.name,
                         "key": l3.key,
                         "route": l3.route,
-                        # "query_params": l3.query_params or {},
+                        "query_params": l3.query_params or {},
+                        "query_param": next(iter(l3.query_params or {}), ""),
                         # "feature_code": l3.feature_code,
                         # "icon": l3.icon,
                         "level": "level3",
@@ -972,30 +1142,14 @@ class NavigationMasterCreateView(APIView):
             )
 
         name = str(request.data.get("name") or "").strip()
-        route = str(request.data.get("route") or "").strip()
-        # feature_code = str(request.data.get("feature_code") or "").strip()
-        # icon = str(request.data.get("icon") or "").strip()
-        parent_level = request.data.get("parent_level") or "root"
+        parent_level = str(request.data.get("parent_level") or "root").strip()
         parent_id = request.data.get("parent_id")
-        # query_params = request.data.get("query_params") or {}
 
         if not name:
             return Response(
                 {"detail": "name is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        if not route:
-            return Response(
-                {"detail": "Path is required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # if not isinstance(query_params, dict):
-        #     return Response(
-        #         {"detail": "query_params must be a JSON object."},
-        #         status=status.HTTP_400_BAD_REQUEST,
-        #     )
 
         if parent_level not in {"root", "top", "level2"}:
             return Response(
@@ -1009,69 +1163,85 @@ class NavigationMasterCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        route = route.strip()
+        # Paths:
+        # root   (Center Tab) -> required
+        # top    (Center Category) -> optional; inherits parent when blank
+        # level2 (Level-3) -> optional; inherits parent/category when blank
+        route_required = parent_level == "root"
 
-        if not route:
+        try:
+            route = _normalize_route(
+                request.data.get("route"),
+                required=route_required,
+            )
+        except ValueError as exc:
             return Response(
-                {"detail": "Path is required."},
+                {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if route.startswith(("http://", "https://")):
+        query_param = str(
+            request.data.get("query_param") or ""
+        ).strip()
+
+        if parent_level == "root" and query_param:
             return Response(
-                {"detail": "Only internal /app/ paths are allowed."},
+                {"detail": "Center Tab cannot have a Query Param."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if route == "/app":
+        try:
+            query_params = _build_query_params(
+                name,
+                query_param,
+                allow_query_param=parent_level != "root",
+            )
+        except ValueError as exc:
             return Response(
-                {"detail": "Path must contain a dynamic path after /app/."},
+                {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if route.startswith("/app/"):
-            dynamic_path = route[len("/app/"):].strip("/")
+        if parent_level == "root":
+            sort_queryset = DynamicTopLevelTab.objects.all()
+        elif parent_level == "top":
+            sort_queryset = DynamicLevel2Tab.objects.filter(
+                parent_tab_id=parent_id
+            )
         else:
-            dynamic_path = route.strip("/")
-
-        if not dynamic_path:
-            return Response(
-                {"detail": "Path must contain a dynamic path after /app/."},
-                status=status.HTTP_400_BAD_REQUEST,
+            sort_queryset = DynamicLevel3Tab.objects.filter(
+                parent_tab_id=parent_id
             )
 
-        route = f"/app/{dynamic_path}"
-
-        base_key = slugify(name) or "tab"
-        sort_order = int(request.data.get("sort_order") or 0)
+        try:
+            sort_order = _parse_sort_order(
+                request.data.get("sort_order"),
+                sort_queryset,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         with transaction.atomic():
             if parent_level == "root":
-                key = base_key
-                suffix = 2
-
-                while DynamicTopLevelTab.objects.filter(key=key).exists():
-                    key = f"{base_key}-{suffix}"
-                    suffix += 1
-
                 tab = DynamicTopLevelTab.objects.create(
                     name=name,
-                    key=key,
+                    key=_build_custom_key(DynamicTopLevelTab, name),
                     route=route,
-                    # query_params=query_params,
-                    # feature_code=feature_code,
-                    # icon=icon,
+                    query_params=query_params,
                     sort_order=sort_order,
                     is_active=True,
                 )
-
                 level = "top"
 
             elif parent_level == "top":
-                parent = DynamicTopLevelTab.objects.filter(
-                    pk=parent_id,
-                    is_active=True,
-                ).first()
+                parent = (
+                    DynamicTopLevelTab.objects
+                    .filter(pk=parent_id, is_active=True)
+                    .first()
+                )
 
                 if not parent:
                     return Response(
@@ -1079,32 +1249,23 @@ class NavigationMasterCreateView(APIView):
                         status=status.HTTP_404_NOT_FOUND,
                     )
 
-                key = base_key
-                suffix = 2
-
-                while DynamicLevel2Tab.objects.filter(key=key).exists():
-                    key = f"{base_key}-{suffix}"
-                    suffix += 1
-
                 tab = DynamicLevel2Tab.objects.create(
                     parent_tab=parent,
                     name=name,
-                    key=key,
+                    key=_build_custom_key(DynamicLevel2Tab, name),
                     route=route,
-                    # query_params=query_params,
-                    # feature_code=feature_code,
-                    # icon=icon,
+                    query_params=query_params,
                     sort_order=sort_order,
                     is_active=True,
                 )
-
                 level = "level2"
 
             else:
-                parent = DynamicLevel2Tab.objects.filter(
-                    pk=parent_id,
-                    is_active=True,
-                ).first()
+                parent = (
+                    DynamicLevel2Tab.objects
+                    .filter(pk=parent_id, is_active=True)
+                    .first()
+                )
 
                 if not parent:
                     return Response(
@@ -1112,38 +1273,31 @@ class NavigationMasterCreateView(APIView):
                         status=status.HTTP_404_NOT_FOUND,
                     )
 
-                key = base_key
-                suffix = 2
-
-                while DynamicLevel3Tab.objects.filter(key=key).exists():
-                    key = f"{base_key}-{suffix}"
-                    suffix += 1
-
                 tab = DynamicLevel3Tab.objects.create(
                     parent_tab=parent,
                     name=name,
-                    key=key,
+                    key=_build_custom_key(DynamicLevel3Tab, name),
                     route=route,
-                    # query_params=query_params,
-                    # feature_code=feature_code,
-                    # icon=icon,
+                    query_params=query_params,
                     sort_order=sort_order,
                     is_active=True,
                 )
-
                 level = "level3"
 
         return success_response(
             message="Navigation tab created successfully.",
             data={
                 "id": str(tab.id),
+                "internal_id": tab.internal_id,
                 "name": tab.name,
                 "key": tab.key,
                 "level": level,
                 "route": tab.route,
-                # "query_params": tab.query_params or {},
+                "query_params": tab.query_params or {},
+                "sort_order": tab.sort_order,
             },
         )
+
 
 class NavigationMasterUpdateView(APIView):
     """Update an existing top-level, level-2, or level-3 navigation tab."""
@@ -1171,42 +1325,41 @@ class NavigationMasterUpdateView(APIView):
             )
 
         try:
-            tab = model.objects.get(pk=tab_id)
+            tab = model.objects.get(pk=tab_id, is_active=True)
         except model.DoesNotExist:
             return Response(
                 {"detail": "Navigation tab not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Employees and Settings are protected system tabs.
-        if level == "top" and tab.key in {"employees", "settings"} or (
-            level == "level2"
-            and tab.key in {
-                "settings-company-info",
-                "settings-customize",
-                "settings-personal-info",
-            }
-        ):
+        system_tab = (
+            (level == "top" and tab.key in {"employees", "settings"})
+            or (
+                level == "level2"
+                and tab.key in {
+                    "settings-company-info",
+                    "settings-customize",
+                    "settings-personal-info",
+                }
+            )
+            or (
+                level == "level3"
+                and tab.key in {
+                    "center-tabs",
+                    "center-categories",
+                }
+            )
+        )
+
+        if system_tab:
             return Response(
-                {
-                    "detail": (
-                        "System navigation tabs cannot be removed or "
-                        "customized."
-                    )
-                },
+                {"detail": "System navigation tabs cannot be customized."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        allowed_fields = {
-            "name",
-            "route",
-            # "query_params",
-            # "feature_code",
-            # "icon",
-            "sort_order",
-        }
-
+        allowed_fields = {"name", "route", "query_param", "sort_order"}
         unknown_fields = set(request.data.keys()) - allowed_fields
+
         if unknown_fields:
             return Response(
                 {
@@ -1218,96 +1371,108 @@ class NavigationMasterUpdateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if "name" in request.data:
-            name = str(request.data.get("name") or "").strip()
+        old_name = tab.name
+        new_name = old_name
 
-            if not name:
+        if "name" in request.data:
+            new_name = str(request.data.get("name") or "").strip()
+            if not new_name:
                 return Response(
                     {"detail": "name cannot be empty."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            tab.name = name
+        if level == "top":
+            route_required = True
+        else:
+            # Center Categories and Level-3 items inherit their effective path.
+            route_required = False
 
         if "route" in request.data:
-            route = str(request.data.get("route") or "").strip()
-
-            if not route:
+            raw_route = request.data.get("route")
+            try:
+                tab.route = _normalize_route(
+                    raw_route,
+                    required=route_required,
+                )
+            except ValueError as exc:
                 return Response(
-                    {"detail": "Path cannot be empty."},
+                    {"detail": str(exc)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if route.startswith(("http://", "https://")):
+        if level == "top" and not tab.route:
+            return Response(
+                {"detail": "Path is required for Center Tabs."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        current_query_keys = list((tab.query_params or {}).keys())
+
+        if "query_param" in request.data:
+            query_param = str(
+                request.data.get("query_param") or ""
+            ).strip()
+
+            if level == "top" and query_param:
                 return Response(
-                    {"detail": "Only internal /app/ paths are allowed."},
+                    {"detail": "Center Tab cannot have a Query Param."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if route == "/app":
+            try:
+                tab.query_params = _build_query_params(
+                    new_name,
+                    query_param,
+                    allow_query_param=level != "top",
+                )
+            except ValueError as exc:
                 return Response(
-                    {
-                        "detail": (
-                            "Path must contain a dynamic path after /app/."
-                        )
-                    },
+                    {"detail": str(exc)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
-            if route.startswith("/app/"):
-                dynamic_path = route[len("/app/"):].strip("/")
-            else:
-                dynamic_path = route.strip("/")
-
-            if not dynamic_path:
-                return Response(
-                    {"detail": "Path must contain a dynamic path after /app/."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            tab.route = f"/app/{dynamic_path}"
-
-        # if "query_params" in request.data:
-        #     query_params = request.data.get("query_params")
-
-        #     if not isinstance(query_params, dict):
-        #         return Response(
-        #             {"detail": "query_params must be a JSON object."},
-        #             status=status.HTTP_400_BAD_REQUEST,
-        #         )
-
-        #     tab.query_params = query_params
-
-        # if "feature_code" in request.data:
-        #     tab.feature_code = str(
-        #         request.data.get("feature_code") or ""
-        #     ).strip()
-
-        # if "icon" in request.data:
-        #     tab.icon = str(request.data.get("icon") or "").strip()
+        elif "name" in request.data and current_query_keys:
+            # Keep the same query-param key and update its value to the new name.
+            tab.query_params = {
+                key: new_name
+                for key in current_query_keys
+            }
 
         if "sort_order" in request.data:
             try:
-                tab.sort_order = int(request.data.get("sort_order"))
+                sort_order = int(request.data.get("sort_order"))
             except (TypeError, ValueError):
                 return Response(
                     {"detail": "sort_order must be an integer."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            if sort_order < 0:
+                return Response(
+                    {"detail": "sort_order cannot be negative."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            tab.sort_order = sort_order
+
+        if "name" in request.data:
+            tab.name = new_name
+
         tab.save()
+
+        query_param_key = next(iter(tab.query_params), "")
 
         return success_response(
             message="Navigation tab updated successfully.",
             data={
                 "id": str(tab.id),
+                "internal_id": tab.internal_id,
                 "name": tab.name,
                 "key": tab.key,
                 "level": level,
-                "route": tab.route,
-                # "query_params": tab.query_params or {},
-                # "feature_code": tab.feature_code,
-                # "icon": tab.icon,
+                "route": tab.route or "",
+                "query_params": tab.query_params or {},
+                "query_param": query_param_key,
                 "sort_order": tab.sort_order,
             },
         )
@@ -1347,26 +1512,22 @@ class NavigationMasterUpdateView(APIView):
             "settings-company-info",
             "settings-customize",
             "settings-personal-info",
+            "center-tabs",
+            "center-categories",
         }
 
         if tab.key in system_keys:
             return Response(
-                {
-                    "detail": (
-                        "System navigation tabs cannot be deleted."
-                    )
-                },
+                {"detail": "System navigation tabs cannot be deleted."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         with transaction.atomic():
             tab_name = tab.name
 
-            # Soft-delete the selected tab.
             tab.is_active = False
             tab.save(update_fields=["is_active", "updated_at"])
 
-            # Deactivate descendants when a parent is deleted.
             if level == "top":
                 DynamicLevel2Tab.objects.filter(
                     parent_tab=tab,
@@ -1384,19 +1545,18 @@ class NavigationMasterUpdateView(APIView):
                     is_active=True,
                 ).update(is_active=False)
 
-            # Remove per-user overrides for the deleted branch.
-            access_filter = {}
-
             if level == "top":
-                access_filter["top_level_tab"] = tab
+                NavigationUserAccess.objects.filter(
+                    top_level_tab=tab
+                ).delete()
             elif level == "level2":
-                access_filter["level2_tab"] = tab
+                NavigationUserAccess.objects.filter(
+                    level2_tab=tab
+                ).delete()
             else:
-                access_filter["level3_tab"] = tab
-
-            NavigationUserAccess.objects.filter(
-                **access_filter
-            ).delete()
+                NavigationUserAccess.objects.filter(
+                    level3_tab=tab
+                ).delete()
 
         return success_response(
             message=f'Navigation tab "{tab_name}" deleted successfully.',
@@ -1406,6 +1566,7 @@ class NavigationMasterUpdateView(APIView):
                 "is_active": False,
             },
         )
+
 
 class CenterCategoriesView(APIView):
     """
@@ -1432,7 +1593,7 @@ class CenterCategoriesView(APIView):
             DynamicLevel2Tab.objects
             .filter(is_active=True)
             .select_related("parent_tab")
-            .order_by("sort_order", "name", "id")
+            .order_by("sort_order", "internal_id", "name", "id")
         )
 
         paginator = Paginator(categories, 10)
@@ -1441,7 +1602,7 @@ class CenterCategoriesView(APIView):
         center_tabs = (
             DynamicTopLevelTab.objects
             .filter(is_active=True)
-            .order_by("sort_order", "name", "id")
+            .order_by("sort_order", "internal_id", "name", "id")
         )
 
         return success_response(
@@ -1450,11 +1611,24 @@ class CenterCategoriesView(APIView):
                 "results": [
                     {
                         "id": str(category.id),
+                        "internal_id": category.internal_id,
                         "name": category.name,
+                        "key": category.key,
                         "route": category.route or "",
+                        "query_params": category.query_params or {},
+                        "query_param": next(
+                            iter(category.query_params or {}),
+                            "",
+                        ),
+                        "sort_order": category.sort_order,
                         "center_tab": {
                             "id": str(category.parent_tab.id),
                             "name": category.parent_tab.name,
+                        },
+                        "system": category.key in {
+                            "settings-company-info",
+                            "settings-customize",
+                            "settings-personal-info",
                         },
                     }
                     for category in page.object_list
@@ -1478,8 +1652,13 @@ class CenterCategoriesView(APIView):
         )
 
     def post(self, request):
+        if not _is_company_admin(request.user):
+            return Response(
+                {"detail": "Only Company Admin can add Center Categories."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         name = str(request.data.get("name") or "").strip()
-        route = str(request.data.get("route") or "").strip()
         center_tab_id = request.data.get("center_tab_id")
 
         if not name:
@@ -1496,10 +1675,7 @@ class CenterCategoriesView(APIView):
 
         parent = (
             DynamicTopLevelTab.objects
-            .filter(
-                pk=center_tab_id,
-                is_active=True,
-            )
+            .filter(pk=center_tab_id, is_active=True)
             .first()
         )
 
@@ -1509,29 +1685,32 @@ class CenterCategoriesView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        base_key = slugify(name) or "category"
-        key = base_key
-        suffix = 2
-
-        while DynamicLevel2Tab.objects.filter(key=key).exists():
-            key = f"{base_key}-{suffix}"
-            suffix += 1
-
-        latest_sort_order = (
-            DynamicLevel2Tab.objects
-            .filter(parent_tab=parent)
-            .order_by("-sort_order")
-            .values_list("sort_order", flat=True)
-            .first()
-        )
-
-        sort_order = (latest_sort_order or 0) + 10
+        try:
+            route = _normalize_route(
+                request.data.get("route"),
+                required=False,
+            )
+            query_params = _build_query_params(
+                name,
+                request.data.get("query_param"),
+                allow_query_param=True,
+            )
+            sort_order = _parse_sort_order(
+                request.data.get("sort_order"),
+                DynamicLevel2Tab.objects.filter(parent_tab=parent),
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         category = DynamicLevel2Tab.objects.create(
             parent_tab=parent,
             name=name,
-            key=key,
+            key=_build_custom_key(DynamicLevel2Tab, name),
             route=route,
+            query_params=query_params,
             sort_order=sort_order,
             is_active=True,
         )
@@ -1540,14 +1719,80 @@ class CenterCategoriesView(APIView):
             message="Center Category created successfully.",
             data={
                 "id": str(category.id),
+                "internal_id": category.internal_id,
                 "name": category.name,
+                "key": category.key,
                 "route": category.route or "",
+                "query_params": category.query_params or {},
+                "query_param": next(
+                    iter(category.query_params or {}),
+                    "",
+                ),
+                "sort_order": category.sort_order,
                 "center_tab": {
                     "id": str(parent.id),
                     "name": parent.name,
                 },
             },
         )
+
+
+class CenterTabChildrenView(APIView):
+    """Return the active Level-2 categories for a Center Tab."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, tab_id):
+        tab = (
+            DynamicTopLevelTab.objects
+            .filter(pk=tab_id, is_active=True)
+            .first()
+        )
+
+        if not tab:
+            return Response(
+                {"detail": "Center Tab not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        categories = (
+            DynamicLevel2Tab.objects
+            .filter(parent_tab=tab, is_active=True)
+            .order_by("sort_order", "internal_id", "name", "id")
+        )
+
+        return success_response(
+            message="Center Tab children fetched successfully.",
+            data={
+                "center_tab": {
+                    "id": str(tab.id),
+                    "internal_id": tab.internal_id,
+                    "name": tab.name,
+                },
+                "results": [
+                    {
+                        "id": str(category.id),
+                        "internal_id": category.internal_id,
+                        "name": category.name,
+                        "key": category.key,
+                        "route": category.route or "",
+                        "query_params": category.query_params or {},
+                        "query_param": next(
+                            iter(category.query_params or {}),
+                            "",
+                        ),
+                        "sort_order": category.sort_order,
+                        "system": category.key in {
+                            "settings-company-info",
+                            "settings-customize",
+                            "settings-personal-info",
+                        },
+                    }
+                    for category in categories
+                ],
+            },
+        )
+
 
 class CenterCategoryChildrenView(APIView):
     """
@@ -1560,10 +1805,7 @@ class CenterCategoryChildrenView(APIView):
     def get_category(self, category_id):
         return (
             DynamicLevel2Tab.objects
-            .filter(
-                pk=category_id,
-                is_active=True,
-            )
+            .filter(pk=category_id, is_active=True)
             .first()
         )
 
@@ -1578,11 +1820,8 @@ class CenterCategoryChildrenView(APIView):
 
         children = (
             DynamicLevel3Tab.objects
-            .filter(
-                parent_tab=category,
-                is_active=True,
-            )
-            .order_by("sort_order", "name", "id")
+            .filter(parent_tab=category, is_active=True)
+            .order_by("sort_order", "internal_id", "name", "id")
         )
 
         return success_response(
@@ -1595,8 +1834,20 @@ class CenterCategoryChildrenView(APIView):
                 "results": [
                     {
                         "id": str(child.id),
+                        "internal_id": child.internal_id,
                         "name": child.name,
+                        "key": child.key,
                         "route": child.route or "",
+                        "query_params": child.query_params or {},
+                        "query_param": next(
+                            iter(child.query_params or {}),
+                            "",
+                        ),
+                        "sort_order": child.sort_order,
+                        "system": child.key in {
+                            "center-tabs",
+                            "center-categories",
+                        },
                     }
                     for child in children
                 ],
@@ -1612,8 +1863,13 @@ class CenterCategoryChildrenView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if not _is_company_admin(request.user):
+            return Response(
+                {"detail": "Only Company Admin can add Level-3 items."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         name = str(request.data.get("name") or "").strip()
-        route = str(request.data.get("route") or "").strip()
 
         if not name:
             return Response(
@@ -1621,29 +1877,33 @@ class CenterCategoryChildrenView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        base_key = slugify(name) or "item"
-        key = base_key
-        suffix = 2
-
-        while DynamicLevel3Tab.objects.filter(key=key).exists():
-            key = f"{base_key}-{suffix}"
-            suffix += 1
-
-        latest_sort_order = (
-            DynamicLevel3Tab.objects
-            .filter(parent_tab=category)
-            .order_by("-sort_order")
-            .values_list("sort_order", flat=True)
-            .first()
-        )
-
-        sort_order = (latest_sort_order or 0) + 10
+        try:
+            # Level-3 inherits the parent route; users only provide a query-param key.
+            route = _normalize_route(
+                request.data.get("route"),
+                required=False,
+            )
+            query_params = _build_query_params(
+                name,
+                request.data.get("query_param"),
+                allow_query_param=True,
+            )
+            sort_order = _parse_sort_order(
+                request.data.get("sort_order"),
+                DynamicLevel3Tab.objects.filter(parent_tab=category),
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         child = DynamicLevel3Tab.objects.create(
             parent_tab=category,
             name=name,
-            key=key,
+            key=_build_custom_key(DynamicLevel3Tab, name),
             route=route,
+            query_params=query_params,
             sort_order=sort_order,
             is_active=True,
         )
@@ -1652,7 +1912,16 @@ class CenterCategoryChildrenView(APIView):
             message="Level-3 item created successfully.",
             data={
                 "id": str(child.id),
+                "internal_id": child.internal_id,
                 "name": child.name,
+                "key": child.key,
                 "route": child.route or "",
+                "query_params": child.query_params or {},
+                "query_param": next(
+                    iter(child.query_params or {}),
+                    "",
+                ),
+                "sort_order": child.sort_order,
             },
         )
+
