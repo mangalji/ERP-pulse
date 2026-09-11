@@ -30,16 +30,10 @@ export const AUTH_ENDPOINTS = {
 
 export const DASHBOARD_ENDPOINTS = {
   summary: '/dashboard/summary/',
-  recentCustomers: '/dashboard/recent-customers/',
-  recentSalesOrders: '/dashboard/recent-sales-orders/',
   recentInvoices: '/dashboard/recent-invoices/',
   executiveSummary: '/dashboard/executive-summary/',
   executiveCharts: '/dashboard/executive-charts/',
   activityFeed: '/dashboard/activity-feed/',
-}
-
-export const REPORTS_ENDPOINTS = {
-  salesTrend: '/reports/sales-trend/',
 }
 
 export const NETSUITE_ENDPOINTS = {
@@ -48,12 +42,7 @@ export const NETSUITE_ENDPOINTS = {
   myConnections: '/netsuite/my/connections/',
   myConnection: '/netsuite/my/connection/',
   callback: '/netsuite/callback/',
-  customers: '/netsuite/customers/',
   employees: '/netsuite/employees/',
-  vendors: '/netsuite/vendors/',
-  items: '/netsuite/items/',
-  salesOrders: '/netsuite/sales-orders/',
-  purchaseOrders: '/netsuite/purchase-orders/',
   invoices: '/netsuite/invoices/',
 }
 
@@ -61,12 +50,6 @@ export const MONITORING_ENDPOINTS = {
   health: '/monitoring/health/',
   errors: '/monitoring/errors/',
   apiUsage: '/monitoring/api-usage/',
-}
-
-export const AI_ENDPOINTS = {
-  chat: '/ai/chat/',
-  history: '/ai/history/',
-  messages: (conversationId) => `/ai/history/${conversationId}/messages/`,
 }
 
 export const CLIENT_ENDPOINTS = {
@@ -80,39 +63,6 @@ export const CLIENT_ENDPOINTS = {
   employeeResendInvitation: (id) => `/client/employees/${id}/resend_invitation/`,
   roles: '/client/roles/',
   settings: '/client/settings/',
-  notifications: '/client/notifications/',
-  notificationsUnreadCount: '/client/notifications/unread_count/',
-  notificationMarkRead: (id) => `/client/notifications/${id}/mark_read/`,
-  notificationMarkAllRead: '/client/notifications/mark_all_read/',
-}
-
-export const BI_ENDPOINTS = {
-  summary: '/bi/summary/',
-  sales: '/bi/sales/',
-  purchase: '/bi/purchase/',
-  customer: '/bi/customer/',
-  inventory: '/bi/inventory/',
-  finance: '/bi/finance/',
-  alerts: '/bi/alerts/',
-  insights: '/bi/insights/',
-  health: '/bi/health/',
-}
-
-export const REPORTS_ENGINE_ENDPOINTS = {
-  templates: '/reports-engine/templates/',
-  template: (id) => `/reports-engine/templates/${id}/`,
-  templateTypes: '/reports-engine/templates/types/',
-  schedules: '/reports-engine/schedules/',
-  schedule: (id) => `/reports-engine/schedules/${id}/`,
-  scheduleActivate: (id) => `/reports-engine/schedules/${id}/activate/`,
-  scheduleDeactivate: (id) => `/reports-engine/schedules/${id}/deactivate/`,
-  scheduleRunNow: (id) => `/reports-engine/schedules/${id}/run_now/`,
-  generate: '/reports-engine/generate/',
-  preview: '/reports-engine/preview/',
-  email: '/reports-engine/email/',
-  history: '/reports-engine/history/',
-  historyMetadata: (id) => `/reports-engine/history/${id}/metadata/`,
-  historyDownload: (id) => `/reports-engine/history/${id}/download/`,
 }
 
 export const SUPERADMIN_ENDPOINTS = {
@@ -130,11 +80,6 @@ export const SUPERADMIN_ENDPOINTS = {
   companyPlanCancel: '/superadmin/company-plans/cancel/',
   companyPlanRenew: '/superadmin/company-plans/renew/',
   companyPlanHistory: (id) => `/superadmin/company-plans/${id}/history/`,
-  modules: '/superadmin/modules/',
-  companyModules: '/superadmin/company-modules/',
-  companyModulesFetch: '/superadmin/company-modules/fetch/',
-  companyModulesSet: '/superadmin/company-modules/set_module/',
-  companyModulesBulk: '/superadmin/company-modules/bulk_update/',
   employees: '/superadmin/employees/',
   employeeCreate: '/superadmin/employees/create_employee/',
   employeeDeactivate: (id) => `/superadmin/employees/${id}/deactivate/`,
@@ -145,21 +90,6 @@ export const SUPERADMIN_ENDPOINTS = {
   supportSessionsStart: '/superadmin/support-sessions/start/',
   supportSessionsEnd: (id) => `/superadmin/support-sessions/${id}/end/`,
   dashboardSummary: '/superadmin/dashboard/summary/',
-  notifications: '/superadmin/notifications/',
-  notificationsFetch: '/superadmin/notifications/fetch/',
-  notificationsUnreadCount: '/superadmin/notifications/unread_count/',
-  notificationMarkRead: (id) => `/superadmin/notifications/${id}/mark_read/`,
-  notificationMarkAllRead: '/superadmin/notifications/mark_all_read/',
-}
-
-export const DEMO_ENDPOINTS = {
-  submit: '/demo/submit/',
-  list: '/demo/list/',
-  detail: (id) => `/demo/${id}/detail/`,
-  convert: (id) => `/demo/${id}/convert/`,
-  approve: (id) => `/demo/${id}/approve/`,
-  reject: (id) => `/demo/${id}/reject/`,
-  assign: (id) => `/demo/${id}/assign/`,
 }
 
 export const INVITATION_ENDPOINTS = {

@@ -3,7 +3,6 @@ from rest_framework.routers import DefaultRouter
 
 from tenancy.views import (
     ClientMeView,
-    ClientNotificationViewSet,
     ClientRoleListView,
     CompanyEmployeeViewSet,
     CompanySettingsView,
@@ -11,8 +10,6 @@ from tenancy.views import (
 
 router = DefaultRouter()
 router.register(r'employees', CompanyEmployeeViewSet, basename='client-employee')
-router.register(r'notifications', ClientNotificationViewSet, basename='client-notification')
-
 urlpatterns = [
     path('me/', ClientMeView.as_view(), name='client-me'),
     path('roles/', ClientRoleListView.as_view(), name='client-roles'),

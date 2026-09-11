@@ -8,9 +8,6 @@ export const subscriptionApi = {
   getMyUsage: () =>
     apiClient.get('/subscriptions/my-usage/').then(unwrap),
 
-  getMyModules: () =>
-    apiClient.get('/subscriptions/my-modules/').then(unwrap),
-
   getMyTransactions: () =>
     apiClient.get('/subscriptions/my-transactions/').then(unwrap),
 

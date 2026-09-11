@@ -9,7 +9,7 @@ const NAV_LINKS = [
   { label: 'Contact', to: '/contact' },
 ]
 
-export default function PublicLayout({ children }) {
+export default function TemplatesPagePublicLayout({ children }) {
   return (
     <div className="flex min-h-screen flex-col bg-[var(--color-canvas)]">
       <nav className="sticky top-0 z-50 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 backdrop-blur">

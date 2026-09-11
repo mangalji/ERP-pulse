@@ -55,7 +55,7 @@ class ClientMeView(APIView):
                 if context['company']
                 else None
             ),
-            'modules': context['modules'],
+            # 'modules': context['modules'],
             'roles': context['roles'],
             'permissions': context['permissions'],
             'plan': context['plan'],
@@ -262,65 +262,3 @@ class CompanySettingsView(APIView):
             message='Company settings updated successfully.',
             data=CompanyProfileSerializer(result['company']).data,
         )
-
-
-class ClientNotificationViewSet(viewsets.ViewSet):
-    """
-    User-scoped notification endpoints for the client portal.
-
-    Dedicated client endpoints so the Super Admin notification API is
-    never exposed to client company users.
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def list(self, request):
-        try:
-            limit = int(request.query_params.get('limit', 20))
-            offset = int(request.query_params.get('offset', 0))
-        except (ValueError, TypeError):
-            return Response({'detail': 'limit and offset must be integers.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        is_read = request.query_params.get('is_read')
-        if is_read is not None:
-            is_read = is_read.lower() in {'1', 'true', 'yes'}
-
-        notifications, count = client_portal_service.list_notifications(
-            user=request.user,
-            is_read=is_read,
-            limit=limit,
-            offset=offset,
-        )
-        data = [
-            {
-                'id': str(n.id),
-                'title': n.title,
-                'message': n.message,
-                'type': n.type,
-                'is_read': n.is_read,
-                'created_at': n.created_at,
-            }
-            for n in notifications
-        ]
-        return success_response(
-            message='Notifications fetched successfully.',
-            data={'count': count, 'results': data},
-        )
-
-    @action(detail=False, methods=['get'])
-    def unread_count(self, request):
-        count = client_portal_service.unread_notifications_count(user=request.user)
-        return success_response(message='Unread notification count fetched successfully.', data={'count': count})
-
-    @action(detail=True, methods=['post'])
-    def mark_read(self, request, pk=None):
-        notification = client_portal_service.mark_notification_read(notification_id=pk, user=request.user)
-        return success_response(
-            message='Notification marked as read.',
-            data={'id': str(notification.id), 'is_read': notification.is_read},
-        )
-
-    @action(detail=False, methods=['post'])
-    def mark_all_read(self, request):
-        result = client_portal_service.mark_all_notifications_read(user=request.user)
-        return success_response(message='All notifications marked as read.', data=result)

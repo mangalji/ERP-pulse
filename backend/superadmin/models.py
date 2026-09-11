@@ -1,6 +1,6 @@
 from django.db import models
 from django.conf import settings
-from tenancy.models import Company, Module
+from tenancy.models import Company
 from core.models import BaseModel
 
 
@@ -26,7 +26,6 @@ class Plan(BaseModel):
     trial_days = models.PositiveIntegerField(default=14, help_text='Number of trial days for new assignments')
     ai_credits = models.PositiveIntegerField(default=0, help_text='AI credits included per billing cycle')
     ocr_credits = models.PositiveIntegerField(default=0, help_text='OCR documents allowed per billing cycle')
-    enabled_models = models.ManyToManyField(Module, related_name='plans', blank=True)
     status = models.CharField(max_length=20, choices=PlanStatus.choices, default=PlanStatus.ACTIVE)
 
     Status = PlanStatus

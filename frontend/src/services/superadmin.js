@@ -47,11 +47,6 @@ export const superadminApi = {
   listModules: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.modules, { params }).then(unwrap),
   getModule: (id) => apiClient.get(`${SUPERADMIN_ENDPOINTS.modules}${id}/`).then(unwrap),
   updateModule: (id, payload) => apiClient.patch(`${SUPERADMIN_ENDPOINTS.modules}${id}/`, payload).then(unwrap),
-  fetchCompanyModules: (companyId) =>
-    apiClient.get(SUPERADMIN_ENDPOINTS.companyModulesFetch, { params: { company_id: companyId } }).then(unwrap),
-  setCompanyModule: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyModulesSet, payload).then(unwrap),
-  bulkSetCompanyModules: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyModulesBulk, payload).then(unwrap),
-
   // ── Employees ────────────────────────────────────────────────
   listEmployees: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.employees, { params }).then(unwrap),
   getEmployee: (id) => apiClient.get(`${SUPERADMIN_ENDPOINTS.employees}${id}/`).then(unwrap),
@@ -68,10 +63,4 @@ export const superadminApi = {
   getSupportSession: (id) => apiClient.get(`${SUPERADMIN_ENDPOINTS.supportSessions}${id}/`).then(unwrap),
   startSupportSession: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.supportSessionsStart, payload).then(unwrap),
   endSupportSession: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.supportSessionsEnd(id)).then(unwrap),
-
-  // ── Notifications ────────────────────────────────────────────
-  fetchNotifications: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.notificationsFetch, { params }).then(unwrap),
-  getUnreadNotificationCount: () => apiClient.get(SUPERADMIN_ENDPOINTS.notificationsUnreadCount).then(unwrap),
-  markNotificationRead: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.notificationMarkRead(id)).then(unwrap),
-  markAllNotificationsRead: () => apiClient.post(SUPERADMIN_ENDPOINTS.notificationMarkAllRead).then(unwrap),
 }

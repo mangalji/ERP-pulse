@@ -15,7 +15,6 @@ from django.core.cache import cache
 from rest_framework.permissions import BasePermission
 
 from rbac.models import RolePermission, UserRole
-from tenancy.models import CompanyModule
 
 # Short TTL so permission changes propagate quickly.
 CACHE_TTL_SECONDS = 60
@@ -89,39 +88,3 @@ class HasPermission(BasePermission):
 
         return bool(user_codes & permission_codes)
 
-
-class HasModuleAccess(BasePermission):
-    """
-    Allow access only if the user's company has the given module
-    enabled.
-
-    Usage::
-
-        permission_classes = [HasModuleAccess]
-        HasModuleAccess.code = 'netsuite'
-    """
-
-    code: str | None = None
-
-    def has_permission(self, request, view):
-        user = request.user
-        if not user or not getattr(user, 'is_authenticated', False):
-            return False
-        company = getattr(user, 'company', None)
-        if company is None:
-            return False
-        module_code = self.code
-        if not module_code:
-            return False
-
-        cache_key = _cache_key(f'module:{module_code}', company.id)
-        has_access = cache.get(cache_key)
-        if has_access is None:
-            has_access = CompanyModule.objects.filter(
-                company=company,
-                module__code=module_code,
-                enabled=True,
-            ).exists()
-            cache.set(cache_key, has_access, CACHE_TTL_SECONDS)
-
-        return has_access

@@ -13,24 +13,15 @@ import SuperAdminDashboardPage from '../pages/superadmin/DashboardPage.jsx'
 import SuperAdminCompaniesPage from '../pages/superadmin/CompaniesPage.jsx'
 import SuperAdminPlansPage from '../pages/superadmin/PlansPage.jsx'
 import SuperAdminPlanDetailPage from '../pages/superadmin/PlanDetailPage.jsx'
-import SuperAdminModulesPage from '../pages/superadmin/ModulesPage.jsx'
 import SuperAdminEmployeesPage from '../pages/superadmin/EmployeesPage.jsx'
 import SuperAdminSupportSessionsPage from '../pages/superadmin/SupportSessionsPage.jsx'
-import SuperAdminNotificationsPage from '../pages/superadmin/NotificationsPage.jsx'
 import SuperAdminSettingsPage from '../pages/superadmin/SettingsPage.jsx'
-import SuperAdminDemoRequestsPage from '../pages/superadmin/DemoRequestsPage.jsx'
-import SuperAdminDemoRequestDetailPage from '../pages/superadmin/DemoRequestDetailPage.jsx'
 import SuperAdminCompanyDetailPage from '../pages/superadmin/CompanyDetailPage.jsx'
 import SuperAdminCompanySubscriptionPage from '../pages/superadmin/CompanySubscriptionPage.jsx'
 import InvitationAcceptPage from '../pages/invitations/InvitationAcceptPage.jsx'
 
 // Public Website
 import PublicHomePage from '../pages/public/HomePage.jsx'
-// import PublicFeaturesPage from '../pages/public/FeaturesPage.jsx'
-// import PublicPricingPage from '../pages/public/PricingPage.jsx'
-// import PublicAboutPage from '../pages/public/AboutPage.jsx'
-// import PublicContactPage from '../pages/public/ContactPage.jsx'
-// import PublicRequestDemoPage from '../pages/public/RequestDemoPage.jsx'
 
 // Client Company Portal
 import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
@@ -38,11 +29,7 @@ import ClientInvoiceReaderPage from '../pages/client/InvoiceReaderPage.jsx'
 import ClientInvoiceDetailPage from '../pages/client/InvoiceDetailPage.jsx'
 import ClientPayloadPreviewPage from '../pages/client/PayloadPreviewPage.jsx'
 import ClientOcrJobsPage from '../pages/client/OcrJobsPage.jsx'
-import ClientAiAssistantPage from '../pages/client/AiAssistantPage.jsx'
 import ClientEmployeesPage from '../pages/client/EmployeesPage.jsx'
-import ClientReportsPage from '../pages/client/ReportsPage.jsx'
-import ClientAnalyticsPage from '../pages/client/AnalyticsPage.jsx'
-import ClientNotificationsPage from '../pages/client/NotificationsPage.jsx'
 import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
 import CustomizeNavigationPage from '../pages/client/CustomizeNavigationPage.jsx'
 import CenterTabsPage from '../pages/client/CenterTabsPage.jsx'
@@ -54,22 +41,8 @@ import ClientSubscriptionPage from '../pages/client/SubscriptionPage.jsx'
 import NetSuiteIntegrationsPage from '../pages/client/NetSuiteIntegrationsPage.jsx'
 import EmployeeNetSuitePage from '../pages/client/EmployeeNetSuitePage.jsx'
 import TransactionsPage from '../pages/client/TransactionsPage.jsx'
+import ProductsPage from '../pages/client/ProductsPage.jsx'
 
-// Executive BI Portal
-import BIDashboardPage from '../pages/bi/DashboardPage.jsx'
-import BiSalesAnalyticsPage from '../pages/bi/SalesAnalyticsPage.jsx'
-import BiPurchaseAnalyticsPage from '../pages/bi/PurchaseAnalyticsPage.jsx'
-import BiCustomerAnalyticsPage from '../pages/bi/CustomerAnalyticsPage.jsx'
-import BiInventoryAnalyticsPage from '../pages/bi/InventoryAnalyticsPage.jsx'
-import BiFinanceAnalyticsPage from '../pages/bi/FinanceAnalyticsPage.jsx'
-import BiAiInsightsPage from '../pages/bi/AiInsightsPage.jsx'
-
-// Reports Engine
-import ReportsEngineDashboardPage from '../pages/reports-engine/ReportsDashboardPage.jsx'
-import GenerateReportPage from '../pages/reports-engine/GenerateReportPage.jsx'
-import ScheduledReportsPage from '../pages/reports-engine/ScheduledReportsPage.jsx'
-import ReportHistoryPage from '../pages/reports-engine/ReportHistoryPage.jsx'
-import TemplatesPage from '../pages/reports-engine/TemplatesPage.jsx'
 import OcrTestPage from '../pages/client/OcrTestPage.jsx'
 import OcrFieldMappingPage from '../pages/client/OcrFieldMappingPage.jsx'
 import OcrTestResultPage from '../pages/client/OcrTestResultPage.jsx'
@@ -111,11 +84,6 @@ export default function AppRoutes() {
     <Routes>
       {/* Public Website */}
       <Route path="/" element={<PublicRoute><PublicHomePage /></PublicRoute>} />
-      {/* <Route path="/features" element={<PublicRoute><PublicFeaturesPage /></PublicRoute>} />
-      <Route path="/pricing" element={<PublicRoute><PublicPricingPage /></PublicRoute>} />
-      <Route path="/about" element={<PublicRoute><PublicAboutPage /></PublicRoute>} />
-      <Route path="/contact" element={<PublicRoute><PublicContactPage /></PublicRoute>} />
-      <Route path="/request-demo" element={<PublicRoute><PublicRequestDemoPage /></PublicRoute>} /> */}
 
       {/* Authentication */}
       <Route path="/login" element={<LoginPage />} />
@@ -133,16 +101,9 @@ export default function AppRoutes() {
       {/* Legacy redirects → new client portal routes */}
       <Route path="/dashboard" element={<Navigate to="/app" replace />} />
       <Route path="/connect-netsuite" element={<Navigate to="/app/integrations/netsuite" replace />} />
-      <Route path="/ai-assistant" element={<Navigate to="/app/ai-assistant" replace />} />
-      <Route path="/customers" element={<Navigate to="/app/bi/customers" replace />} />
       <Route path="/employees" element={<Navigate to="/app/employees" replace />} />
-      <Route path="/vendors" element={<Navigate to="/app" replace />} />
-      <Route path="/inventory" element={<Navigate to="/app/bi/inventory" replace />} />
-      <Route path="/sales-orders" element={<Navigate to="/app/bi/sales" replace />} />
-      <Route path="/purchase-orders" element={<Navigate to="/app/bi/purchase" replace />} />
       <Route path="/invoices" element={<Navigate to="/app/invoice-reader" replace />} />
       <Route path="/invoice-reader" element={<Navigate to="/app/invoice-reader" replace />} />
-      <Route path="/reports" element={<Navigate to="/app/reports" replace />} />
       <Route path="/history" element={<Navigate to="/app" replace />} />
       <Route path="/settings" element={<Navigate to="/app/settings" replace />} />
       <Route path="/system-health" element={<Navigate to="/app" replace />} />
@@ -154,9 +115,9 @@ export default function AppRoutes() {
         </ProtectedRoute>
       } />
 
-      <Route path="/app/transaction" element={
+      <Route path="/app/products" element={
         <ProtectedRoute requiredRole="client">
-          <TransactionsPage />
+          <ProductsPage />
         </ProtectedRoute>
       } />
 
@@ -195,14 +156,6 @@ export default function AppRoutes() {
         }
       />
       <Route
-        path="/admin/modules"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <SuperAdminModulesPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/admin/employees"
         element={
           <ProtectedRoute requiredRole="admin">
@@ -219,34 +172,10 @@ export default function AppRoutes() {
         }
       />
       <Route
-        path="/admin/notifications"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <SuperAdminNotificationsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/admin/settings"
         element={
           <ProtectedRoute requiredRole="admin">
             <SuperAdminSettingsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/demo-requests"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <SuperAdminDemoRequestsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/admin/demo-requests/:id"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <SuperAdminDemoRequestDetailPage />
           </ProtectedRoute>
         }
       />
@@ -356,46 +285,9 @@ export default function AppRoutes() {
 <Route path="/app/ocr-test/history/:documentId" element={<OcrTestResultPage />} />
 
       <Route
-        path="/app/ai-assistant"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="ai">
-            <ClientAiAssistantPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
         path="/app/employees"
         element={
-          <ModuleProtectedRoute 
-          requiredRole="client"
-          requiredPermission="employee.manage"
-          >
             <ClientEmployeesPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/reports"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <ClientReportsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/analytics"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <ClientAnalyticsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/notifications"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <ClientNotificationsPage />
-          </ProtectedRoute>
         }
       />
       <Route
@@ -480,106 +372,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
-
-      {/* Executive BI Portal */}
-      <Route
-        path="/app/bi"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
-            <BIDashboardPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/bi/sales"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
-            <BiSalesAnalyticsPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/bi/purchase"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
-            <BiPurchaseAnalyticsPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/bi/customers"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
-            <BiCustomerAnalyticsPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/bi/inventory"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
-            <BiInventoryAnalyticsPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/bi/finance"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="analytics">
-            <BiFinanceAnalyticsPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/bi/insights"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="ai">
-            <BiAiInsightsPage />
-          </ModuleProtectedRoute>
-        }
-      />
-
       {/* Reports Engine */}
-      <Route
-        path="/app/reports-engine"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <ReportsEngineDashboardPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/reports-engine/generate"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <GenerateReportPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/reports-engine/schedules"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <ScheduledReportsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/reports-engine/history"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <ReportHistoryPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/reports-engine/templates"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <TemplatesPage />
-          </ProtectedRoute>
-        }
-      />
       {/* Catch-all: route to portal if authenticated, login if not */}
       <Route path="*" element={<CatchAllRoute />} />
     </Routes>

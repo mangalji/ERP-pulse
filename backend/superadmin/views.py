@@ -10,18 +10,15 @@ from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
-from notifications.models import Notification
 from superadmin.models import (
     CompanyPlan, Plan, SupportSession,
     SubscriptionHistory, Transaction,
 )
 from superadmin.permissions import IsSuperAdmin
 from superadmin.serializers import (
-    CompanyModuleSerializer,
     CompanyPlanSerializer,
     CompanySerializer,
     CompanyDetailSerializer,
-    ModuleSerializer,
     PlanSerializer,
     PlanDetailSerializer,
     SupportSessionSerializer,
@@ -32,7 +29,7 @@ from superadmin.serializers import (
     CompanyUpdateSerializer,
 )
 from superadmin.services import SuperAdminService
-from tenancy.models import Company, CompanyModule, Module, CompanyDeletionHistory, CompanySuspensionReason
+from tenancy.models import Company, CompanyDeletionHistory, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
 from rbac.models import Role, UserRole
 
@@ -43,7 +40,7 @@ superadmin_service = SuperAdminService()
 class CompanyViewSet(viewsets.ModelViewSet):
     """Manage client companies from the AGSuite portal."""
 
-    queryset = Company.objects.all().select_related('settings').prefetch_related('company_modules__module')
+    queryset = Company.objects.all().select_related('settings')    
     serializer_class = CompanySerializer
     permission_classes = [IsSuperAdmin]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -55,7 +52,6 @@ class CompanyViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         return queryset.annotate(
             user_count=Count('users', distinct=True),
-            module_count=Count('company_modules', distinct=True),
         ).prefetch_related('company_plans')
 
     def get_serializer_class(self):
@@ -116,7 +112,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         )
 
     def retrieve(self, request, *args, **kwargs):
-        """Override to return company detail with subscription, modules, employees, and netsuite info."""
+        """Override to return company detail with subscription, employees, and netsuite info."""
         company = self.get_object()
         serializer = CompanyDetailSerializer(company)
         return success_response(
@@ -321,7 +317,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
 
 class PlanViewSet(viewsets.ModelViewSet):
-    queryset = Plan.objects.filter(is_deleted=False).prefetch_related('enabled_models')
+    queryset = Plan.objects.filter(is_deleted=False)
     serializer_class = PlanSerializer
     permission_classes = [IsSuperAdmin]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -556,57 +552,6 @@ class SupportSessionViewSet(viewsets.ModelViewSet):
         session = superadmin_service.end_support_session(session_id=pk)
         return success_response(message='Support session ended successfully.', data=SupportSessionSerializer(session).data)
 
-
-class ModuleViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Module.objects.all()
-    serializer_class = ModuleSerializer
-    permission_classes = [IsSuperAdmin]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name', 'code', 'display_name']
-    ordering_fields = ['sort_order', 'name', 'created_at']
-    ordering = ['sort_order', 'name']
-
-
-class CompanyModuleViewSet(viewsets.ViewSet):
-    permission_classes = [IsSuperAdmin]
-
-    @action(detail=False, methods=['get'])
-    def fetch(self, request):
-        company_id = request.query_params.get('company_id')
-        if not company_id:
-            return Response({'detail': 'company_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        modules = superadmin_service.list_company_modules(company_id=company_id)
-        return success_response(message='Company modules fetched successfully.', data=modules)
-
-    @action(detail=False, methods=['post'])
-    def set_module(self, request):
-        company_id = request.data.get('company_id')
-        module_id = request.data.get('module_id')
-        enabled = request.data.get('enabled')
-        if not company_id or not module_id:
-            return Response({'detail': 'company_id and module_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        company_module = superadmin_service.set_company_module_state(
-            company_id=company_id,
-            module_id=module_id,
-            enabled=bool(enabled),
-        )
-        return success_response(message='Company module updated successfully.', data=CompanyModuleSerializer(company_module).data)
-
-    @action(detail=False, methods=['post'])
-    def bulk_update(self, request):
-        company_id = request.data.get('company_id')
-        module_ids = request.data.get('module_ids')
-        enabled = request.data.get('enabled')
-        if not company_id or not module_ids:
-            return Response({'detail': 'company_id and module_ids are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        updated = superadmin_service.bulk_set_company_modules(
-            company_id=company_id,
-            module_ids=module_ids,
-            enabled=bool(enabled),
-        )
-        return success_response(message='Company modules updated successfully.', data=[CompanyModuleSerializer(item).data for item in updated])
-
-
 class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = User.objects.select_related('company').all()
     serializer_class = UserSerializer
@@ -779,48 +724,3 @@ class DashboardViewSet(viewsets.ViewSet):
     def summary(self, request):
         summary = superadmin_service.get_dashboard_summary()
         return success_response(message='Platform dashboard summary fetched successfully.', data=summary)
-
-
-class NotificationViewSet(viewsets.ViewSet):
-    permission_classes = [IsSuperAdmin]
-
-    @action(detail=False, methods=['get'])
-    def fetch(self, request):
-        searchable = request.query_params.get('search')
-        is_read = request.query_params.get('is_read')
-        if is_read is not None:
-            is_read = is_read.lower() in {'1', 'true', 'yes'}
-        try:
-            limit = int(request.query_params.get('limit',20))
-            offset = int(request.query_params.get("offset", 0))
-        except ValueError:
-            return Response(
-                {
-                    'detail':'limit and offset must be integers.'
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        
-        notifications = superadmin_service.list_notifications(
-            user=request.user,
-            searchable=searchable,
-            is_read=is_read,
-            limit=limit,
-            offset=offset,
-        )
-        return success_response(message='Notifications fetched successfully.', data=notifications)
-
-    @action(detail=False, methods=['get'])
-    def unread_count(self, request):
-        count = superadmin_service.unread_notifications_count(user=request.user)
-        return success_response(message='Unread notification count fetched successfully.', data={'count': count})
-
-    @action(detail=True, methods=['post'])
-    def mark_read(self, request, pk=None):
-        notification = superadmin_service.mark_notification_read(notification_id=pk, user=request.user)
-        return success_response(message='Notification marked as read.', data={'id': str(notification.id), 'is_read': notification.is_read})
-
-    @action(detail=False, methods=['post'])
-    def mark_all_read(self, request):
-        result = superadmin_service.mark_all_notifications_read(user=request.user)
-        return success_response(message='All notifications marked as read.', data=result)

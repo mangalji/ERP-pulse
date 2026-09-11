@@ -33,16 +33,16 @@ DEFAULT_PERMISSIONS = [
 SYSTEM_ROLES = {
     'Super Admin': [
         'company.manage', 'employee.manage', 'ocr.upload', 'ocr.review',
-        'ocr.export', 'ai.chat', 'ai.history', 'reports.view', 'reports.export',
+        'ocr.export','reports.view', 'reports.export',
         'dashboard.view', 'netsuite.connect', 'netsuite.sync', 'settings.manage',
     ],
     'Company Admin': [
         'employee.manage', 'ocr.upload', 'ocr.review', 'ocr.export',
-        'ai.chat', 'ai.history', 'reports.view', 'reports.export',
+        'reports.view', 'reports.export',
         'dashboard.view', 'netsuite.connect', 'netsuite.sync', 'settings.manage',
     ],
     'Employee': [
-        'ocr.upload', 'ai.chat', 'ai.history', 'reports.view',
+        'ocr.upload','reports.view',
         'dashboard.view',
     ],
 }

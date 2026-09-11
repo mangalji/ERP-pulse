@@ -162,7 +162,7 @@ export default function CenterCategoriesPage() {
       } else {
         const payload = {
           name,
-          route,
+          route: categoryForm.route.trim(),
           center_tab_id: categoryForm.center_tab_id,
           query_param: queryParam,
         }

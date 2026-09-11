@@ -18,34 +18,10 @@ import { clientApi } from '../../services/client.js'
 //     module: null,
 //   },
 //   {
-//     to: '/app/ai-assistant',
-//     label: 'AI Assistant',
-//     icon: SparkleIcon,
-//     module: 'ai',
-//   },
-//   {
 //     to: '/app/employees',
 //     label: 'Employees',
 //     icon: EmployeesIcon,
 //     module: 'employees',
-//   },
-//   {
-//     to: '/app/reports-engine/generate',
-//     label: 'Generate Report',
-//     icon: ReportEngineIcon,
-//     module: 'reports',
-//   },
-//   {
-//     to: '/app/analytics',
-//     label: 'Analytics',
-//     icon: AnalyticsIcon,
-//     module: 'bi',
-//   },
-//   {
-//     to: '/app/notifications',
-//     label: 'Notifications',
-//     icon: BellIcon,
-//     module: 'notifications',
 //   },
 //   {
 //     to: '/app/settings',
@@ -60,65 +36,33 @@ const SYSTEM_NAV_KEYS = {
 }
 
 /* Employee-only items that always show for any authenticated user */
-// const EMPLOYEE_ALWAYS_ITEMS = ['/app/notifications', '/app/settings', '/app/profile']
+// const EMPLOYEE_ALWAYS_ITEMS = ['/app/settings', '/app/profile']
 
 /**
  * Reusable Client Company Portal layout.
- * Top navbar + sidebar + breadcrumb + page header + profile menu + notifications.
+ * Top navbar + sidebar + breadcrumb + page header + profile menu
  */
 export default function ClientLayout({ title, breadcrumb, children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-
-  // const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [notifOpen, setNotifOpen] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
-  const [notifications, setNotifications] = useState([])
-  const [availableModules, setAvailableModules] = useState([])
   const [companyName, setCompanyName] = useState('')
   const [databaseNavItems, setDatabaseNavItems] = useState([])
-  // const [expandedMenuItems, setExpandedMenuItems] = useState({})
   const userMenuRef = useRef(null)
-  const notifRef = useRef(null)
 
   const isCompanyAdmin = user?.is_superadmin || user?.is_staff || (user?.roles || []).includes('company_admin')
-
-  const loadUnread = async () => {
-    try {
-      const res = await clientApi.getUnreadNotificationCount()
-      setUnreadCount(res?.count ?? 0)
-    } catch {
-      setUnreadCount(0)
-    }
-  }
-
-  const loadNotifications = async () => {
-    try {
-      const res = await clientApi.fetchNotifications({ limit: 10, offset: 0 })
-      setNotifications(res?.results ?? res ?? [])
-    } catch {
-      setNotifications([])
-    }
-  }
-
-  useEffect(() => {
-    loadUnread()
-  }, [])
 
   useEffect(() => {
     const loadClientProfile = async () => {
       try {
         const res = await clientApi.getMe()
-        setAvailableModules(res?.modules || [])
         setCompanyName(
           res?.company_name ||
           res?.company?.name ||
           '',
         )
       } catch {
-        setAvailableModules([])
         setCompanyName('')
       }
     }
@@ -147,9 +91,6 @@ export default function ClientLayout({ title, breadcrumb, children }) {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
         setUserMenuOpen(false)
       }
-      if (notifRef.current && !notifRef.current.contains(event.target)) {
-        setNotifOpen(false)
-      }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -161,62 +102,9 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     navigate('/login', { replace: true })
   }
 
-  const handleNotifToggle = () => {
-    const next = !notifOpen
-    setNotifOpen(next)
-    if (next) loadNotifications()
-  }
-
-  const handleMarkAllRead = async () => {
-    try {
-      await clientApi.markAllNotificationsRead()
-      setUnreadCount(0)
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
-    } catch {
-      // noop
-    }
-  }
-
   const initials = user
     ? `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`.toUpperCase() || 'U'
     : 'U'
-
-  // const currentPath = location.pathname
-  // const activeNav = ALL_NAV_ITEMS.find((item) =>
-  // item.end ? currentPath === item.to : currentPath.startsWith(item.to),
-  // )
-
-  // const userModules = user?.modules || availableModules
-  // const userPermissions = user?.permissions || []
-
-  // const visibleNav = ALL_NAV_ITEMS.filter((item) => {
-  //   if (!item.module) return true
-  //   if (isCompanyAdmin) return true
-  //   const hasModule = userModules.some((m) => m.module_code === item.module)
-  //   if (!hasModule) return false
-  //   const modulePermissionMap = {
-  //     'invoice_reader': 'ocr.upload',
-  //     'ocr': 'ocr.upload',
-  //     'ai': 'ai.chat',
-  //     'employees': 'employee.manage',
-  //     'reports': 'reports.view',
-  //     'reports_engine': 'reports.view',
-  //     'analytics': 'reports.view',
-  //     'dashboard': 'dashboard.view',
-  //   }
-  //   const permCode = modulePermissionMap[item.module]
-  //   if (permCode) {
-  //     return userPermissions.includes(permCode)
-  //   }
-  //   return true
-  // })
-
-  // const toggleDatabaseMenu = (key) => {
-  //   setExpandedMenuItems((prev) => ({
-  //     ...prev,
-  //     [key]: !(prev[key] ?? true),
-  //   }))
-  // }
 
   const buildMenuSearch = (queryParams = {}) => {
     const search = new URLSearchParams()
@@ -233,9 +121,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     const children = Array.isArray(item?.children) ? item.children : []
     const hasChildren = children.length > 0
     const route = item.route ? `${item.route}${buildMenuSearch(item.query_params)}` : ''
-    // const isExpanded = expandedMenuItems[item.key] ?? true
 
-    // if (hasChildren) {
     if (level===0){
       return (
         <div key={item.key} className="group/top relative shrink-0">
@@ -335,23 +221,6 @@ export default function ClientLayout({ title, breadcrumb, children }) {
             </div>
             <div className="flex shrink-0 items-center gap-3">
               <div className="hidden max-w-48 truncate text-right lg:block">{companyName && <span className="text-sm font-semibold capitalize text-[var(--color-ink)]">{companyName}</span>}</div>
-              <div className="relative" ref={notifRef}>
-                <button onClick={handleNotifToggle} aria-label="Notifications" className="relative rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]">
-                  <BellIcon className="h-5 w-5" />
-                  {unreadCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-negative)] px-1 text-[10px] font-bold text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
-                </button>
-                {notifOpen && (
-                  <div className="absolute right-0 mt-2 w-[calc(100vw-1.5rem)] max-w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
-                    <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3"><p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p><button onClick={handleMarkAllRead} className="text-xs font-medium text-[var(--color-primary)] hover:underline">Mark all read</button></div>
-                    <div className="max-h-80 overflow-y-auto">
-                      {notifications.length === 0 ? <p className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">No notifications</p> : notifications.map((n) => (
-                        <div key={n.id} className={`border-b border-[var(--color-border)] px-4 py-3 last:border-0 ${n.is_read ? '' : 'bg-[var(--color-primary-soft)]'}`}><p className="text-sm font-medium text-[var(--color-ink)]">{n.title}</p>{n.message && <p className="mt-0.5 text-xs text-[var(--color-muted)]">{n.message}</p>}</div>
-                      ))}
-                    </div>
-                    <NavLink to="/app/notifications" onClick={() => setNotifOpen(false)} className="block border-t border-[var(--color-border)] px-4 py-2 text-center text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-canvas)]">View all</NavLink>
-                  </div>
-                )}
-              </div>
               <div className="relative" ref={userMenuRef}>
                 <button onClick={() => setUserMenuOpen((prev) => !prev)} className="flex items-center gap-2 rounded-full bg-[var(--color-primary-soft)] px-2 py-1 pr-1 text-sm font-semibold text-[var(--color-primary-dark)]" aria-label="User menu">
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">{initials}</span>
@@ -430,22 +299,6 @@ function ReportEngineIcon(props) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
       <path d="M14 2v6h6M9 13h6M9 17h6M9 9h2" />
-    </svg>
-  )
-}
-function AnalyticsIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M3 3v18h18" />
-      <path d="M7 15l4-4 3 3 5-6" />
-    </svg>
-  )
-}
-function BellIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
     </svg>
   )
 }

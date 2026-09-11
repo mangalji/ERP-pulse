@@ -13,17 +13,17 @@ from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from common.utils.pagination import paginated_response
 from common.utils.response import success_response
-from tenancy.models import Company, CompanyModule, Module
+from tenancy.models import Company
 from subscriptions.permissions import IsSuperAdminOrCompanyAdmin
-from subscriptions.serializers import ModuleSerializer, PlanSerializer, SubscriptionSerializer, UsageSerializer
-from subscriptions.services import license_service, subscription_service
+from subscriptions.serializers import PlanSerializer, SubscriptionSerializer
+from subscriptions.services import subscription_service
 from superadmin.models import Plan
 
 class SubscriptionViewSet(viewsets.ViewSet):
     """Subscription management for super admins and company admins."""
 
     def get_permissions(self):
-        if self.action in ['my_subscription', 'my_usage', 'my_modules']:
+        if self.action in ['my_subscription']:
             return [IsAuthenticated()]
         return [IsSuperAdminOrCompanyAdmin()]
 
@@ -56,32 +56,6 @@ class SubscriptionViewSet(viewsets.ViewSet):
         return success_response(
             message='Transactions fetched successfully.',
             data=TransactionSerializer(transactions, many=True).data,
-        )
-
-    @action(detail=False, methods=['get'], url_path='my-usage')
-    def my_usage(self, request):
-        """GET /api/v1/subscriptions/my-usage/ — client company usage summary."""
-        company = getattr(request.user, 'company', None)
-        if not company:
-            return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
-
-        summary = license_service.get_usage_summary(company)
-        return success_response(
-            message='Usage summary fetched successfully.',
-            data=summary,
-        )
-
-    @action(detail=False, methods=['get'], url_path='my-modules')
-    def my_modules(self, request):
-        """GET /api/v1/subscriptions/my-modules/ — available modules for company."""
-        company = getattr(request.user, 'company', None)
-        if not company:
-            return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)
-
-        modules = CompanyModule.objects.filter(company=company).select_related('module')
-        return success_response(
-            message='Company modules fetched successfully.',
-            data=UsageSerializer(modules, many=True).data,
         )
 
     @action(detail=False, methods=['post'])
@@ -198,23 +172,6 @@ class SubscriptionViewSet(viewsets.ViewSet):
             data=SubscriptionSerializer(company_plan).data,
         )
 
-    @action(detail=False, methods=['post'])
-    def reset_usage(self, request):
-        """POST /api/v1/subscriptions/reset-usage/ — reset usage counters."""
-        company_id = request.data.get('company_id')
-        module_code = request.data.get('module_code')
-        if not company_id:
-            return Response({'detail': 'company_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        updated = subscription_service.reset_usage(
-            company_id=company_id,
-            module_code=module_code,
-        )
-        return success_response(
-            message=f'Usage reset for {updated} modules.',
-            data={'reset_count': updated},
-        )
-
     @action(detail=False, methods=['get'], url_path='plans')
     def list_plans(self, request):
         """GET /api/v1/subscriptions/plans/ — list available plans."""
@@ -223,83 +180,3 @@ class SubscriptionViewSet(viewsets.ViewSet):
             message='Plans fetched successfully.',
             data=PlanSerializer(plans, many=True).data,
         )
-
-
-class ModuleManagementViewSet(viewsets.ViewSet):
-    """Module management for super admins."""
-
-    def get_permissions(self):
-        return [IsSuperAdminOrCompanyAdmin()]
-
-    @action(detail=False, methods=['get'])
-    def list_modules(self, request):
-        """GET /api/v1/subscriptions/modules/ — list all modules."""
-        modules = Module.objects.all()
-        return success_response(
-            message='Modules fetched successfully.',
-            data=ModuleSerializer(modules, many=True).data,
-        )
-
-    @action(detail=False, methods=['post'])
-    def enable(self, request):
-        """POST /api/v1/subscriptions/modules/enable/ — enable module for company."""
-        company_id = request.data.get('company_id')
-        module_id = request.data.get('module_id')
-        if not company_id or not module_id:
-            return Response({'detail': 'company_id and module_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        company_module, created = CompanyModule.objects.get_or_create(
-            company_id=company_id,
-            module_id=module_id,
-            defaults={'enabled': True},
-        )
-        if not created:
-            company_module.enabled = True
-            company_module.save(update_fields=['enabled'])
-
-        audit_service.log(
-            module=AuditModule.SUBSCRIPTION,
-            action=AuditAction.UPDATE,
-            entity='CompanyModule',
-            entity_id=str(company_module.id),
-            company_id=company_id,
-            user=request.user,
-            old_value={'enabled': False},
-            new_value={'enabled': True},
-        )
-
-        return success_response(
-            message='Module enabled successfully.',
-            data=UsageSerializer(company_module).data,
-        )
-
-    @action(detail=False, methods=['post'])
-    def disable(self, request):
-        """POST /api/v1/subscriptions/modules/disable/ — disable module for company."""
-        company_id = request.data.get('company_id')
-        module_id = request.data.get('module_id')
-        if not company_id or not module_id:
-            return Response({'detail': 'company_id and module_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            company_module = CompanyModule.objects.get(company_id=company_id, module_id=module_id)
-            company_module.enabled = False
-            company_module.save(update_fields=['enabled'])
-
-            audit_service.log(
-                module=AuditModule.SUBSCRIPTION,
-                action=AuditAction.UPDATE,
-                entity='CompanyModule',
-                entity_id=str(company_module.id),
-                company_id=company_id,
-                user=request.user,
-                old_value={'enabled': True},
-                new_value={'enabled': False},
-            )
-
-            return success_response(
-                message='Module disabled successfully.',
-                data=UsageSerializer(company_module).data,
-            )
-        except CompanyModule.DoesNotExist:
-            return Response({'detail': 'Module assignment not found.'}, status=status.HTTP_404_NOT_FOUND)

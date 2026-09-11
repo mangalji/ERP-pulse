@@ -6,12 +6,9 @@ import { superadminApi } from '../../services/superadmin.js'
 const NAV_ITEMS = [
   { to: '/admin', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/admin/companies', label: 'Companies', icon: BuildingIcon },
-  { to: '/admin/demo-requests', label: 'Demo Requests', icon: DemoIcon },
   { to: '/admin/plans', label: 'Plans', icon: PlanIcon },
-  { to: '/admin/modules', label: 'Modules', icon: ModulesIcon },
   { to: '/admin/employees', label: 'Employees', icon: EmployeesIcon },
   { to: '/admin/support', label: 'Support Sessions', icon: SupportIcon },
-  { to: '/admin/notifications', label: 'Notifications', icon: BellIcon },
   { to: '/admin/settings', label: 'Settings', icon: GearIcon },
 ]
 
@@ -27,41 +24,12 @@ export default function AdminLayout({ title, breadcrumb, children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [notifOpen, setNotifOpen] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
-  const [notifications, setNotifications] = useState([])
   const userMenuRef = useRef(null)
-  const notifRef = useRef(null)
-
-  const loadUnread = async () => {
-    try {
-      const res = await superadminApi.getUnreadNotificationCount()
-      setUnreadCount(res?.count ?? 0)
-    } catch {
-      setUnreadCount(0)
-    }
-  }
-
-  const loadNotifications = async () => {
-    try {
-      const res = await superadminApi.fetchNotifications({ limit: 10, offset: 0 })
-      setNotifications(res?.results ?? res ?? [])
-    } catch {
-      setNotifications([])
-    }
-  }
-
-  useEffect(() => {
-    loadUnread()
-  }, [])
 
   useEffect(() => {
     function handleClickOutside(event) {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
         setUserMenuOpen(false)
-      }
-      if (notifRef.current && !notifRef.current.contains(event.target)) {
-        setNotifOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -72,22 +40,6 @@ export default function AdminLayout({ title, breadcrumb, children }) {
     setUserMenuOpen(false)
     await logout()
     navigate('/login', { replace: true })
-  }
-
-  const handleNotifToggle = () => {
-    const next = !notifOpen
-    setNotifOpen(next)
-    if (next) loadNotifications()
-  }
-
-  const handleMarkAllRead = async () => {
-    try {
-      await superadminApi.markAllNotificationsRead()
-      setUnreadCount(0)
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
-    } catch {
-      // noop
-    }
   }
 
   const initials = user
@@ -201,60 +153,6 @@ export default function AdminLayout({ title, breadcrumb, children }) {
               </svg>
             </button>
 
-            {/* Notification bell */}
-            <div className="relative" ref={notifRef}>
-              <button
-                onClick={handleNotifToggle}
-                aria-label="Notifications"
-                className="relative rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-                </svg>
-                {unreadCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-negative)] px-1 text-[10px] font-bold text-white">
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </span>
-                )}
-              </button>
-              {notifOpen && (
-                <div className="absolute right-0 mt-2 w-[calc(100vw-1.5rem)] max-w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
-                  <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
-                    <p className="text-sm font-semibold text-[var(--color-ink)]">Notifications</p>
-                    <button
-                      onClick={handleMarkAllRead}
-                      className="text-xs font-medium text-[var(--color-primary)] hover:underline"
-                    >
-                      Mark all read
-                    </button>
-                  </div>
-                  <div className="max-h-80 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <p className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">No notifications</p>
-                    ) : (
-                      notifications.map((n) => (
-                        <div
-                          key={n.id}
-                          className={`border-b border-[var(--color-border)] px-4 py-3 last:border-0 ${n.is_read ? '' : 'bg-[var(--color-primary-soft)]'}`}
-                        >
-                          <p className="text-sm font-medium text-[var(--color-ink)]">{n.title}</p>
-                          {n.message && <p className="mt-0.5 text-xs text-[var(--color-muted)]">{n.message}</p>}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <NavLink
-                    to="/admin/notifications"
-                    onClick={() => setNotifOpen(false)}
-                    className="block border-t border-[var(--color-border)] px-4 py-2 text-center text-sm font-medium text-[var(--color-primary)] hover:bg-[var(--color-canvas)]"
-                  >
-                    View all
-                  </NavLink>
-                </div>
-              )}
-            </div>
-
             {/* User menu */}
             <div className="relative" ref={userMenuRef}>
               <button
@@ -331,31 +229,12 @@ function BuildingIcon(props) {
     </svg>
   )
 }
-function DemoIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M9 21c0 .6 2.7 1 3 1s3-.4 3-1" />
-      <rect x="4" y="3" width="16" height="12" rx="2" />
-      <path d="M9 7h6M9 11h6" />
-    </svg>
-  )
-}
 function PlanIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
       <path d="M14 2v6h6" />
       <path d="M12 18v-6M9 15l3 3 3-3" />
-    </svg>
-  )
-}
-function ModulesIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
     </svg>
   )
 }
@@ -372,14 +251,6 @@ function SupportIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  )
-}
-function BellIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
     </svg>
   )
 }

@@ -8,14 +8,10 @@ Pulse never keeps a local copy of NetSuite business records). This
 service only decides *which* record types to ask for and *how many*
 records/what shape to hand back to the view.
 
-Note (Phase 3 — Analytics & AI Architecture): KPI/business-insight
-calculations (top customers, overdue invoices, sales summary, revenue
-by period, etc.) previously lived here as `BusinessInsightsService` and
-have moved to analytics/services.py as `AnalyticsService`, since
-Reports and AI both need that logic too and neither should import from
-a presentation-oriented app like `dashboard`. This file now contains
-only the simple record-count/recent-record logic the dashboard summary
-view itself needs.
+This service contains the dashboard's company-scoped summary,
+recent-record, invoice-chart, employee-growth, and activity-feed
+logic. Business records continue to come from the existing services
+and are not stored locally by the dashboard.
 """
 
 import logging
@@ -37,12 +33,7 @@ DEFAULT_RECENT_LIMIT = 5
 # the list views — unlike the REST Record API (get_records) which can
 # return different totals than SuiteQL for the same data.
 SUMMARY_RECORD_TYPES = {
-    'total_customers': ('list_customers', NetSuiteRecordType.CUSTOMER),
     'total_employees': ('list_employees', NetSuiteRecordType.EMPLOYEE),
-    'total_vendors': ('list_vendors', NetSuiteRecordType.VENDOR),
-    'total_inventory_items': ('list_inventory_items', NetSuiteRecordType.INVENTORY_ITEM),
-    'total_sales_orders': ('list_sales_orders', NetSuiteRecordType.SALES_ORDER),
-    'total_purchase_orders': ('list_purchase_orders', NetSuiteRecordType.PURCHASE_ORDER),
     'total_invoices': ('list_invoices', NetSuiteRecordType.INVOICE),
 }
 
@@ -68,14 +59,8 @@ class DashboardService:
             for summary_key, (method_name, record_type) in SUMMARY_RECORD_TYPES.items()
         }
 
-    def get_recent_sales_orders(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
-        return self._get_items(record_type=NetSuiteRecordType.SALES_ORDER, user=user, limit=limit)
-
     def get_recent_invoices(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
         return self._get_items(record_type=NetSuiteRecordType.INVOICE, user=user, limit=limit)
-
-    def get_recent_customers(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
-        return self._get_items(record_type=NetSuiteRecordType.CUSTOMER, user=user, limit=limit)
     
     def get_recent_employees(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
         return self._get_items(record_type=NetSuiteRecordType.EMPLOYEE, user=user, limit=limit)
@@ -159,10 +144,7 @@ class DashboardAggregateService:
         from invitations.models import Invitation, InvitationStatus
         from netsuite.models import NetSuiteConnection
         from invoice.models import InvoiceBatch, InvoiceFile, FileStatus
-        from ai.models import AIConversation, AIMessage
-        from reports_engine.models import ReportHistory
         from superadmin.models import CompanyPlan
-        from analytics.services import AnalyticsService
 
         # Employee stats
         total_employees = UserModel.objects.filter(company=company).count()
@@ -189,14 +171,6 @@ class DashboardAggregateService:
         ).count()
         ocr_failed = invoice_files_qs.filter(status=FileStatus.FAILED).count()
 
-        # Reports generated
-        reports_generated = ReportHistory.objects.filter(company=company).count()
-
-        # AI requests
-        ai_requests = AIMessage.objects.filter(
-            conversation__user__company=company
-        ).count()
-
         # Subscription
         subscription = CompanyPlan.objects.filter(
             company=company,
@@ -212,10 +186,6 @@ class DashboardAggregateService:
         ai_credits = subscription.plan.ai_credits if subscription else 0
         ocr_credits = subscription.plan.ocr_credits if subscription else 0
 
-        # Modules enabled count
-        from tenancy.models import CompanyModule
-        modules_enabled = CompanyModule.objects.filter(company=company, enabled=True).count()
-
         return {
             'total_employees': total_employees,
             'active_employees': active_employees,
@@ -225,14 +195,11 @@ class DashboardAggregateService:
             'invoices_pending_review': invoices_pending_review,
             'approved_invoices': approved_invoices,
             'ocr_failed': ocr_failed,
-            'reports_generated': reports_generated,
-            'ai_requests': ai_requests,
             'subscription_plan': subscription_plan,
             'plan_expiry': plan_expiry,
             'storage_used_mb': storage_used_mb,
             'ai_credits': ai_credits,
             'ocr_credits': ocr_credits,
-            'modules_enabled': modules_enabled,
         }
 
     def get_invoice_charts(self, *, user: User) -> dict:
@@ -320,31 +287,6 @@ class DashboardAggregateService:
             for item in monthly_counts
         ]
 
-    def get_ai_usage(self, *, user: User) -> list:
-        company = getattr(user, 'company', None)
-        if not company:
-            return []
-
-        from ai.models import AIMessage, AIConversation
-        from django.db.models import Count
-        from django.utils import timezone
-        import datetime
-
-        twelve_months_ago = timezone.now().date() - datetime.timedelta(days=365)
-        monthly_counts = (
-            AIMessage.objects.filter(conversation__user__company=company, created_at__date__gte=twelve_months_ago)
-            .values('created_at__year', 'created_at__month')
-            .annotate(count=Count('id'))
-            .order_by('created_at__year', 'created_at__month')
-        )
-        return [
-            {
-                'month': f"{item['created_at__year']}-{item['created_at__month']:02d}",
-                'count': item['count'],
-            }
-            for item in monthly_counts
-        ]
-
     def get_activity_feed(self, *, user: User, limit: int = 10) -> dict:
         company = getattr(user, 'company', None)
 
@@ -353,15 +295,11 @@ class DashboardAggregateService:
                 'recent_employees': [],
                 'recent_invoices': [],
                 'recent_ocr_jobs': [],
-                'recent_reports': [],
-                'recent_ai_conversations': [],
                 'recent_netsuite_syncs': [],
             }
 
         from accounts.models import User as UserModel
         from invoice.models import InvoiceBatch, InvoiceFile
-        from ai.models import AIConversation
-        from reports_engine.models import ReportHistory
         from netsuite.models import NetSuiteConnection
 
         # ---------------------------------------------------------
@@ -425,31 +363,6 @@ class DashboardAggregateService:
                 )
             )
 
-            recent_reports = list(
-                ReportHistory.objects.filter(
-                    company=company
-                )
-                .order_by('-generated_at')[:5]
-                .values(
-                    'id',
-                    'report_type',
-                    'status',
-                    'generated_at',
-                )
-            )
-
-            recent_ai_conversations = list(
-                AIConversation.objects.filter(
-                    user__company=company
-                )
-                .order_by('-updated_at')[:5]
-                .values(
-                    'id',
-                    'title',
-                    'updated_at',
-                )
-            )
-
             recent_netsuite_syncs = list(
                 NetSuiteConnection.objects.filter(
                     company=company
@@ -498,32 +411,6 @@ class DashboardAggregateService:
                     'created_at',
                 )
             )
-
-            recent_reports = list(
-                ReportHistory.objects.filter(
-                    created_by=user
-                )
-                .order_by('-generated_at')[:5]
-                .values(
-                    'id',
-                    'report_type',
-                    'status',
-                    'generated_at',
-                )
-            )
-
-            recent_ai_conversations = list(
-                AIConversation.objects.filter(
-                    user=user
-                )
-                .order_by('-updated_at')[:5]
-                .values(
-                    'id',
-                    'title',
-                    'updated_at',
-                )
-            )
-
             recent_netsuite_syncs = list(
                 NetSuiteConnection.objects.filter(
                     user=user
@@ -541,8 +428,6 @@ class DashboardAggregateService:
             'recent_employees': recent_employees,
             'recent_invoices': recent_invoices,
             'recent_ocr_jobs': recent_ocr_jobs,
-            'recent_reports': recent_reports,
-            'recent_ai_conversations': recent_ai_conversations,
             'recent_netsuite_syncs': recent_netsuite_syncs,
         }
 
@@ -575,12 +460,9 @@ class DashboardAggregateService:
             'invoices_pending_review': 0,
             'approved_invoices': 0,
             'ocr_failed': 0,
-            'reports_generated': 0,
-            'ai_requests': 0,
             'subscription_plan': None,
             'plan_expiry': None,
             'storage_used_mb': None,
             'ai_credits': 0,
             'ocr_credits': 0,
-            'modules_enabled': 0,
         }

@@ -14,7 +14,6 @@ from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from datetime import timedelta
 
 from common.contact_validation import normalize_phone
 
@@ -23,9 +22,8 @@ from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
-from notifications.models import Notification
 from rbac.models import Role, RolePermission, UserRole
-from tenancy.models import CompanyModule, CompanySettings, Company, CompanySuspensionReason
+from tenancy.models import CompanySettings, Company, CompanySuspensionReason
 
 from superadmin.models import CompanyPlan, CompanyPlanStatus
 
@@ -476,67 +474,13 @@ class ClientPortalService:
         )
         return {'company': company, 'settings': settings}
 
-    # ── Notifications (user-scoped) ───────────────────────────
-
-    def list_notifications(self, *, user, is_read=None, limit=20, offset=0):
-        company = getattr(user,'company', None)
-        if company:
-            self._ensure_company_operational(company=company)
-        qs = Notification.objects.filter(user=user).select_related('company')
-        if is_read is not None:
-            qs = qs.filter(is_read=is_read)
-        qs = qs.order_by('-created_at')
-        count = qs.count()
-        return qs[offset:offset + limit], count
-
-    def unread_notifications_count(self, *, user):
-        company = getattr(user, 'company', None)
-
-        if company:
-            self._ensure_company_operational(company=company)
-
-        return Notification.objects.filter(
-            user=user,
-            is_read=False,
-        ).count()
-
-    def mark_notification_read(self, *, notification_id, user):
-        company = getattr(user, 'company', None)
-
-        if company:
-            self._ensure_company_operational(company=company)
-        notification = get_object_or_404(Notification, pk=notification_id, user=user)
-        notification.is_read = True
-        notification.read_at = timezone.now()
-        notification.save(update_fields=['is_read', 'read_at'])
-        return notification
-
-    def mark_all_notifications_read(self, *, user):
-        company = getattr(user, 'company', None)
-
-        if company:
-            self._ensure_company_operational(company=company)
-            
-        updated = Notification.objects.filter(user=user, is_read=False).update(
-            is_read=True, read_at=timezone.now(),
-        )
-        return {'updated_count': updated}
-
     # ── Client me context ─────────────────────────────────────
 
     def get_client_context(self, *, user):
         company = getattr(user, 'company', None)
         if company:
             self._ensure_company_operational(company=company)
-        modules = []
         permissions = []
-        if company:
-            modules = list(
-                CompanyModule.objects.filter(company=company, enabled=True)
-                .select_related('module')
-                .values('module_id', 'module__code', 'module__name')
-            )
-        # role_names = list(user.user_roles.values_list('role__name', flat=True))
         role_names= [
             role_name.lower().replace(' ','_')
             for role_name in user.user_roles.values_list('role__name',flat=True)
@@ -547,7 +491,6 @@ class ClientPortalService:
                 role__user_roles__user=user,
             ).values_list('permission__code', flat=True).distinct()
         )
-        # TASK 7: Employee limit info
         employee_count = 0
         plan_info = None
         if company:
@@ -566,7 +509,6 @@ class ClientPortalService:
         return {
             'user': user,
             'company': company,
-            'modules': modules,
             'roles': role_names,
             'permissions': permissions,
             'plan': plan_info,

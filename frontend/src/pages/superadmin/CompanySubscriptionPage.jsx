@@ -49,7 +49,6 @@ export default function CompanySubscriptionPage() {
     try {
       const [companyData, modData, histData, plansData] = await Promise.all([
         superadminApi.getCompany(id),
-        superadminApi.fetchCompanyModules(id),
         subscriptionApi.getCompanyPlanHistory(id),
         superadminApi.listPlans(),
       ])

@@ -1,8 +1,6 @@
 import apiClient, { unwrap } from './apiClient.js'
 import { CLIENT_ENDPOINTS } from '../utils/constants.js'
 import { invoiceApi } from './invoice.js'
-import { aiApi } from './ai.js'
-import { reportsApi } from './reports.js'
 import { dashboardApi } from './dashboard.js'
 
 /**
@@ -11,7 +9,6 @@ import { dashboardApi } from './dashboard.js'
  * Reuses existing feature services (invoice, ai, reports, dashboard)
  * for company-scoped data, and talks to the dedicated company-scoped
  * `/client/*` backend endpoints for employees, roles, settings and
- * notifications. The backend derives the company from the authenticated
  * user — the client never sends a company_id.
  */
 export const clientApi = {
@@ -24,7 +21,6 @@ export const clientApi = {
   getExecutiveCharts: () => dashboardApi.getExecutiveCharts(),
   getActivityFeed: (limit) => dashboardApi.getActivityFeed(limit),
   getRecentInvoices: () => dashboardApi.getRecentInvoices(),
-  getRecentSalesOrders: () => dashboardApi.getRecentSalesOrders(),
 
   // ── Invoice (reused) ────────────────────────────────────────
   uploadInvoices: (files) => invoiceApi.upload(files),
@@ -38,14 +34,6 @@ export const clientApi = {
     apiClient.post(`/api/v1/invoice/review/${fileId}/`, payload).then(unwrap),
   previewInvoicePayload: (fileId) =>
     apiClient.post(`/api/v1/invoice/preview-payload/${fileId}/`).then(unwrap),
-
-  // ── AI Assistant (reused) ───────────────────────────────────
-  chat: (message, conversationId) => aiApi.chat(message, conversationId),
-  getAiHistory: () => aiApi.getHistory(),
-  getAiMessages: (conversationId) => aiApi.getMessages(conversationId),
-
-  // ── Reports (reused) ────────────────────────────────────────
-  getSalesTrend: (months) => reportsApi.getSalesTrend(months),
 
   // ── Employees (company-scoped /client/*) ────────────────────
   listEmployees: (params) =>
@@ -73,16 +61,6 @@ export const clientApi = {
   getCompanySettings: () => apiClient.get(CLIENT_ENDPOINTS.settings).then(unwrap),
   updateCompanySettings: (payload) =>
     apiClient.patch(CLIENT_ENDPOINTS.settings, payload).then(unwrap),
-
-  // ── Notifications (user-scoped /client/*) ──────────────────
-  fetchNotifications: (params) =>
-    apiClient.get(CLIENT_ENDPOINTS.notifications, { params }).then(unwrap),
-  getUnreadNotificationCount: () =>
-    apiClient.get(CLIENT_ENDPOINTS.notificationsUnreadCount).then(unwrap),
-  markNotificationRead: (id) =>
-    apiClient.post(CLIENT_ENDPOINTS.notificationMarkRead(id)).then(unwrap),
-  markAllNotificationsRead: () =>
-    apiClient.post(CLIENT_ENDPOINTS.notificationMarkAllRead).then(unwrap),
 
   // ── Transaction navigation (DB-driven) ─────────────────────
   getNavigationMenu: () =>
@@ -163,6 +141,17 @@ export const clientApi = {
   createTransaction: ({ transactionType, recordType, payload }) =>
     apiClient.post('/transactions/', payload, {
       params: {
+        transaction_type: transactionType,
+        record_type: recordType,
+      },
+    }).then(unwrap),
+
+  getProducts:(params) =>
+    apiClient.get('/products/', {params}).then(unwrap),
+
+  createProduct: ({ transactionType, recordType, payload}) =>
+    apiClient.post('/product/',payload,{
+      params:{
         transaction_type: transactionType,
         record_type: recordType,
       },

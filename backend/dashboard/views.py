@@ -73,44 +73,10 @@ class DashboardSummaryView(APIView):
                 data={
                     'netsuite_available': False,
                     'message': 'NetSuite data is not available.',
-                    'total_customers': 0,
                     'total_employees': 0,
-                    'total_vendors': 0,
-                    'total_inventory_items': 0,
-                    'total_sales_orders': 0,
-                    'total_purchase_orders': 0,
                     'total_invoices': 0,
                 },
             )
-
-
-class RecentSalesOrdersView(APIView):
-    """GET /api/v1/dashboard/recent-sales-orders/"""
-
-    permission_classes = [permissions.AllowAny]
-    throttle_classes = [DashboardThrottle]
-
-    def get(self, request):
-        if not request.user or not request.user.is_authenticated:
-            return success_response(
-                message='Authentication credentials were not provided.',
-                data={},
-                status_code=401,
-            )
-
-        offset, limit = _parse_pagination_params(request)
-        all_orders = _get_dashboard_service().get_recent_sales_orders(user=request.user)
-        count = len(all_orders)
-        page = all_orders[offset:offset + limit]
-        return paginated_response(
-            message='Recent sales orders fetched successfully.',
-            results=page,
-            count=count,
-            request=request,
-            offset=offset,
-            limit=limit,
-        )
-
 
 class RecentInvoicesView(APIView):
     """GET /api/v1/dashboard/recent-invoices/"""
@@ -148,34 +114,6 @@ class RecentInvoicesView(APIView):
             offset=offset,
             limit=limit,
         )
-
-class RecentCustomersView(APIView):
-    """GET /api/v1/dashboard/recent-customers/"""
-
-    permission_classes = [permissions.AllowAny]
-    throttle_classes = [DashboardThrottle]
-
-    def get(self, request):
-        if not request.user or not request.user.is_authenticated:
-            return success_response(
-                message='Authentication credentials were not provided.',
-                data={},
-                status_code=401,
-            )
-
-        offset, limit = _parse_pagination_params(request)
-        all_customers = _get_dashboard_service().get_recent_customers(user=request.user)
-        count = len(all_customers)
-        page = all_customers[offset:offset + limit]
-        return paginated_response(
-            message='Recent customers fetched successfully.',
-            results=page,
-            count=count,
-            request=request,
-            offset=offset,
-            limit=limit,
-        )
-
 
 class ExecutiveSummaryView(APIView):
     """GET /api/v1/dashboard/executive-summary/"""
@@ -216,7 +154,7 @@ class ExecutiveChartsView(APIView):
         data = {
             'invoice_charts': service.get_invoice_charts(user=request.user),
             'employee_growth': service.get_employee_growth(user=request.user),
-            'ai_usage': service.get_ai_usage(user=request.user),
+            # 'ai_usage': service.get_ai_usage(user=request.user),
         }
         return success_response(
             message='Executive charts fetched successfully.',

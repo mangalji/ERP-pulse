@@ -13,7 +13,7 @@ from datetime import timedelta
 
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
-from tenancy.models import Company, CompanyModule, Module
+from tenancy.models import Company
 from superadmin.models import (
     Plan, CompanyPlan, CompanyPlanStatus,
     DiscountType, BillingCycle, SubscriptionHistory, Transaction,
@@ -110,9 +110,6 @@ class SubscriptionService:
             final_amount=final_price, billing_cycle=normalized_billing_cycle,
             status=normalized_status,
         )
-
-        # Sync module access with plan
-        self._sync_company_modules(company=company, plan=plan)
 
         audit_service.log(
             module=AuditModule.SUBSCRIPTION,
@@ -333,9 +330,6 @@ class SubscriptionService:
         company_plan.end_date = timezone.now().date()
         company_plan.save(update_fields=['status', 'end_date'])
 
-        # Disable all company modules
-        CompanyModule.objects.filter(company_id=company_id).update(enabled=False)
-
         audit_service.log(
             module=AuditModule.SUBSCRIPTION,
             action=AuditAction.UPDATE,
@@ -361,149 +355,8 @@ class SubscriptionService:
         for plan in expired_plans:
             plan.status = CompanyPlanStatus.EXPIRED
             plan.save(update_fields=['status'])
-            CompanyModule.objects.filter(company=plan.company).update(enabled=False)
             count += 1
 
         return count
 
-    def _sync_company_modules(self, *, company=None, company_id=None, plan):
-        """Sync company modules with plan enabled modules."""
-        target_company = company or Company.objects.get(pk=company_id)
-        plan_modules = plan.enabled_models.all()
-
-        # Disable modules not in plan
-        CompanyModule.objects.filter(company=target_company).exclude(module__in=plan_modules).update(enabled=False)
-
-        # Enable modules in plan
-        for module in plan_modules:
-            CompanyModule.objects.get_or_create(
-                company=target_company,
-                module=module,
-                defaults={'enabled': True},
-            )
-
-
-class LicenseService:
-    """Business logic for license and usage checking."""
-
-    @staticmethod
-    def check_limit(company, module_code, feature=None):
-        """
-        Check if a company has exceeded limits for a module/feature.
-        Raises LicenseError if blocked.
-        """
-        if not company or company.status == Company.Status.EXPIRED:
-            raise LicenseError('Company subscription has expired. Please contact support.')
-
-        company_module = CompanyModule.objects.select_related('module').filter(
-            company=company,
-            module__code=module_code,
-            enabled=True,
-        ).first()
-
-        if not company_module:
-            raise LicenseError(f'Module {module_code} is not enabled for this company.')
-
-        if company_module.is_limit_exceeded():
-            raise LicenseError(
-                f'Usage limit exceeded for {module_code}. '
-                f'Limit: {company_module.usage_limit}, Current: {company_module.usage_count}'
-            )
-
-        return company_module
-
-    @staticmethod
-    def can_use_module(company, module_code):
-        """Check if company can use a module."""
-        try:
-            LicenseService.check_limit(company, module_code)
-            return True
-        except LicenseError:
-            return False
-
-    @staticmethod
-    def can_use_ai(company):
-        """Check if company can use AI features."""
-        return LicenseService.can_use_module(company, 'ai')
-
-    @staticmethod
-    def can_use_ocr(company):
-        """Check if company can use OCR features."""
-        return LicenseService.can_use_module(company, 'ocr')
-
-    @staticmethod
-    def can_create_employee(company):
-        """Check if company can create more employees."""
-        try:
-            LicenseService.check_limit(company, 'employees')
-            return True
-        except LicenseError:
-            return False
-
-    @staticmethod
-    def can_generate_report(company):
-        """Check if company can generate reports."""
-        return LicenseService.can_use_module(company, 'reports')
-
-    @staticmethod
-    def can_use_bi(company):
-        """Check if company can use BI features."""
-        return LicenseService.can_use_module(company, 'bi')
-
-    @staticmethod
-    def can_sync_netsuite(company):
-        """Check if company can sync NetSuite."""
-        return LicenseService.can_use_module(company, 'netsuite')
-
-    @staticmethod
-    def increment_usage(company, module_code, amount=1):
-        """
-        Increment usage count for a module.
-        Returns the updated CompanyModule or raises LicenseError.
-        """
-        company_module = CompanyModule.objects.select_related('module').filter(
-            company=company,
-            module__code=module_code,
-            enabled=True,
-        ).first()
-
-        if not company_module:
-            raise LicenseError(f'Module {module_code} is not enabled for this company.')
-
-        if company_module.usage_limit and company_module.usage_count >= company_module.usage_limit:
-            raise LicenseError(f'Usage limit exceeded for {module_code}.')
-
-        company_module.usage_count = (company_module.usage_count or 0) + amount
-        company_module.save(update_fields=['usage_count'])
-
-        return company_module
-
-    @staticmethod
-    def get_usage_summary(company):
-        """Get usage summary for all company modules."""
-        modules = CompanyModule.objects.filter(company=company).select_related('module')
-        summary = []
-        for cm in modules:
-            summary.append({
-                'module_code': cm.module.code,
-                'module_name': cm.module.name,
-                'enabled': cm.enabled,
-                'usage_limit': cm.usage_limit,
-                'usage_count': cm.usage_count or 0,
-                'remaining': (cm.usage_limit - cm.usage_count) if cm.usage_limit else None,
-                'percentage': round((cm.usage_count / cm.usage_limit) * 100, 1) if cm.usage_limit else None,
-            })
-        return summary
-
-    @staticmethod
-    def reset_usage(company, module_code=None):
-        """Reset usage counters."""
-        qs = CompanyModule.objects.filter(company=company)
-        if module_code:
-            qs = qs.filter(module__code=module_code)
-        updated = qs.update(usage_count=0, last_usage_reset=timezone.now())
-        return updated
-
-
 subscription_service = SubscriptionService()
-license_service = LicenseService()

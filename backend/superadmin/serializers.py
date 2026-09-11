@@ -6,7 +6,7 @@ from .models import (
     SubscriptionHistory, Transaction,
     DiscountType, BillingCycle, CompanyPlanStatus,
 )
-from tenancy.models import Company, CompanyModule, Module
+from tenancy.models import Company
 from django.contrib.auth import get_user_model
 from invitations.models import Invitation, InvitationStatus
 
@@ -56,10 +56,6 @@ class SupportSessionSerializer(serializers.ModelSerializer):
 
 class CompanySerializer(serializers.ModelSerializer):
     user_count = serializers.IntegerField(
-        read_only=True,
-    )
-
-    module_count = serializers.IntegerField(
         read_only=True,
     )
 
@@ -285,19 +281,6 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             return CompanyPlanSummarySerializer(plan).data
         return None
 
-    def get_assigned_modules(self, obj):
-        modules = obj.company_modules.select_related('module').filter(enabled=True)
-        return [
-            {
-                'id': cm.module.id,
-                'name': cm.module.name,
-                'code': cm.module.code,
-                'display_name': cm.module.display_name,
-                'enabled': cm.enabled,
-            }
-            for cm in modules
-        ]
-
     def get_netsuite_connected(self, obj):
         return obj.netsuite_connections.filter(is_active=True).exists()
 
@@ -312,30 +295,6 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
     def get_netsuite_last_sync(self, obj):
         conn = obj.netsuite_connections.filter(is_active=True).first()
         return conn.last_synced_at if conn else None
-
-
-class ModuleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Module
-        fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
-
-
-class CompanyModuleSerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(source='company.name', read_only=True)
-    module_name = serializers.CharField(source='module.name', read_only=True)
-    module_code = serializers.CharField(source='module.code', read_only=True)
-    company_code = serializers.CharField(
-    source="company.code",
-    read_only=True,
-)
-
-    class Meta:
-        from tenancy.models import CompanyModule
-        model = CompanyModule
-        fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
-
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(
@@ -487,10 +446,8 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
     Includes subscription plan, assigned modules, employee stats, and NetSuite connection status.
     """
     user_count = serializers.SerializerMethodField()
-    module_count = serializers.SerializerMethodField()
     active_user_count = serializers.SerializerMethodField()
     current_plan = serializers.SerializerMethodField()
-    assigned_modules = serializers.SerializerMethodField()
     admin_email = serializers.SerializerMethodField()
     netsuite_connected = serializers.SerializerMethodField()
     netsuite_account_id = serializers.SerializerMethodField()
@@ -503,8 +460,8 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'code', 'status', 'contact_email', 'contact_phone',
             'country', 'created_at', 'updated_at',
-            'user_count', 'active_user_count', 'module_count',
-            'current_plan', 'assigned_modules', 'admin_email',
+            'user_count', 'active_user_count',
+            'current_plan', 'admin_email',
             'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
             'transactions', 'suspension_reason',
         ]
@@ -515,10 +472,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
 
     def get_active_user_count(self, obj):
         return obj.users.filter(is_active=True).count()
-
-    def get_module_count(self, obj):
-        return obj.company_modules.count()
-
+    
     def get_admin_email(self, obj):
         admin = obj.users.filter(user_roles__role__name='Company Admin').first()
         return admin.email if admin else None
@@ -530,19 +484,6 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
         if plan:
             return CompanyPlanSummarySerializer(plan).data
         return None
-
-    def get_assigned_modules(self, obj):
-        modules = obj.company_modules.select_related('module').filter(enabled=True)
-        return [
-            {
-                'id': cm.module.id,
-                'name': cm.module.name,
-                'code': cm.module.code,
-                'display_name': cm.module.display_name,
-                'enabled': cm.enabled,
-            }
-            for cm in modules
-        ]
 
     def get_netsuite_connected(self, obj):
         return obj.netsuite_connections.filter(is_active=True).exists()

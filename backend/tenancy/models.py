@@ -150,64 +150,6 @@ class CompanyDeletionHistory(BaseModel):
     def __str__(self):
         return f"{self.company_name} ({self.company_code}) - Permanently Deleted"
 
-
-class Module(BaseModel):
-    """A feature module that can be enabled/disabled per company."""
-
-    name = models.CharField(max_length=150, unique=True)
-    code = models.CharField(max_length=100, unique=True)
-    display_name = models.CharField(max_length=255, blank=True)
-    icon = models.CharField(max_length=100, blank=True)
-    description = models.TextField(blank=True)
-    sort_order = models.PositiveIntegerField(default=0)
-    is_active = models.BooleanField(default=True)
-    is_system = models.BooleanField(default=False)
-
-    class Meta:
-        db_table = "module"
-        ordering = ["sort_order", "name"]
-        verbose_name = "Module"
-        verbose_name_plural = "Modules"
-
-    def __str__(self):
-        return f"{self.name} ({self.code})"
-
-
-class CompanyModule(BaseModel):
-    """Links a Company to a Module with enable/disable and usage limits."""
-
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name="company_modules")
-    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="company_modules")
-    enabled = models.BooleanField(default=True)
-    usage_limit = models.PositiveIntegerField(null=True, blank=True)
-    usage_count = models.PositiveIntegerField(default=0)
-    last_usage_reset = models.DateTimeField(null=True, blank=True)
-    activated_at = models.DateTimeField(null=True, blank=True)
-    activated_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='+',
-    )
-
-    class Meta:
-        db_table = "company_module"
-        constraints = [
-            models.UniqueConstraint(fields=["company", "module"], name="unique_company_module"),
-        ]
-        verbose_name = "Company Module"
-        verbose_name_plural = "Company Modules"
-
-    def __str__(self):
-        return f"{self.company.name} → {self.module.name}"
-
-    def is_limit_exceeded(self):
-        if self.usage_limit is None or self.usage_limit <= 0:
-            return False
-        return self.usage_count >= self.usage_limit
-
-
 class CompanySettings(BaseModel):
     """Per-company configuration settings."""
 

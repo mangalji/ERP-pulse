@@ -12,7 +12,6 @@ from django.utils.crypto import get_random_string
 from accounts.models import User, Gender
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
-from notifications.models import Notification
 from rbac.models import Role, UserRole
 from superadmin.models import (
     CompanyPlan,
@@ -28,7 +27,7 @@ from superadmin.models import (
     PaymentStatus,
     TransactionStatus,
 )
-from tenancy.models import Company, CompanyModule, Module, CompanyDeletionHistory, CompanySuspensionReason
+from tenancy.models import Company, CompanyDeletionHistory, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
 
 from decimal import Decimal, InvalidOperation
@@ -66,11 +65,6 @@ class SuperAdminService:
             ),
         )
 
-        module_summary = Module.objects.aggregate(
-            total=Count("id"),
-            enabled=Count("id", filter=Q(is_active=True)),
-        )
-
         return {
             "total_companies": company_summary["total"],
             "active_companies": company_summary["active"],
@@ -84,8 +78,6 @@ class SuperAdminService:
             "active_plans": plan_summary["active"],
             "total_support_sessions": support_summary["total"],
             "active_support_sessions": support_summary["active"],
-            "total_modules": module_summary["total"],
-            "enabled_modules": module_summary["enabled"],
             "recent_company_registrations": list(
                 Company.objects.order_by("-created_at")
                 .values(
@@ -624,34 +616,6 @@ class SuperAdminService:
         )
         return company_plan
 
-    def list_notifications(self, *, user, searchable=None, is_read=None, limit=None, offset=0):
-        qs = Notification.objects.filter(user=user).select_related('company')
-        if searchable:
-            qs = qs.filter(Q(title__icontains=searchable) | Q(message__icontains=searchable))
-        if is_read is not None:
-            qs = qs.filter(is_read=is_read)
-        qs = qs.order_by('-created_at')
-        if limit is not None:
-            return list(qs[offset:offset + limit])
-        return list(qs[offset:])
-
-    def unread_notifications_count(self, *, user):
-        return Notification.objects.filter(user=user, is_read=False).count()
-
-    def mark_notification_read(self, *, notification_id, user):
-        notification = get_object_or_404(Notification, pk=notification_id, user=user)
-        notification.is_read = True
-        notification.read_at = timezone.now()
-        notification.save(update_fields=['is_read', 'read_at'])
-        return notification
-
-    def mark_all_notifications_read(self, *, user):
-        updated_count = Notification.objects.filter(user=user, is_read=False).update(
-            is_read=True,
-            read_at=timezone.now(),
-        )
-        return {'updated_count': updated_count}
-
     def get_employee_roles(self, *, user):
         return list(user.user_roles.select_related('role').values('role_id', 'role__name'))
 
@@ -710,52 +674,6 @@ class SuperAdminService:
         deleted, _ = UserRole.objects.filter(user=user, role_id=role_id).delete()
         return {'deleted': deleted > 0}
 
-    def set_company_module_state(self, *, company_id, module_id, enabled):
-        company = get_object_or_404(Company, pk=company_id)
-        module = get_object_or_404(Module, pk=module_id)
-        company_module, _ = CompanyModule.objects.get_or_create(company=company, module=module)
-        company_module.enabled = enabled
-        company_module.save(update_fields=['enabled'])
-        return company_module
-
-    @transaction.atomic
-    def bulk_set_company_modules(
-    self,
-    *,
-    company_id,
-    module_ids,
-    enabled,
-):
-        company = get_object_or_404(Company, pk=company_id)
-
-        modules = Module.objects.filter(pk__in=module_ids)
-
-        company_modules = []
-
-        for module in modules:
-            company_module, _ = CompanyModule.objects.get_or_create(
-                company=company,
-                module=module,
-            )
-
-            company_module.enabled = enabled
-
-            company_modules.append(company_module)
-
-        CompanyModule.objects.bulk_update(
-            company_modules,
-            ["enabled"],
-        )
-        return company_modules
-
-    def list_company_modules(self, *, company_id):
-        company = get_object_or_404(Company, pk=company_id)
-        return list(
-            CompanyModule.objects.filter(company=company)
-            .select_related('module')
-            .order_by('module__sort_order', 'module__name')
-            .values('id', 'module_id', 'module__name', 'module__code', 'enabled', 'usage_limit')
-        )
 
     def start_support_session(self, *, company_id, support_user_id, reason, ip_address=None):
         company = get_object_or_404(Company, pk=company_id)
