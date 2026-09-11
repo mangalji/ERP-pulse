@@ -8,7 +8,7 @@ import { useAuth } from '../../contexts/AuthContext.jsx'
 export default function OtpVerificationPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { verifyLogin, verifyRegister, resendLoginOtp, resendRegisterOtp, error } = useAuth()
+  const { verifyLogin, resendLoginOtp } = useAuth()
   const purpose = location.state?.purpose ?? 'login'
   const emailFromState = location.state?.email ?? ''
   const [email, setEmail] = useState(emailFromState)
@@ -52,8 +52,6 @@ export default function OtpVerificationPage() {
         const isSuperAdmin = Boolean(userData?.is_superadmin || userData?.is_staff)
         navigate(isSuperAdmin ? '/admin' : '/app', { replace: true })
       } else {
-        const result = await verifyRegister(email, code)
-        navigate('/complete-profile', { state: { registrationToken: result.registration_token, email } })
       }
     } catch (err) {
       setLocalError(err.payload?.message || err.message || 'Invalid OTP')
@@ -70,7 +68,6 @@ export default function OtpVerificationPage() {
       if (purpose === 'login') {
         await resendLoginOtp(email)
       } else {
-        await resendRegisterOtp(email)
       }
       setResendSuccess('A new code has been sent to your email.')
     } catch (err) {
@@ -78,7 +75,7 @@ export default function OtpVerificationPage() {
     } finally {
       setResendLoading(false)
     }
-  }, [purpose, email, resendLoginOtp, resendRegisterOtp])
+  }, [purpose, email, resendLoginOtp])
 
   const handleEditEmail = () => {
     setTempEmail(email)

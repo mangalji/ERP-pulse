@@ -2,9 +2,9 @@ import re
 from common.contact_validation import normalize_phone
 from rest_framework import serializers
 from .models import (
-    Plan, CompanyPlan, SupportSession,
+    Plan, CompanyPlan,
     SubscriptionHistory, Transaction,
-    DiscountType, BillingCycle, CompanyPlanStatus,
+    DiscountType, CompanyPlanStatus,
 )
 from tenancy.models import Company
 from django.contrib.auth import get_user_model
@@ -41,18 +41,6 @@ class CompanyPlanSerializer(serializers.ModelSerializer):
 
     def get_effective_price(self, obj):
         return obj.final_price
-
-
-class SupportSessionSerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(source='company.name', read_only=True)
-    support_user_name = serializers.CharField(source='support_user.get_full_name', read_only=True)
-    support_user_email = serializers.EmailField(source='support_user.email',read_only=True)
-
-    class Meta:
-        model = SupportSession
-        fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
-
 
 class CompanySerializer(serializers.ModelSerializer):
     user_count = serializers.IntegerField(
@@ -266,35 +254,6 @@ class CompanyPlanSummarySerializer(serializers.ModelSerializer):
             return f'{obj.discount_value}%'
         return f'₹{obj.discount_value}'
 
-
-class CompanyDetailSerializer(serializers.ModelSerializer):
-    """DEPRECATED: This class is overwritten by the one below (line ~328).
-    Kept commented for traceability — the active class includes `transactions` + `admin_email`.
-    """
-    pass
-
-    def get_current_plan(self, obj):
-        plan = obj.company_plans.filter(
-            status__in=['ACTIVE', 'TRIAL']
-        ).select_related('plan').first()
-        if plan:
-            return CompanyPlanSummarySerializer(plan).data
-        return None
-
-    def get_netsuite_connected(self, obj):
-        return obj.netsuite_connections.filter(is_active=True).exists()
-
-    def get_netsuite_account_id(self, obj):
-        conn = obj.netsuite_connections.filter(is_active=True).first()
-        return conn.netsuite_account_id if conn else None
-
-    def get_netsuite_environment(self, obj):
-        conn = obj.netsuite_connections.filter(is_active=True).first()
-        return conn.get_environment_display() if conn and conn.environment else None
-
-    def get_netsuite_last_sync(self, obj):
-        conn = obj.netsuite_connections.filter(is_active=True).first()
-        return conn.last_synced_at if conn else None
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(

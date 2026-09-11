@@ -7,11 +7,16 @@ from accounts.exceptions import (
 from django.utils import timezone
 from accounts.models import OTP
 from accounts.repositories import OTPRepository
-from common.services.email_service import send_email
-from common.utils.datetime import calculate_expiry, is_expired
-from common.utils.hash import hash_value, verify_value
-from common.utils.otp import generate_otp_code
-from common import constants
+from common.email_service import send_email
+from common.common_utils import calculate_expiry, is_expired
+from common.common_utils import hash_value, verify_value
+from common.common_utils import generate_otp_code
+from common.common_utils import (
+    OTP_RESEND_COOLDOWN_SECONDS,
+    OTP_LENGTH,
+    OTP_EXPIRY_MINUTES,
+    MAX_OTP_ATTEMPTS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,17 +64,17 @@ class OTPService:
         existing_otp = self.repository.get_latest_active_otp(user=user,purpose=purpose)
         if existing_otp is not None:
             seconds_since_last_send = (timezone.now() - existing_otp.created_at).total_seconds()
-            if seconds_since_last_send < constants.OTP_RESEND_COOLDOWN_SECONDS:
-                wait_seconds = int(constants.OTP_RESEND_COOLDOWN_SECONDS - seconds_since_last_send)
+            if seconds_since_last_send < OTP_RESEND_COOLDOWN_SECONDS:
+                wait_seconds = int(OTP_RESEND_COOLDOWN_SECONDS - seconds_since_last_send)
                 raise ResendCooldownException(
                     f"Please wait {wait_seconds} more second(s) before requesting new code."
                 )
         with transaction.atomic():
             self.repository.invalidate_previous_otps(user=user, purpose=purpose)
 
-            raw_code = generate_otp_code(length=constants.OTP_LENGTH)
+            raw_code = generate_otp_code(length=OTP_LENGTH)
             otp_hash = hash_value(raw_code)
-            expires_at = calculate_expiry(minutes=constants.OTP_EXPIRY_MINUTES)
+            expires_at = calculate_expiry(minutes=OTP_EXPIRY_MINUTES)
 
             otp = self.repository.create_otp(
                 user=user,
@@ -84,7 +89,7 @@ class OTPService:
         logger.info(
             "%s OTP for user %s (%s): %s (expires in %d minutes)",
             purpose.replace('_', ' ').title(),
-            user.id, user.email, raw_code, constants.OTP_EXPIRY_MINUTES,
+            user.id, user.email, raw_code, OTP_EXPIRY_MINUTES,
         )
 
         # Email delivery outside the atomic transaction — failure here
@@ -97,7 +102,7 @@ class OTPService:
                 subject='Your AGSuite ERP verification code',
                 message=(
                     f'Your verification code is {raw_code}. '
-                    f'It expires in {constants.OTP_EXPIRY_MINUTES} minutes.'
+                    f'It expires in {OTP_EXPIRY_MINUTES} minutes.'
                 ),
                 fail_silently=True,
             )
@@ -117,7 +122,7 @@ class OTPService:
         Raises:
             OTPNotFoundException: no active OTP exists for this user/purpose.
             MaxOTPAttemptsExceededException: too many wrong guesses against
-                this OTP already (common.constants.MAX_OTP_ATTEMPTS) —
+                this OTP already (MAX_OTP_ATTEMPTS) —
                 checked before expiry so a locked-out OTP reports as
                 locked, not merely expired, even if both are true.
             OTPExpiredException: the OTP exists but has expired.
@@ -128,7 +133,7 @@ class OTPService:
             logger.warning('No active OTP found for user %s (purpose=%s).', user.id, purpose)
             raise OTPNotFoundException('No active verification code found. Please request a new one.')
 
-        if otp.attempt_count >=constants.MAX_OTP_ATTEMPTS:
+        if otp.attempt_count >=MAX_OTP_ATTEMPTS:
             logger.warning("OTP attempt limit reached for user %s (purpose=%s).",user.id, purpose)
             raise MaxOTPAttemptsExceededException("Too many incorrect attempts. Please request a new code.")
         
@@ -139,7 +144,7 @@ class OTPService:
         if not verify_value(submitted_code, otp.otp_hash):
             new_attempt_count = self.repository.increment_attempt_count(otp).attempt_count
 
-            logger.warning('OTP mismatch for user %s (purpose=%s).', user.id, purpose, new_attempt_count, constants.MAX_OTP_ATTEMPTS)
+            logger.warning('OTP mismatch for user %s (purpose=%s).', user.id, purpose, new_attempt_count, MAX_OTP_ATTEMPTS)
             raise OTPMismatchException('The code you entered is incorrect. Please try again.')
 
         self.repository.mark_as_used(otp)

@@ -2,12 +2,9 @@
 Base service class for AGSuite ERP.
 
 Provides a thin ``BaseService`` that establishes the service-layer
-convention without imposing any business logic. Services across the
-project (``AuthenticationService``, ``NetSuiteConnectionService``,
-``OCRService``, ``AIService``, ``SyncManager``, ``DashboardService``,
-``AnalyticsService``) already follow a consistent pattern: instantiated
-once (or per-request), delegate to repositories, and never touch the
-HTTP layer.
+convention without imposing any business logic.Services across the project follow the same service-layer convention:
+they are instantiated once or per request, delegate to repositories,
+and never touch the HTTP layer.
 
 ``BaseService`` formalizes this pattern for new services. Existing
 services are intentionally NOT migrated to inherit from it — they

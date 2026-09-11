@@ -46,6 +46,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [openMenuKey, setOpenMenuKey] = useState(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [companyName, setCompanyName] = useState('')
   const [databaseNavItems, setDatabaseNavItems] = useState([])
@@ -122,34 +123,84 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     const hasChildren = children.length > 0
     const route = item.route ? `${item.route}${buildMenuSearch(item.query_params)}` : ''
 
-    if (level===0){
+    if (level === 0) {
+      const isMenuOpen = openMenuKey === item.key
+        
       return (
-        <div key={item.key} className="group/top relative shrink-0">
-          {route ? (
-            <NavLink to={route} className={({ isActive }) => `flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'}`}>
+        <div
+          key={item.key}
+          className="group/top relative shrink-0"
+          onMouseEnter={() => {
+            if (hasChildren) {
+              setOpenMenuKey(item.key)
+            }
+          }}
+          onMouseLeave={() => {
+            setOpenMenuKey(null)
+          }}
+        >
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setOpenMenuKey((current) =>
+                  current === item.key ? null : item.key
+                )
+              }}
+              className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]"
+            >
               <span>{item.name}</span>
-              {hasChildren && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
-              )}
+            
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                className="h-3.5 w-3.5"
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+          ) : route ? (
+            <NavLink
+              to={route}
+              className={({ isActive }) =>
+                `flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  isActive
+                    ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]'
+                    : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'
+                }`
+              }
+            >
+              <span>{item.name}</span>
             </NavLink>
           ) : (
-            <button type="button" className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]">
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]"
+            >
               <span>{item.name}</span>
-              {hasChildren && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5"><path d="m6 9 6 6 6-6" /></svg>
-              )}
             </button>
           )}
+    
           {hasChildren && (
-            <div className="invisible absolute left-0 top-full z-50 mt-1 min-w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 opacity-0 shadow-xl transition-all group-hover/top:visible group-hover/top:opacity-100 group-focus-within/top:visible group-focus-within/top:opacity-100">
-              {children.map((child) => renderDatabaseMenuItem(child, 1))}
+            <div
+              className={`absolute left-0 top-full z-50 mt-1 min-w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-xl ${
+                isMenuOpen
+                  ? 'visible opacity-100'
+                  : 'invisible opacity-0'
+              } transition-all`}
+            >
+              {children.map((child) =>
+                renderDatabaseMenuItem(child, 1)
+              )}
             </div>
           )}
         </div>
       )
     }
-
-    // if (!item.route) return null
 
     return (
       <div key={item.key} className="group/submenu relative">

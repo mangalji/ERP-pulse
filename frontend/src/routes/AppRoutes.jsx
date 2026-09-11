@@ -14,7 +14,6 @@ import SuperAdminCompaniesPage from '../pages/superadmin/CompaniesPage.jsx'
 import SuperAdminPlansPage from '../pages/superadmin/PlansPage.jsx'
 import SuperAdminPlanDetailPage from '../pages/superadmin/PlanDetailPage.jsx'
 import SuperAdminEmployeesPage from '../pages/superadmin/EmployeesPage.jsx'
-import SuperAdminSupportSessionsPage from '../pages/superadmin/SupportSessionsPage.jsx'
 import SuperAdminSettingsPage from '../pages/superadmin/SettingsPage.jsx'
 import SuperAdminCompanyDetailPage from '../pages/superadmin/CompanyDetailPage.jsx'
 import SuperAdminCompanySubscriptionPage from '../pages/superadmin/CompanySubscriptionPage.jsx'
@@ -25,13 +24,8 @@ import PublicHomePage from '../pages/public/HomePage.jsx'
 
 // Client Company Portal
 import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
-import ClientInvoiceReaderPage from '../pages/client/InvoiceReaderPage.jsx'
-import ClientInvoiceDetailPage from '../pages/client/InvoiceDetailPage.jsx'
-import ClientPayloadPreviewPage from '../pages/client/PayloadPreviewPage.jsx'
-import ClientOcrJobsPage from '../pages/client/OcrJobsPage.jsx'
 import ClientEmployeesPage from '../pages/client/EmployeesPage.jsx'
 import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
-import CustomizeNavigationPage from '../pages/client/CustomizeNavigationPage.jsx'
 import CenterTabsPage from '../pages/client/CenterTabsPage.jsx'
 import CenterCategoriesPage from '../pages/client/CenterCategoriesPage.jsx'
 import CenterTabDetailPage from '../pages/client/CenterTabDetailPage.jsx'
@@ -102,8 +96,6 @@ export default function AppRoutes() {
       <Route path="/dashboard" element={<Navigate to="/app" replace />} />
       <Route path="/connect-netsuite" element={<Navigate to="/app/integrations/netsuite" replace />} />
       <Route path="/employees" element={<Navigate to="/app/employees" replace />} />
-      <Route path="/invoices" element={<Navigate to="/app/invoice-reader" replace />} />
-      <Route path="/invoice-reader" element={<Navigate to="/app/invoice-reader" replace />} />
       <Route path="/history" element={<Navigate to="/app" replace />} />
       <Route path="/settings" element={<Navigate to="/app/settings" replace />} />
       <Route path="/system-health" element={<Navigate to="/app" replace />} />
@@ -164,14 +156,6 @@ export default function AppRoutes() {
         }
       />
       <Route
-        path="/admin/support"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <SuperAdminSupportSessionsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/admin/settings"
         element={
           <ProtectedRoute requiredRole="admin">
@@ -208,39 +192,6 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/app/invoice-reader"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
-            <ClientInvoiceReaderPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/invoice-reader/:id"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
-            <ClientInvoiceDetailPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/invoice-reader/:id/payload"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
-            <ClientPayloadPreviewPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/ocr-jobs"
-        element={
-          <ModuleProtectedRoute requiredRole="client" requiredModule="ocr">
-            <ClientOcrJobsPage />
-          </ModuleProtectedRoute>
-        }
-      />
-      
       <Route
         path="/app/ocr-test/field-mapping"
         element={
@@ -295,16 +246,6 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute requiredRole="client">
             <ClientCompanySettingsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/settings/customize"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <CompanyAdminRoute>
-            <CustomizeNavigationPage />
-            </CompanyAdminRoute>
           </ProtectedRoute>
         }
       />
@@ -372,7 +313,6 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      {/* Reports Engine */}
       {/* Catch-all: route to portal if authenticated, login if not */}
       <Route path="*" element={<CatchAllRoute />} />
     </Routes>

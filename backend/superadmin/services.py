@@ -18,8 +18,6 @@ from superadmin.models import (
     CompanyPlanStatus,
     Plan,
     PlanStatus,
-    SupportSession,
-    SupportSessionStatus,
     SubscriptionHistory,
     Transaction,
     DiscountType,
@@ -57,14 +55,6 @@ class SuperAdminService:
             active=Count("id", filter=Q(status=PlanStatus.ACTIVE)),
         )
 
-        support_summary = SupportSession.objects.aggregate(
-            total=Count("id"),
-            active=Count(
-                "id",
-                filter=Q(status=SupportSessionStatus.ACTIVE),
-            ),
-        )
-
         return {
             "total_companies": company_summary["total"],
             "active_companies": company_summary["active"],
@@ -76,8 +66,6 @@ class SuperAdminService:
             "total_client_employees": user_summary["client"],
             "total_plans": plan_summary["total"],
             "active_plans": plan_summary["active"],
-            "total_support_sessions": support_summary["total"],
-            "active_support_sessions": support_summary["active"],
             "recent_company_registrations": list(
                 Company.objects.order_by("-created_at")
                 .values(
@@ -616,10 +604,6 @@ class SuperAdminService:
         )
         return company_plan
 
-    def get_employee_roles(self, *, user):
-        return list(user.user_roles.select_related('role').values('role_id', 'role__name'))
-
-
     def ensure_employee_company_operational(self, *, employee):
         company = getattr(employee, 'company', None)
 
@@ -673,36 +657,6 @@ class SuperAdminService:
         )
         deleted, _ = UserRole.objects.filter(user=user, role_id=role_id).delete()
         return {'deleted': deleted > 0}
-
-
-    def start_support_session(self, *, company_id, support_user_id, reason, ip_address=None):
-        company = get_object_or_404(Company, pk=company_id)
-        support_user = get_object_or_404(User, pk=support_user_id)
-        if SupportSession.objects.filter(company=company, status=SupportSessionStatus.ACTIVE).exists():
-            raise ValueError('Another support session is already active for this company.')
-        session = SupportSession.objects.create(
-            company=company,
-            support_user=support_user,
-            reason=reason,
-            status=SupportSessionStatus.ACTIVE,
-            ip_address=ip_address,
-        )
-        return session
-
-    def end_support_session(self, *, session_id):
-        session = get_object_or_404(SupportSession, pk=session_id)
-        session.status = SupportSessionStatus.ENDED
-        session.ended_at = timezone.now()
-        session.save(update_fields=['status', 'ended_at'])
-        return session
-
-    def list_support_sessions(self, *, company_id=None, search=None):
-        qs = SupportSession.objects.select_related('company', 'support_user')
-        if company_id:
-            qs = qs.filter(company_id=company_id)
-        if search:
-            qs = qs.filter(Q(reason__icontains=search) | Q(company__name__icontains=search))
-        return list(qs.order_by('-started_at')[:50])
 
     def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None,mobile_number=None, country=None, gender=None):
         """Create a pending company user and send the existing invitation flow."""

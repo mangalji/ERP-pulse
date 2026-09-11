@@ -35,15 +35,13 @@ from ocr.exceptions import (
     DocumentProcessingException,
     UnsupportedFormatException,
 )
-from ocr.formats import (
+from ocr.file_validation import (
     SUPPORTED_FORMATS,
     FormatCategory,
     detect_format,
     get_supported_extensions,
     get_supported_mime_types,
     is_supported_extension,
-)
-from ocr.validators import (
     ALLOWED_EXTENSIONS,
     ALLOWED_MIME_TYPES,
     MAX_FILE_SIZE,
@@ -52,7 +50,6 @@ from ocr.validators import (
     validate_file_size,
     validate_mime_type,
 )
-
 
 # ==================================================================
 # Format Registry Tests

@@ -95,13 +95,6 @@ class CompanyPlan(BaseModel):
     def __str__(self):
         return f'{self.company.name} - {self.plan.name}'
 
-
-class SupportSessionStatus(models.TextChoices):
-    ACTIVE = 'ACTIVE', 'Active'
-    ENDED = 'ENDED', 'Ended'
-    EXPIRED = 'EXPIRED', 'Expired'
-
-
 class SubscriptionHistory(BaseModel):
     """
     Read-only historical record of every plan assignment/upgrade/downgrade.
@@ -195,27 +188,3 @@ class Transaction(BaseModel):
     @property
     def discount_amount_value(self):
         return self.original_amount - self.final_amount
-
-
-class SupportSession(BaseModel):
-    """
-    Support session where an AGSuite staff member assists a company.
-    """
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='support_sessions')
-    support_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='support_sessions_as_support'
-    )
-    reason = models.TextField()
-    started_at = models.DateTimeField(auto_now_add=True)
-    ended_at = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(max_length=20, choices=SupportSessionStatus.choices, default=SupportSessionStatus.ACTIVE)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-
-    class Meta:
-        db_table = 'sa_support_session'
-        ordering = ['-started_at']
-
-    def __str__(self):
-        return f'Support session for {self.company.name} by {self.support_user.email}'

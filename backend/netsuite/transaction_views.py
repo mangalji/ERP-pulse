@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.throttles import NetSuiteSyncThrottle
-from common.utils.pagination import paginated_response
+from common.pagination import paginated_response
 from netsuite.services import NetSuiteDataService
 
 

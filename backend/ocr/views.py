@@ -19,7 +19,7 @@ from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from common.utils.response import success_response
+from common.common_utils import success_response
 from rest_framework.response import Response
 from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionTemplate, OCRValidationResult
 from ocr.serializers import (

@@ -11,8 +11,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
-from common.utils.pagination import paginated_response
-from common.utils.response import success_response
+from common.pagination import paginated_response
+from common.common_utils import success_response
 from tenancy.models import Company
 from subscriptions.permissions import IsSuperAdminOrCompanyAdmin
 from subscriptions.serializers import PlanSerializer, SubscriptionSerializer

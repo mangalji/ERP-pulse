@@ -12,8 +12,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.throttles import NetSuiteSyncThrottle
-from common.utils.pagination import paginated_response
-from common.utils.response import success_response
+from common.pagination import paginated_response
+from common.common_utils import success_response
 from sync.serializers import SyncRunSerializer, TriggerSyncSerializer
 from sync.services import SyncManager
 

@@ -44,8 +44,6 @@ apiClient.interceptors.response.use(
     const isAuthEndpoint =
       original.url.includes('/auth/login/') ||
       original.url.includes('/auth/login/verify-otp/') ||
-      original.url.includes('/auth/register/') ||
-      original.url.includes('/auth/register/verify-otp/') ||
       original.url.includes('/auth/forgot-password/') ||
       original.url.includes('/auth/reset-password/')
     const is401 = error.response?.status === 401

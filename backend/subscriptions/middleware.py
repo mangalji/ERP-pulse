@@ -92,9 +92,6 @@ class LicenseMiddleware(MiddlewareMixin):
         """Map URL path to module code."""
         module_map = {
             '/api/v1/ocr/': 'ocr',
-            '/api/v1/ai/': 'ai',
-            '/api/v1/reports/': 'reports',
-            '/api/v1/bi/': 'bi',
             '/api/v1/netsuite/': 'netsuite',
             '/api/v1/invoice/': 'invoice',
             '/api/v1/client/employees': 'employees',

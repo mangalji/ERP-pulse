@@ -8,7 +8,6 @@ const NAV_ITEMS = [
   { to: '/admin/companies', label: 'Companies', icon: BuildingIcon },
   { to: '/admin/plans', label: 'Plans', icon: PlanIcon },
   { to: '/admin/employees', label: 'Employees', icon: EmployeesIcon },
-  { to: '/admin/support', label: 'Support Sessions', icon: SupportIcon },
   { to: '/admin/settings', label: 'Settings', icon: GearIcon },
 ]
 
@@ -244,13 +243,6 @@ function EmployeesIcon(props) {
       <circle cx="9" cy="7" r="3" />
       <path d="M3 21v-2a6 6 0 0 1 12 0v2" />
       <path d="M16 4a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.7" />
-    </svg>
-  )
-}
-function SupportIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   )
 }

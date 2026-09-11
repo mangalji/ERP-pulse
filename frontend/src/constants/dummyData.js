@@ -22,7 +22,7 @@ export const topCustomers = [
 
 export const recentActivity = [
   { id: 1, type: 'sync', text: 'NetSuite sync completed — 214 records updated', time: '12 min ago' },
-  { id: 2, type: 'ai', text: 'AI Assistant generated "Q2 Revenue Summary"', time: '1 hour ago' },
+  // { id: 2, type: 'ai', text: 'AI Assistant generated "Q2 Revenue Summary"', time: '1 hour ago' },
   { id: 3, type: 'report', text: 'Monthly report exported as PDF', time: '3 hours ago' },
   { id: 4, type: 'sync', text: 'NetSuite sync completed — 98 records updated', time: 'Yesterday' },
 ]

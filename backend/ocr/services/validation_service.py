@@ -14,7 +14,7 @@ from pathlib import Path
 from ocr.exceptions import InvalidFileException, PDFProcessingException
 from ocr.pdf_processor import pdf_processor
 from ocr.utils import logger
-from ocr.validators import (
+from ocr.file_validation import (
     validate_extension,
     validate_file_size,
     validate_mime_type,

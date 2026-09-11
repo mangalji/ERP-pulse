@@ -1,0 +1,947 @@
+===== FILE INVENTORY =====
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\services\email_service.py | 123 lines =====
+
+"""
+Reusable email sending utility.
+ 
+This module intentionally contains only low-level email sending functionality.
+Business logic (OTP emails, welcome emails, password reset emails, etc.)
+must remain inside their respective services.
+ 
+Two delivery paths, chosen automatically:
+ 
+- Brevo HTTP API (when settings.BREVO_API_KEY is set) — sends over
+  HTTPS (port 443). Needed on hosts like Render's free tier, which
+  blocks outbound traffic on SMTP ports 25/465/587 entirely, so SMTP
+  delivery silently times out there regardless of how correct the
+  SMTP credentials are.
+- Django's configured EMAIL_BACKEND otherwise (SMTP in most other
+  environments, console for local dev) — unchanged from before.
+ 
+fail_silently is handled uniformly here for both paths: we always
+catch and log the failure ourselves (so it shows up in server logs
+either way), and only re-raise when the caller asked not to fail
+silently..
+"""
+
+import logging
+import requests
+
+from django.core.mail import send_mail as django_send_mail
+from django.conf import settings
+
+logger = logging.getLogger(__name__)
+
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+
+
+def send_email(
+        *,
+        subject:str,
+        message: str,
+        recipient_list: list[str],
+        from_email:str | None=None,
+        fail_silently: bool=False,
+        ) -> int:
+    """
+    Send a plain text email.
+
+    Args:
+        subject: Email subject.
+        message: Plain text email body.
+        recipient_list: List of recipient email addresses.
+        from_email: Sender email. Defaults to settings.DEFAULT_FROM_EMAIL.
+        fail_silently: Whether Django should suppress email backend exceptions.
+
+    Returns:
+        Number of successfully delivered messages.
+
+    Raises:
+        Any exception raised by Django's email backend.
+    """
+
+    if not recipient_list:
+        raise ValueError("recipient list cannot be empty")
+
+    sender_email = from_email or settings.DEFAULT_FROM_EMAIL
+    
+    try:
+
+        if settings.BREVO_API_KEY:
+            _send_via_brevo(
+                subject=subject,
+                message=message,
+                recipient_list=recipient_list,
+                sender_email=sender_email
+            )
+        else:
+            django_send_mail(
+                subject=subject,
+                message=message,
+                from_email=sender_email,
+                recipient_list=recipient_list,
+                fail_silently=False,
+            )
+        return len(recipient_list)
+
+    except Exception as exc:
+        logger.error(
+            "Failed to send email to %s (subject='%s'): %s",
+            recipient_list,
+            subject,
+            str(exc)[:500],
+        )
+        if not fail_silently:
+            raise
+        return 0
+
+def _send_via_brevo(*, subject: str, message: str, recipient_list: list[str], sender_email: str) -> None:
+    """
+    POST to Brevo's transactional email API. Raises on any non-2xx
+    response or network failure — send_email() above handles logging
+    and fail_silently.
+    """
+
+    response = requests.post(
+        BREVO_API_URL,
+        headers={
+            "api-key":settings.BREVO_API_KEY,
+            "content-type":"application/json",
+            "accept":"application/json",
+        },
+        json = {
+            "sender":{
+                "name":settings.DEFAULT_FROM_NAME,
+                "email":sender_email,
+            },
+            "to":[{"email":address} for address in recipient_list],
+            "subject":subject,
+            "textContent":message,
+        },
+        timeout=settings.EMAIL_TIMEOUT,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"Brevo API returned {response.status_code}: {response.text[:300]}"
+        )
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\services\__init__.py | 0 lines =====
+
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\crypto.py | 61 lines =====
+
+"""
+Field-level encryption for sensitive values stored at rest.
+
+Used by netsuite.models.NetSuiteConnection for client_secret, access_token,
+and refresh_token — see that model's docstring. Encryption/decryption is
+transparent at the model layer (EncryptedTextField), so services.py,
+client.py, and repositories.py keep reading/writing connection.access_token
+etc. as plain strings; nothing outside this file needs to know encryption
+is happening.
+"""
+
+from cryptography.fernet import Fernet, InvalidToken
+from django.conf import settings
+from django.db import models
+
+
+def _get_fernet() -> Fernet:
+    # Resolved lazily (not at import time) so settings are fully loaded
+    # first, and so a missing key only breaks code paths that actually
+    # touch an encrypted field rather than every import of this module.
+    key = settings.FIELD_ENCRYPTION_KEY
+    if not key:
+        raise ValueError(
+            'FIELD_ENCRYPTION_KEY is not set. Generate one with '
+            '`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` '
+            'and set it as an environment variable before storing NetSuite credentials.'
+        )
+    return Fernet(key.encode() if isinstance(key, str) else key)
+
+
+class EncryptedTextField(models.TextField):
+    """
+    A TextField that is encrypted with Fernet (AES-128-CBC + HMAC) before
+    it reaches the database and decrypted transparently on read.
+
+    Values already in the DB before this field type was introduced are
+    plaintext; from_db_value() falls back to returning them as-is if
+    Fernet decryption fails, so existing rows don't break on first read.
+    Re-saving such a row (e.g. via update_tokens()) re-encrypts it going
+    forward.
+    """
+
+    def get_prep_value(self, value):
+        value = super().get_prep_value(value)
+        if value is None or value == '':
+            return value
+        return _get_fernet().encrypt(value.encode()).decode()
+
+    def from_db_value(self, value, expression, connection):
+        if value is None or value == '':
+            return value
+        try:
+            return _get_fernet().decrypt(value.encode()).decode()
+        except InvalidToken:
+            # Pre-encryption plaintext row — return as-is rather than
+            # raising, so migrating existing connections doesn't lock
+            # users out. Gets encrypted on the next save.
+            return value
+
+    def to_python(self, value):
+        return value
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\datetime.py | 13 lines =====
+
+from datetime import datetime, timedelta
+
+from django.utils import timezone
+
+
+def calculate_expiry(minutes: int) -> datetime:
+    """Return a timezone-aware timestamp `minutes` from now."""
+    return timezone.now() + timedelta(minutes=minutes)
+
+
+def is_expired(expires_at: datetime) -> bool:
+    """Return True if the given timestamp is at or before the current time."""
+    return timezone.now() >= expires_at
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\hash.py | 17 lines =====
+
+from django.contrib.auth.hashers import check_password, make_password
+
+
+def hash_value(raw_value: str) -> str:
+    """
+    Hash a raw string using Django's configured password hasher.
+
+    Reused for OTP codes (not just passwords) per AUTHENTICATION_DESIGN.md
+    Decision AUTH-007: OTP codes are hashed at rest using the same
+    precedent as passwords, rather than a separate hashing scheme.
+    """
+    return make_password(raw_value)
+
+
+def verify_value(raw_value: str, hashed_value: str) -> bool:
+    """Check whether a raw string matches a previously hashed value."""
+    return check_password(raw_value, hashed_value)
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\model_schema.py | 74 lines =====
+
+from django.db import models
+
+
+TYPE_MAP = {
+    models.AutoField: "integer",
+    models.BigAutoField: "integer",
+    models.IntegerField: "integer",
+    models.BigIntegerField: "integer",
+    models.PositiveIntegerField: "integer",
+    models.PositiveBigIntegerField: "integer",
+    models.SmallIntegerField: "integer",
+    models.PositiveSmallIntegerField: "integer",
+    models.FloatField: "number",
+    models.DecimalField: "decimal",
+    models.BooleanField: "boolean",
+    models.DateField: "date",
+    models.DateTimeField: "datetime",
+    models.TimeField: "time",
+    models.EmailField: "string",
+    models.URLField: "string",
+    models.UUIDField: "string",
+    models.TextField: "text",
+    models.CharField: "string",
+    models.JSONField: "json",
+}
+
+
+def get_model_schema(model):
+    fields = []
+
+    for field in model._meta.get_fields():
+        if not getattr(field, "concrete", False):
+            continue
+
+        if getattr(field, "auto_created", False):
+            continue
+
+        internal_type = field.get_internal_type()
+
+        field_type = "string"
+
+        for django_type, frontend_type in TYPE_MAP.items():
+            if isinstance(field, django_type):
+                field_type = frontend_type
+                break
+
+        choices = [
+            {
+                "value": value,
+                "label": label,
+            }
+            for value, label in (field.choices or [])
+        ]
+
+        fields.append({
+            "name": field.name,
+            "label": field.verbose_name.replace("_", " ").title(),
+            "type": field_type,
+            "required": (
+                not getattr(field, "blank", False)
+                and not getattr(field, "null", False)
+                and not getattr(field, "auto_created", False)
+            ),
+            "read_only": (
+                getattr(field, "auto_created", False)
+                or getattr(field, "primary_key", False)
+                or getattr(field, "auto_now", False)
+                or getattr(field, "auto_now_add", False)
+            ),
+            "nullable": getattr(field, "null", False),
+            "choices": choices,
+        })
+
+    return fields
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\otp.py | 24 lines =====
+
+"""
+OTP utility functions.
+
+Contains only OTP generation logic.
+No database access.
+No email sending.
+No business logic.
+"""
+
+import secrets
+import string
+
+
+def generate_otp_code(length: int = 6) -> str:
+    """
+    Generate a random numeric OTP code of the given length.
+
+    Uses `secrets` (not `random`) because OTP codes are a security control —
+    they must not be predictable from a seeded or time-based PRNG.
+    """
+    if length < 4:
+        raise ValueError('OTP length must be at least 4 digits.')
+
+    return ''.join(secrets.choice(string.digits) for _ in range(length))
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\pagination.py | 87 lines =====
+
+"""
+Standard paginated API response builder.
+
+Wraps the standard success_response envelope with pagination metadata,
+so list endpoints return a consistent shape:
+
+    {
+        "success": true,
+        "message": "...",
+        "data": {
+            "count": 100,
+            "next": "https://.../api/v1/.../?offset=20&limit=20",
+            "previous": null,
+            "results": [...]
+        }
+    }
+"""
+
+from math import ceil
+
+from django.conf import settings
+from rest_framework.request import Request
+
+from common.utils.response import success_response
+
+
+def paginated_response(
+    *,
+    message: str,
+    results: list,
+    count: int,
+    request: Request,
+    offset: int = 0,
+    limit: int = 20,
+    status_code: int = 200,
+) -> dict:
+    """
+    Build a paginated success response.
+
+    Parameters
+    ----------
+    message : str
+        Human-readable success message.
+    results : list
+        The page of items being returned.
+    count : int
+        Total number of items across all pages (not just this page).
+    request : Request
+        The DRF request — used to reconstruct full URLs for next/previous.
+    offset : int
+        Zero-based offset of the current page.
+    limit : int
+        Maximum items per page.
+    status_code : int
+        HTTP status code (default 200).
+
+    Returns
+    -------
+    Response
+        DRF Response with the standard success envelope containing
+        pagination metadata.
+    """
+
+    def _build_url(new_offset: int) -> str | None:
+        """Build a full URL for the given offset, preserving other query params."""
+        if new_offset < 0 or new_offset >= count:
+            return None
+        params = request.query_params.copy()
+        params["offset"] = str(new_offset)
+        params["limit"] = str(limit)
+        return request.build_absolute_uri(
+            f"{request.path}?{params.urlencode()}"
+        )
+
+    previous_offset = offset - limit
+    next_offset = offset + limit
+
+    return success_response(
+        message=message,
+        data={
+            "count": count,
+            "next": _build_url(next_offset),
+            "previous": _build_url(previous_offset),
+            "results": results,
+        },
+        status_code=status_code,
+    )
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\response.py | 21 lines =====
+
+
+"""
+Standard API response builder.
+ 
+Every successful response across the project must follow the standard
+envelope defined in BACKEND_CONTEXT.md / CODE_STYLE.md:
+    {"success": true, "message": "...", "data": {...}}
+ 
+Error responses follow the same envelope via
+common/exception_handler.py — views never build error bodies by hand.
+"""
+from rest_framework.response import Response
+
+def success_response(*,message:str,data:dict|None=None, status_code:int=200)->Response:
+    """Build a success envelope response"""
+    return Response(
+        {"success":True,
+         'message':message,
+         'data':data if data is not None else {}},
+         status=status_code,
+    )
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\utils\signed_token.py | 30 lines =====
+
+"""
+Signed, short-lived token utility built on Django's own `signing` module
+(HMAC-signed with SECRET_KEY — no new dependency, no database row).
+
+Used wherever a flow needs to prove "this step already happened" across
+separate stateless HTTP requests without persisting a row for it — e.g.
+proving OTP verification completed before allowing registration profile
+completion. Deliberately generic (not accounts-specific) since the same
+need will come up again for other multi-step flows (e.g. a future
+password-reset flow).
+"""
+
+from django.core import signing
+
+
+def generate_signed_token(*, payload: dict, salt: str) -> str:
+    """Create a signed, tamper-proof token carrying `payload`."""
+    return signing.dumps(payload, salt=salt)
+
+
+def verify_signed_token(*, token: str, salt: str, max_age_seconds: int) -> dict:
+    """
+    Decode and verify a token created by generate_signed_token().
+
+    Raises django.core.signing.BadSignature (invalid/tampered/wrong salt)
+    or django.core.signing.SignatureExpired (past max_age_seconds).
+    Callers should catch these and translate to a domain-specific
+    exception rather than let them leak past the service layer.
+    """
+    return signing.loads(token, salt=salt, max_age=max_age_seconds)
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\admin.py | 1 lines =====
+
+# No models are registered yet — the common app currently has none.
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\apps.py | 5 lines =====
+
+from django.apps import AppConfig
+
+
+class CommonConfig(AppConfig):
+    name = 'common'
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\authentication.py | 123 lines =====
+
+"""
+Custom JWT authentication that reads the access token from an httpOnly
+cookie (in addition to the standard Authorization header).
+
+This allows the refresh token to be stored as an httpOnly cookie (safe from
+XSS — JavaScript can never read it) while the access token can travel
+either way. The cookie approach means the frontend never needs to
+explicitly manage token strings in JavaScript (no localStorage, no
+sessionStorage, no JS-accessible variables).
+
+Backward-compatible: the Authorization header is checked first, then the
+cookie. This lets API clients (curl, Postman, third-party integrations)
+continue using the Bearer header without any code change.
+"""
+
+import logging
+
+from django.conf import settings
+from rest_framework.authentication import BaseAuthentication
+from rest_framework.exceptions import AuthenticationFailed
+
+logger = logging.getLogger(__name__)
+
+# Cookie names — must match what the login/refresh/logout views set.
+ACCESS_COOKIE_NAME = getattr(settings, 'JWT_AUTH_COOKIE', 'access_token')
+REFRESH_COOKIE_NAME = getattr(settings, 'JWT_AUTH_REFRESH_COOKIE', 'refresh_token')
+
+
+class CookieJWTAuthentication(BaseAuthentication):
+    """
+    Falls back to reading the access token from an httpOnly cookie named
+    `access_token` when no Authorization header is present.
+
+    Usage in settings:
+        REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES'] = [
+            'common.authentication.CookieJWTAuthentication',
+            'rest_framework_simplejwt.authentication.JWTAuthentication',
+        ]
+    """
+
+    def authenticate(self, request):
+        """
+        Try the Authorization header first (standard SimpleJWT path), then
+        fall back to the httpOnly cookie. This way curl/Postman clients
+        keep working unchanged.
+        """
+        # If the request already has an Authorization header, let SimpleJWT
+        # handle it as usual — no need to read the cookie.
+        raw_token = request.META.get('HTTP_AUTHORIZATION')
+        if raw_token:
+            return None  # Let the next auth class in the chain handle it
+
+        # No Authorization header — try the access_token cookie.
+        access_token = request.COOKIES.get(ACCESS_COOKIE_NAME)
+        if not access_token:
+            return None  # No cookie either — move to the next auth class
+
+        # Validate the token via SimpleJWT's own validator.
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+
+        jwt_auth = JWTAuthentication()
+        try:
+            validated_token = jwt_auth.get_validated_token(access_token)
+
+        except (InvalidToken, TokenError):
+            logger.debug("Ignoring invalid access_token cookie.")
+            return None
+        try:
+            user = jwt_auth.get_user(validated_token)
+        except AuthenticationFailed:
+            logger.debug("Ignoring access_token cookie for inactive/invalid user.")
+            return None
+        return user, validated_token
+
+
+def set_auth_cookies(response, access_token, refresh_token=None):
+    """
+    Set JWT tokens as httpOnly cookies on the given response.
+    Safe to call on login, token refresh, or any view that issues new tokens.
+
+    The access token cookie is used by CookieJWTAuthentication (above) and
+    the frontend's apiClient (which sends credentials automatically).
+    The refresh token cookie is used by the custom TokenRefreshView to
+    obtain new access tokens without exposing the refresh token to JS.
+    """
+    _set_cookie(
+        response,
+        ACCESS_COOKIE_NAME,
+        access_token,
+        max_age=getattr(settings, 'JWT_AUTH_COOKIE_ACCESS_MAX_AGE', None),
+    )
+    if refresh_token:
+        _set_cookie(
+            response,
+            REFRESH_COOKIE_NAME,
+            refresh_token,
+            max_age=getattr(settings, 'JWT_AUTH_COOKIE_REFRESH_MAX_AGE', None),
+        )
+
+
+def clear_auth_cookies(response):
+    """Remove JWT auth cookies — call on logout."""
+    _set_cookie(response, ACCESS_COOKIE_NAME, '', max_age=0)
+    _set_cookie(response, REFRESH_COOKIE_NAME, '', max_age=0)
+
+
+def _set_cookie(response, name, value, max_age=None):
+    """
+    Set a single httpOnly cookie with production-hardened defaults.
+    All parameters are configurable via Django settings with the
+    JWT_AUTH_COOKIE_* prefix so they can differ between local dev and
+    production without touching code.
+    """
+    response.set_cookie(
+        key=name,
+        value=value,
+        max_age=max_age,
+        secure=getattr(settings, 'JWT_AUTH_COOKIE_SECURE', not settings.DEBUG),
+        httponly=True,
+        samesite=getattr(settings, 'JWT_AUTH_COOKIE_SAMESITE', 'Lax'),
+        path=getattr(settings, 'JWT_AUTH_COOKIE_PATH', '/'),
+    )
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\constants.py | 29 lines =====
+
+"""
+Project-wide constants.
+
+Only stable values belong here.
+Business logic must not live in this file.
+"""
+OTP_LENGTH = 6
+
+OTP_EXPIRY_MINUTES = 5
+
+MAX_OTP_ATTEMPTS = 3
+
+# OTP_PURPOSE_REGISTRATION = "REGISTRATION"
+
+# OTP_PURPOSE_LOGIN = "LOGIN"
+
+# Registration flow (email/OTP/password held in cache until profile
+# completion — see accounts/registration_cache.py).
+OTP_RESEND_COOLDOWN_SECONDS = 60
+EMAIL_SUBJECT_LOGIN = "Your AGSuite ERP login OTP"
+EMAIL_SUBJECT_PASSWORD_RESET = "Reset your AGSuite ERP password"
+EMAIL_SUBJECT_PROFILE_UPDATE = "Confirm your AGSuite ERP profile update"
+
+# How many prior messages (not the whole conversation) get sent to the AI
+# provider as context on each turn. Kept deliberately small — unlimited
+# history would grow both token cost and latency unboundedly as a
+# conversation gets longer. The full conversation remains readable via
+# GET /api/v1/ai/conversations/<id>/messages/ regardless of this limit.
+AI_CONVERSATION_HISTORY_LIMIT = 10
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\contact_validation.py | 128 lines =====
+
+"""
+Shared country/phone validation for AGSuite ERP.
+
+The selected country is the source of truth for validating the phone number.
+Phones are normalized to E.164 format before being persisted.
+
+Dependency:
+    pip install phonenumbers
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import phonenumbers
+from phonenumbers import NumberParseException
+
+def _validate_india_mobile_sanity(digits: str) -> None:
+    first_digit = digits[0]
+
+    if first_digit not in {'6', '7', '8', '9'}:
+        raise ValueError(
+            'Indian mobile numbers must start with 6, 7, 8, or 9.'
+        )
+
+    if digits.count(first_digit) >= 4:
+        raise ValueError(
+            'The first digit cannot repeat 4 or more times in the number.'
+        )
+
+    if len(set(digits)) == 1:
+        raise ValueError(
+            'Mobile number cannot contain the same digit throughout.'
+        )
+
+    for index in range(len(digits) - 5):
+        if len(set(digits[index:index + 6])) == 1:
+            raise ValueError(
+                'Mobile number cannot contain the same digit more than 5 times continuously.'
+            )
+
+    if digits in {'1234567890', '9876543210'}:
+        raise ValueError(
+            'Mobile number cannot be a simple sequential number.'
+        )
+
+    if (
+        len(digits) == 10
+        and all(digits[index] == digits[index % 2] for index in range(10))
+        and digits[0] != digits[1]
+    ):
+        raise ValueError(
+            'Mobile number cannot follow a repeating two-digit pattern.'
+        )
+
+
+@dataclass(frozen=True)
+class NormalizedPhone:
+    number: str
+    country_code: str
+    dial_code: str
+
+
+def _validate_country(country: str) -> str:
+    region = str(country or "").strip().upper()
+
+    if len(region) != 2 or not region.isalpha():
+        raise ValueError("Country must be a valid 2-letter country code.")
+
+    try:
+        calling_code = phonenumbers.country_code_for_region(region)
+    except Exception as exc:
+        raise ValueError("Invalid country selected.") from exc
+
+    if not calling_code:
+        raise ValueError("The selected country has no valid calling code.")
+
+    return region
+
+
+def normalize_phone(*, phone: str, country: str) -> NormalizedPhone:
+    """
+    Validate a phone number against the selected ISO country and normalize it.
+
+    Example:
+        country="IN", phone="9425457160"
+        -> "+919425457160", "+91", "IN"
+    """
+    if not phone or not str(phone).strip():
+        raise ValueError("Phone number is required.")
+
+    region = _validate_country(country)
+
+    raw = str(phone).strip()
+
+    try:
+        parsed = phonenumbers.parse(raw, region)
+    except NumberParseException as exc:
+        raise ValueError(
+            "Enter a valid phone number for the selected country."
+        ) from exc
+
+    if not phonenumbers.is_possible_number(parsed):
+        raise ValueError(
+            "Enter a valid phone number for the selected country."
+        )
+
+    if not phonenumbers.is_valid_number(parsed):
+        raise ValueError(
+            "Enter a valid phone number for the selected country."
+        )
+
+    national_digits = str(parsed.national_number)
+    if region == "IN":
+        _validate_india_mobile_sanity(national_digits)
+
+    normalized = phonenumbers.format_number(
+        parsed,
+        phonenumbers.PhoneNumberFormat.E164,
+    )
+
+    dial_code = f"+{parsed.country_code}"
+
+    return NormalizedPhone(
+        number=normalized,
+        country_code=region,
+        dial_code=dial_code,
+    )
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\exception_handler.py | 113 lines =====
+
+"""
+Project-wide DRF exception handler.
+ 
+Wraps every error response — serializer validation errors, domain/service
+exceptions, and unexpected exceptions — into the standard
+{"success": false, "message": "...", "data": {}} envelope, so views never
+format errors themselves and raw serializer errors are never returned
+directly. Registered via REST_FRAMEWORK['EXCEPTION_HANDLER'] in
+config/settings.py.
+"""
+
+import logging
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import exception_handler as drf_exception_handler
+
+logger = logging.getLogger(__name__)
+
+def standard_exception_handler(exc, context):
+    """
+    Convert any exception into the standard error envelope.
+ 
+    Handling order:
+    1. Exceptions DRF already understands (ValidationError,
+       NotAuthenticated, PermissionDenied, NotFound, ...) — re-wrap DRF's
+       own response instead of reformatting each one manually.
+    2. Domain/service exceptions that declare a `status_code` attribute
+       (e.g. accounts.exceptions.UserAlreadyExistsException). Apps opt in
+       by setting `status_code` on their own exception classes, so
+       `common` never has to import app-specific exception modules —
+       this keeps common reusable for every future app, not just accounts.
+    3. Anything else is unexpected: log it and return a generic 500
+       without leaking internal detail to the client.
+    """
+    response = drf_exception_handler(exc, context)
+    # DEBUG_EXC_HANDLER: exception type = {type(exc).__name__}  # temporarily disabled debug logging
+    # DEBUG_EXC_HANDLER: exception message = {str(exc)}  # temporarily disabled debug logging
+    # DEBUG_EXC_HANDLER: hasattr status_code = ...  # temporarily disabled debug logging
+    # import traceback as tb_module2  # temporarily disabled debug logging
+    # DEBUG_EXC_HANDLER: traceback:\n...  # temporarily disabled debug logging
+
+    if response is not None:
+        # DEBUG_EXC_HANDLER: drf response status = {response.status_code}  # temporarily disabled debug logging
+        response.data = {
+            'success': False,
+            'message': _extract_message(response.data),
+            'errors': response.data if response.status_code == status.HTTP_400_BAD_REQUEST else {},
+            'data': {},
+        }
+        return response
+    
+    status_code = getattr(exc,'status_code',None)
+    if status_code is not None:
+        if status_code >= 500:
+            _log_error(exc, context, status_code, level='error')
+        return Response(
+            {'success':False,
+             'message':str(exc),
+             'data':{}},
+             status=status_code,
+        )
+    
+    logger.exception('Unhandled exception is %s', context.get('view'))
+    _log_error(exc, context, status.HTTP_500_INTERNAL_SERVER_ERROR, level='error')
+    return Response(
+        {'success':False,
+         'message':'An unexpected error occurred.', 'data': {}},
+         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
+
+
+def _log_error(exc, context, status_code, level='error'):
+    """
+    Persist an unhandled/server exception to monitoring.ErrorLog.
+
+    Imported lazily (not at module top) so `common` — loaded very early
+    in the app registry — never has a hard import-time dependency on the
+    `monitoring` app. Failures here are swallowed: a broken monitoring
+    write must never mask the original error response.
+    """
+    try:
+        import traceback as tb_module
+        from monitoring.models import ErrorLog
+
+        request = context.get('request')
+        user = getattr(request, 'user', None)
+
+        ErrorLog.objects.create(
+            level=level,
+            message=str(exc),
+            exception_type=type(exc).__name__,
+            traceback=''.join(tb_module.format_exception(type(exc), exc, exc.__traceback__))[:10000],
+            method=getattr(request, 'method', ''),
+            path=getattr(request, 'path', ''),
+            status_code=status_code,
+            user=user if user and getattr(user, 'is_authenticated', False) else None,
+        )
+    except Exception:
+        logger.exception('Failed to write ErrorLog entry.')
+
+def _extract_message(error_data)->str:
+    """
+    Reduce DRF's (possibly nested, per-field) error data into one
+    human-readable message instead of exposing the raw field/error
+    structure to the client.
+    """
+    if isinstance(error_data,dict):
+        for value in error_data.values():
+            return _extract_message(value)
+        return 'Invalid request.'
+    if isinstance(error_data,list):
+        return str(error_data[0] if error_data else 'Invalid request.')
+    return str(error_data)
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\models.py | 4 lines =====
+
+# Intentionally empty for Day 1.
+# The shared BaseModel (created_at/updated_at audit columns per
+# DATABASE_CONTEXT.md) is scheduled for Day 3 alongside the other
+# Django apps, not Day 1 project initialization.
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\throttles.py | 31 lines =====
+
+"""
+Custom DRF throttle classes with rates driven by Django settings.
+
+All rates are defined in settings.py so they can be changed without
+touching code. Defaults match the production hardening requirements:
+
+- Anonymous OTP endpoints: 5/min
+- AI Chat: 20/min
+- Dashboard: 120/min
+- NetSuite Sync: 30/min
+"""
+
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+
+class LoginOTPThrottle(AnonRateThrottle):
+     scope = 'login_otp'
+
+class RegisterOTPThrottle(AnonRateThrottle):
+    scope = 'register_otp'
+
+class AIChatThrottle(UserRateThrottle):
+    scope = 'ai_chat'
+
+class DashboardThrottle(UserRateThrottle):
+    scope = 'dashboard'
+
+class NetSuiteSyncThrottle(UserRateThrottle):
+    scope = 'netsuite_sync'
+
+class HealthCheckThrottle(AnonRateThrottle):
+    scope = 'health_check'
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\views.py | 2 lines =====
+
+# No views in this app. Views live in the apps that own the relevant
+# domain logic (accounts, customers, etc.), created starting Day 3.
+
+===== C:\Users\Raj Mangal\OneDrive\Desktop\erp-pulse\ERP-pulse\backend\common\__init__.py | 0 lines =====
+

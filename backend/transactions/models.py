@@ -11,7 +11,7 @@ def get_model_schema(model):
             "label": str(field.verbose_name).replace("_", " ").title(),
             "type": field.get_internal_type(),
             "required": not field.blank and not field.null and field.default is models.NOT_PROVIDED,
-            "read_only": field.auto_created or field.primary_key,
+            "read_only": field.auto_created or field.primary_key or not field.editable,
         })
 
     return fields

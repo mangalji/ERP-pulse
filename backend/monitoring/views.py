@@ -20,7 +20,7 @@ from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.views import APIView
 
 from common.throttles import HealthCheckThrottle
-from common.utils.response import success_response
+from common.common_utils import success_response
 from monitoring.models import ErrorLog, RequestLog
 from monitoring.serializers import ErrorLogSerializer
 

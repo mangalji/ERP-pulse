@@ -57,10 +57,4 @@ export const superadminApi = {
   assignEmployeeRole: (id, roleId) => apiClient.post(SUPERADMIN_ENDPOINTS.employeeAssignRole(id), { role_id: roleId }).then(unwrap),
   removeEmployeeRole: (id, roleId) => apiClient.post(SUPERADMIN_ENDPOINTS.employeeRemoveRole(id), { role_id: roleId }).then(unwrap),
   resendEmployeeInvitation: (employeeId) => apiClient.post(`/superadmin/employees/${employeeId}/resend_invitation/`).then(unwrap),
-
-  // ── Support Sessions ─────────────────────────────────────────
-  listSupportSessions: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.supportSessions, { params }).then(unwrap),
-  getSupportSession: (id) => apiClient.get(`${SUPERADMIN_ENDPOINTS.supportSessions}${id}/`).then(unwrap),
-  startSupportSession: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.supportSessionsStart, payload).then(unwrap),
-  endSupportSession: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.supportSessionsEnd(id)).then(unwrap),
 }

@@ -12,8 +12,8 @@ from rest_framework import permissions
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.views import APIView
 from netsuite.exceptions import NetSuiteConnectionNotFoundException
-from common.utils.pagination import paginated_response
-from common.utils.response import success_response
+from common.pagination import paginated_response
+from common.common_utils import success_response
 from common.throttles import DashboardThrottle
 from dashboard.services import DashboardService, DashboardAggregateService
 

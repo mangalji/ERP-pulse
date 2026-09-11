@@ -87,27 +87,6 @@ export function AuthProvider({ children }) {
     return await authApi.resendLoginOtp(email)
   }
 
-  const register = async (email, password, confirmPassword) => {
-    setError(null)
-    const res = await authApi.requestRegisterOtp(email, password, confirmPassword)
-    return { email: res.email }
-  }
-
-  const verifyRegister = async (email, otpCode) => {
-    setError(null)
-    return await authApi.verifyRegisterOtp(email, otpCode)
-  }
-
-  const completeProfile = async (registrationToken, firstName, lastName, mobileNumber) => {
-    setError(null)
-    return await authApi.completeProfile(registrationToken, firstName, lastName, mobileNumber)
-  }
-
-  const resendRegisterOtp = async (email) => {
-    setError(null)
-    return await authApi.resendRegisterOtp(email)
-  }
-
   const forgotPassword = async (email) => {
     setError(null)
     return await authApi.forgotPassword(email)
@@ -155,10 +134,6 @@ export function AuthProvider({ children }) {
       login,
       verifyLogin,
       resendLoginOtp,
-      register,
-      verifyRegister,
-      completeProfile,
-      resendRegisterOtp,
       forgotPassword,
       resetPassword,
       profileSendOtp,

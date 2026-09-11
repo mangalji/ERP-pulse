@@ -11,10 +11,6 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8
  */
 
 export const AUTH_ENDPOINTS = {
-  register: '/auth/register/',
-  resendRegisterOtp: '/auth/register/resend-otp/',
-  verifyRegisterOtp: '/auth/register/verify-otp/',
-  completeProfile: '/auth/register/complete-profile/',
   login: '/auth/login/',
   verifyLoginOtp: '/auth/login/verify-otp/',
   resendLoginOtp: '/auth/login/resend-otp/',
@@ -86,9 +82,6 @@ export const SUPERADMIN_ENDPOINTS = {
   employeeActivate: (id) => `/superadmin/employees/${id}/activate/`,
   employeeAssignRole: (id) => `/superadmin/employees/${id}/assign_role/`,
   employeeRemoveRole: (id) => `/superadmin/employees/${id}/remove_role/`,
-  supportSessions: '/superadmin/support-sessions/',
-  supportSessionsStart: '/superadmin/support-sessions/start/',
-  supportSessionsEnd: (id) => `/superadmin/support-sessions/${id}/end/`,
   dashboardSummary: '/superadmin/dashboard/summary/',
 }
 

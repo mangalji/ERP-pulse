@@ -13,7 +13,7 @@ urlpatterns = [
     path('api/v1/monitoring/', include('monitoring.urls')),
     path('api/v1/sync/', include('sync.urls')),
     path('api/v1/ocr/', include('ocr.urls')),
-    path('api/v1/invoice/', include('invoice.urls')),
+    # path('api/v1/invoice/', include('invoice.urls')),
     path('api/v1/superadmin/', include('superadmin.urls')),
     path('api/v1/client/', include('tenancy.urls')),
     path('api/v1/invitations/', include('invitations.urls')),

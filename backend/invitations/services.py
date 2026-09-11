@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from audit.models import AuditModule, AuditAction
 from audit.services import audit_service
-from common.services.email_service import send_email
+from common.email_service import send_email
 from accounts.models import OTP
 from accounts.services import OTPService
 from common.contact_validation import normalize_phone

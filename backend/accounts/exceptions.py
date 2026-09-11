@@ -32,15 +32,6 @@ class InvalidCredentialsException(Exception):
 class AccountNotVerifiedException(Exception):
     """Raised when login is attempted before registration OTP verification is complete."""
     status_code = status.HTTP_403_FORBIDDEN
-
-class RegistrationSessionNotFoundException(Exception):
-    """
-    Raised when no in-flight registration exists for a given email —
-    either it was never started, or its cache entry has expired. The two
-    cases are indistinguishable once the cache entry is gone, so they
-    share one exception rather than two.
-    """
-    status_code = status.HTTP_404_NOT_FOUND
  
  
 class ResendCooldownException(Exception):
@@ -54,11 +45,3 @@ class MaxOTPAttemptsExceededException(Exception):
     wrong the maximum number of times.
     """
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
- 
- 
-class InvalidRegistrationTokenException(Exception):
-    """
-    Raised when the Complete Profile step's signed token is missing,
-    invalid, tampered with, or expired.
-    """
-    status_code = status.HTTP_400_BAD_REQUEST

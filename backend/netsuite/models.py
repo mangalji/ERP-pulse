@@ -2,7 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
-from common.utils.crypto import EncryptedTextField
+from common.crypto import EncryptedTextField
 
 
 class NetSuiteConnection(models.Model):

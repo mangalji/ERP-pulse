@@ -54,7 +54,7 @@ from ocr.models import OCRUpload
 from ocr.pdf_processor import MAX_PAGES, PDFProcessor
 from ocr.serializers import UploadResponseSerializer, UploadSerializer
 from ocr.services import OCRService
-from ocr.validators import (
+from ocr.file_validation import (
     ALLOWED_EXTENSIONS,
     ALLOWED_MIME_TYPES,
     MAX_FILE_SIZE,

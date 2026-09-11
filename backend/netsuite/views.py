@@ -17,8 +17,8 @@ from rest_framework.response import Response
 from rest_framework import status
 import logging
 from netsuite.repositories import NetSuiteConnectionRepository
-from common.utils.pagination import paginated_response
-from common.utils.response import success_response
+from common.pagination import paginated_response
+from common.common_utils import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException, NetSuiteConnectionNotFoundException, NetSuiteRecordFetchException

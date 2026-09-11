@@ -101,7 +101,6 @@ export default function DashboardPage() {
       { id: 'agsuite', label: 'AGSuite Employees', value: summary.total_agsuite_employees, icon: statIcons.agsuite },
       { id: 'client', label: 'Client Employees', value: summary.total_client_employees, icon: statIcons.client },
       { id: 'plans', label: 'Plans', value: summary.total_plans, icon: statIcons.plans },
-      { id: 'support', label: 'Support Sessions', value: summary.total_support_sessions, icon: statIcons.support },
       { id: 'modules', label: 'Modules', value: summary.total_modules, icon: statIcons.modules },
     ]
   }, [summary])

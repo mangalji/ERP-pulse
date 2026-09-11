@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 from uuid import UUID
-from common.utils.response import success_response
+from common.common_utils import success_response
 from django.core.paginator import Paginator
 from .models import (
     DynamicTopLevelTab,
@@ -385,21 +385,18 @@ def _ensure_system_tabs():
             "key": "settings-company-info",
             "name": "Company Info",
             "route": "/app/settings",
-            # "feature_code": "system.settings.company_info",
             "sort_order": 10,
         },
         {
             "key": "settings-customize",
             "name": "Customize",
-            "route": "/app/settings/customize",
-            # "feature_code": "system.settings.customize",
+            "route": "",
             "sort_order": 20,
         },
         {
             "key": "settings-personal-info",
             "name": "Personal Info",
-            "route": "/app/profile",
-            # "feature_code": "system.settings.personal_info",
+            "route": "/app/profile",   
             "sort_order": 30,
         },
     ]
@@ -411,7 +408,6 @@ def _ensure_system_tabs():
                 "parent_tab": settings_tab,
                 "name": tab_data["name"],
                 "route": tab_data["route"],
-                # "feature_code": tab_data["feature_code"],
                 "sort_order": tab_data["sort_order"],
                 "is_active": True,
             },
@@ -829,22 +825,6 @@ class NavigationCustomizationDataView(APIView):
             return Response({"detail": "Only Company Admin can customize navigation."}, status=status.HTTP_403_FORBIDDEN)
         if not request.user.company:
             return success_response(message="No company associated with user.", data={"employees": [], "tree": []})
-
-        # employees = (
-        #     User.objects.filter(company=request.user.company)
-        #     .exclude(pk=request.user.pk)
-        #     .exclude(user_roles__role__name__iexact="Company Admin")
-        #     .distinct()
-        #     .order_by("first_name", "last_name", "email")
-        # )
-        # employee_data = [
-        #     {
-        #         "id": str(user.id),
-        #         "name": user.get_full_name().strip() or user.email,
-        #         "email": user.email,
-        #     }
-        #     for user in employees
-        # ]
 
         company_users = (
             User.objects

@@ -3,10 +3,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from ocr.exceptions import InvalidFileException, UnsupportedFormatException
-# from ocr.models import OCRBatch, OCRUpload
-from ocr.validators import validate_extension, validate_file_size, validate_mime_type
-from ocr.formats import lookup_format
-
+from ocr.file_validation import validate_extension, validate_file_size, validate_mime_type, lookup_format
 
 class UploadSerializer(serializers.Serializer):
     """

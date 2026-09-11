@@ -18,8 +18,15 @@ const EMPTY_FORM = {}
 export default function ProductsPage() {
   const [searchParams] = useSearchParams()
 
-  const transactionType = searchParams.get('transaction_type') || ''
-  const recordType = searchParams.get('record_type') || ''
+  const queryParams = Object.fromEntries(searchParams.entries())
+  const queryParamEntries = Object.entries(queryParams)
+
+  // const transactionType = searchParams.get('transaction_type') || ''
+  // const recordType = searchParams.get('record_type') || ''
+  const transactionType = queryParamEntries[0]?.[1] || ''
+  const recordType = queryParamEntries[1]?.[1] || ''
+
+  const hasProductContext = Boolean(transactionType && recordType)
 
   const title = recordType || transactionType || 'Products'
 
@@ -41,8 +48,9 @@ export default function ProductsPage() {
 
     try {
       const response = await clientApi.getProducts({
-        ...(transactionType ? { transaction_type: transactionType } : {}),
-        ...(recordType ? { record_type: recordType } : {}),
+        // ...(transactionType ? { transaction_type: transactionType } : {}),
+        // ...(recordType ? { record_type: recordType } : {}),
+        ...queryParams,
         limit: PAGE_SIZE,
         offset,
       })
@@ -143,8 +151,9 @@ useEffect(() => {
   const handleCreate = async (event) => {
     event.preventDefault()
 
-    if (!transactionType || !recordType) {
-      setError('Product type and record type are required.')
+    // if (!transactionType || !recordType) {
+    if (!hasProductContext) {
+      setError('Product context are required.')
       return
     }
 
@@ -199,7 +208,8 @@ useEffect(() => {
               {count} record{count === 1 ? '' : 's'}
             </div>
 
-            {transactionType && recordType && (
+            {/* {transactionType && recordType && ( */}
+            {hasProductContext && (
               <button
                 type="button"
                 onClick={openNewForm}

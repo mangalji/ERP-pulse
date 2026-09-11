@@ -21,7 +21,7 @@ from math import ceil
 from django.conf import settings
 from rest_framework.request import Request
 
-from common.utils.response import success_response
+from common.common_utils import success_response
 
 
 def paginated_response(

@@ -20,10 +20,6 @@ DEFAULT_PERMISSIONS = [
     ('ocr.upload', 'Upload OCR', 'ocr'),
     ('ocr.review', 'Review OCR', 'ocr'),
     ('ocr.export', 'Export OCR', 'ocr'),
-    ('ai.chat', 'AI Chat', 'ai'),
-    ('ai.history', 'AI History', 'ai'),
-    ('reports.view', 'View Reports', 'reports'),
-    ('reports.export', 'Export Reports', 'reports'),
     ('dashboard.view', 'View Dashboard', 'dashboard'),
     ('netsuite.connect', 'Connect NetSuite', 'netsuite'),
     ('netsuite.sync', 'Sync NetSuite', 'netsuite'),
@@ -33,16 +29,15 @@ DEFAULT_PERMISSIONS = [
 SYSTEM_ROLES = {
     'Super Admin': [
         'company.manage', 'employee.manage', 'ocr.upload', 'ocr.review',
-        'ocr.export','reports.view', 'reports.export',
+        'ocr.export',
         'dashboard.view', 'netsuite.connect', 'netsuite.sync', 'settings.manage',
     ],
     'Company Admin': [
         'employee.manage', 'ocr.upload', 'ocr.review', 'ocr.export',
-        'reports.view', 'reports.export',
         'dashboard.view', 'netsuite.connect', 'netsuite.sync', 'settings.manage',
     ],
     'Employee': [
-        'ocr.upload','reports.view',
+        'ocr.upload',
         'dashboard.view',
     ],
 }

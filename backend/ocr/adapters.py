@@ -18,13 +18,14 @@ import csv
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from ocr.exceptions import (
     DocumentProcessingException,
     UnsupportedFormatException,
 )
-from ocr.formats import FormatEntry
+if TYPE_CHECKING:
+    from ocr.file_validation import FormatEntry
 from ocr.utils import logger
 
 
@@ -45,7 +46,6 @@ class BaseDocumentAdapter(ABC):
         if format_entry is not None:
             self.format_entry = format_entry
         elif self.format_entry is None:
-            from ocr.formats import detect_format
             try:
                 self.format_entry = detect_format(file_path)
             except Exception:
@@ -682,9 +682,7 @@ def get_adapter(file_path: str | Path, upload_id: str) -> BaseDocumentAdapter:
     Raises:
         UnsupportedFormatException: If the format is not supported.
     """
-    from ocr.formats import detect_format
-
-    fmt = detect_format(file_path)
+    fmt = FormatEntry.detect_format(file_path)
 
     adapter_map = {
         'pdf': PDFAdapter,

@@ -23,14 +23,14 @@ from django.db import transaction
 
 from ocr.models import OCRUpload
 from ocr.utils import logger
-from ocr.validators import (
+from ocr.file_validation import (
     get_extension_from_mime_type,
     validate_extension,
     validate_file_size,
     validate_mime_type,
     validate_file_format,
+    lookup_format
 )
-from ocr.formats import lookup_format
 from ocr.exceptions import InvalidFileException, UnsupportedFormatException, DocumentProcessingException
 
 

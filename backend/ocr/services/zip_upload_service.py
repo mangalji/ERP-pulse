@@ -1,8 +1,6 @@
 """Safe ZIP intake for OCR batch uploads."""
 
 from __future__ import annotations
-
-import mimetypes
 import posixpath
 import zipfile
 from io import BytesIO

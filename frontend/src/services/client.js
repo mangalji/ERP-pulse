@@ -1,6 +1,5 @@
 import apiClient, { unwrap } from './apiClient.js'
 import { CLIENT_ENDPOINTS } from '../utils/constants.js'
-import { invoiceApi } from './invoice.js'
 import { dashboardApi } from './dashboard.js'
 
 /**
@@ -21,19 +20,6 @@ export const clientApi = {
   getExecutiveCharts: () => dashboardApi.getExecutiveCharts(),
   getActivityFeed: (limit) => dashboardApi.getActivityFeed(limit),
   getRecentInvoices: () => dashboardApi.getRecentInvoices(),
-
-  // ── Invoice (reused) ────────────────────────────────────────
-  uploadInvoices: (files) => invoiceApi.upload(files),
-  listInvoiceBatches: (params) => invoiceApi.listBatches(params),
-  getInvoiceBatch: (id) => invoiceApi.getBatch(id),
-  getInvoiceFile: (id) => invoiceApi.getFile(id),
-  deleteInvoiceFile: (id) => invoiceApi.deleteFile(id),
-  retryInvoiceFile: (id) => invoiceApi.retryFile(id),
-  patchInvoiceExtraction: (id, data) => invoiceApi.patchExtraction(id, data),
-  reviewInvoiceFile: (fileId, payload) =>
-    apiClient.post(`/api/v1/invoice/review/${fileId}/`, payload).then(unwrap),
-  previewInvoicePayload: (fileId) =>
-    apiClient.post(`/api/v1/invoice/preview-payload/${fileId}/`).then(unwrap),
 
   // ── Employees (company-scoped /client/*) ────────────────────
   listEmployees: (params) =>

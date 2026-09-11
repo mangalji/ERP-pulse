@@ -8,11 +8,10 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
-from common.utils.pagination import paginated_response
-from common.utils.response import success_response
+from common.pagination import paginated_response
+from common.common_utils import success_response
 from superadmin.models import (
-    CompanyPlan, Plan, SupportSession,
-    SubscriptionHistory, Transaction,
+    CompanyPlan, Plan,
 )
 from superadmin.permissions import IsSuperAdmin
 from superadmin.serializers import (
@@ -21,9 +20,7 @@ from superadmin.serializers import (
     CompanyDetailSerializer,
     PlanSerializer,
     PlanDetailSerializer,
-    SupportSessionSerializer,
     UserSerializer,
-    SubscriptionHistorySerializer,
     TransactionSerializer,
     SuperAdminEmployeeSerializer,
     CompanyUpdateSerializer,
@@ -31,7 +28,6 @@ from superadmin.serializers import (
 from superadmin.services import SuperAdminService
 from tenancy.models import Company, CompanyDeletionHistory, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
-from rbac.models import Role, UserRole
 
 User = get_user_model()
 superadmin_service = SuperAdminService()
@@ -126,16 +122,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         company.status = Company.Status.SUSPENDED
         company.suspension_reason = CompanySuspensionReason.MANUAL
         company.save(update_fields=['status','suspension_reason'])
-        # audit_service.log(
-        #     module=AuditModule.TENANCY,
-        #     action=AuditAction.UPDATE,
-        #     entity='Company',
-        #     entity_id=str(company.id),
-        #     company=company,
-        #     user=request.user,
-        #     old_value={'status': Company.Status.ACTIVE},
-        #     new_value={'status': company.status},
-        # )
+        
         return success_response(message='Company suspended successfully.', data={'id': str(company.id),'status':company.status})
 
     @action(detail=True, methods=['post'])
@@ -517,40 +504,6 @@ class CompanyPlanViewSet(viewsets.ModelViewSet):
     def history(self, request, pk=None):
         data = superadmin_service.get_company_plan_history(company_id=pk)
         return success_response(message='Company plan history fetched successfully.', data=data)
-
-
-class SupportSessionViewSet(viewsets.ModelViewSet):
-    queryset = SupportSession.objects.select_related('company', 'support_user')
-    serializer_class = SupportSessionSerializer
-    permission_classes = [IsSuperAdmin]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['reason', 'company__name', 'support_user__email']
-    ordering_fields = ['started_at', 'ended_at', 'status']
-    ordering = ['-started_at']
-
-    @action(detail=False, methods=['post'])
-    def start(self, request):
-        company_id = request.data.get('company_id')
-        support_user_id = request.data.get('support_user_id')
-        reason = request.data.get('reason')
-        ip_address = request.data.get('ip_address')
-        if not company_id or not support_user_id or not reason:
-            return Response({'detail': 'company_id, support_user_id, and reason are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            session = superadmin_service.start_support_session(
-                company_id=company_id,
-                support_user_id=support_user_id,
-                reason=reason,
-                ip_address=ip_address,
-            )
-        except ValueError as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return success_response(message='Support session started successfully.', data=SupportSessionSerializer(session).data)
-
-    @action(detail=True, methods=['post'])
-    def end(self, request, pk=None):
-        session = superadmin_service.end_support_session(session_id=pk)
-        return success_response(message='Support session ended successfully.', data=SupportSessionSerializer(session).data)
 
 class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = User.objects.select_related('company').all()

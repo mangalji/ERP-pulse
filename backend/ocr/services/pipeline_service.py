@@ -30,10 +30,10 @@ from ocr.models import (
     OCRUpload,
 )
 from ocr.services.benchmark_service import benchmark_service
-from ocr.services.classification_service import classification_service
+from ocr.services.document_analysis_service import classification_service
 from ocr.services.document_service import document_service
-from ocr.services.layout_service import layout_service
-from ocr.services.normalization_service import normalization_service
+from ocr.services.document_analysis_service import layout_service
+from ocr.services.document_analysis_service import normalization_service
 from ocr.services.validation_service import validation_service
 from ocr.pdf_processor import pdf_processor
 from ocr.extraction_service import ocr_extraction_service

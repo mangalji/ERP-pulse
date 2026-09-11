@@ -11,8 +11,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from common.throttles import RegisterOTPThrottle
-from common.utils.pagination import paginated_response
-from common.utils.response import success_response
+from common.pagination import paginated_response
+from common.common_utils import success_response
 from .models import Invitation, InvitationStatus
 from .permissions import IsSuperAdmin, IsInvitationOwner
 from .serializers import (
