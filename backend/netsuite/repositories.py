@@ -1,7 +1,7 @@
 from accounts.models import User
-from netsuite.models import NetSuiteConnection, NetSuiteConnectionAuditLog
+from netsuite.models import NetSuiteConnection
 from django.db import transaction
-from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteConnectionAuditLog, NetSuiteReferenceRecord, NetSuiteOCRPosting, NetSuiteUserConnectionPreference
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteReferenceRecord, NetSuiteOCRPosting, NetSuiteUserConnectionPreference
 import logging
 from netsuite.exceptions import NetSuiteConnectionNotFoundException
 
@@ -594,55 +594,3 @@ class NetSuiteConnectionRepository:
         posting.error_message = error_message
         posting.save()
         return posting
-
-class NetSuiteConnectionAuditLogRepository:
-    """
-    Persistence-only operations for NetSuiteConnectionAuditLog.
-
-    Deliberately minimal — a single log() method, since every write is
-    the same shape (action + who + which connection + optional detail).
-    No update/delete methods: audit rows are append-only by design.
-    """
-
-    def log(
-        self,
-        *,
-        action: str,
-        connection: NetSuiteConnection | None = None,
-        user: User | None = None,
-        netsuite_account_id: str | None = None,
-        client_name: str | None = None,
-        detail: str | None = None,
-    ) -> NetSuiteConnectionAuditLog:
-        return NetSuiteConnectionAuditLog.objects.create(
-            action=action,
-            connection=connection,
-            user=user or (connection.user if connection else None),
-            netsuite_account_id=netsuite_account_id or (connection.netsuite_account_id if connection else None),
-            client_name=client_name if client_name is not None else (connection.client_name if connection else None),
-            detail=detail,
-        )
-
-    def list_by_user(self, user: User, *, limit: int = 100):
-        return NetSuiteConnectionAuditLog.objects.filter(user=user)[:limit]
-
-    def list_by_company(self, company_id):
-        return NetSuiteConnection.objects.filter(company_id=company_id).order_by('-is_active', '-connected_at')
-
-    def get_employee_connection(self, employee_id):
-        return EmployeeConnection.objects.select_related('connection').filter(employee_id=employee_id).first()
-
-    def assign_employee(self, connection_id, employee_id):
-        return EmployeeConnection.objects.get_or_create(
-            connection_id=connection_id,
-            employee_id=employee_id,
-        )
-
-    def remove_employee(self, connection_id, employee_id):
-        return EmployeeConnection.objects.filter(
-            connection_id=connection_id,
-            employee_id=employee_id,
-        ).delete()
-
-    def list_connection_employees(self, connection_id):
-        return EmployeeConnection.objects.filter(connection_id=connection_id).select_related('employee')

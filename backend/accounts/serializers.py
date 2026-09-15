@@ -8,9 +8,10 @@ from common.common_utils import (
     OTP_EXPIRY_MINUTES,
     MAX_OTP_ATTEMPTS,
 )
-from accounts.models import LoginActivity, User, Gender
+from accounts.models import User, Gender
 from common.contact_validation import normalize_phone
 from rbac.models import UserRole
+from audit.models import AuditLog
 
 otp_code_validator = RegexValidator(
     regex = r'^\d+$',
@@ -214,10 +215,10 @@ class VerifyProfileUpdateOTPSerializer(serializers.Serializer):
     profile_pic = serializers.ImageField(required=False, allow_null=True)
 
 
-class LoginActivitySerializer(serializers.ModelSerializer):
+class LoginHistorySerializer(serializers.ModelSerializer):
     """Read-only — for the History page's login/activity list."""
 
     class Meta:
-        model = LoginActivity
+        model = AuditLog
         fields = ['id', 'ip_address', 'user_agent', 'created_at']
         read_only_fields = fields

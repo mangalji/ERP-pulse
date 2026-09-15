@@ -17,7 +17,7 @@ export const clientApi = {
   // ── Dashboard (reused) ──────────────────────────────────────
   getDashboardSummary: () => dashboardApi.getSummary(),
   getExecutiveSummary: () => dashboardApi.getExecutiveSummary(),
-  getExecutiveCharts: () => dashboardApi.getExecutiveCharts(),
+  // getExecutiveCharts: () => dashboardApi.getExecutiveCharts(),
   getActivityFeed: (limit) => dashboardApi.getActivityFeed(limit),
   getRecentInvoices: () => dashboardApi.getRecentInvoices(),
 

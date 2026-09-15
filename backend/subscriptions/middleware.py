@@ -27,12 +27,10 @@ class LicenseMiddleware(MiddlewareMixin):
         '/static/',
         '/media/',
         '/api/v1/auth/',
-        '/api/v1/demo/submit/',
         '/api/v1/invitations/',
         '/api/v1/subscriptions/plans/',
         '/api/v1/subscriptions/my/',
         '/api/v1/subscriptions/my-usage/',
-        '/api/v1/subscriptions/my-modules/',
     )
 
     def process_request(self, request):

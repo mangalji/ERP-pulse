@@ -27,7 +27,9 @@ from netsuite.exceptions import (
 )
 from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting, NetSuiteReferenceRecord, NetSuiteFieldCatalogue, NetSuiteUserConnectionPreference
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
-from netsuite.repositories import NetSuiteConnectionAuditLogRepository, NetSuiteConnectionRepository
+from netsuite.repositories import NetSuiteConnectionRepository
+from audit.models import AuditAction, AuditModule
+from audit.services import audit_service
 from netsuite.token_manager import NetSuiteTokenManager
 from netsuite.vendor_bill_baseline import VENDOR_BILL_BASELINE_FIELDS
 from tenancy.services import company_lifecycle_service
@@ -48,11 +50,9 @@ class NetSuiteConnectionService:
         self,
         repository: NetSuiteConnectionRepository | None = None,
         client: NetSuiteAuthClient | None = None,
-        audit_log_repository: NetSuiteConnectionAuditLogRepository | None = None,
         token_manager: NetSuiteTokenManager | None=None,
     ):
         self.repository = repository or NetSuiteConnectionRepository()
-        self.audit_log_repository = audit_log_repository or NetSuiteConnectionAuditLogRepository()
         self.token_manager = token_manager or NetSuiteTokenManager(repository=self.repository)
 
     def _ensure_user_company_operational(self, *, user: User) -> None:
@@ -118,7 +118,19 @@ class NetSuiteConnectionService:
                         "updated_at",
                     ]
                 )
-            self.audit_log_repository.log(action='oauth_completed', connection=connection)
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.CONNECT,
+                entity="NetSuiteConnection",
+                entity_id=str(connection.id),
+                company=connection.company,
+                user=user,
+                new_value={
+                    "event": "oauth_completed",
+                    "account_name": connection.netsuite_account_id,
+                    "client_name": connection.client_name,
+                },
+            )
 
             # Reference/master data is synchronized asynchronously. OAuth
             # callback must remain fast and must not block on a large account.
@@ -157,10 +169,19 @@ class NetSuiteConnectionService:
                 ]
             )
 
-            self.audit_log_repository.log(
-                action="oauth_failed",
-                connection=connection,
-                detail=str(exc)[:1000],
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.CONNECT,
+                entity="NetSuiteConnection",
+                entity_id=str(connection.id),
+                company=connection.company,
+                user=user,
+                new_value={
+                    "event": "oauth_failed",
+                    "account_name": connection.netsuite_account_id,
+                    "client_name": connection.client_name,
+                    "detail": str(exc)[:1000],
+                },
             )
             raise
 
@@ -203,12 +224,20 @@ class NetSuiteConnectionService:
                 environment=environment,
                 client_id=client_id,
                 client_secret=client_secret,
-                # netsuite_account_id=netsuite_account_id,
             )
 
-            self.audit_log_repository.log(
-                action="oauth_retry_started",
-                connection=connection,
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.CONNECT,
+                entity="NetSuiteConnection",
+                entity_id=str(connection.id),
+                company=connection.company,
+                user=user,
+                new_value={
+                    "event": "oauth_retry_started",
+                    "account_name": connection.netsuite_account_id,
+                    "client_name": connection.client_name,
+                },
             )
 
         else:
@@ -223,9 +252,18 @@ class NetSuiteConnectionService:
                 company_id=company_id,
             )
 
-            self.audit_log_repository.log(
-                action="created",
-                connection=connection,
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.CREATE,
+                entity="NetSuiteConnection",
+                entity_id=str(connection.id),
+                company=connection.company,
+                user=user,
+                new_value={
+                    "event": "created",
+                    "account_name": connection.netsuite_account_id,
+                    "client_name": connection.client_name,
+                },
             )
 
         authorization_url = self.get_authorization_url(user=user,connection=connection)
@@ -251,9 +289,22 @@ class NetSuiteConnectionService:
         renamed = self.repository.rename(
             connection,client_name
         )
-        self.audit_log_repository.log(
-            action='renamed', connection=renamed,
-            detail=f'"{old_name}" -> "{client_name}"',
+        audit_service.log(
+            module=AuditModule.NETSUITE,
+            action=AuditAction.UPDATE,
+            entity="NetSuiteConnection",
+            entity_id=str(renamed.id),
+            company=renamed.company,
+            user=user,
+            old_value={
+                "client_name": old_name,
+            },
+            new_value={
+                "event": "renamed",
+                "client_name": client_name,
+                "detail": f'"{old_name}" -> "{client_name}"',
+                "account_name": renamed.netsuite_account_id,
+            },
         )
         return renamed
     
@@ -278,10 +329,19 @@ class NetSuiteConnectionService:
             "NetSuite connection not found."
         )
 
-        self.audit_log_repository.log(
-            action="deleted",
-            connection=connection,
+        audit_service.log(
+            module=AuditModule.NETSUITE,
+            action=AuditAction.DELETE,
+            entity="NetSuiteConnection",
+            entity_id=str(connection.id),
+            company=connection.company,
             user=user,
+            old_value={
+                "event": "deleted",
+                "account_name": connection.netsuite_account_id,
+                "client_name": connection.client_name,
+                "environment": connection.environment,
+            },
         )
 
         self.repository.delete(connection)
@@ -315,9 +375,18 @@ class NetSuiteConnectionService:
                 'updated_at',
             ]
         )
-        self.audit_log_repository.log(
-        action='switched_active',
-        connection=connection,
+        audit_service.log(
+            module=AuditModule.NETSUITE,
+            action=AuditAction.UPDATE,
+            entity="NetSuiteConnection",
+            entity_id=str(connection.id),
+            company=connection.company,
+            user=user,
+            new_value={
+                "event": "switched_active",
+                "account_name": connection.netsuite_account_id,
+                "client_name": connection.client_name,
+            },
         )
         return connection
 
@@ -539,10 +608,19 @@ class NetSuiteConnectionService:
                 ]
             )
 
-            self.audit_log_repository.log(
-                action="oauth_failed",
-                connection=connection,
-                detail=error_message[:1000],
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.CONNECT,
+                entity="NetSuiteConnection",
+                entity_id=str(connection.id),
+                company=connection.company,
+                user=connection.user,
+                new_value={
+                    "event": "oauth_failed",
+                    "account_name": connection.netsuite_account_id,
+                    "client_name": connection.client_name,
+                    "detail": error_message[:1000],
+                },
             )
 
         return connection

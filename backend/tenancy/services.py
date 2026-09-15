@@ -37,16 +37,6 @@ class ClientPortalService:
 
     # ── Employees ─────────────────────────────────────────────
 
-    def list_employees(self, *, company, search=None):
-        qs = User.objects.filter(company=company).select_related('company').prefetch_related('user_roles__role')
-        if search:
-            qs = qs.filter(
-                Q(email__icontains=search)
-                | Q(first_name__icontains=search)
-                | Q(last_name__icontains=search)
-            )
-        return qs.order_by('first_name', 'last_name')
-
     def get_employee(self, *, company, employee_id):
         self._ensure_company_operational(company=company)
         return get_object_or_404(
@@ -149,9 +139,11 @@ class ClientPortalService:
             company=company,
             user=acting_user,
             new_value={
+                        'event':'created',
+                        'employee_name': f'{employee.first_name} {employee.last_name}'.strip(),
                         'email': employee.email, 
-                       'role_id': str(role_id) if role_id else None,
-                       },
+                        'role_id': str(role_id) if role_id else None,
+                        },
         )
         return employee
 
@@ -513,11 +505,6 @@ class ClientPortalService:
             'permissions': permissions,
             'plan': plan_info,
         }
-
-from django.utils import timezone
-
-from superadmin.models import CompanyPlan, CompanyPlanStatus
-from tenancy.models import Company
 
 
 class CompanyLifecycleService:

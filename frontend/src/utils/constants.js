@@ -25,10 +25,7 @@ export const AUTH_ENDPOINTS = {
 }
 
 export const DASHBOARD_ENDPOINTS = {
-  summary: '/dashboard/summary/',
-  recentInvoices: '/dashboard/recent-invoices/',
   executiveSummary: '/dashboard/executive-summary/',
-  executiveCharts: '/dashboard/executive-charts/',
   activityFeed: '/dashboard/activity-feed/',
 }
 

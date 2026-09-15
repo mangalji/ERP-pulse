@@ -23,6 +23,7 @@ class AuditService:
         old_value: dict | None = None,
         new_value: dict | None = None,
         ip_address: str | None = None,
+        user_agent: str | None = None,
     ) -> AuditLog:
         """Create a single audit log entry."""
         return AuditLog.objects.create(
@@ -35,6 +36,7 @@ class AuditService:
             old_value=old_value,
             new_value=new_value,
             ip_address=ip_address,
+            user_agent=user_agent,
         )
 
 

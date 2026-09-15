@@ -24,37 +24,6 @@ def _cache_key(prefix: str, user_id) -> str:
     return f'rbac:{prefix}:{user_id}'
 
 
-class HasRole(BasePermission):
-    """
-    Allow access only if the user has at least one of the given roles.
-
-    Usage::
-
-        permission_classes = [HasRole]
-        HasRole.roles = ['ADMIN', 'MANAGER']
-    """
-
-    roles: list[str] = []
-
-    def has_permission(self, request, view):
-        user = request.user
-        if not user or not getattr(user, 'is_authenticated', False):
-            return False
-        role_names = set(self.roles or [])
-        if not role_names:
-            return False
-
-        cache_key = _cache_key('roles', user.id)
-        user_role_names = cache.get(cache_key)
-        if user_role_names is None:
-            user_role_names = set(
-                UserRole.objects.filter(user=user).values_list('role__name', flat=True)
-            )
-            cache.set(cache_key, user_role_names, CACHE_TTL_SECONDS)
-
-        return bool(user_role_names & role_names)
-
-
 class HasPermission(BasePermission):
     """
     Allow access only if the user has at least one of the given

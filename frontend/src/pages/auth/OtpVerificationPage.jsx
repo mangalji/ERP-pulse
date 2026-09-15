@@ -150,7 +150,7 @@ export default function OtpVerificationPage() {
 
       <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-6">
         <OtpInput value={code} onChange={setCode} />
-        {(localError || error) && <p className="text-center text-sm text-[var(--color-negative)]">{localError || error}</p>}
+        {localError && <p className="text-center text-sm text-[var(--color-negative)]">{localError || error}</p>}
         {resendSuccess && <p className="text-center text-sm text-[var(--color-positive)]">{resendSuccess}</p>}
         <Button type="submit" isLoading={isSubmitting} disabled={code.length < 6} className="w-full">
           Verify

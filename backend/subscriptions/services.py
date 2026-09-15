@@ -258,12 +258,27 @@ class SubscriptionService:
             raise ValueError('Plan selection is required when renewing a cancelled plan.')
         if company_plan and company_plan.status == CompanyPlanStatus.CANCELLED and plan_id is None:
             plan_id = company_plan.plan_id
+
         if plan_id is not None:
             new_company_plan = self.assign_plan(
                 company_id=company_id, plan_id=plan_id,
                 discount_type=discount_type, discount_value=discount_value,
                 billing_cycle=billing_cycle, request=request,
                 status=CompanyPlanStatus.ACTIVE,
+            )
+
+            audit_service.log(
+                module=AuditModule.SUBSCRIPTION,
+                action=AuditAction.UPDATE,
+                entity='CompanyPlan',
+                entity_id=str(new_company_plan.id),
+                company_id=company_id,
+                user=user,
+                new_value={
+                    'event': 'renewed',
+                    'plan_name': new_company_plan.plan.name,
+                    'plan_id': str(new_company_plan.plan_id),
+                },
             )
             return new_company_plan
         old_status = company_plan.status
@@ -280,7 +295,12 @@ class SubscriptionService:
             company_id=company_id,
             user=user,
             old_value={'status': old_status},
-            new_value={'status': CompanyPlanStatus.ACTIVE},
+            new_value={
+                'event': 'renewed',
+                'status': CompanyPlanStatus.ACTIVE,
+                'plan_name': company_plan.plan.name,
+                'plan_id': str(company_plan.plan_id),
+                    }
         )
         return company_plan
 
@@ -337,8 +357,15 @@ class SubscriptionService:
             entity_id=str(company_plan.id),
             company_id=company_id,
             user=self._audit_user(request),
-            old_value={'status': CompanyPlanStatus.TRIAL},
-            new_value={'status': CompanyPlanStatus.EXPIRED},
+            old_value={
+                'status': CompanyPlanStatus.TRIAL,
+            },
+            new_value={
+                'event': 'expired',
+                'status': CompanyPlanStatus.EXPIRED,
+                'plan_name': company_plan.plan.name,
+                'plan_id': str(company_plan.plan_id),
+            },
         )
 
         return company_plan
@@ -353,8 +380,29 @@ class SubscriptionService:
 
         count = 0
         for plan in expired_plans:
+            old_status = plan.status
+
             plan.status = CompanyPlanStatus.EXPIRED
             plan.save(update_fields=['status'])
+
+            audit_service.log(
+                module=AuditModule.SUBSCRIPTION,
+                action=AuditAction.UPDATE,
+                entity='CompanyPlan',
+                entity_id=str(plan.id),
+                company_id=plan.company_id,
+                user=None,
+                old_value={
+                    'status': old_status,
+                },
+                new_value={
+                    'event': 'expired',
+                    'status': CompanyPlanStatus.EXPIRED,
+                    'plan_name': plan.plan.name,
+                    'plan_id': str(plan.plan_id),
+                },
+            )
+
             count += 1
 
         return count

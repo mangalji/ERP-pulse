@@ -1,34 +1,16 @@
-"""
-Dashboard API views.
+"""Dashboard API views.
 
-Views only: authenticate, call DashboardService, return the standard
-response envelope. No NetSuite calls happen here — DashboardService is
-the only thing this module talks to, and DashboardService in turn only
-talks to the existing NetSuiteDataService, matching the layering already
-used by accounts/ and netsuite/.
+Views handle authentication and delegate dashboard operations
+to the dashboard aggregate service.
 """
 
 from rest_framework import permissions
-from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.views import APIView
 from netsuite.exceptions import NetSuiteConnectionNotFoundException
 from common.pagination import paginated_response
 from common.common_utils import success_response
 from common.throttles import DashboardThrottle
-from dashboard.services import DashboardService, DashboardAggregateService
-
-
-class DashboardIsAuthenticated(permissions.BasePermission):
-    message = 'Authentication credentials were not provided.'
-
-    def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            raise AuthenticationFailed(self.message)
-        return True
-
-
-def _get_dashboard_service() -> DashboardService:
-    return DashboardService()
+from dashboard.services import DashboardAggregateService
 
 
 def _parse_pagination_params(request, default_limit=20):
@@ -45,75 +27,6 @@ def _parse_pagination_params(request, default_limit=20):
     limit = max(1, min(limit, 100))
     return offset, limit
 
-
-class DashboardSummaryView(APIView):
-    """GET /api/v1/dashboard/summary/"""
-
-    permission_classes = [permissions.AllowAny]
-    throttle_classes = [DashboardThrottle]
-
-    def get(self, request):
-        if not request.user or not request.user.is_authenticated:
-            return success_response(
-                message='Authentication credentials were not provided.',
-                data={},
-                status_code=401,
-            )
-        try:
-
-            summary = _get_dashboard_service().get_summary(user=request.user)
-            summary['netsuite_available'] = True
-            return success_response(
-                message='Dashboard summary fetched successfully.',
-                data=summary,
-            )
-        except NetSuiteConnectionNotFoundException:
-            return success_response(
-                message='NetSuite data is not available.',
-                data={
-                    'netsuite_available': False,
-                    'message': 'NetSuite data is not available.',
-                    'total_employees': 0,
-                    'total_invoices': 0,
-                },
-            )
-
-class RecentInvoicesView(APIView):
-    """GET /api/v1/dashboard/recent-invoices/"""
-
-    permission_classes = [permissions.AllowAny]
-    throttle_classes = [DashboardThrottle]
-
-    def get(self, request):
-        if not request.user or not request.user.is_authenticated:
-            return success_response(
-                message='Authentication credentials were not provided.',
-                data={},
-                status_code=401,
-            )
-
-        offset, limit = _parse_pagination_params(request)
-        try:
-            all_invoices = _get_dashboard_service().get_recent_invoices(user=request.user)
-        except NetSuiteConnectionNotFoundException:
-            return paginated_response(
-                message='NetSuite data is not available.',
-                results=[],
-                count=0,
-                request=request,
-                offset=offset,
-                limit=limit,
-            )
-        count = len(all_invoices)
-        page = all_invoices[offset:offset + limit]
-        return paginated_response(
-            message='Recent invoices fetched successfully.',
-            results=page,
-            count=count,
-            request=request,
-            offset=offset,
-            limit=limit,
-        )
 
 class ExecutiveSummaryView(APIView):
     """GET /api/v1/dashboard/executive-summary/"""
@@ -132,32 +45,6 @@ class ExecutiveSummaryView(APIView):
         data = DashboardAggregateService().get_executive_summary(user=request.user)
         return success_response(
             message='Executive summary fetched successfully.',
-            data=data,
-        )
-
-
-class ExecutiveChartsView(APIView):
-    """GET /api/v1/dashboard/executive-charts/"""
-
-    permission_classes = [permissions.AllowAny]
-    throttle_classes = [DashboardThrottle]
-
-    def get(self, request):
-        if not request.user or not request.user.is_authenticated:
-            return success_response(
-                message='Authentication credentials were not provided.',
-                data={},
-                status_code=401,
-            )
-
-        service = DashboardAggregateService()
-        data = {
-            'invoice_charts': service.get_invoice_charts(user=request.user),
-            'employee_growth': service.get_employee_growth(user=request.user),
-            # 'ai_usage': service.get_ai_usage(user=request.user),
-        }
-        return success_response(
-            message='Executive charts fetched successfully.',
             data=data,
         )
 

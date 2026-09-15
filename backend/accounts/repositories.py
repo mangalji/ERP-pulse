@@ -1,4 +1,4 @@
-from accounts.models import OTP, User, LoginActivity
+from accounts.models import OTP, User
 
 
 class UserRepository:
@@ -99,21 +99,21 @@ class OTPRepository:
         otp.save(update_fields=['attempt_count','updated_at'])
         return otp
     
-class LoginActivityRepository:
-    """
-    Persistence-only operations for LoginActivity.
+# class LoginActivityRepository:
+#     """
+#     Persistence-only operations for LoginActivity.
  
-    Contains no business rules — deciding *when* a login counts as
-    "completed" belongs to AuthenticationService. This class only reads
-    from and writes to the database.
-    """
-    def create(self,*,user:User,ip_address:str|None,user_agent:str|None)->LoginActivity:
-        return LoginActivity.objects.create(
-            user=user,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-    def get_queryset_by_user(self,user:User,*,limit:int=50):
-        """FIX: Return un-evaluated QuerySet so the View layer can handle
-        proper ORM slicing and count queries without evaluation side-effects."""
-        return LoginActivity.objects.filter(user=user)
+#     Contains no business rules — deciding *when* a login counts as
+#     "completed" belongs to AuthenticationService. This class only reads
+#     from and writes to the database.
+#     """
+#     def create(self,*,user:User,ip_address:str|None,user_agent:str|None)->LoginActivity:
+#         return LoginActivity.objects.create(
+#             user=user,
+#             ip_address=ip_address,
+#             user_agent=user_agent,
+#         )
+#     def get_queryset_by_user(self,user:User,*,limit:int=50):
+#         """FIX: Return un-evaluated QuerySet so the View layer can handle
+#         proper ORM slicing and count queries without evaluation side-effects."""
+#         return LoginActivity.objects.filter(user=user)

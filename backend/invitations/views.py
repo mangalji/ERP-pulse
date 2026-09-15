@@ -14,12 +14,11 @@ from common.throttles import RegisterOTPThrottle
 from common.pagination import paginated_response
 from common.common_utils import success_response
 from .models import Invitation, InvitationStatus
-from .permissions import IsSuperAdmin, IsInvitationOwner
+from .permissions import IsSuperAdmin
 from .serializers import (
     AcceptInvitationSerializer,
     CreateInvitationSerializer,
     InvitationSerializer,
-    InvitationValidateSerializer,
     RequestInvitationOTPSerializer,
 )
 from .services import invitation_service

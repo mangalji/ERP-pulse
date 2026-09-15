@@ -51,7 +51,6 @@ export default function DashboardPage() {
 
     return [
       { id: 'employees', label: 'Total Employees', value: summary.total_employees, delta: 0, format: 'number' },
-      { id: 'invoices', label: 'Total Invoices', value: summary.total_invoices, delta: 0, format: 'number' },
     ]
   }, [summary])
 

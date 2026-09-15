@@ -1,31 +1,15 @@
 import logging
-from django.contrib.auth.hashers import make_password
-from django.utils import timezone
-from django.db import transaction
 
 from accounts.exceptions import (
     AccountNotVerifiedException,
     InvalidCredentialsException,
-    MaxOTPAttemptsExceededException,
-    OTPExpiredException,
-    OTPMismatchException,
     ResendCooldownException,
     UserAlreadyExistsException,
 )
 from accounts.models import OTP, User
 from accounts.repositories import UserRepository
 from accounts.services import OTPService
-from common.common_utils import (
-    OTP_RESEND_COOLDOWN_SECONDS,
-    OTP_LENGTH,
-    OTP_EXPIRY_MINUTES,
-    MAX_OTP_ATTEMPTS,
-)
-from common.email_service import send_email
-from common.common_utils import calculate_expiry, is_expired
-from common.common_utils import hash_value, verify_value
-from common.common_utils import generate_otp_code
-from common.common_utils import generate_signed_token, verify_signed_token
+
 from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
@@ -149,7 +133,7 @@ class AuthenticationService:
         Step 1 of login: verify credentials and, if valid and the account
         is active/verified, send a LOGIN OTP. Issues no token.
         """
-        import traceback
+
         user = self.user_repository.get_by_email(email)
         if user is None:
             raise InvalidCredentialsException('Invalid email or password.')
@@ -165,10 +149,9 @@ class AuthenticationService:
             )
         self._ensure_user_company_operational(user=user)
 
-        try:
-            self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)
-        except Exception as e:
-            raise
+        
+        self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)
+        
         logger.info('Login OTP sent for user %s.', user.id)
         return user
 

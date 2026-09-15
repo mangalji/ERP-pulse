@@ -1,127 +1,13 @@
 """
 Business logic for the Dashboard module.
 
-Every method here reuses the existing NetSuiteDataService.get_records()
-(accounts/../netsuite/services.py) — no new HTTP calls, no new client
-logic, and no local storage of NetSuite business records (NETSUITE_CONTEXT.md: ERP
-Pulse never keeps a local copy of NetSuite business records). This
-service only decides *which* record types to ask for and *how many*
-records/what shape to hand back to the view.
-
-This service contains the dashboard's company-scoped summary,
-recent-record, invoice-chart, employee-growth, and activity-feed
-logic. Business records continue to come from the existing services
-and are not stored locally by the dashboard.
+Provides the company-scoped executive summary and Recent Activity
+feed for the client dashboard.
 """
 
-import logging
-from typing import Any
-from netsuite.exceptions import NetSuiteConnectionNotFoundException
 from accounts.models import User
-from netsuite.constants import NetSuiteRecordType
-from netsuite.services import NetSuiteDataService
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_RECENT_LIMIT = 5
-
-# record_type -> summary key. A dict + loop instead of seven near-
-# identical lines, per this task's "avoid duplicate code" requirement.
-# Map summary keys to SuiteQL-based list methods on NetSuiteDataService.
-# Entity list pages (CustomersPage, VendorsPage, etc.) use these same
-# methods, so the dashboard counts will always match what users see in
-# the list views — unlike the REST Record API (get_records) which can
-# return different totals than SuiteQL for the same data.
-SUMMARY_RECORD_TYPES = {
-    'total_employees': ('list_employees', NetSuiteRecordType.EMPLOYEE),
-    'total_invoices': ('list_invoices', NetSuiteRecordType.INVOICE),
-}
-
-
-class DashboardService:
-    def __init__(self, netsuite_data_service: NetSuiteDataService | None = None):
-        self.netsuite_data_service = netsuite_data_service or NetSuiteDataService()
-
-    def get_summary(self, *, user: User) -> dict:
-        """
-        One count per record type, using limit=1 on every call. Uses the
-        same SuiteQL-based list methods that the entity list pages
-        (CustomersPage, VendorsPage, etc.) call, so dashboard KPI counts
-        always match what users see on those pages. Each call fetches 1
-        record; NetSuite's SuiteQL response always includes `totalResults`
-        (the true total across all pages), keeping each summary call
-        lightweight.
-        """
-        return {
-            summary_key: self._get_total(
-                method_name=method_name, record_type=record_type, user=user,
-            )
-            for summary_key, (method_name, record_type) in SUMMARY_RECORD_TYPES.items()
-        }
-
-    def get_recent_invoices(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
-        return self._get_items(record_type=NetSuiteRecordType.INVOICE, user=user, limit=limit)
-    
-    def get_recent_employees(self, *, user: User, limit: int = DEFAULT_RECENT_LIMIT) -> list:
-        return self._get_items(record_type=NetSuiteRecordType.EMPLOYEE, user=user, limit=limit)
-
-    def _get_total(self, *, method_name: str, record_type: str, user: User) -> int:
-        """
-        Fetch exactly 1 record and return totalResults.
-
-        Uses the SuiteQL-based list method (matching the entity list pages)
-        for accuracy. If the SuiteQL call fails (e.g. a field name mismatch
-        for this account), falls back to the REST Record API which is more
-        broadly supported. Logs the failure for diagnostics.
-        """
-        list_method = getattr(self.netsuite_data_service, method_name, None)
-        if list_method is not None:
-            try:
-                response = list_method(user=user, limit=1, offset=0)
-                return response.get('totalResults', 0)
-            except NetSuiteConnectionNotFoundException:
-                # No NetSuite connection is a normal state.
-                # Let the view handle it without logging it as an error.
-                raise
-            except Exception as exc:
-                logger.warning(
-                    'Dashboard summary: %s failed via SuiteQL — falling back to REST API. '
-                    'Error: %s', method_name, exc,
-                )
-
-        # Fallback: REST Record API (always available, may differ from
-        # SuiteQL totals for some record types).
-        try:
-            response = self.netsuite_data_service.get_records(
-                record_type=record_type, user=user, limit=1,
-            )
-            return response.get('totalResults', 0)
-        
-        except NetSuiteConnectionNotFoundException:
-             # No active NetSuite connection.
-            raise
-
-        except Exception as exc:
-            logger.exception(
-                'Dashboard summary: %s (REST fallback) also failed for user %s — %s',
-                method_name, user.id, exc,
-            )
-            return 0
-
-    def _get_items(self, *, record_type: str, user: User, limit: int) -> list:
-        """
-        Returns whichever page NetSuite's default ordering gives back for
-        this record type. NetSuite's collection endpoint has no built-in
-        "sort by most recent" without adding SuiteQL or `q=` filter
-        support to the client — out of scope here (no client changes,
-        per this task). "Recent" therefore currently means "latest page
-        returned by NetSuite's default order", not a guaranteed date
-        sort; see the accompanying note in the task summary.
-        """
-        response = self.netsuite_data_service.get_records(
-            record_type=record_type, user=user, limit=limit
-        )
-        return response.get('items', [])
 
 
 class DashboardAggregateService:
@@ -132,8 +18,8 @@ class DashboardAggregateService:
     from real database records.
     """
 
-    def __init__(self):
-        self.netsuite_service = NetSuiteDataService()
+    # def __init__(self):
+    #     self.netsuite_service = NetSuiteDataService()
 
     def get_executive_summary(self, *, user: User) -> dict:
         company = getattr(user, 'company', None)
@@ -143,7 +29,6 @@ class DashboardAggregateService:
         from accounts.models import User as UserModel
         from invitations.models import Invitation, InvitationStatus
         from netsuite.models import NetSuiteConnection
-        from invoice.models import InvoiceBatch, InvoiceFile, FileStatus
         from superadmin.models import CompanyPlan
 
         # Employee stats
@@ -160,295 +45,334 @@ class DashboardAggregateService:
             company=company, is_active=True
         ).count()
 
-        # Invoice stats
-        invoice_files_qs = InvoiceFile.objects.filter(batch__company=company)
-        invoices_uploaded = invoice_files_qs.count()
-        invoices_pending_review = invoice_files_qs.filter(
-            status__in=[FileStatus.EXTRACTED, FileStatus.REVIEW_REQUIRED]
-        ).count()
-        approved_invoices = invoice_files_qs.filter(
-            status__in=[FileStatus.APPROVED, FileStatus.READY_FOR_NETSUITE]
-        ).count()
-        ocr_failed = invoice_files_qs.filter(status=FileStatus.FAILED).count()
-
         # Subscription
         subscription = CompanyPlan.objects.filter(
             company=company,
             status__in=['ACTIVE', 'TRIAL'],
         ).select_related('plan').first()
+
         subscription_plan = subscription.plan.name if subscription else None
         plan_expiry = subscription.end_date.isoformat() if subscription and subscription.end_date else None
-
-        # Storage used (approximate from media files)
-        storage_used_mb = self._calculate_storage_used(company)
-
-        # AI / OCR credits from the active plan
-        ai_credits = subscription.plan.ai_credits if subscription else 0
-        ocr_credits = subscription.plan.ocr_credits if subscription else 0
 
         return {
             'total_employees': total_employees,
             'active_employees': active_employees,
             'pending_invitations': pending_invitations,
             'connected_netsuite': connected_netsuite,
-            'invoices_uploaded': invoices_uploaded,
-            'invoices_pending_review': invoices_pending_review,
-            'approved_invoices': approved_invoices,
-            'ocr_failed': ocr_failed,
             'subscription_plan': subscription_plan,
             'plan_expiry': plan_expiry,
-            'storage_used_mb': storage_used_mb,
-            'ai_credits': ai_credits,
-            'ocr_credits': ocr_credits,
         }
 
-    def get_invoice_charts(self, *, user: User) -> dict:
-        company = getattr(user, 'company', None)
-        if not company:
-            return {'by_status': [], 'by_month': [], 'ocr_success_vs_failed': []}
 
-        from invoice.models import InvoiceBatch, InvoiceFile, FileStatus
-        from django.db.models import Count
-        from django.utils import timezone
-        import datetime
+    def get_activity_feed(self, *, user: User, limit: int = 10) -> list:
+        """
+        Return only the business activities that belong in the dashboard
+        Recent Activity section.
 
-        # Invoices by status
-        status_counts = (
-            InvoiceFile.objects.filter(batch__company=company)
-            .values('status')
-            .annotate(count=Count('id'))
-            .order_by('-count')
-        )
-        by_status = [
-            {'status': item['status'], 'count': item['count']}
-            for item in status_counts
-        ]
+        Included:
+        - employee create/delete
+        - NetSuite connect/disconnect
+        - NetSuite employee assignment
+        - subscription renew/expire
 
-        # Invoices by month (last 6 months)
-        six_months_ago = timezone.now().date() - datetime.timedelta(days=180)
-        monthly_counts = (
-            InvoiceBatch.objects.filter(
-                company=company,
-                created_at__date__gte=six_months_ago,
-            )
-            .values('created_at__year', 'created_at__month')
-            .annotate(count=Count('id'))
-            .order_by('created_at__year', 'created_at__month')
-        )
-        by_month = [
-            {
-                'month': f"{item['created_at__year']}-{item['created_at__month']:02d}",
-                'count': item['count'],
-            }
-            for item in monthly_counts
-        ]
+        Excluded:
+        - login/logout
+        - settings
+        - RBAC
+        - invoice/OCR
+        - dashboard views
+        - generic updates
+        """
+        from django.db.models import Q
+        from audit.models import AuditAction, AuditLog, AuditModule
 
-        # OCR success vs failed
-        success_count = InvoiceFile.objects.filter(
-            batch__company=company,
-            status__in=[FileStatus.EXTRACTED, FileStatus.APPROVED, FileStatus.READY_FOR_NETSUITE],
-        ).count()
-        failed_count = InvoiceFile.objects.filter(
-            batch__company=company, status=FileStatus.FAILED
-        ).count()
-        ocr_success_vs_failed = [
-            {'status': 'Success', 'count': success_count},
-            {'status': 'Failed', 'count': failed_count},
-        ]
-
-        return {
-            'by_status': by_status,
-            'by_month': by_month,
-            'ocr_success_vs_failed': ocr_success_vs_failed,
-        }
-
-    def get_employee_growth(self, *, user: User) -> list:
         company = getattr(user, 'company', None)
         if not company:
             return []
 
-        from accounts.models import User as UserModel
-        from django.db.models import Count
-        from django.utils import timezone
-        import datetime
-
-        twelve_months_ago = timezone.now().date() - datetime.timedelta(days=365)
-        monthly_counts = (
-            UserModel.objects.filter(company=company, created_at__date__gte=twelve_months_ago)
-            .values('created_at__year', 'created_at__month')
-            .annotate(count=Count('id'))
-            .order_by('created_at__year', 'created_at__month')
-        )
-        return [
-            {
-                'month': f"{item['created_at__year']}-{item['created_at__month']:02d}",
-                'count': item['count'],
-            }
-            for item in monthly_counts
-        ]
-
-    def get_activity_feed(self, *, user: User, limit: int = 10) -> dict:
-        company = getattr(user, 'company', None)
-
-        if not company:
-            return {
-                'recent_employees': [],
-                'recent_invoices': [],
-                'recent_ocr_jobs': [],
-                'recent_netsuite_syncs': [],
-            }
-
-        from accounts.models import User as UserModel
-        from invoice.models import InvoiceBatch, InvoiceFile
-        from netsuite.models import NetSuiteConnection
-
-        # ---------------------------------------------------------
-        # Determine whether the current user is a Company Admin.
-        # ---------------------------------------------------------
-
-        user_roles_names = set(
-            user.user_roles
-            .select_related('role')
-            .values_list('role__name', flat=True)
-        )
-
-        is_company_admin = 'Company Admin' in user_roles_names
-
-        # ---------------------------------------------------------
-        # Company Admin:
-        #   Show company-wide activity.
-        #
-        # Employee:
-        #   Show only activity created/uploaded by this user.
-        # ---------------------------------------------------------
-
-        if is_company_admin:
-            recent_employees = list(
-                UserModel.objects.filter(company=company)
-                .order_by('-created_at')[:5]
-                .values(
-                    'id',
-                    'email',
-                    'first_name',
-                    'last_name',
-                    'created_at',
-                )
-            )
-
-            recent_invoices = list(
-                InvoiceFile.objects.filter(
-                    batch__company=company
-                )
-                .order_by('-created_at')[:5]
-                .values(
-                    'id',
-                    'original_filename',
-                    'status',
-                    'created_at',
-                )
-            )
-
-            recent_ocr_jobs = list(
-                InvoiceBatch.objects.filter(
-                    company=company
-                )
-                .order_by('-created_at')[:5]
-                .values(
-                    'id',
-                    'total_files',
-                    'processed_files',
-                    'failed_files',
-                    'status',
-                    'created_at',
-                )
-            )
-
-            recent_netsuite_syncs = list(
-                NetSuiteConnection.objects.filter(
-                    company=company
-                )
-                .order_by('-last_synced_at')[:5]
-                .values(
-                    'id',
-                    'client_name',
-                    'status',
-                    'last_synced_at',
-                )
-            )
-
-        else:
-            # -----------------------------------------------------
-            # Normal Employee:
-            # Only show activity belonging to the logged-in user.
-            # -----------------------------------------------------
-
-            recent_employees = []
-
-            recent_invoices = list(
-                InvoiceFile.objects.filter(
-                    batch__uploaded_by=user
-                )
-                .order_by('-created_at')[:5]
-                .values(
-                    'id',
-                    'original_filename',
-                    'status',
-                    'created_at',
-                )
-            )
-
-            recent_ocr_jobs = list(
-                InvoiceBatch.objects.filter(
-                    uploaded_by=user
-                )
-                .order_by('-created_at')[:5]
-                .values(
-                    'id',
-                    'total_files',
-                    'processed_files',
-                    'failed_files',
-                    'status',
-                    'created_at',
-                )
-            )
-            recent_netsuite_syncs = list(
-                NetSuiteConnection.objects.filter(
-                    user=user
-                )
-                .order_by('-last_synced_at')[:5]
-                .values(
-                    'id',
-                    'client_name',
-                    'status',
-                    'last_synced_at',
-                )
-            )
-
-        return {
-            'recent_employees': recent_employees,
-            'recent_invoices': recent_invoices,
-            'recent_ocr_jobs': recent_ocr_jobs,
-            'recent_netsuite_syncs': recent_netsuite_syncs,
-        }
-
-    def _calculate_storage_used(self, company) -> float | None:
-        """
-        Approximate storage used by company files in MB.
-        Returns None if unavailable.
-        """
         try:
-            from django.core.files.storage import default_storage
-            from pathlib import Path
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 10
 
-            total_bytes = 0
-            for root, dirs, files in default_storage.walk(''):
-                for f in files:
-                    fp = Path(root) / f
-                    if fp.exists():
-                        total_bytes += fp.stat().st_size
-            return round(total_bytes / (1024 * 1024), 2)
-        except Exception:
-            return None
+        limit = max(1, min(limit, 50))
+
+        logs = (
+            AuditLog.objects
+            .filter(company=company)
+            .filter(
+                Q(
+                    module=AuditModule.EMPLOYEE,
+                    action__in=[
+                        AuditAction.CREATE,
+                        AuditAction.DELETE,
+                    ],
+                )
+                |
+                Q(
+                    module=AuditModule.NETSUITE,
+                    action__in=[
+                        AuditAction.CONNECT,
+                        AuditAction.DISCONNECT,
+                        AuditAction.ASSIGN,
+                    ],
+                )
+                |
+                Q(
+                    module=AuditModule.SUBSCRIPTION,
+                    action=AuditAction.UPDATE,
+                )
+            )
+            .select_related('user')
+            .order_by('-created_at')
+        )
+
+        activities = []
+
+        for log in logs:
+            new_value = log.new_value or {}
+            old_value = log.old_value or {}
+
+            if not isinstance(new_value, dict):
+                new_value = {}
+
+            if not isinstance(old_value, dict):
+                old_value = {}
+
+            event_data = new_value or old_value
+            event = event_data.get('event')
+
+            actor = self._audit_actor_name(log.user)
+
+            # ---------------------------------------------------------
+            # 1. EMPLOYEE CREATED
+            # ---------------------------------------------------------
+            if (
+                log.module == AuditModule.EMPLOYEE
+                and log.action == AuditAction.CREATE
+                and event == 'created'
+            ):
+                employee_name = (
+                    new_value.get('employee_name')
+                    or new_value.get('name')
+                    or log.entity
+                    or 'Unknown employee'
+                )
+
+                activities.append({
+                    'id': str(log.id),
+                    'type': 'employee_created',
+                    'text': f'{actor} created employee {employee_name}',
+                    'time': log.created_at,
+                    'meta': {
+                        'actor': actor,
+                        'employee_name': employee_name,
+                    },
+                })
+
+            # ---------------------------------------------------------
+            # 2. EMPLOYEE DELETED
+            # ---------------------------------------------------------
+            elif (
+                log.module == AuditModule.EMPLOYEE
+                and log.action == AuditAction.DELETE
+                and event == 'deleted'
+            ):
+                employee_name = (
+                    old_value.get('employee_name')
+                    or old_value.get('name')
+                    or new_value.get('employee_name')
+                    or log.entity
+                    or 'Unknown employee'
+                )
+
+                activities.append({
+                    'id': str(log.id),
+                    'type': 'employee_deleted',
+                    'text': f'{actor} deleted employee {employee_name}',
+                    'time': log.created_at,
+                    'meta': {
+                        'actor': actor,
+                        'employee_name': employee_name,
+                    },
+                })
+
+            # ---------------------------------------------------------
+            # 3. NETSUITE CONNECTED
+            # ---------------------------------------------------------
+            elif (
+                log.module == AuditModule.NETSUITE
+                and log.action == AuditAction.CONNECT
+                and event == 'connected'
+            ):
+                account_name = (
+                    new_value.get('account_name')
+                    or new_value.get('client_name')
+                    or new_value.get('account_id')
+                    or log.entity
+                    or 'NetSuite account'
+                )
+
+                activities.append({
+                    'id': str(log.id),
+                    'type': 'netsuite_connected',
+                    'text': f'{actor} connected NetSuite account {account_name}',
+                    'time': log.created_at,
+                    'meta': {
+                        'actor': actor,
+                        'account_name': account_name,
+                    },
+                })
+
+            # ---------------------------------------------------------
+            # 4. NETSUITE DISCONNECTED
+            # ---------------------------------------------------------
+            elif (
+                log.module == AuditModule.NETSUITE
+                and log.action == AuditAction.DISCONNECT
+                and event == 'disconnected'
+            ):
+                account_name = (
+                    old_value.get('account_name')
+                    or old_value.get('client_name')
+                    or old_value.get('account_id')
+                    or new_value.get('account_name')
+                    or new_value.get('client_name')
+                    or new_value.get('account_id')
+                    or log.entity
+                    or 'NetSuite account'
+                )
+
+                activities.append({
+                    'id': str(log.id),
+                    'type': 'netsuite_disconnected',
+                    'text': f'{actor} disconnected NetSuite account {account_name}',
+                    'time': log.created_at,
+                    'meta': {
+                        'actor': actor,
+                        'account_name': account_name,
+                    },
+                })
+
+            # ---------------------------------------------------------
+            # 5. NETSUITE EMPLOYEE ASSIGNMENT
+            # ---------------------------------------------------------
+            elif (
+                log.module == AuditModule.NETSUITE
+                and log.action == AuditAction.ASSIGN
+                and event == 'employees_assigned'
+            ):
+                account_name = (
+                    new_value.get('account_name')
+                    or new_value.get('client_name')
+                    or new_value.get('account_id')
+                    or log.entity
+                    or 'NetSuite account'
+                )
+
+                employee_names = (
+                    new_value.get('employee_names')
+                    or new_value.get('employees')
+                    or []
+                )
+
+                if not isinstance(employee_names, list):
+                    employee_names = [str(employee_names)]
+
+                employee_names = [str(name) for name in employee_names if name]
+
+                employee_count = new_value.get(
+                    'employee_count',
+                    len(employee_names),
+                )
+
+                activities.append({
+                    'id': str(log.id),
+                    'type': 'netsuite_employees_assigned',
+                    'text': (
+                        f'{actor} assigned {employee_count} employees '
+                        f'to NetSuite account {account_name}'
+                        + (
+                            f": {', '.join(employee_names)}"
+                            if employee_names
+                            else ''
+                        )
+                    ),
+                    'time': log.created_at,
+                    'meta': {
+                        'actor': actor,
+                        'account_name': account_name,
+                        'employee_count': employee_count,
+                        'employee_names': employee_names,
+                    },
+                })
+
+            # ---------------------------------------------------------
+            # 6. SUBSCRIPTION RENEWED
+            # ---------------------------------------------------------
+            elif (
+                log.module == AuditModule.SUBSCRIPTION
+                and log.action == AuditAction.UPDATE
+                and event == 'renewed'
+            ):
+                plan_name = (
+                    new_value.get('plan_name')
+                    or old_value.get('plan_name')
+                    or 'subscription'
+                )
+
+                activities.append({
+                    'id': str(log.id),
+                    'type': 'subscription_renewed',
+                    'text': f'{actor} renewed {plan_name}',
+                    'time': log.created_at,
+                    'meta': {
+                        'actor': actor,
+                        'plan_name': plan_name,
+                    },
+                })
+
+            # ---------------------------------------------------------
+            # 7. SUBSCRIPTION EXPIRED
+            # ---------------------------------------------------------
+            elif (
+                log.module == AuditModule.SUBSCRIPTION
+                and log.action == AuditAction.UPDATE
+                and event == 'expired'
+            ):
+                plan_name = (
+                    new_value.get('plan_name')
+                    or old_value.get('plan_name')
+                    or 'subscription'
+                )
+
+                activities.append({
+                    'id': str(log.id),
+                    'type': 'subscription_expired',
+                    'text': f'{plan_name} expired',
+                    'time': log.created_at,
+                    'meta': {
+                        'actor': actor,
+                        'plan_name': plan_name,
+                    },
+                })
+
+            if len(activities) >= limit:
+                break
+
+        return activities
+
+    @staticmethod
+    def _audit_actor_name(user) -> str:
+        if not user:
+            return 'System'
+
+        full_name = (
+            f'{getattr(user, "first_name", "")} '
+            f'{getattr(user, "last_name", "")}'
+        ).strip()
+
+        return full_name or getattr(user, 'email', 'User')
 
     def _empty_summary(self) -> dict:
         return {
@@ -456,13 +380,6 @@ class DashboardAggregateService:
             'active_employees': 0,
             'pending_invitations': 0,
             'connected_netsuite': 0,
-            'invoices_uploaded': 0,
-            'invoices_pending_review': 0,
-            'approved_invoices': 0,
-            'ocr_failed': 0,
             'subscription_plan': None,
             'plan_expiry': None,
-            'storage_used_mb': None,
-            'ai_credits': 0,
-            'ocr_credits': 0,
         }

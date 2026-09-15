@@ -123,63 +123,6 @@ class NetSuiteConnection(models.Model):
         return f"{self.client_name} ({self.user.email})"
 
 
-class NetSuiteConnectionAuditLog(models.Model):
-    """
-    One row per lifecycle event on a NetSuiteConnection — created,
-    renamed, deleted, switched active, OAuth completed, or a sync
-    failure recorded against it.
-
-    `connection` is nullable and SET_NULL on delete (not CASCADE) so a
-    deleted connection's audit history survives the deletion itself —
-    otherwise "this connection was deleted" would delete its own audit
-    trail as a side effect, which defeats the point of an audit log.
-    `netsuite_account_id`/`client_name` are duplicated onto the log row
-    (not just looked up via the FK) for the same reason: they need to
-    stay readable after the connection is gone.
-    """
-
-    ACTION_CHOICES = [
-        ('created', 'Created'),
-        ('oauth_completed', 'OAuth Completed'),
-        ('renamed', 'Renamed'),
-        ('switched_active', 'Switched Active'),
-        ('deleted', 'Deleted'),
-        ('sync_failed', 'Sync Failed'),
-    ]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    connection = models.ForeignKey(
-        NetSuiteConnection,
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='audit_logs',
-    )
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='netsuite_connection_audit_logs',
-    )
-
-    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
-    netsuite_account_id = models.CharField(max_length=50, null=True, blank=True)
-    client_name = models.CharField(max_length=255, null=True, blank=True)
-    detail = models.TextField(null=True, blank=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'netsuite_connection_audit_log'
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['user', '-created_at'], name='ns_audit_user_recent_idx'),
-        ]
-
-    def __str__(self):
-        return f'{self.get_action_display()} — {self.client_name or self.netsuite_account_id}'
-
-
 class EmployeeConnection(models.Model):
     """
     Assigns a company employee to a specific NetSuite connection.

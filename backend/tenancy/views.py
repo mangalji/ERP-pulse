@@ -16,7 +16,6 @@ from rest_framework.views import APIView
 from accounts.serializers import UserSerializer
 from common.pagination import paginated_response
 from common.common_utils import success_response
-from tenancy.permissions import IsCompanyUser
 from tenancy.serializers import (
     ClientRoleSerializer,
     CompanyEmployeeSerializer,
@@ -55,7 +54,6 @@ class ClientMeView(APIView):
                 if context['company']
                 else None
             ),
-            # 'modules': context['modules'],
             'roles': context['roles'],
             'permissions': context['permissions'],
             'plan': context['plan'],

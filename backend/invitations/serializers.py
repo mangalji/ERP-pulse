@@ -162,7 +162,3 @@ class AcceptInvitationSerializer(serializers.Serializer):
         max_length=20,
         validators=[mobile_number_validator],
     )
-
-
-class InvitationValidateSerializer(serializers.Serializer):
-    token = serializers.UUIDField()

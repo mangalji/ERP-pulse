@@ -23,13 +23,12 @@ from rest_framework_simplejwt.views import TokenBlacklistView as BaseTokenBlackl
 from rest_framework_simplejwt.views import TokenRefreshView as BaseTokenRefreshView
 
 from accounts.authentication_service import AuthenticationService
-from accounts.repositories import LoginActivityRepository
 from accounts.serializers import (
     UserSerializer,
     LoginSerializer,
     VerifyLoginOTPSerializer,
     ResendLoginOTPSerializer,
-    LoginActivitySerializer,
+    LoginHistorySerializer,
     ForgotPasswordSerializer,
     ResetPasswordSerializer,
     VerifyProfileUpdateOTPSerializer,
@@ -39,9 +38,10 @@ from common.common_utils import success_response
 from common.throttles import LoginOTPThrottle, RegisterOTPThrottle
 from common.authentication import set_auth_cookies, clear_auth_cookies
 from accounts.models import OTP
+from audit.models import AuditAction, AuditModule, AuditLog
+from audit.services import audit_service
 
 authentication_service = AuthenticationService()
-login_activity_repository = LoginActivityRepository()
 
 
 def _get_client_ip(request) -> str | None:
@@ -109,8 +109,13 @@ class VerifyLoginOTPView(APIView):
 
         refresh = RefreshToken.for_user(user)
 
-        login_activity_repository.create(
+        audit_service.log(
+            module=AuditModule.AUTH,
+            action=AuditAction.LOGIN,
+            entity='User',
+            entity_id=str(user.id),
             user=user,
+            company=user.company,
             ip_address=_get_client_ip(request),
             user_agent=request.META.get('HTTP_USER_AGENT', '')[:512] or None,
         )
@@ -252,9 +257,8 @@ class MeView(APIView):
 class LoginHistoryView(APIView):
     """
     GET /api/v1/auth/login-history/
-
-    Most recent logins first (LoginActivity.Meta.ordering), capped at 50
-    by LoginActivityRepository.list_by_user()'s default limit.
+    
+    Returns the user's recent successful login events from the audit log.
     """
 
     permission_classes = [IsAuthenticated]
@@ -271,12 +275,18 @@ class LoginHistoryView(APIView):
         offset = max(0, offset)
         limit = max(1, min(limit, 100))
 
-        queryset = login_activity_repository.get_queryset_by_user(request.user)
+        queryset = AuditLog.objects.filter(
+            user=request.user,
+            module=AuditModule.AUTH,
+            action=AuditAction.LOGIN,
+            entity='User',
+        ).order_by('-created_at')
+
         count = queryset.count()
         page = queryset[offset:offset + limit]
         return paginated_response(
             message="Login history fetched successfully.",
-            results=LoginActivitySerializer(page, many=True).data,
+            results=LoginHistorySerializer(page, many=True).data,
             count=count,
             request=request,
             offset=offset,

@@ -1,12 +1,8 @@
 """
 Subscriptions & Licensing models.
 
-Note: Most subscription logic reuses existing models:
-- CompanyPlan (superadmin.models)
-- Plan (superadmin.models)
-- CompanyModule (tenancy.models)
-
-This file exists for app completeness and future model additions.
+Current subscription models are defined in ``superadmin.models``.
+This file remains available for future subscription-specific models.
 """
 
 from django.db import models
