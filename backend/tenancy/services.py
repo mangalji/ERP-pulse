@@ -22,7 +22,7 @@ from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
-from rbac.models import Role, RolePermission
+from rbac.models import Role
 from tenancy.models import Company, CompanySuspensionReason
 
 from superadmin.models import CompanyPlan, CompanyPlanStatus
@@ -505,18 +505,11 @@ class ClientPortalService:
             role_names = [
                 user.role.name.lower().replace(' ', '_')
             ]
-        
+
         permissions = []
-        
+
         if user.role_id:
-            permissions = list(
-                RolePermission.objects.filter(
-                    role_id=user.role_id,
-                ).values_list(
-                    'permission__code',
-                    flat=True,
-                ).distinct()
-            )
+            permissions = list(user.role.permissions or [])
         employee_count = 0
         plan_info = None
         if company:

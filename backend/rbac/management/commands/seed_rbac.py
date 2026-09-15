@@ -1,95 +1,87 @@
-"""
-Django management command to seed default RBAC data.
-
-Creates default permissions and system roles if they don't already exist.
-
-Usage::
-
-    python manage.py seed_rbac
-"""
-
 from django.core.management.base import BaseCommand
 
-from rbac.models import Permission, Role, RolePermission
+from rbac.models import Role
 
 
 DEFAULT_PERMISSIONS = [
-    # (code, name, module)
-    ('company.manage', 'Manage Company', 'company'),
-    ('employee.manage', 'Manage Employee', 'employee'),
-    ('ocr.upload', 'Upload OCR', 'ocr'),
-    ('ocr.review', 'Review OCR', 'ocr'),
-    ('ocr.export', 'Export OCR', 'ocr'),
-    ('dashboard.view', 'View Dashboard', 'dashboard'),
-    ('netsuite.connect', 'Connect NetSuite', 'netsuite'),
-    ('netsuite.sync', 'Sync NetSuite', 'netsuite'),
-    ('settings.manage', 'Manage Settings', 'settings'),
+    'company.manage',
+    'dashboard.view',
+    'employee.manage',
+    'netsuite.connect',
+    'netsuite.sync',
+    'ocr.export',
+    'ocr.review',
+    'ocr.upload',
+    'settings.manage',
 ]
+
 
 SYSTEM_ROLES = {
     'Super Admin': [
-        'company.manage', 'employee.manage', 'ocr.upload', 'ocr.review',
-        'ocr.export',
-        'dashboard.view', 'netsuite.connect', 'netsuite.sync', 'settings.manage',
-    ],
-    'Company Admin': [
-        'employee.manage', 'ocr.upload', 'ocr.review', 'ocr.export',
-        'dashboard.view', 'netsuite.connect', 'netsuite.sync', 'settings.manage',
-    ],
-    'Employee': [
-        'ocr.upload',
+        'company.manage',
         'dashboard.view',
+        'employee.manage',
+        'netsuite.connect',
+        'netsuite.sync',
+        'ocr.export',
+        'ocr.review',
+        'ocr.upload',
+        'settings.manage',
+    ],
+
+    'Company Admin': [
+        'dashboard.view',
+        'employee.manage',
+        'netsuite.connect',
+        'netsuite.sync',
+        'ocr.export',
+        'ocr.review',
+        'ocr.upload',
+        'settings.manage',
+    ],
+
+    'Employee': [
+        'dashboard.view',
+        'ocr.upload',
     ],
 }
 
 
 class Command(BaseCommand):
-    help = 'Seed default RBAC permissions and system roles.'
+    help = 'Seed system roles and their permissions.'
 
     def handle(self, *args, **options):
-        # 1. Seed permissions
-        created_perms = 0
-        permission_map = {}
-        for code, name, module in DEFAULT_PERMISSIONS:
-            perm, created = Permission.objects.get_or_create(
-                code=code,
-                defaults={
-                    'name': name,
-                    'module': module,
-                    'is_system': True,
-                },
-            )
-            if created:
-                created_perms += 1
-            permission_map[code] = perm
-
-        self.stdout.write(
-            self.style.SUCCESS(f'Permissions: {created_perms} created, '
-                                f'{len(DEFAULT_PERMISSIONS)} total.')
-        )
-
-        # 2. Seed system roles + assign permissions
         for role_name, permission_codes in SYSTEM_ROLES.items():
             role, created = Role.objects.get_or_create(
                 name=role_name,
                 company=None,
                 defaults={
-                    'description': f'Default system role: {role_name}',
+                    'description': f'System role: {role_name}',
                     'is_system': True,
+                    'permissions': permission_codes,
                 },
             )
-            if created:
-                self.stdout.write(self.style.SUCCESS(f'Role created: {role_name}'))
-            # 3. Assign permissions idempotently
-            for code in permission_codes:
-                perm = permission_map[code]
-                _, perm_created = RolePermission.objects.get_or_create(
-                    role=role,
-                    permission=perm,
-                )
-                if perm_created:
-                    self.stdout.write(
-                        self.style.SUCCESS(f'  → {role_name}: {code}')
-                    )
 
-        self.stdout.write(self.style.SUCCESS('seed_rbac complete.'))
+            if not created:
+                role.permissions = permission_codes
+                role.is_system = True
+                role.save(
+                    update_fields=[
+                        'permissions',
+                        'is_system',
+                    ]
+                )
+
+            action = 'Created' if created else 'Updated'
+
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f'{action} role: {role_name}'
+                )
+            )
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                'RBAC roles and permissions seeded successfully.'
+            )
+        )
