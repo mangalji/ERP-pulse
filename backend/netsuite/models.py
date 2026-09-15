@@ -160,35 +160,6 @@ class EmployeeConnection(models.Model):
         return f'{self.employee.email} → {self.connection.client_name or self.connection.netsuite_account_id}'
 
 
-class NetSuiteUserConnectionPreference(models.Model):
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='netsuite_connection_preference',
-    )
-
-    connection = models.ForeignKey(
-        NetSuiteConnection,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='current_for_users',
-    )
-
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'netsuite_user_connection_preference'
-
-    def __str__(self):
-        account = (
-            self.connection.client_name
-            if self.connection
-            else 'No connection'
-        )
-        return f'{self.user.email} → {account}'
-
-
 class NetSuiteReferenceRecord(models.Model):
     """Cached NetSuite master/reference record for one connected account."""
 

@@ -22,8 +22,8 @@ from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
-from rbac.models import Role, RolePermission, UserRole
-from tenancy.models import CompanySettings, Company, CompanySuspensionReason
+from rbac.models import Role, RolePermission
+from tenancy.models import Company, CompanySuspensionReason
 
 from superadmin.models import CompanyPlan, CompanyPlanStatus
 
@@ -40,7 +40,7 @@ class ClientPortalService:
     def get_employee(self, *, company, employee_id):
         self._ensure_company_operational(company=company)
         return get_object_or_404(
-            User.objects.prefetch_related('user_roles__role'),
+            User.objects.select_related('role','company'),
             pk=employee_id,
             company=company,
         )
@@ -101,6 +101,12 @@ class ClientPortalService:
                     f'Please upgrade your plan to add more employees.'
                 )
 
+        role_id = data.get('role_id')
+        role = self._validate_role(
+            company=company,
+            role_id=role_id,
+        )
+
         employee = User.objects.create(
             email=email,
             first_name=first_name,
@@ -112,18 +118,13 @@ class ClientPortalService:
             designation=data.get('designation', ''),
             department=data.get('department', ''),
             company=company,
+            role=role,
             is_active=False,
             is_email_verified=False,
         )
+
         employee.set_unusable_password()
         employee.save(update_fields=['password'])
-
-        role_id = data.get('role_id')
-        role = self._validate_role(company=company,role_id=role_id)
-        UserRole.objects.create(
-            user=employee,
-            role=role,
-        )
         invitation = invitation_service.create_invitation(
             email=email.lower().strip(),
             company_id=company.id,
@@ -162,7 +163,7 @@ class ClientPortalService:
 
     def list_employees(self, *, company, search=None, status=None):
         self._ensure_company_operational(company=company)
-        qs = User.objects.filter(company=company).select_related('company').prefetch_related('user_roles__role')
+        qs = User.objects.filter(company=company).select_related('company','role')
         if search:
             qs = qs.filter(
                 Q(email__icontains=search)
@@ -236,10 +237,8 @@ class ClientPortalService:
         role_id = data.get('role_id')
         if role_id is not None:
             role = self._validate_role(company=company, role_id=role_id)
-            # Replace all existing role assignments
-            UserRole.objects.filter(user=employee).delete()
-            if role:
-                UserRole.objects.create(user=employee, role=role)
+            employee.role = role
+            employee.save(update_fields=['role'])
 
         audit_service.log(
             module=AuditModule.EMPLOYEE,
@@ -331,80 +330,105 @@ class ClientPortalService:
         self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
         role = self._validate_role(company=company, role_id=role_id)
-        user_role, created = UserRole.objects.get_or_create(user=employee, role=role)
+
+        changed = employee.role_id != role.id
+        if changed:
+            employee.role = role
+            employee.save(update_fields=['role'])
+
         audit_service.log(
             module=AuditModule.RBAC,
             action=AuditAction.UPDATE,
-            entity='UserRole',
-            entity_id=str(user_role.id),
+            entity='User',
+            entity_id=str(employee.id),
             company=company,
             user=acting_user,
-            new_value={'user_id': str(employee.id), 'role_id': str(role.id)},
+            new_value={'user_id': str(employee.id), 'role_id': str(role.id), 'changed': changed},
         )
-        return {'created': created, 'user_role': user_role}
+        return {'created': changed, 'user': employee}
 
     @transaction.atomic
     def remove_role(self, *, company, employee_id, role_id, acting_user):
         self._ensure_company_operational(company=company)
-        employee = self.get_employee(company=company, employee_id=employee_id)
-        role = self._validate_role(company=company, role_id=role_id)
-        deleted, _ = UserRole.objects.filter(user=employee, role=role).delete()
+
+        employee = self.get_employee(
+            company=company,
+            employee_id=employee_id,
+        )
+
+        role = self._validate_role(
+            company=company,
+            role_id=role_id,
+        )
+
+        deleted = employee.role_id == role.id
+
+        if deleted:
+            employee.role = None
+            employee.save(update_fields=['role'])
+
         audit_service.log(
             module=AuditModule.RBAC,
             action=AuditAction.UPDATE,
-            entity='UserRole',
-            entity_id=None,
+            entity='User',
+            entity_id=str(employee.id),
             company=company,
             user=acting_user,
-            new_value={'user_id': str(employee.id), 'role_id': str(role.id), 'deleted': deleted > 0},
+            new_value={
+                'user_id': str(employee.id),
+                'role_id': str(role.id),
+                'deleted': deleted,
+            },
         )
-        return {'deleted': deleted > 0}
+
+        return {
+            'deleted': deleted,
+        }
 
     # ── Company settings ──────────────────────────────────────
 
     def get_company_settings(self, *, company):
         self._ensure_company_operational(company=company)
-        settings, _ = CompanySettings.objects.get_or_create(company=company)
-        return {'company': company, 'settings': settings}
+        return {'company': company}
 
     @transaction.atomic
     def update_company_settings(self, *, company, acting_user, data):
         self._ensure_company_operational(company=company)
-        settings, _ = CompanySettings.objects.get_or_create(company=company)
+
         old = {
             'contact_email': company.contact_email,
             'contact_phone': company.contact_phone,
             'country': company.country,
-            'timezone': settings.timezone,
-            'currency': settings.currency,
-            'language': settings.language,
-            'date_format': settings.date_format,
-            'number_format': settings.number_format,
+            'timezone': company.timezone,
+            'currency': company.currency,
+            'language': company.language,
+            'date_format': company.date_format,
+            'number_format': company.number_format,
         }
 
         company_changed = []
-        settings_changed = []
+
         contact_email = data.get('contact_email')
         contact_phone = data.get('contact_phone')
         country = data.get('country')
-        
+
         if contact_email is not None:
             company.contact_email = contact_email
             company_changed.append('contact_email')
-        
+
         if contact_phone is not None or country is not None:
             final_country = (
                 country.strip().upper()
                 if country
                 else (company.country or '').strip().upper()
             )
-        
+
             final_phone = (
                 contact_phone
                 if contact_phone is not None
                 else company.contact_phone
             )
-        
+
             if final_phone:
                 try:
                     normalized = normalize_phone(
@@ -413,43 +437,45 @@ class ClientPortalService:
                     )
                 except ValueError as exc:
                     raise ValueError(str(exc)) from exc
-        
+
                 company.contact_phone = normalized.number
                 company.country = normalized.country_code
                 company.contact_phone_country_code = normalized.dial_code
-        
+
                 company_changed.extend([
                     'contact_phone',
                     'country',
                     'contact_phone_country_code',
                 ])
-        
+
             elif country is not None:
                 company.country = final_country
                 company.contact_phone_country_code = ''
-        
+
                 company_changed.extend([
                     'country',
                     'contact_phone_country_code',
                 ])
-        
-        
-        
-                if company_changed:
-                    company.save(update_fields=company_changed)
 
-        for field in ('timezone', 'currency', 'language', 'date_format', 'number_format'):
+        for field in (
+            'timezone',
+            'currency',
+            'language',
+            'date_format',
+            'number_format',
+        ):
             if field in data:
-                setattr(settings, field, data[field])
-                settings_changed.append(field)
-        if settings_changed:
-            settings.save(update_fields=settings_changed)
+                setattr(company, field, data[field])
+                company_changed.append(field)
+
+        if company_changed:
+            company.save(update_fields=list(dict.fromkeys(company_changed)))
 
         audit_service.log(
             module=AuditModule.SETTINGS,
             action=AuditAction.UPDATE,
-            entity='CompanySettings',
-            entity_id=str(settings.id),
+            entity='Company',
+            entity_id=str(company.id),
             company=company,
             user=acting_user,
             old_value=old,
@@ -457,15 +483,15 @@ class ClientPortalService:
                 'contact_email': company.contact_email,
                 'contact_phone': company.contact_phone,
                 'country': company.country,
-                'timezone': settings.timezone,
-                'currency': settings.currency,
-                'language': settings.language,
-                'date_format': settings.date_format,
-                'number_format': settings.number_format,
+                'timezone': company.timezone,
+                'currency': company.currency,
+                'language': company.language,
+                'date_format': company.date_format,
+                'number_format': company.number_format,
             },
         )
-        return {'company': company, 'settings': settings}
 
+        return {'company': company}
     # ── Client me context ─────────────────────────────────────
 
     def get_client_context(self, *, user):
@@ -473,16 +499,24 @@ class ClientPortalService:
         if company:
             self._ensure_company_operational(company=company)
         permissions = []
-        role_names= [
-            role_name.lower().replace(' ','_')
-            for role_name in user.user_roles.values_list('role__name',flat=True)
-        ]
-        # Collect permission codes granted to the user via their roles.
-        permissions = list(
-            RolePermission.objects.filter(
-                role__user_roles__user=user,
-            ).values_list('permission__code', flat=True).distinct()
-        )
+        role_names = []
+
+        if user.role_id:
+            role_names = [
+                user.role.name.lower().replace(' ', '_')
+            ]
+        
+        permissions = []
+        
+        if user.role_id:
+            permissions = list(
+                RolePermission.objects.filter(
+                    role_id=user.role_id,
+                ).values_list(
+                    'permission__code',
+                    flat=True,
+                ).distinct()
+            )
         employee_count = 0
         plan_info = None
         if company:

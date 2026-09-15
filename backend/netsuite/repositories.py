@@ -1,7 +1,7 @@
 from accounts.models import User
 from netsuite.models import NetSuiteConnection
 from django.db import transaction
-from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteReferenceRecord, NetSuiteOCRPosting, NetSuiteUserConnectionPreference
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteReferenceRecord, NetSuiteOCRPosting
 import logging
 from netsuite.exceptions import NetSuiteConnectionNotFoundException
 
@@ -45,22 +45,15 @@ class NetSuiteConnectionRepository:
             ).first()
         )
 
-    def get_for_user(self, user:User) -> NetSuiteConnection | None:
+    def get_for_user(self, user: User) -> NetSuiteConnection | None:
         available = self.list_available_for_user(user)
 
         if not available.exists():
             return None
 
-        preference = (
-            NetSuiteUserConnectionPreference.objects
-            .select_related("connection")
-            .filter(user=user)
-            .first()
-        )
-
-        if preference and preference.connection_id:
+        if user.current_netsuite_connection_id:
             selected = available.filter(
-                id=preference.connection_id
+                id=user.current_netsuite_connection_id
             ).first()
 
             if selected:
@@ -71,9 +64,12 @@ class NetSuiteConnectionRepository:
         if selected is None:
             return None
 
-        NetSuiteUserConnectionPreference.objects.update_or_create(
-            user=user,
-            defaults={"connection": selected},
+        user.current_netsuite_connection = selected
+        user.save(
+            update_fields=[
+                "current_netsuite_connection",
+                "updated_at",
+            ]
         )
 
         return selected
@@ -112,9 +108,10 @@ class NetSuiteConnectionRepository:
 
         is_company_admin = (
             getattr(user, "is_superuser", False)
-            or user.user_roles.filter(
-                role__name__iexact="Company Admin",
-            ).exists()
+            or (
+                getattr(user, "role", None) is not None
+                and user.role.name.lower() == "company admin"
+            )
         )
 
         if is_company_admin:
@@ -134,9 +131,10 @@ class NetSuiteConnectionRepository:
     ):
         is_company_admin = (
             getattr(user, "is_superuser", False)
-            or user.user_roles.filter(
-                role__name__iexact="Company Admin",
-            ).exists()
+            or (
+                getattr(user, "role", None) is not None
+                and user.role.name.lower() == "company admin"
+            )
         )
         connections = NetSuiteConnection.objects.filter(
             company_id = user.company_id,
@@ -184,9 +182,10 @@ class NetSuiteConnectionRepository:
 
         is_company_admin = (
             getattr(user, "is_superuser", False)
-            or user.user_roles.filter(
-                role__name__iexact="Company Admin",
-            ).exists()
+            or (
+                getattr(user, "role", None) is not None
+                and user.role.name.lower() == "company admin"
+            )
         )
         if is_company_admin:
             return connection

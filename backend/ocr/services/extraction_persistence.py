@@ -155,13 +155,16 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
     )
 
     if document.user_id != user.id:
+        role = getattr(user, "role", None)
+
         is_company_admin = (
             getattr(user, "is_superuser", False)
-            or getattr(user,"is_staff", False)
-            or user.user_roles.filter(
-                role__name__iexact="Company Admin"
-            ).exists()
-        )
+            or getattr(user, "is_staff", False)
+            or (
+                role is not None
+                and role.name.lower() == "company admin"
+            )
+)
         if not (allow_company_admin and is_company_admin):
             raise PermissionError('OCR document belongs to a different user.')
 

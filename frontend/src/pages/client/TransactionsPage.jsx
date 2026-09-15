@@ -5,14 +5,6 @@ import { clientApi } from '../../services/client.js'
 
 const PAGE_SIZE = 20
 
-// const EMPTY_FORM = {
-  // tran_id: '',
-  // tran_date: '',
-  // entity: '',
-  // name: '',
-  // invoice: '',
-  // amount: '',
-// }
 const EMPTY_FORM = {}
 
 export default function TransactionsPage() {

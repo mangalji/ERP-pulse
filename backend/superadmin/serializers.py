@@ -334,16 +334,7 @@ class SuperAdminEmployeeSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_role(self, obj):
-        user_role = (
-            obj.user_roles
-            .select_related("role")
-            .first()
-        )
-
-        if user_role:
-            return user_role.role.name
-
-        return None
+        return obj.role.name if obj.role_id else None
 
     def get_invitation_status(self, obj):
         invitation = Invitation.objects.filter(email__iexact=obj.email,company=obj.company).order_by("-created_at").first()
@@ -433,7 +424,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
         return obj.users.filter(is_active=True).count()
     
     def get_admin_email(self, obj):
-        admin = obj.users.filter(user_roles__role__name='Company Admin').first()
+        admin = obj.users.filter(role__name='Company Admin').first()
         return admin.email if admin else None
 
     def get_current_plan(self, obj):

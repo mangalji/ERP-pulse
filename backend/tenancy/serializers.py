@@ -1,10 +1,9 @@
 """
 Serializers for the Client Company Portal (company-scoped).
 
-Reuses the same User, Role, Company and CompanySettings models as the
-rest of the platform — no duplicate models. The company is never
-accepted from the client; it is pinned to ``request.user.company`` in
-the service/view layer.
+Reuses the same User, Role and Company models as the
+rest of the platform. Exposes only fields already present on Company —
+no new database fields are invented. Only exposes fields already present on Company.
 """
 
 from django.contrib.auth import get_user_model
@@ -13,7 +12,7 @@ from common.contact_validation import normalize_phone
 from invitations.models import Invitation, InvitationStatus
 from rbac.models import Role
 from accounts.models import Gender
-from tenancy.models import Company, CompanySettings
+from tenancy.models import Company
 
 User = get_user_model()
 
@@ -113,10 +112,15 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_roles(self, obj):
-        return list(
-            obj.user_roles.select_related('role').values('role_id', 'role__name')
-        )
-
+        if not obj.role_id:
+            return []
+    
+        return [
+            {
+                'role_id': obj.role_id,
+                'role__name': obj.role.name,
+            }
+        ]
     def get_invitation_status(self, obj):
         invitation = Invitation.objects.filter(
             email=obj.email,
@@ -226,11 +230,11 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
     no new database fields are invented.
     """
 
-    timezone = serializers.CharField(source='settings.timezone', read_only=True)
-    currency = serializers.CharField(source='settings.currency', read_only=True)
-    language = serializers.CharField(source='settings.language', read_only=True)
-    date_format = serializers.CharField(source='settings.date_format', read_only=True)
-    number_format = serializers.CharField(source='settings.number_format', read_only=True)
+    timezone = serializers.CharField(read_only=True)
+    currency = serializers.CharField(read_only=True)
+    language = serializers.CharField(read_only=True)
+    date_format = serializers.CharField(read_only=True)
+    number_format = serializers.CharField(read_only=True)
     contact_phone_country_code = serializers.CharField(
         read_only=True,
     )

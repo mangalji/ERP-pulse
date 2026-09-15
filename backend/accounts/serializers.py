@@ -10,7 +10,6 @@ from common.common_utils import (
 )
 from accounts.models import User, Gender
 from common.contact_validation import normalize_phone
-from rbac.models import UserRole
 from audit.models import AuditLog
 
 otp_code_validator = RegexValidator(
@@ -156,9 +155,11 @@ class UserSerializer(serializers.ModelSerializer):
         ).exists()
 
     def get_roles(self, obj):
+        if not obj.role_id:
+            return []
+    
         return [
-            item['role__name'].lower().replace(' ','_')
-            for item in obj.user_roles.values('role__name')
+            obj.role.name.lower().replace(' ', '_')
         ]
     
 

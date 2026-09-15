@@ -56,9 +56,10 @@ def _is_company_admin(user) -> bool:
 
     if getattr(user, "is_staff", False):
         return True
-    return user.user_roles.filter(
-        role__name__iexact='Company Admin',
-    ).exists()
+
+    role = getattr(user, "role", None)
+
+    return role is not None and role.name.lower() == "company admin"
 
 def _visible_batch_queryset(user):
     qs = OCRBatch.objects.all()

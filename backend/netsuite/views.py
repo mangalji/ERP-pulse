@@ -74,9 +74,9 @@ def _is_company_admin(user) -> bool:
         if not getattr(user, "company_id", None):
             return False
 
-        return user.user_roles.filter(
-            role__name__iexact="Company Admin",
-        ).exists()
+        role = getattr(user, "role", None)
+
+        return role is not None and role.name.lower() == "company admin"
 
     except Exception:
         logger.exception(

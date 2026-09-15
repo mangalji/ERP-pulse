@@ -25,7 +25,7 @@ from netsuite.exceptions import (
     NetSuiteRecordFetchException,
     NetSuiteTokenExchangeException,
 )
-from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting, NetSuiteReferenceRecord, NetSuiteFieldCatalogue, NetSuiteUserConnectionPreference
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting, NetSuiteReferenceRecord, NetSuiteFieldCatalogue
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionRepository
 from audit.models import AuditAction, AuditModule
@@ -106,15 +106,11 @@ class NetSuiteConnectionService:
                 refresh_token=token_set.refresh_token,
                 access_token_expires_at=token_set.access_token_expires_at,
             )
-            from netsuite.models import NetSuiteUserConnectionPreference
-
-            preference, _ = (NetSuiteUserConnectionPreference.objects.get_or_create(user=user))
-            
-            if preference.connection_id is None:
-                preference.connection = connection
-                preference.save(
+            if user.current_netsuite_connection_id is None:
+                user.current_netsuite_connection = connection
+                user.save(
                     update_fields=[
-                        "connection",
+                        "current_netsuite_connection",
                         "updated_at",
                     ]
                 )
@@ -363,16 +359,11 @@ class NetSuiteConnectionService:
                 "NetSuite connection is not available to this user."
             )
             
-        preference, _ = (
-            NetSuiteUserConnectionPreference.objects
-            .select_for_update()
-            .get_or_create(user=user)
-            )
-        preference.connection = connection
-        preference.save(
+        user.current_netsuite_connection = connection
+        user.save(
             update_fields=[
-                'connection',
-                'updated_at',
+                "current_netsuite_connection",
+                "updated_at",
             ]
         )
         audit_service.log(
@@ -426,9 +417,9 @@ class NetSuiteConnectionService:
         if not getattr(user, "company_id", None):
             return False
 
-        return user.user_roles.filter(
-            role__name__iexact="Company Admin",
-        ).exists()
+        role = getattr(user, "role", None)
+
+        return role is not None and role.name.lower() == "company admin"
 
     def assign_employee(self, *, user:User, connection_id, employee_id):
 
@@ -950,86 +941,6 @@ class NetSuiteDataService:
     def list_invoices(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
         return self._list_transactions_via_suiteql(user=user, transaction_type='CustInvc', limit=limit, offset=offset)
 
-    # def list_sales_order_invoices(self,*,user:User,limit:int=20,offset:int=0) -> dict:
-    #     raw = self._list_via_suiteql(
-    #         user=user, limit=limit, offset=offset,
-    #         query="""
-    #             SELECT
-    #             child.id,
-    #             child.tranid,
-    #             child.entity,
-    #             BUILTIN.DF(child.entity) AS entityname,
-    #             BUILTIN.DF(child.status) AS status,
-    #             child.foreigntotal,
-    #             child.trandate,
-    #             child.createdfrom
-    #         FROM transaction child
-    #         INNER JOIN transaction parent
-    #             ON child.createdfrom = parent.id
-    #         WHERE child.type = 'CustInvc'
-    #           AND parent.type = 'SalesOrd'
-    #         ORDER BY child.id
-    #         """,
-    #     ) 
-    #     raw['items'] = [
-    #         {
-    #             'id': row.get('id'),
-    #             'tranId': row.get('tranid'),
-    #             'entity': {
-    #             'id': row.get('entity'),
-    #             'name': row.get('entityname'),
-    #             },
-    #             'status': row.get('status'),
-    #             'total': row.get('foreigntotal'),
-    #             'createdDate': row.get('trandate'),
-    #             'sourceRecordId': row.get('createdfrom'),
-    #         }
-    #         for row in raw["items"]        
-    #     ]
-    #     return raw
-
-    # def list_purchase_order_vendor_bills( self, *, user: User, limit: int = 20, offset: int = 0, ) -> dict:
-    #     raw = self._list_via_suiteql(
-    #         user=user,
-    #         limit=limit,
-    #         offset=offset,
-    #         query="""
-    #             SELECT
-    #                 child.id,
-    #                 child.tranid,
-    #                 child.entity,
-    #                 BUILTIN.DF(child.entity) AS entityname,
-    #                 BUILTIN.DF(child.status) AS status,
-    #                 child.foreigntotal,
-    #                 child.trandate,
-    #                 child.createdfrom
-    #             FROM transaction child
-    #             INNER JOIN transaction parent
-    #                 ON child.createdfrom = parent.id
-    #             WHERE child.type = 'VendBill'
-    #               AND parent.type = 'PurchOrd'
-    #             ORDER BY child.id
-    #         """,
-    #     )
-
-    #     raw['items'] = [
-    #         {
-    #             'id': row.get('id'),
-    #             'tranId': row.get('tranid'),
-    #             'entity': {
-    #                 'id': row.get('entity'),
-    #                 'name': row.get('entityname'),
-    #             },
-    #             'status': row.get('status'),
-    #             'total': row.get('foreigntotal'),
-    #             'createdDate': row.get('trandate'),
-    #             'sourceRecordId': row.get('createdfrom'),
-    #         }
-    #         for row in raw['items']
-    #     ]
-
-    #     return raw
-
     def list_cash_sales(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
         return self._list_transactions_via_suiteql(
             user=user,
@@ -1283,9 +1194,9 @@ class NetSuiteVendorBillPostingService:
         try:
             if getattr(user, "is_superuser", False):
                 return True
-            return user.user_roles.filter(
-                role__name__iexact="Company Admin",
-            ).exists()
+            role = getattr(user, "role", None)
+
+            return role is not None and role.name.lower() == "company admin"
         except Exception:
             logger.exception(
                 "Failed to resolve Company Admin role for OCR posting — user=%s",
@@ -2416,7 +2327,6 @@ class NetSuiteFieldMappingService:
                 connection=connection,
                 record_type=record_type,
             )
-            # normalized = self._normalise_metadata(raw, record_type)
             normalized = self._merge_baseline_fields(
                 self._normalise_metadata(
                     raw,record_type,
@@ -3351,9 +3261,9 @@ class NetSuiteValidationService:
             if not getattr(user, "company_id", None):
                 return False
 
-            return user.user_roles.filter(
-                role__name__iexact="Company Admin",
-            ).exists()
+            role = getattr(user, "role", None)
+
+            return role is not None and role.name.lower() == "company admin"
 
         except Exception:
             logger.exception(
@@ -3813,20 +3723,12 @@ class NetSuiteValidationService:
                 "Vendor field mapping is required before NetSuite reference validation."
             )
 
-        # if item_mapping is None:
-        #     raise ValueError(
-        #         "Item field mapping is required before NetSuite reference validation."
-        #     )
-
         vendor_name = data.get(vendor_mapping.source_field_key)
 
         if isinstance(vendor_name,str):
             vendor_name = vendor_name.strip()
 
         if not vendor_name:
-            # raise ValueError(
-            #     "Vendor value is required before NetSuite reference validation."
-            # )
             vendor_name = data.get("vendor_name")
 
         if isinstance(vendor_name,str):
@@ -4488,8 +4390,6 @@ class NetSuiteValidationService:
         unique_matches = {}
 
         for match in matches:
-            # if not isinstance(match, dict):
-            #     continue
 
             record_id = match.get("id")
             if not record_id:

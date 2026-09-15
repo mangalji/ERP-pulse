@@ -14,7 +14,7 @@ from django.core.cache import cache
 
 from rest_framework.permissions import BasePermission
 
-from rbac.models import RolePermission, UserRole
+from rbac.models import RolePermission
 
 # Short TTL so permission changes propagate quickly.
 CACHE_TTL_SECONDS = 60
@@ -48,11 +48,17 @@ class HasPermission(BasePermission):
         cache_key = _cache_key('permissions', user.id)
         user_codes = cache.get(cache_key)
         if user_codes is None:
-            user_codes = set(
-                RolePermission.objects.filter(
-                    role__user_roles__user=user,
-                ).values_list('permission__code', flat=True).distinct()
-            )
+            user_codes = set()
+
+            if user.role_id:
+                user_codes = set(
+                    RolePermission.objects.filter(
+                        role_id=user.role_id,
+                    ).values_list(
+                        'permission__code',
+                        flat=True,
+                    ).distinct()
+                )
             cache.set(cache_key, user_codes, CACHE_TTL_SECONDS)
 
         return bool(user_codes & permission_codes)

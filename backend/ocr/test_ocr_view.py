@@ -139,12 +139,15 @@ def _visible_upload_queryset(user):
         "document",
     )
 
+    role = getattr(user, "role", None)
+
     if (
         getattr(user, "is_superuser", False)
         or getattr(user, "is_staff", False)
-        or user.user_roles.filter(
-            role__name__iexact="Company Admin"
-        ).exists()
+        or (
+            role is not None
+            and role.name.lower() == "company admin"
+        )
     ):
         return queryset.filter(
             user__company_id=user.company_id,
@@ -226,9 +229,9 @@ class OCRTestExtractView(APIView):
         if getattr(user, "is_staff", False):
             return True
 
-        return user.user_roles.filter(
-            role__name__iexact="Company Admin"
-        ).exists()
+        role = getattr(user, "role", None)
+
+        return role is not None and role.name.lower() == "company admin"
 
     def _get_batch_for_request(self, request, batch_id):
         queryset = OCRBatch.objects.prefetch_related(
@@ -498,9 +501,9 @@ class OCRTestBatchStatusView(APIView):
         if getattr(user, "is_staff", False):
             return True
 
-        return user.user_roles.filter(
-            role__name__iexact="Company Admin"
-        ).exists()
+        role = getattr(user, "role", None)
+
+        return role is not None and role.name.lower() == "company admin"
 
     def get(self, request, batch_id):
         queryset = OCRBatch.objects.prefetch_related(

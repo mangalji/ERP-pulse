@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
-from rbac.models import Role, UserRole
+from rbac.models import Role
 
 
 class Command(BaseCommand):
@@ -92,11 +92,10 @@ class Command(BaseCommand):
                 "Run seed_rbac before bootstrap_superadmin."
             )
 
-        UserRole.objects.get_or_create(
-            user=user,
-            role=role,
-        )
-
+        if user.role_id != role.id:
+            user.role = role
+            user.save(update_fields=["role", "updated_at"])
+        
         self.stdout.write(
             self.style.SUCCESS(
                 "Super Admin RBAC role verified."

@@ -316,37 +316,11 @@ def _parse_sort_order(raw_value, queryset):
 def _is_company_admin(user):
     if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
         return True
-    return user.user_roles.filter(role__name__iexact="Company Admin").exists()
 
-# def _ensure_system_tabs():
-#     system_tabs = [
-#         {
-#             "key": "employees",
-#             "name": "Employees",
-#             "route": "/app/employees",
-#             "feature_code": "system.employees",
-#             "sort_order": 10,
-#         },
-#         {
-#             "key": "settings",
-#             "name": "Settings",
-#             "route": "/app/settings",
-#             "feature_code": "system.settings",
-#             "sort_order": 9990,
-#         },
-#     ]
+    role = getattr(user, "role", None)
 
-#     for tab_data in system_tabs:
-#         DynamicTopLevelTab.objects.get_or_create(
-#             key=tab_data["key"],
-#             defaults={
-#                 "name": tab_data["name"],
-#                 "route": tab_data["route"],
-#                 "feature_code": tab_data["feature_code"],
-#                 "sort_order": tab_data["sort_order"],
-#                 "is_active": True,
-#             },
-#         )
+    return role is not None and role.name.lower() == "company admin"
+
 
 def _ensure_system_tabs():
     system_tabs = [
@@ -834,13 +808,9 @@ class NavigationCustomizationDataView(APIView):
             .order_by("first_name", "last_name", "email")
         )
 
-        employees = company_users.exclude(
-            user_roles__role__name__iexact="Company Admin"
-        ).distinct()
+        employees = company_users.exclude(role__name__iexact="Company Admin")
 
-        admins = company_users.filter(
-            user_roles__role__name__iexact="Company Admin"
-        ).distinct()
+        admins = company_users.exclude(role__name__iexact="Company Admin")
 
         employee_data = [
             {

@@ -140,29 +140,49 @@ export default function ClientLayout({ title, breadcrumb, children }) {
           }}
         >
           {hasChildren ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                setOpenMenuKey((current) =>
-                  current === item.key ? null : item.key
-                )
-              }}
-              className="flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]"
-            >
-              <span>{item.name}</span>
-            
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                className="h-3.5 w-3.5"
+            <div className="flex items-center rounded-md">
+              {route ? (
+                <NavLink
+                  to={route}
+                  className={({ isActive }) =>
+                    `flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]'
+                        : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'
+                    }`
+                  }
+                >
+                  <span>{item.name}</span>
+                </NavLink>
+              ) : (
+                <span className="px-3 py-2 text-sm font-medium text-[var(--color-ink-soft)]">
+                  {item.name}
+                </span>
+              )}
+          
+              <button
+                type="button"
+                aria-label={`Open ${item.name} menu`}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setOpenMenuKey((current) =>
+                    current === item.key ? null : item.key
+                  )
+                }}
+                className="rounded-r-md px-1.5 py-2 text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]"
               >
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            </button>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  className="h-3.5 w-3.5"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+            </div>
           ) : route ? (
             <NavLink
               to={route}

@@ -11,7 +11,6 @@ The ``company.name + role name`` pair is unique for company roles; global
 roles keep a unique name across the whole table.
 """
 
-from django.conf import settings
 from django.db import models
 
 from core.models import BaseModel
@@ -90,18 +89,3 @@ class RolePermission(BaseModel):
     def __str__(self) -> str:
         return f'{self.role.name} → {self.permission.code}'
 
-
-class UserRole(BaseModel):
-    """Many-to-many link between User and Role."""
-
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='user_roles')
-    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_roles')
-
-    class Meta:
-        db_table = 'user_role'
-        constraints = [
-            models.UniqueConstraint(fields=['user', 'role'], name='unique_user_role'),
-        ]
-
-    def __str__(self) -> str:
-        return f'{self.user.email} → {self.role.name}'

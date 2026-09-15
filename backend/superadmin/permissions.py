@@ -18,7 +18,8 @@ class IsSuperAdmin(permissions.BasePermission):
         if getattr(request.user, 'is_superuser', False):
             return True
 
-        return request.user.user_roles.filter(
-            role__company__isnull=True,
-            role__name__iexact="super_admin",
-        ).exists()
+        return (
+            request.user.role_id is not None
+            and request.user.role.company_id is None
+            and request.user.role.name.lower() == "super admin"
+        )

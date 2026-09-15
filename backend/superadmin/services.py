@@ -12,7 +12,7 @@ from django.utils.crypto import get_random_string
 from accounts.models import User, Gender
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
-from rbac.models import Role, UserRole
+from rbac.models import Role
 from superadmin.models import (
     CompanyPlan,
     CompanyPlanStatus,
@@ -626,11 +626,12 @@ class SuperAdminService:
 
 
     @transaction.atomic
-    def assign_user_role( self, *, user_id, role_id):
+    def assign_user_role(self, *, user_id, role_id):
         user = get_object_or_404(
             User,
             pk=user_id,
         )
+
         self.ensure_employee_company_operational(
             employee=user
         )
@@ -640,23 +641,33 @@ class SuperAdminService:
             pk=role_id,
         )
 
-        user_role, created = UserRole.objects.get_or_create(
-            user=user,
-            role=role,
-        )
+        changed = user.role_id != role.id
+
+        if changed:
+            user.role = role
+            user.save(update_fields=["role", "updated_at"])
 
         return {
-            "created": created,
-            "user_role": user_role,
+            "created": changed,
+            "user": user,
         }
     
     def remove_user_role(self, *, user_id, role_id):
         user = get_object_or_404(User, pk=user_id)
+    
         self.ensure_employee_company_operational(
             employee=user
         )
-        deleted, _ = UserRole.objects.filter(user=user, role_id=role_id).delete()
-        return {'deleted': deleted > 0}
+    
+        deleted = user.role_id == role_id
+    
+        if deleted:
+            user.role = None
+            user.save(update_fields=["role", "updated_at"])
+    
+        return {
+            "deleted": deleted,
+        }
 
     def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None,mobile_number=None, country=None, gender=None):
         """Create a pending company user and send the existing invitation flow."""
@@ -760,13 +771,12 @@ class SuperAdminService:
                 phone_country_code=phone_country_code,
                 gender=gender,
                 company=company,
+                role=selected_role,
                 is_active=False,
                 is_email_verified=False,
             )
             user.set_unusable_password()
             user.save()
-            UserRole.objects.create(user=user, role=selected_role)
-
             invitation = invitation_service.create_invitation(
                 email=normalized_email,
                 company_id=company.id,
@@ -794,9 +804,6 @@ class SuperAdminService:
     
         if not employee:
             raise ValueError("Employee not found.")
-
-        # if employee.company is None:
-        #     return ...
 
         if employee.company and employee.company.is_deleted:
             raise ValueError(

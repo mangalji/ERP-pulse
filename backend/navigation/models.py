@@ -15,7 +15,7 @@ class DynamicTopLevelTab(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "dynamic_top_level_tab"
+        db_table = "center_tabs_table"
         ordering = ["sort_order", "internal_id"]
 
         indexes = [
@@ -44,7 +44,7 @@ class DynamicLevel2Tab(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "dynamic_level2_tab"
+        db_table = "center_categories_table"
         ordering = ["sort_order", "internal_id"]
 
         indexes = [
@@ -76,7 +76,7 @@ class DynamicLevel3Tab(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "dynamic_level3_tab"
+        db_table = "center_categories_subtabs_table"
         ordering = ["sort_order", "internal_id"]
 
         indexes = [
@@ -112,7 +112,7 @@ class NavigationUserAccess(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "navigation_user_access"
+        db_table = "navigation_menu_path"
         constraints = [
             models.CheckConstraint(
                 condition=(

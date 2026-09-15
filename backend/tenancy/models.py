@@ -14,8 +14,6 @@ The model inherits from ``core.models.BaseModel`` which provides:
 
 from django.conf import settings
 from django.db import models
-from django.db.models.signals import post_save
-from django.dispatch import receiver
 from django.db.models.functions import Lower
 
 from core.models import BaseModel
@@ -86,6 +84,30 @@ class Company(BaseModel):
         null=True,
         help_text="City where the company is located.",
     )
+    timezone = models.CharField(
+        max_length=100,
+        default='UTC',
+    )
+
+    currency = models.CharField(
+        max_length=10,
+        default='INR',
+    )
+
+    language = models.CharField(
+        max_length=10,
+        default='en',
+    )
+
+    date_format = models.CharField(
+        max_length=20,
+        default='DD/MM/YYYY',
+    )
+
+    number_format = models.CharField(
+        max_length=20,
+        default='en-IN',
+    )
 
 
     class Meta:
@@ -149,32 +171,3 @@ class CompanyDeletionHistory(BaseModel):
 
     def __str__(self):
         return f"{self.company_name} ({self.company_code}) - Permanently Deleted"
-
-class CompanySettings(BaseModel):
-    """Per-company configuration settings."""
-
-    company = models.OneToOneField(
-        Company,
-        on_delete=models.CASCADE,
-        related_name='settings',
-    )
-    timezone = models.CharField(max_length=100, default='UTC')
-    currency = models.CharField(max_length=10, default='INR')
-    language = models.CharField(max_length=10, default='en')
-    date_format = models.CharField(max_length=20, default='DD/MM/YYYY')
-    number_format = models.CharField(max_length=20, default='en-IN')
-
-    class Meta:
-        db_table = 'company_settings'
-        verbose_name = 'Company Settings'
-        verbose_name_plural = 'Company Settings'
-
-    def __str__(self):
-        return f'{self.company.name} settings'
-
-
-@receiver(post_save, sender=Company)
-def create_company_settings(sender, instance, created, **kwargs):
-    """Automatically create default settings when a Company is created."""
-    if created:
-        CompanySettings.objects.get_or_create(company=instance)
