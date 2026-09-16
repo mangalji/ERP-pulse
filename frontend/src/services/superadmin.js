@@ -33,14 +33,8 @@ export const superadminApi = {
   deactivatePlan: (id) => apiClient.post(`${SUPERADMIN_ENDPOINTS.plans}${id}/deactivate/`).then(unwrap),
 
   // ── Company Plans (subscriptions) ────────────────────────────
-  listCompanyPlans: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.companyPlans, { params }).then(unwrap),
-  assignPlanPending: (payload) => apiClient.post(`${SUPERADMIN_ENDPOINTS.companyPlans}assign_pending/`, payload).then(unwrap),
-  completeTransaction: (payload) => apiClient.post(`${SUPERADMIN_ENDPOINTS.companyPlans}complete_transaction/`, payload).then(unwrap),
-  upgradePlan: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPlanUpgrade, payload).then(unwrap),
-  downgradePlan: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPlanDowngrade, payload).then(unwrap),
-  cancelPlan: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPlanCancel, payload).then(unwrap),
-  renewPlan: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPlanRenew, payload).then(unwrap),
-  getCompanyPlanHistory: (companyId) => apiClient.get(SUPERADMIN_ENDPOINTS.companyPlanHistory(companyId)).then(unwrap),
+  assignPlanPending: (companyId, payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyAssignPlanPending(companyId),  payload).then(unwrap),
+  completeTransaction: (companyId, transactionId) => apiClient.post(SUPERADMIN_ENDPOINTS.companyCompleteTransaction(companyId),{ transaction_id: transactionId }).then(unwrap),
   fetchCompanyTransactions: (companyId) => apiClient.get(`/superadmin/companies/${companyId}/transactions/`).then(unwrap),
 
   // ── Modules ──────────────────────────────────────────────────

@@ -25,8 +25,6 @@ import {
 export default function EmployeesPage() {
   const { toasts, addToast, removeToast } = useToast()
   const { user } = useAuth()
-  const plan = user?.plan
-  const employeeLimitReached = plan && plan.max_employees > 0 && (plan.employee_count || 0) >= plan.max_employees
   const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -284,12 +282,6 @@ const isFormValid = () => {
           </button>
            <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
          </div>
-         {employeeLimitReached && (
-           <div className="rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-900/20">
-             Employee limit reached ({plan.employee_count}/{plan.max_employees}).
-             Please upgrade your plan to add more employees.
-           </div>
-         )}
          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex flex-col gap-1">
             <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
@@ -299,7 +291,7 @@ const isFormValid = () => {
               Manage the people in your company and their access to the portal.
             </p>
           </div>
-           <Button intent="primary" onClick={() => setShowCreate((prev) => !prev)} disabled={employeeLimitReached}>
+           <Button intent="primary" onClick={() => setShowCreate((prev) => !prev)}>
              + Add Employee
            </Button>
         </div>

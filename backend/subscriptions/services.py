@@ -10,17 +10,15 @@ Business logic for:
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
-
+from django.utils.crypto import get_random_string
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from tenancy.models import Company
 from superadmin.models import (
-    Plan, DiscountType, BillingCycle, Transaction,
+    Plan, DiscountType, Transaction,
     PaymentStatus, TransactionStatus,
 )
-
-from .utils import LicenseError
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 class SubscriptionService:
     """Business logic for subscription management."""
@@ -55,96 +53,100 @@ class SubscriptionService:
             return None
 
         return company
-
+    
     @transaction.atomic
-    def assign_plan(
+    def create_pending_plan_transaction(
         self,
         *,
         company_id,
         plan_id,
         discount_type=None,
         discount_value=None,
-        billing_cycle=None,
         request=None,
     ):
-        """Assign a plan directly to a company."""
-
         company = Company.objects.select_for_update().get(pk=company_id)
         plan = Plan.objects.get(pk=plan_id)
 
         if plan.is_deleted or plan.status != 'ACTIVE':
             raise ValueError('This plan is not available for assignment.')
 
+        # A company with an active subscription cannot start another
+        # initial assignment transaction.
+        active_subscription = self.get_active_subscription(company.id)
+        if active_subscription is not None:
+            raise ValueError(
+                'This company already has an active subscription.'
+            )
+
+        # Only one pending assignment transaction at a time.
+        existing_pending = Transaction.objects.filter(
+            company=company,
+            payment_status=PaymentStatus.PENDING,
+            transaction_status__in=[
+                TransactionStatus.INITIATED,
+                TransactionStatus.PENDING,
+            ],
+        ).first()
+
+        if existing_pending:
+            raise ValueError(
+                'A pending plan assignment transaction already exists.'
+            )
+
         normalized_discount_type = discount_type or DiscountType.NONE
         normalized_discount_value = discount_value or 0
-        normalized_billing_cycle = billing_cycle or BillingCycle.MONTHLY
 
-        original_price = (
-            plan.yearly_price
-            if normalized_billing_cycle == BillingCycle.YEARLY
-            else plan.monthly_price
-        )
-
-        discount_amount,final_price = self._calculate_final_price(
-            original_price,
+        discount_amount, total_amount = self._calculate_final_price(
+            plan.price,
             normalized_discount_type,
             normalized_discount_value,
         )
 
-        today = timezone.now().date()
-        end_date = today + timedelta(days=plan.validity_days)
+        transaction_id = f'TXN-{get_random_string(8).upper()}'
 
-        old_plan_id = company.plan_id
-
-        company.plan = plan
-        company.plan_start_date = today
-        company.plan_end_date = end_date
-
-        if company.suspension_reason != 'MANUAL':
-            company.status = Company.Status.ACTIVE
-            company.suspension_reason = 'NONE'
-
-        company.save(
-            update_fields=[
-                'plan',
-                'plan_start_date',
-                'plan_end_date',
-                'status',
-                'suspension_reason',
-            ]
-        )
-
-        self._create_transaction(
+        transaction_record = Transaction.objects.create(
             company=company,
             plan=plan,
-            original_amount=original_price,
+            transaction_id=transaction_id,
+            original_amount=Decimal(str(plan.price)).quantize(
+                Decimal('0.01')
+            ),
             discount_amount=discount_amount,
-            discount_type=normalized_discount_type,
-            discount_value=normalized_discount_value,
-            final_amount=final_price,
-            billing_cycle=normalized_billing_cycle,
-            request=request,
+            total_amount=total_amount,
+            payment_status=PaymentStatus.PENDING,
+            transaction_status=TransactionStatus.INITIATED,
+            payment_method='MANUAL',
+            assigned_by=self._audit_user(request),
         )
 
         audit_service.log(
             module=AuditModule.SUBSCRIPTION,
-            action=AuditAction.UPDATE if old_plan_id else AuditAction.CREATE,
-            entity='Company',
-            entity_id=str(company.id),
+            action=AuditAction.CREATE,
+            entity='Transaction',
+            entity_id=str(transaction_record.id),
             company=company,
             user=self._audit_user(request),
-            old_value={
-                'plan_id': str(old_plan_id) if old_plan_id else None,
-            },
+            old_value=None,
             new_value={
+                'transaction_id': transaction_record.transaction_id,
+                'company_id': str(company.id),
                 'plan_id': str(plan.id),
                 'plan_name': plan.name,
-                'plan_start_date': str(today),
-                'plan_end_date': str(end_date),
+                'original_amount': str(
+                    transaction_record.original_amount
+                ),
+                'discount_amount': str(
+                    transaction_record.discount_amount
+                ),
+                'total_amount': str(
+                    transaction_record.total_amount
+                ),
+                'payment_status': transaction_record.payment_status,
+                'transaction_status': transaction_record.transaction_status,
             },
         )
 
-        return company
+        return transaction_record
 
     @staticmethod
     def _calculate_final_price(
@@ -156,206 +158,108 @@ class SubscriptionService:
         discount_value = Decimal(str(discount_value or 0))
 
         if original_price < 0:
-            raise ValueError("Original price cannot be negative.")
+            raise ValueError(
+                'Original price cannot be negative.'
+            )
 
         if discount_type == DiscountType.NONE:
-            discount_value = Decimal("0")
-            discount_amount = Decimal("0")
+            discount_amount = Decimal('0')
 
         elif discount_type == DiscountType.PERCENTAGE:
             if discount_value < 0 or discount_value > 100:
                 raise ValueError(
-                    "Percentage discount must be between 0 and 100."
+                    'Percentage discount must be between 0 and 100.'
                 )
 
             discount_amount = (
-                original_price * discount_value / Decimal("100")
+                original_price
+                * discount_value
+                / Decimal('100')
             )
 
         elif discount_type == DiscountType.FIXED:
             if discount_value < 0:
                 raise ValueError(
-                    "Discount value cannot be negative."
+                    'Discount value cannot be negative.'
                 )
 
             if discount_value > original_price:
                 raise ValueError(
-                    "Fixed discount cannot exceed the plan price."
+                    'Fixed discount cannot exceed the plan price.'
                 )
 
             discount_amount = discount_value
 
         else:
-            raise ValueError("Invalid discount type.")
+            raise ValueError('Invalid discount type.')
 
-        final_price = original_price - discount_amount
+        total_amount = original_price - discount_amount
 
-        if final_price < 0:
-            raise ValueError("Final price cannot be negative.")
+        if total_amount < 0:
+            raise ValueError(
+                'Total amount cannot be negative.'
+            )
 
         return (
-            discount_amount.quantize(Decimal("0.01")),
-            final_price.quantize(Decimal("0.01")),
+            discount_amount.quantize(Decimal('0.01')),
+            total_amount.quantize(Decimal('0.01')),
         )
 
-    def _create_transaction(
-        self,
-        *,
-        company,
-        plan,
-        original_amount,
-        discount_amount,
-        discount_type,
-        discount_value,
-        final_amount,
-        billing_cycle,
-        request=None,
-    ):
-        from django.utils.crypto import get_random_string
-    
-        transaction_id = f"TXN-{get_random_string(8).upper()}"
-    
-        Transaction.objects.create(
-            company=company,
-            plan=plan,
-            transaction_id=transaction_id,
-            original_amount=original_amount,
-            discount_amount=discount_amount,
-            discount_type=discount_type,
-            discount_value=discount_value,
-            final_amount=final_amount,
-            billing_cycle=billing_cycle,
-            payment_status=PaymentStatus.PENDING,
-            transaction_status=TransactionStatus.INITIATED,
-            payment_method="MANUAL",
-            assigned_by=self._audit_user(request),
-        )
-    
     @transaction.atomic
-    def upgrade_plan(
+    def complete_plan_transaction(
         self,
         *,
         company_id,
-        plan_id,
-        discount_type=None,
-        discount_value=None,
-        billing_cycle=None,
+        transaction_id,
         request=None,
     ):
-        """Upgrade company to another active plan."""
-
-        company = Company.objects.select_for_update().get(pk=company_id)
-        old_plan_id = company.plan_id
-
-        new_company = self.assign_plan(
-            company_id=company.id,
-            plan_id=plan_id,
-            discount_type=discount_type,
-            discount_value=discount_value,
-            billing_cycle=billing_cycle,
-            request=request,
+        company = (
+            Company.objects
+            .select_for_update()
+            .get(pk=company_id)
         )
 
-        audit_service.log(
-            module=AuditModule.SUBSCRIPTION,
-            action=AuditAction.UPDATE,
-            entity='Company',
-            entity_id=str(company.id),
-            company_id=company.id,
-            user=self._audit_user(request),
-            old_value={'plan_id': str(old_plan_id) if old_plan_id else None},
-            new_value={'plan_id': str(plan_id)},
+        transaction_record = (
+            Transaction.objects
+            .select_for_update()
+            .select_related('plan')
+            .filter(
+                company=company,
+                transaction_id=transaction_id,
+            )
+            .first()
         )
 
-        return new_company
+        if not transaction_record:
+            raise ValueError('Transaction not found.')
 
-    @transaction.atomic
-    def downgrade_plan(
-        self,
-        *,
-        company_id,
-        plan_id,
-        discount_type=None,
-        discount_value=None,
-        billing_cycle=None,
-        request=None,
-    ):
-        """Downgrade company to another active plan."""
+        if (
+            transaction_record.payment_status != PaymentStatus.PENDING
+            or transaction_record.transaction_status
+            not in [
+                TransactionStatus.INITIATED,
+                TransactionStatus.PENDING,
+            ]
+        ):
+            raise ValueError(
+                'Only a pending transaction can be completed.'
+            )
 
-        company = Company.objects.select_for_update().get(pk=company_id)
-        old_plan_id = company.plan_id
+        plan = transaction_record.plan
 
-        new_company = self.assign_plan(
-            company_id=company.id,
-            plan_id=plan_id,
-            discount_type=discount_type,
-            discount_value=discount_value,
-            billing_cycle=billing_cycle,
-            request=request,
-        )
+        if not plan:
+            raise ValueError(
+                'No plan is associated with this transaction.'
+            )
 
-        audit_service.log(
-            module=AuditModule.SUBSCRIPTION,
-            action=AuditAction.UPDATE,
-            entity='Company',
-            entity_id=str(company.id),
-            company_id=company.id,
-            user=self._audit_user(request),
-            old_value={'plan_id': str(old_plan_id) if old_plan_id else None},
-            new_value={'plan_id': str(plan_id)},
-        )
+        today = timezone.now().date()
+        end_date = today + timedelta(days=plan.validity_days)
 
-        return new_company
-
-    @transaction.atomic
-    def renew_plan(
-        self,
-        *,
-        company_id,
-        plan_id=None,
-        discount_type=None,
-        discount_value=None,
-        billing_cycle=None,
-        request=None,
-    ):
-        """Renew the company's current plan or assign a selected plan."""
-
-        company = Company.objects.select_for_update().select_related('plan').get(
-            pk=company_id
-        )
-
-        if plan_id is None:
-            if not company.plan_id:
-                raise ValueError(
-                    'Plan selection is required when there is no current plan.'
-                )
-            plan_id = company.plan_id
-
-        return self.assign_plan(
-            company_id=company.id,
-            plan_id=plan_id,
-            discount_type=discount_type,
-            discount_value=discount_value,
-            billing_cycle=billing_cycle,
-            request=request,
-        )
-
-    @transaction.atomic
-    def cancel_plan(self, *, company_id, request=None):
-        """Cancel the company's current plan."""
-
-        company = Company.objects.select_for_update().get(pk=company_id)
-
-        if not company.plan_id:
-            raise ValueError('No active plan found for this company.')
-
-        old_plan_id = company.plan_id
-
-        company.plan = None
-        company.plan_start_date = None
-        company.plan_end_date = None
-        company.status = Company.Status.SUSPENDED
-        company.suspension_reason = 'PLAN'
+        company.plan = plan
+        company.plan_start_date = today
+        company.plan_end_date = end_date
+        company.status = Company.Status.ACTIVE
+        company.suspension_reason = 'NONE'
 
         company.save(
             update_fields=[
@@ -367,19 +271,43 @@ class SubscriptionService:
             ]
         )
 
+        transaction_record.payment_status = PaymentStatus.SUCCESS
+        transaction_record.transaction_status = TransactionStatus.COMPLETED
+        transaction_record.assigned_by = self._audit_user(request)
+
+        transaction_record.save(
+            update_fields=[
+                'payment_status',
+                'transaction_status',
+                'assigned_by',
+            ]
+        )
+
         audit_service.log(
             module=AuditModule.SUBSCRIPTION,
             action=AuditAction.UPDATE,
-            entity='Company',
-            entity_id=str(company.id),
-            company_id=company.id,
+            entity='Transaction',
+            entity_id=str(transaction_record.id),
+            company=company,
             user=self._audit_user(request),
-            old_value={'plan_id': str(old_plan_id)},
-            new_value={'plan_id': None},
+            old_value={
+                'payment_status': PaymentStatus.PENDING,
+                'transaction_status': TransactionStatus.INITIATED,
+            },
+            new_value={
+                'transaction_id': transaction_record.transaction_id,
+                'company_id': str(company.id),
+                'plan_id': str(plan.id),
+                'plan_name': plan.name,
+                'payment_status': transaction_record.payment_status,
+                'transaction_status': transaction_record.transaction_status,
+                'plan_start_date': str(company.plan_start_date),
+                'plan_end_date': str(company.plan_end_date),
+            },
         )
 
-        return company
-
+        return transaction_record
+    
     def check_expiry(self):
         """
         Mark companies with expired plans as suspended.

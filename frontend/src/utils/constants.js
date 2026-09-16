@@ -66,13 +66,6 @@ export const SUPERADMIN_ENDPOINTS = {
   companySoftDelete: (id) => `/superadmin/companies/${id}/soft_delete/`,
   companyRestore: (id) => `/superadmin/companies/${id}/restore/`,
   plans: '/superadmin/plans/',
-  companyPlans: '/superadmin/company-plans/',
-  companyPlanAssign: '/superadmin/company-plans/assign/',
-  companyPlanUpgrade: '/superadmin/company-plans/upgrade/',
-  companyPlanDowngrade: '/superadmin/company-plans/downgrade/',
-  companyPlanCancel: '/superadmin/company-plans/cancel/',
-  companyPlanRenew: '/superadmin/company-plans/renew/',
-  companyPlanHistory: (id) => `/superadmin/company-plans/${id}/history/`,
   employees: '/superadmin/employees/',
   employeeCreate: '/superadmin/employees/create_employee/',
   employeeDeactivate: (id) => `/superadmin/employees/${id}/deactivate/`,
@@ -80,6 +73,8 @@ export const SUPERADMIN_ENDPOINTS = {
   employeeAssignRole: (id) => `/superadmin/employees/${id}/assign_role/`,
   employeeRemoveRole: (id) => `/superadmin/employees/${id}/remove_role/`,
   dashboardSummary: '/superadmin/dashboard/summary/',
+  companyAssignPlanPending: (id) => `/superadmin/companies/${id}/assign-plan-pending/`,
+  companyCompleteTransaction: (id) => `/superadmin/companies/${id}/complete-transaction/`,
 }
 
 export const INVITATION_ENDPOINTS = {

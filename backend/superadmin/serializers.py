@@ -4,7 +4,6 @@ from rest_framework import serializers
 from .models import (
     Plan, 
     Transaction,
-    DiscountType
 )
 from tenancy.models import Company
 from django.contrib.auth import get_user_model
@@ -323,7 +322,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
         fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'transaction_id', 'created_at', 'updated_at')
 
 
 class CompanyDetailSerializer(serializers.ModelSerializer):
@@ -398,11 +397,11 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
                 'transaction_id': t.transaction_id,
                 'plan_name': t.plan.name if t.plan else None,
                 'original_amount': str(t.original_amount),
-                'discount_value': str(t.discount_value),
                 'discount_amount': str(t.discount_amount),
-                'final_amount': str(t.final_amount),
+                'total_amount': str(t.total_amount),
+                'transaction_status': t.transaction_status,
+                'payment_method': t.payment_method,
                 'payment_status': t.payment_status,
-                'billing_cycle': t.billing_cycle,
                 'created_at': t.created_at,
             }
             for t in transactions

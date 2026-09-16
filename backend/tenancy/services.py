@@ -85,19 +85,6 @@ class ClientPortalService:
             if User.objects.filter(mobile_number=normalized_phone).exists():
                 raise ValueError('A user with this mobile number already exists.')
 
-        current_plan = company_lifecycle_service.get_current_plan(
-            company=company
-        )
-
-        if current_plan and current_plan.max_employees > 0:
-            current_count = User.objects.filter(company=company).count()
-
-            if current_count >= current_plan.max_employees:
-                raise ValueError(
-                    f'Employee limit of {current_plan.max_employees} reached. '
-                    f'Please upgrade your plan to add more employees.'
-                )
-
         role_id = data.get('role_id')
         role = self._validate_role(
             company=company,
@@ -522,7 +509,6 @@ class ClientPortalService:
             if current_plan:
                 plan_info = {
                     'plan_name': current_plan.name,
-                    'max_employees': current_plan.max_employees,
                     'employee_count': employee_count,
                     'start_date': company.plan_start_date,
                     'end_date': company.plan_end_date,

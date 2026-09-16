@@ -246,16 +246,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
                 <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">E</span>
                 <span className="hidden font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)] sm:inline">AGSuite ERP</span>
               </NavLink>
-              {/* <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-1" aria-label="Main navigation">
-                {databaseNavItems.length > 0 ? databaseNavItems.map((item) => renderDatabaseMenuItem(item, 0)) : (
-                  [...visibleNav, netSuiteNavItem].map(({ to, label, end }) => (
-                    <NavLink key={to} to={to} end={end} className={({ isActive }) => `shrink-0 rounded-md px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-ink)]'}`}>{label}</NavLink>
-                  ))
-                )}
-              </nav> */}
-              {/* <nav className="flex flex-1 flex-col gap-1">
-  {databaseNavItems.map((item) => renderDatabaseMenuItem(item, 0))}
-</nav> */}
+              
 <nav
   className="flex min-w-0 flex-1 items-center gap-2 overflow-visible"
   aria-label="Main navigation"

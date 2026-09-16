@@ -25,6 +25,7 @@ from superadmin.serializers import (
 from superadmin.services import SuperAdminService
 from tenancy.models import Company, CompanyDeletionHistory, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
+from subscriptions.services import subscription_service
 
 User = get_user_model()
 superadmin_service = SuperAdminService()
@@ -218,6 +219,68 @@ class CompanyViewSet(viewsets.ModelViewSet):
                 'id': str(company.id),
                 'status': company.status,
             },
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='complete-transaction',
+    )
+    def complete_transaction(self, request, pk=None):
+        company = self.get_object()
+
+        transaction_id = request.data.get('transaction_id')
+
+        if not transaction_id:
+            raise ValidationError(
+                {'transaction_id': 'Transaction ID is required.'}
+            )
+
+        try:
+            transaction_record = (
+                subscription_service.complete_plan_transaction(
+                    company_id=company.id,
+                    transaction_id=transaction_id,
+                    request=request,
+                )
+            )
+        except ValueError as exc:
+            raise ValidationError({'detail': str(exc)})
+
+        return success_response(
+            message='Transaction completed and plan assigned successfully.',
+            data=TransactionSerializer(transaction_record).data,
+        )
+
+    @action(detail=True,methods=['post'],url_path='assign-plan-pending',)
+    def assign_plan_pending(self, request, pk=None):
+        company = self.get_object()
+
+        plan_id = request.data.get('plan_id')
+        discount_type = request.data.get('discount_type')
+        discount_value = request.data.get('discount_value', 0)
+
+        if not plan_id:
+            raise ValidationError(
+                {'plan_id': 'Plan selection is required.'}
+            )
+
+        try:
+            transaction_record = (
+                subscription_service.create_pending_plan_transaction(
+                    company_id=company.id,
+                    plan_id=plan_id,
+                    discount_type=discount_type,
+                    discount_value=discount_value,
+                    request=request,
+                )
+            )
+        except ValueError as exc:
+            raise ValidationError({'detail': str(exc)})
+
+        return success_response(
+            message='Plan assignment transaction created successfully. Payment is pending.',
+            data=TransactionSerializer(transaction_record).data,
         )
 
     @action(detail=False, methods=['get'], url_path='permanently-deleted')

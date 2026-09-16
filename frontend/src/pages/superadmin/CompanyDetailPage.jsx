@@ -558,9 +558,6 @@ export default function CompanyDetailPage() {
 
                   <p className="mt-1 font-semibold text-[var(--color-ink)]">
                     {company.user_count ?? 0}
-                    {plan.max_employees
-                      ? ` / ${plan.max_employees}`
-                      : ''}
                   </p>
                 </div>
 
@@ -633,7 +630,7 @@ export default function CompanyDetailPage() {
                   </p>
 
                   <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
-                    {plan.max_employees ??
+                    {
                       'Unlimited / Not specified'}
                   </p>
                 </div>

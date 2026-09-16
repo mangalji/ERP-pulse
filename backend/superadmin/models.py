@@ -18,20 +18,12 @@ class Plan(BaseModel):
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     validity_days = models.PositiveIntegerField(default=30)
-    monthly_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    yearly_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    max_employees = models.PositiveIntegerField(default=0)
-    max_ocr_documents = models.PositiveIntegerField(default=0)
-    max_storage_gb = models.PositiveIntegerField(default=0)  # in GB
-    trial_days = models.PositiveIntegerField(default=14, help_text='Number of trial days for new assignments')
-    ai_credits = models.PositiveIntegerField(default=0, help_text='AI credits included per billing cycle')
-    ocr_credits = models.PositiveIntegerField(default=0, help_text='OCR documents allowed per billing cycle')
     status = models.CharField(max_length=20, choices=PlanStatus.choices, default=PlanStatus.ACTIVE)
 
     Status = PlanStatus
 
     class Meta:
-        db_table = 'sa_plan'
+        db_table = 'subscription_plans'
         ordering = ['name']
 
     def __str__(self):
@@ -42,11 +34,6 @@ class DiscountType(models.TextChoices):
     NONE = 'NONE', 'No Discount'
     PERCENTAGE = 'PERCENTAGE', 'Percentage'
     FIXED = 'FIXED', 'Fixed Amount'
-
-
-class BillingCycle(models.TextChoices):
-    MONTHLY = 'MONTHLY', 'Monthly'
-    YEARLY = 'YEARLY', 'Yearly'
 
 
 class PaymentStatus(models.TextChoices):
@@ -66,8 +53,7 @@ class TransactionStatus(models.TextChoices):
 
 class Transaction(BaseModel):
     """
-    Read-only transaction record for plan assignments and payments.
-    Prepared for future payment gateway integration (Razorpay, Stripe, Manual).
+    Transaction record for company plan assignment and payment tracking.
     """
     TRANSACTION_ID_PREFIX = 'TXN'
 
@@ -76,13 +62,10 @@ class Transaction(BaseModel):
     transaction_id = models.CharField(max_length=64, unique=True)
     original_amount = models.DecimalField(max_digits=10, decimal_places=2)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    final_amount = models.DecimalField(max_digits=10, decimal_places=2)
-    billing_cycle = models.CharField(max_length=20, choices=BillingCycle.choices, default=BillingCycle.MONTHLY)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     payment_status = models.CharField(max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)
     transaction_status = models.CharField(max_length=20, choices=TransactionStatus.choices, default=TransactionStatus.INITIATED)
     payment_method = models.CharField(max_length=50, default='MANUAL', help_text='Razorpay, Stripe, Manual, etc.')
-    discount_type = models.CharField(max_length=20, choices=DiscountType.choices, default=DiscountType.NONE)
-    discount_value = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     assigned_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -94,12 +77,8 @@ class Transaction(BaseModel):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'sa_transaction'
+        db_table = 'subscription_plan_transaction'
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'{self.transaction_id} - {self.company.name} - {self.final_amount}'
-
-    @property
-    def discount_amount_value(self):
-        return self.original_amount - self.final_amount
+        return f'{self.transaction_id} - {self.company.name} - {self.total_amount}'
