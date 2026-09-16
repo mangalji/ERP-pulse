@@ -12,7 +12,7 @@ from common.email_service import send_email
 from accounts.models import OTP
 from accounts.services import OTPService
 from common.contact_validation import normalize_phone
-
+from tenancy.services import company_lifecycle_service
 from tenancy.models import Company
 from rbac.models import Role
 
@@ -43,6 +43,9 @@ class InvitationService:
         transaction has successfully completed.
         """
         company = Company.objects.get(pk=company_id)
+        company_lifecycle_service.ensure_operational(
+            company=company
+        )
         role = Role.objects.filter(pk=role_id).first() if role_id else None
 
         # Check for existing pending invitation
@@ -175,6 +178,9 @@ class InvitationService:
         the pre-created user account.
         """
         invitation = self.validate_token(token)
+        company_lifecycle_service.ensure_operational(
+            company=invitation.company
+        )
         try:
             user = User.objects.get(
                 email__iexact=invitation.email,
@@ -205,7 +211,9 @@ class InvitationService:
         The invitee can only provide/update their mobile number.
         """
         invitation = self.validate_token(token)
-
+        company_lifecycle_service.ensure_operational(
+            company=invitation.company
+        )
         try:
             user = User.objects.get(
                 email__iexact=invitation.email

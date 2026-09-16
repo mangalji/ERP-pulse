@@ -2,9 +2,9 @@ import re
 from common.contact_validation import normalize_phone
 from rest_framework import serializers
 from .models import (
-    Plan, CompanyPlan,
-    SubscriptionHistory, Transaction,
-    DiscountType, CompanyPlanStatus,
+    Plan, 
+    Transaction,
+    DiscountType
 )
 from tenancy.models import Company
 from django.contrib.auth import get_user_model
@@ -19,28 +19,6 @@ class PlanSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'price', 'validity_days', 'status', 'created_at', 'updated_at']
         read_only_fields = ('id', 'created_at', 'updated_at')
 
-
-class CompanyPlanSerializer(serializers.ModelSerializer):
-    plan_name = serializers.CharField(source='plan.name', read_only=True)
-    company_name = serializers.CharField(source='company.name', read_only=True)
-    assigned_by_email = serializers.CharField(source='assigned_by.email', read_only=True)
-    discount_display = serializers.SerializerMethodField()
-    effective_price = serializers.SerializerMethodField()
-
-    class Meta:
-        model = CompanyPlan
-        fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at', 'original_price', 'final_price')
-
-    def get_discount_display(self, obj):
-        if obj.discount_type == DiscountType.NONE:
-            return None
-        if obj.discount_type == DiscountType.PERCENTAGE:
-            return f'{obj.discount_value}%'
-        return f'₹{obj.discount_value}'
-
-    def get_effective_price(self, obj):
-        return obj.final_price
 
 class CompanySerializer(serializers.ModelSerializer):
     user_count = serializers.IntegerField(
@@ -234,27 +212,6 @@ class PlanDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'created_at', 'updated_at')
 
 
-class CompanyPlanSummarySerializer(serializers.ModelSerializer):
-    """Lightweight plan summary for company detail page."""
-    plan_name = serializers.CharField(source='plan.name', read_only=True)
-    discount_display = serializers.SerializerMethodField()
-
-    class Meta:
-        model = CompanyPlan
-        fields = [
-            'id', 'plan_name', 'status', 'start_date', 'end_date', 'is_auto_renew',
-            'discount_type', 'discount_value', 'billing_cycle', 'original_price', 'final_price',
-            'validity_days', 'discount_display',
-        ]
-
-    def get_discount_display(self, obj):
-        if obj.discount_type == DiscountType.NONE:
-            return None
-        if obj.discount_type == DiscountType.PERCENTAGE:
-            return f'{obj.discount_value}%'
-        return f'₹{obj.discount_value}'
-
-
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(
         source="get_full_name",
@@ -358,37 +315,15 @@ class SuperAdminEmployeeSerializer(serializers.ModelSerializer):
 
         return "INACTIVE"
 
-class SubscriptionHistorySerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(source='company.name', read_only=True)
-    plan_name = serializers.CharField(source='plan.name', read_only=True)
-    assigned_by_email = serializers.CharField(source='assigned_by.email', read_only=True)
-    discount_display = serializers.SerializerMethodField()
-
-    class Meta:
-        model = SubscriptionHistory
-        fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
-
-    def get_discount_display(self, obj):
-        if obj.discount_type == DiscountType.NONE:
-            return None
-        if obj.discount_type == DiscountType.PERCENTAGE:
-            return f'{obj.discount_value}%'
-        return f'₹{obj.discount_value}'
-
 
 class TransactionSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.name', read_only=True)
     plan_name = serializers.CharField(source='plan.name', read_only=True)
-    discount_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at')
-
-    def get_discount_amount(self, obj):
-        return obj.original_amount - obj.final_amount
 
 
 class CompanyDetailSerializer(serializers.ModelSerializer):
@@ -428,12 +363,18 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
         return admin.email if admin else None
 
     def get_current_plan(self, obj):
-        plan = obj.company_plans.filter(
-            status__in=['ACTIVE', 'TRIAL']
-        ).select_related('plan').first()
-        if plan:
-            return CompanyPlanSummarySerializer(plan).data
-        return None
+        if not obj.plan_id:
+            return None
+        return {
+            "id": str(obj.plan.id),
+            "name": obj.plan.name,
+            "description": obj.plan.description,
+            "price": str(obj.plan.price),
+            "validity_days": obj.plan.validity_days,
+            "status": obj.plan.status,
+            "start_date": obj.plan_start_date,
+            "end_date": obj.plan_end_date,
+        }
 
     def get_netsuite_connected(self, obj):
         return obj.netsuite_connections.filter(is_active=True).exists()
@@ -457,7 +398,8 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
                 'transaction_id': t.transaction_id,
                 'plan_name': t.plan.name if t.plan else None,
                 'original_amount': str(t.original_amount),
-                'discount_amount': str(t.original_amount - t.final_amount),
+                'discount_value': str(t.discount_value),
+                'discount_amount': str(t.discount_amount),
                 'final_amount': str(t.final_amount),
                 'payment_status': t.payment_status,
                 'billing_cycle': t.billing_cycle,

@@ -2,7 +2,7 @@
 OCR processing tasks.
 
 Existing IDP pipeline tasks are preserved.
-The test OCR batch processor uses the approved notebook Gemini extractor,
+The OCR batch processor uses the approved notebook Gemini extractor,
 Redis quota limiting, and per-file persistence.
 """
 
@@ -10,7 +10,6 @@ from __future__ import annotations
 import time
 import hashlib
 import json
-import mimetypes
 import logging
 import random
 import redis
@@ -853,18 +852,6 @@ def _write_live_result(upload_id: str, result: dict) -> None:
             upload_id,
         )
 
-
-def _sync_raw_result_snapshot(version, result: dict) -> None:
-    version.raw_ocr = result
-    version.normalized_json = result
-
-    version.save(
-        update_fields=[
-            "raw_ocr",
-            "normalized_json",
-        ]
-    )
-
 def _refresh_batch_status(batch_id):
     """Reconcile one batch from its child upload states."""
     try:
@@ -927,7 +914,7 @@ try:
         acks_late=True,
         reject_on_worker_lost=True,
     )
-    def process_test_ocr_upload_task(
+    def process_ocr_upload_task(
         self,
         upload_id: str,
         user_id: str,
@@ -1169,7 +1156,7 @@ try:
             )
 
             logger.info(
-                "Test OCR extraction completed — upload=%s; result is awaiting user review/save",
+                "OCR extraction completed — upload=%s; result is awaiting user review/save",
                 upload_id,
             )
 
@@ -1241,13 +1228,13 @@ try:
 
         except OCRUpload.DoesNotExist:
             logger.error(
-                "Test OCR upload not found — upload_id=%s",
+                "OCR upload not found — upload_id=%s",
                 upload_id,
             )
 
         except Exception as exc:
             logger.exception(
-                "Test OCR processing failed — upload=%s error=%s",
+                "OCR processing failed — upload=%s error=%s",
                 upload_id,
                 exc,
             )
@@ -1384,9 +1371,9 @@ try:
             )
 
 except ImportError:  # pragma: no cover
-    def process_test_ocr_upload_task(upload_id: str, user_id: str) -> None:
+    def process_ocr_upload_task(upload_id: str, user_id: str) -> None:
         logger.warning(
-            "Celery not installed; running test OCR synchronously is unavailable."
+            "Celery not installed; running OCR synchronously is unavailable."
         )
 
     def process_document_task(upload_id: str, user_id: int) -> None:

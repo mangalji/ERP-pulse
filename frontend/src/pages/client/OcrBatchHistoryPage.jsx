@@ -132,7 +132,7 @@ export default function OcrBatchHistoryPage() {
               <Button
                 type="button"
                 intent="secondary"
-                onClick={() => navigate('/app/ocr-test')}
+                onClick={() => navigate('/app/ocr')}
               >
                 Back to OCR
               </Button>
@@ -228,7 +228,7 @@ export default function OcrBatchHistoryPage() {
             <Button
               type="button"
               intent="secondary"
-              onClick={() => navigate('/app/ocr-test')}
+              onClick={() => navigate('/app/ocr')}
             >
               Back to OCR
             </Button>
@@ -264,7 +264,7 @@ export default function OcrBatchHistoryPage() {
                   onClick={() => {
                     if (file.document_id) {
                       navigate(
-                        `/app/ocr-test/history/${file.document_id}`,
+                        `/app/ocr/history/${file.document_id}`,
                       )
                       return
                     }
@@ -279,7 +279,7 @@ export default function OcrBatchHistoryPage() {
                           files: [file],
                         }),
                       )
-                      navigate('/app/ocr-test/result')
+                      navigate('/app/ocr/result')
                     }
                   }}
                 >

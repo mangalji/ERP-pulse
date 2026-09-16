@@ -5,8 +5,6 @@ import logging
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
-
-from superadmin.models import CompanyPlan, CompanyPlanStatus
 from tenancy.models import Company, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
 
@@ -28,7 +26,6 @@ def sync_company_subscription_statuses():
     companies = (
         Company.objects
         .filter(is_deleted=False)
-        # .prefetch_related('company_plans')
     )
 
     updated_count = 0
@@ -47,28 +44,13 @@ def sync_company_subscription_statuses():
                 ):
                     continue
 
-                plan = (
-                    CompanyPlan.objects
-                    .filter(company=company)
-                    .order_by('-start_date', '-created_at')
-                    .first()
-                )
-
-                if plan and plan.end_date and plan.end_date < today:
-                    if plan.status not in {
-                        CompanyPlanStatus.EXPIRED,
-                        CompanyPlanStatus.CANCELLED,
-                        CompanyPlanStatus.REPLACED,
-                    }:
-                        plan.status = CompanyPlanStatus.EXPIRED
-                        plan.save(
-                            update_fields=[
-                                'status',
-                                'updated_at',
-                            ]
-                        )
-                        expired_plan_count += 1
-
+                if (
+                    company.plan_id
+                    and company.plan_end_date
+                    and company.plan_end_date < today
+                ):
+                    expired_plan_count += 1
+                
                 effective_status = (
                     company_lifecycle_service.get_effective_status(
                         company=company

@@ -29,7 +29,6 @@ class DashboardAggregateService:
         from accounts.models import User as UserModel
         from invitations.models import Invitation, InvitationStatus
         from netsuite.models import NetSuiteConnection
-        from superadmin.models import CompanyPlan
 
         # Employee stats
         total_employees = UserModel.objects.filter(company=company).count()
@@ -46,13 +45,9 @@ class DashboardAggregateService:
         ).count()
 
         # Subscription
-        subscription = CompanyPlan.objects.filter(
-            company=company,
-            status__in=['ACTIVE', 'TRIAL'],
-        ).select_related('plan').first()
 
-        subscription_plan = subscription.plan.name if subscription else None
-        plan_expiry = subscription.end_date.isoformat() if subscription and subscription.end_date else None
+        subscription_plan = company.plan.name if company else None
+        plan_expiry = company.plan_end_date.isoformat() if company.plan_end_date else None
 
         return {
             'total_employees': total_employees,

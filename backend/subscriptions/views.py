@@ -36,7 +36,10 @@ class SubscriptionViewSet(viewsets.ViewSet):
 
         subscription = subscription_service.get_active_subscription(company_id=company.id)
         if not subscription:
-            return Response({'detail': 'No active subscription found.'}, status=status.HTTP_404_NOT_FOUND)
+            return success_response(
+                message='No active plan found.',
+                data=SubscriptionSerializer(company).data,
+            )
 
         return success_response(
             message='Current subscription fetched successfully.',
@@ -63,17 +66,15 @@ class SubscriptionViewSet(viewsets.ViewSet):
         """POST /api/v1/subscriptions/assign/ — assign plan to company."""
         company_id = request.data.get('company_id')
         plan_id = request.data.get('plan_id')
-        status_value = request.data.get('status')
         discount_type = request.data.get('discount_type')
         discount_value = request.data.get('discount_value')
         billing_cycle = request.data.get('billing_cycle')
         if not company_id or not plan_id:
             return Response({'detail': 'company_id and plan_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        company_plan = subscription_service.assign_plan(
+        company  = subscription_service.assign_plan(
             company_id=company_id,
             plan_id=plan_id,
-            status=status_value,
             discount_type=discount_type,
             discount_value=discount_value,
             billing_cycle=billing_cycle,
@@ -81,7 +82,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
         )
         return success_response(
             message='Plan assigned successfully.',
-            data=SubscriptionSerializer(company_plan).data,
+            data=SubscriptionSerializer(company).data,
         )
 
     @action(detail=False, methods=['post'])
@@ -95,7 +96,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
         if not company_id or not plan_id:
             return Response({'detail': 'company_id and plan_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        company_plan = subscription_service.upgrade_plan(
+        company = subscription_service.upgrade_plan(
             company_id=company_id,
             plan_id=plan_id,
             discount_type=discount_type,
@@ -105,7 +106,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
         )
         return success_response(
             message='Plan upgraded successfully.',
-            data=SubscriptionSerializer(company_plan).data,
+            data=SubscriptionSerializer(company).data,
         )
 
     @action(detail=False, methods=['post'])
@@ -119,7 +120,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
         if not company_id or not plan_id:
             return Response({'detail': 'company_id and plan_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        company_plan = subscription_service.downgrade_plan(
+        company = subscription_service.downgrade_plan(
             company_id=company_id,
             plan_id=plan_id,
             discount_type=discount_type,
@@ -129,7 +130,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
         )
         return success_response(
             message='Plan downgraded successfully.',
-            data=SubscriptionSerializer(company_plan).data,
+            data=SubscriptionSerializer(company).data,
         )
 
     @action(detail=False, methods=['post'])
@@ -143,7 +144,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
         if not company_id:
             return Response({'detail': 'company_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        company_plan = subscription_service.renew_plan(
+        company = subscription_service.renew_plan(
             company_id=company_id,
             plan_id=plan_id,
             discount_type=discount_type,
@@ -153,7 +154,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
         )
         return success_response(
             message='Plan renewed successfully.',
-            data=SubscriptionSerializer(company_plan).data,
+            data=SubscriptionSerializer(company).data,
         )
 
     @action(detail=False, methods=['post'])
@@ -163,19 +164,19 @@ class SubscriptionViewSet(viewsets.ViewSet):
         if not company_id:
             return Response({'detail': 'company_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        company_plan = subscription_service.cancel_plan(
+        company = subscription_service.cancel_plan(
             company_id=company_id,
             request=request,
         )
         return success_response(
             message='Plan cancelled successfully.',
-            data=SubscriptionSerializer(company_plan).data,
+            data=SubscriptionSerializer(company).data,
         )
 
     @action(detail=False, methods=['get'], url_path='plans')
     def list_plans(self, request):
         """GET /api/v1/subscriptions/plans/ — list available plans."""
-        plans = Plan.objects.filter(is_deleted=False)
+        plans = Plan.objects.filter(is_deleted=False,status='ACTIVE')
         return success_response(
             message='Plans fetched successfully.',
             data=PlanSerializer(plans, many=True).data,

@@ -3,33 +3,6 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
-// const ALL_NAV_ITEMS = [
-//   {
-//     to: '/app',
-//     label: 'Dashboard',
-//     icon: DashboardIcon,
-//     end: true,
-//     module: null,
-//   },
-//   {
-//     to: '/app/ocr-test',
-//     label: 'OCR',
-//     icon: OcrIcon,
-//     module: null,
-//   },
-//   {
-//     to: '/app/employees',
-//     label: 'Employees',
-//     icon: EmployeesIcon,
-//     module: 'employees',
-//   },
-//   {
-//     to: '/app/settings',
-//     label: 'Company Settings',
-//     icon: GearIcon,
-//     module: null,
-//   },
-// ]
 const SYSTEM_NAV_KEYS = {
   employees: 'employees',
   settings: 'settings',

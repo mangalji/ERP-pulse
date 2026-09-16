@@ -64,6 +64,27 @@ class Company(BaseModel):
         blank=True,
     )
 
+    plan = models.ForeignKey(
+        "superadmin.Plan",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="companies",
+        help_text="Currently assigned subscription plan.",
+    )
+
+    plan_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Start date of the current subscription plan.",
+    )
+
+    plan_end_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="End date of the current subscription plan.",
+    )
+
     industry = models.CharField(
         max_length=100,
         blank=True,

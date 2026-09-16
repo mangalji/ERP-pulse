@@ -46,7 +46,7 @@ from ocr.tasks import (
     write_completed_cached_result,
 )
 from ocr.serializers import OCRExtractionTemplateCreateSerializer
-from ocr.test_ocr_view import _build_requested_fields, _parse_requested_fields
+from ocr.views import _build_requested_fields, _parse_requested_fields
 
 
 # ----------------------------------------------------------------------
@@ -768,7 +768,7 @@ class DynamicExtractionAPITests(APITestCase):
         self.assertEqual(len(listing.json()["data"]), 0)
 
     def test_missing_template_raises_for_build_requested_fields(self):
-        from ocr.test_ocr_view import _build_requested_fields
+        from ocr.views import _build_requested_fields
 
         class FakeRequest:
             data = {"template_id": "00000000-0000-0000-0000-000000000000"}
@@ -1349,7 +1349,7 @@ class DatatypeNormalizationTests(SimpleTestCase):
         self.assertNotIn(_config_hash(config1), key_default)
 
     def test_batch_status_includes_requested_fields(self):
-        from ocr.test_ocr_view import _build_requested_fields
+        from ocr.views import _build_requested_fields
         from ocr.serializers import DocumentHistorySerializer
 
         requested_fields = {

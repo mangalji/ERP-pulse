@@ -1376,7 +1376,7 @@ const handlePost = async () => {
         })
       )
 
-      navigate('/app/ocr-test', {
+      navigate('/app/ocr', {
         state: {
           validationJobId: String(jobId),
           documentIds,
@@ -1439,7 +1439,7 @@ const handlePost = async () => {
           <Button
             type="button"
             intent="secondary"
-            onClick={() => navigate('/app/ocr-test')}
+            onClick={() => navigate('/app/ocr')}
           >
             ← Back to OCR
           </Button>

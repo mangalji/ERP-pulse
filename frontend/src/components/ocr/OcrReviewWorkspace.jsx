@@ -412,7 +412,7 @@ export default function OcrReviewWorkspace({
       }),
     )
 
-    navigate('/app/ocr-test/field-mapping')
+    navigate('/app/ocr/field-mapping')
   } catch (err) {
     console.error(
       'Failed to save OCR data before Field Mapping:',

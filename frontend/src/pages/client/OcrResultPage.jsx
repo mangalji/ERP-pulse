@@ -11,7 +11,7 @@ function isPdf(filename) {
   return /\.pdf$/i.test(filename || '')
 }
 
-export default function OcrTestResultPage() {
+export default function OcrResultPage() {
   const navigate = useNavigate()
   const { documentId } = useParams()
 
@@ -28,7 +28,7 @@ export default function OcrTestResultPage() {
       if (!documentId) {
         const saved = sessionStorage.getItem('ocr_test_result')
         if (!saved) {
-          navigate('/app/ocr-test', { replace: true })
+          navigate('/app/ocr', { replace: true })
           return
         }
         try {
@@ -92,7 +92,7 @@ export default function OcrTestResultPage() {
           version_number: latest.version_number || null,
           filename: payload.filename || 'OCR document',
           preview_url: payload.upload_id
-            ? `/ocr/test-extract/uploads/${payload.upload_id}/preview/`
+            ? `/ocr/extract/uploads/${payload.upload_id}/preview/`
             : null,
           data: reviewedData,
         })
@@ -211,7 +211,7 @@ export default function OcrTestResultPage() {
           <Button
             type="button"
             intent="secondary"
-            onClick={() => navigate('/app/ocr-test')}
+            onClick={() => navigate('/app/ocr')}
           >
             Back to OCR
           </Button>

@@ -80,7 +80,7 @@ function getFileCategory(file) {
 }
 
 
-export default function OcrTestPage() {
+export default function OcrPage() {
 
   const clearSelectedFilesAfterExtraction = useCallback(() => {
     setSelectedFiles((current) => {
@@ -908,7 +908,7 @@ const selectedValidateIds = useMemo(
       }
 
       const response = await apiClient.post(
-        '/ocr/test-extract/',
+        '/ocr/extract/',
         formData,
         {
           headers: {
@@ -947,7 +947,7 @@ const selectedValidateIds = useMemo(
 
       while (Date.now() - startedAt < maxPollingMs) {
         const statusResponse = await apiClient.get(
-          `/ocr/test-extract/batches/${batchId}/`,
+          `/ocr/extract/batches/${batchId}/`,
         )
 
         const batch = statusResponse?.data ?? {}
@@ -1723,9 +1723,9 @@ const selectedValidateIds = useMemo(
                       className="min-w-0 flex-1 text-left"
                       onClick={() => {
                         if (item.document_id) {
-                          navigate(`/app/ocr-test/history/${item.document_id}`)
+                          navigate(`/app/ocr/history/${item.document_id}`)
                         } else if (item.batch_id) {
-                          navigate(`/app/ocr-test/history/batch/${item.batch_id}`)
+                          navigate(`/app/ocr/history/batch/${item.batch_id}`)
                         }
                       }}
                     >
@@ -1748,9 +1748,9 @@ const selectedValidateIds = useMemo(
                       disabled={!item.document_id && !item.batch_id}
                       onClick={() => {
                         if (item.document_id) {
-                          navigate(`/app/ocr-test/history/${item.document_id}`)
+                          navigate(`/app/ocr/history/${item.document_id}`)
                         } else if (item.batch_id) {
-                          navigate(`/app/ocr-test/history/batch/${item.batch_id}`)
+                          navigate(`/app/ocr/history/batch/${item.batch_id}`)
                         }
                       }}
                     >

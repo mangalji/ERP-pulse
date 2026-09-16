@@ -37,9 +37,9 @@ import EmployeeNetSuitePage from '../pages/client/EmployeeNetSuitePage.jsx'
 import TransactionsPage from '../pages/client/TransactionsPage.jsx'
 import ProductsPage from '../pages/client/ProductsPage.jsx'
 
-import OcrTestPage from '../pages/client/OcrTestPage.jsx'
+import OcrPage from '../pages/client/OcrPage.jsx'
 import OcrFieldMappingPage from '../pages/client/OcrFieldMappingPage.jsx'
-import OcrTestResultPage from '../pages/client/OcrTestResultPage.jsx'
+import OcrResultPage from '../pages/client/OcrResultPage.jsx'
 import OcrBatchHistoryPage from '../pages/client/OcrBatchHistoryPage.jsx'
 /* Legacy flat pages (DashboardLayout) — retained on disk per DEVELOPMENT_GUIDELINES.md.
  * These pages are NOT routed; their legacy URLs redirect to /app/* equivalents.
@@ -193,7 +193,7 @@ export default function AppRoutes() {
         }
       />
       <Route
-        path="/app/ocr-test/field-mapping"
+        path="/app/ocr/field-mapping"
         element={
           <ProtectedRoute requiredRole="client">
             <OcrFieldMappingPage />
@@ -201,15 +201,15 @@ export default function AppRoutes() {
         }
       />
       <Route
-        path="/app/ocr-test"
+        path="/app/ocr"
         element={
           <ProtectedRoute requiredRole="client">
-            <OcrTestPage />
+            <OcrPage />
           </ProtectedRoute>
         }
       />
       <Route
-  path="/app/ocr-test/history/batch/:batchId"
+  path="/app/ocr/history/batch/:batchId"
   element={
     <ProtectedRoute requiredRole="client">
       <OcrBatchHistoryPage />
@@ -218,22 +218,21 @@ export default function AppRoutes() {
 />
 
 <Route
-  path="/app/ocr-test/history/:documentId"
+  path="/app/ocr/history/:documentId"
   element={
     <ProtectedRoute requiredRole="client">
-      <OcrTestResultPage />
+      <OcrResultPage />
     </ProtectedRoute>
   }
 />
       <Route
-  path="/app/ocr-test/result"
+  path="/app/ocr/result"
   element={
     <ProtectedRoute requiredRole="client">
-      <OcrTestResultPage />
+      <OcrResultPage />
     </ProtectedRoute>
   }
 />
-<Route path="/app/ocr-test/history/:documentId" element={<OcrTestResultPage />} />
 
       <Route
         path="/app/employees"

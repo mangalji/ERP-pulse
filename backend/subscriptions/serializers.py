@@ -1,25 +1,63 @@
 from rest_framework import serializers
 from tenancy.models import Company
-from superadmin.models import Plan, CompanyPlan, CompanyPlanStatus, DiscountType
+from superadmin.models import Plan
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
-    plan_name = serializers.CharField(source='plan.name', read_only=True)
-    plan_code = serializers.CharField(source='plan.code', read_only=True)
-    company_name = serializers.CharField(source='company.name', read_only=True)
-    discount_display = serializers.SerializerMethodField()
+    plan_name = serializers.CharField(source='plan.name', read_only=True,allow_null=True,)
+    plan_code = serializers.CharField(source='plan.code', read_only=True,allow_null=True,)
+    company_name = serializers.CharField(source='name', read_only=True)
+    subscription_status = serializers.SerializerMethodField()
+    start_date = serializers.DateField(
+        source='plan_start_date',
+        read_only=True,
+        allow_null=True,
+    )
+    end_date = serializers.DateField(
+        source='plan_end_date',
+        read_only=True,
+        allow_null=True,
+    )
 
     class Meta:
-        model = CompanyPlan
-        fields = '__all__'
-        read_only_fields = ('id', 'created_at', 'updated_at')
+        model = Company
+        fields = [
+            'id',
+            'name',
+            'company_name',
+            'plan',
+            'plan_name',
+            'plan_code',
+            'plan_start_date',
+            'plan_end_date',
+            'start_date',
+            'end_date',
+            'subscription_status',
+        ]
+        read_only_fields = [
+            'id',
+            'name',
+            'company_name',
+            'plan_name',
+            'plan_code',
+            'plan_start_date',
+            'plan_end_date',
+            'start_date',
+            'end_date',
+            'subscription_status',
+        ]
 
-    def get_discount_display(self, obj):
-        if obj.discount_type == DiscountType.NONE or not obj.discount_type:
-            return None
-        if obj.discount_type == DiscountType.PERCENTAGE:
-            return f'{obj.discount_value}%'
-        return f'₹{obj.discount_value}'
+    def get_subscription_status(self, obj):
+        from tenancy.services import company_lifecycle_service
+
+        status = company_lifecycle_service.get_effective_status(
+            company=obj
+        )
+
+        if status in ['ACTIVE', 'TRIAL']:
+            return 'ACTIVE'
+
+        return 'NO_ACTIVE_PLAN'
 
 class PlanSerializer(serializers.ModelSerializer):
 

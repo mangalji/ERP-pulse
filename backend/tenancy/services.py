@@ -21,11 +21,9 @@ from accounts.models import User, Gender
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from invitations.models import Invitation, InvitationStatus
-from invitations.services import invitation_service
 from rbac.models import Role
 from tenancy.models import Company, CompanySuspensionReason
 
-from superadmin.models import CompanyPlan, CompanyPlanStatus
 
 class ClientPortalService:
     """Company-scoped business logic for the client portal."""
@@ -87,17 +85,16 @@ class ClientPortalService:
             if User.objects.filter(mobile_number=normalized_phone).exists():
                 raise ValueError('A user with this mobile number already exists.')
 
-        # TASK 7: Subscription Enforcement — verify employee limit.
-        from superadmin.models import CompanyPlan
-        current_plan = CompanyPlan.objects.filter(
-            company=company,
-            status__in=['ACTIVE', 'TRIAL'],
-        ).first()
-        if current_plan and current_plan.plan.max_employees > 0:
+        current_plan = company_lifecycle_service.get_current_plan(
+            company=company
+        )
+
+        if current_plan and current_plan.max_employees > 0:
             current_count = User.objects.filter(company=company).count()
-            if current_count >= current_plan.plan.max_employees:
+
+            if current_count >= current_plan.max_employees:
                 raise ValueError(
-                    f'Employee limit of {current_plan.plan.max_employees} reached. '
+                    f'Employee limit of {current_plan.max_employees} reached. '
                     f'Please upgrade your plan to add more employees.'
                 )
 
@@ -125,6 +122,7 @@ class ClientPortalService:
 
         employee.set_unusable_password()
         employee.save(update_fields=['password'])
+        from invitations.services import invitation_service
         invitation = invitation_service.create_invitation(
             email=email.lower().strip(),
             company_id=company.id,
@@ -158,6 +156,7 @@ class ClientPortalService:
         ).order_by('-created_at').first()
         if not invitation:
             raise ValueError('No pending invitation found for this employee.')
+        from invitations.services import invitation_service
         invitation_service.resend_invitation(invitation_id=invitation.id)
         return employee
 
@@ -512,18 +511,21 @@ class ClientPortalService:
             permissions = list(user.role.permissions or [])
         employee_count = 0
         plan_info = None
+
         if company:
-            from superadmin.models import CompanyPlan
             employee_count = User.objects.filter(company=company).count()
-            current_plan = CompanyPlan.objects.filter(
-                company=company,
-                status__in=['ACTIVE', 'TRIAL'],
-            ).first()
+
+            current_plan = company_lifecycle_service.get_current_plan(
+                company=company
+            )
+
             if current_plan:
                 plan_info = {
-                    'plan_name': current_plan.plan.name,
-                    'max_employees': current_plan.plan.max_employees,
+                    'plan_name': current_plan.name,
+                    'max_employees': current_plan.max_employees,
                     'employee_count': employee_count,
+                    'start_date': company.plan_start_date,
+                    'end_date': company.plan_end_date,
                 }
         return {
             'user': user,
@@ -541,28 +543,46 @@ class CompanyLifecycleService:
     """
 
     def get_current_plan(self, *, company):
-        return (
-            CompanyPlan.objects
-            .filter(
-                company=company,
-                status__in=[
-                    CompanyPlanStatus.ACTIVE,
-                    CompanyPlanStatus.TRIAL,
-                ]
-                )
-            .select_related('plan')
-            .order_by('-start_date', '-created_at')
-            .first()
-        )
+        """
+        Return the plan currently assigned to the company.
+
+        A plan is active for the company only when:
+        - a plan is assigned,
+        - start date is not in the future,
+        - end date is not in the past.
+
+        Plan.status / is_deleted control whether the plan can be assigned
+        to new companies; they do not invalidate an existing company's
+        paid subscription before its end date.
+        """
+        plan = getattr(company, 'plan', None)
+
+        if plan is None:
+            return None
+
+        today = timezone.now().date()
+
+        if company.plan_start_date and company.plan_start_date > today:
+            return None
+
+        if company.plan_end_date and company.plan_end_date < today:
+            return None
+
+        return plan
 
     def get_effective_status(self, *, company):
         """
-        Return the company's effective operational status.
+        Determine whether the company is operational.
+
+        Super Admin/platform users are handled before this service and do
+        not have a company lifecycle restriction.
 
         A company is operational only when:
         - it is not soft deleted,
         - it is not manually suspended,
-        - and its current subscription is within its valid period.
+        - it has an assigned plan,
+        - the plan's validity period has started,
+        - and the plan has not expired.
         """
         if company.is_deleted:
             return Company.Status.SUSPENDED
@@ -570,42 +590,18 @@ class CompanyLifecycleService:
         if company.suspension_reason == CompanySuspensionReason.MANUAL:
             return Company.Status.SUSPENDED
 
-        # if company.status == Company.Status.SUSPENDED:
-        #     return Company.Status.SUSPENDED
-        # A suspended status can be either:
-        # 1. a temporary state caused by deleted/invalid subscription, or
-        # 2. a manually suspended company.
-        #
-        # Effective state is therefore determined from deletion + subscription
-        # below instead of treating the stored SUSPENDED value as permanent.
-
         today = timezone.now().date()
 
-        plan = self.get_current_plan(company=company)
-
-        if not plan:
+        if not company.plan_id:
             return Company.Status.SUSPENDED
 
-        if plan.status in {
-            CompanyPlanStatus.CANCELLED,
-            CompanyPlanStatus.EXPIRED,
-            CompanyPlanStatus.REPLACED,
-        }:
+        if company.plan_start_date and company.plan_start_date > today:
             return Company.Status.SUSPENDED
 
-        if plan.start_date and plan.start_date > today:
+        if company.plan_end_date and company.plan_end_date < today:
             return Company.Status.SUSPENDED
 
-        if plan.end_date and plan.end_date < today:
-            return Company.Status.SUSPENDED
-
-        if plan.status == CompanyPlanStatus.TRIAL:
-            return Company.Status.TRIAL
-
-        if plan.status == CompanyPlanStatus.ACTIVE:
-            return Company.Status.ACTIVE
-
-        return Company.Status.SUSPENDED
+        return Company.Status.ACTIVE
 
     def is_operational(self, *, company):
         return self.get_effective_status(company=company) in {
