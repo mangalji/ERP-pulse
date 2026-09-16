@@ -132,14 +132,4 @@ export const clientApi = {
       },
     }).then(unwrap),
 
-  getProducts:(params) =>
-    apiClient.get('/products/', {params}).then(unwrap),
-
-  createProduct: ({ transactionType, recordType, payload}) =>
-    apiClient.post('/product/',payload,{
-      params:{
-        transaction_type: transactionType,
-        record_type: recordType,
-      },
-    }).then(unwrap),
 }

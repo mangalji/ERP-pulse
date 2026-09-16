@@ -38,7 +38,6 @@ LOCAL_APPS = [
     "subscriptions",
     'django_extensions',
     'navigation',
-    "products",
 ]
 
 INSTALLED_APPS = (

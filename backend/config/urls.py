@@ -18,5 +18,4 @@ urlpatterns = [
     path('api/v1/subscriptions/', include('subscriptions.urls')),
     path('api/v1/navigation/',include('navigation.urls')),
     path('api/v1/transactions/', include('transactions.urls')),
-    path('api/v1/products/',include('products.urls')),
 ]

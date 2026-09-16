@@ -35,8 +35,6 @@ import ClientSubscriptionPage from '../pages/client/SubscriptionPage.jsx'
 import NetSuiteIntegrationsPage from '../pages/client/NetSuiteIntegrationsPage.jsx'
 import EmployeeNetSuitePage from '../pages/client/EmployeeNetSuitePage.jsx'
 import TransactionsPage from '../pages/client/TransactionsPage.jsx'
-import ProductsPage from '../pages/client/ProductsPage.jsx'
-
 import OcrPage from '../pages/client/OcrPage.jsx'
 import OcrFieldMappingPage from '../pages/client/OcrFieldMappingPage.jsx'
 import OcrResultPage from '../pages/client/OcrResultPage.jsx'
