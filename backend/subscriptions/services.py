@@ -221,7 +221,7 @@ class SubscriptionService:
 
         transaction_record = (
             Transaction.objects
-            .select_for_update()
+            .select_for_update(of=('self',))
             .select_related('plan')
             .filter(
                 company=company,

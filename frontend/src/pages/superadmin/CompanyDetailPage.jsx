@@ -205,6 +205,9 @@ export default function CompanyDetailPage() {
   }
 
   const plan = company.current_plan
+  const completedTransaction = company.transactions?.find(
+  (tx) => tx.payment_status === 'SUCCESS',
+)
   const nsConnected = company.netsuite_connected
   const isSuspended = company.status === 'SUSPENDED'
 
@@ -506,7 +509,7 @@ export default function CompanyDetailPage() {
                   </p>
 
                   <p className="mt-1 font-semibold text-[var(--color-ink)]">
-                    {plan.plan_name || '—'}
+                    {plan.name || '—'}
                   </p>
                 </div>
 
@@ -549,92 +552,57 @@ export default function CompanyDetailPage() {
                 </div>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-4 border-t border-[var(--color-border)] pt-5 lg:grid-cols-4">
+<div className="mt-5 grid grid-cols-2 gap-4 border-t border-[var(--color-border)] pt-5 lg:grid-cols-4">
+  <div>
+    <p className="text-xs text-[var(--color-muted)]">
+      Employees
+    </p>
 
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">
-                    Employees
-                  </p>
+    <p className="mt-1 font-semibold text-[var(--color-ink)]">
+      {company.user_count ?? 0}
+    </p>
+  </div>
 
-                  <p className="mt-1 font-semibold text-[var(--color-ink)]">
-                    {company.user_count ?? 0}
-                  </p>
-                </div>
+  <div>
+    <p className="text-xs text-[var(--color-muted)]">
+      Original Price
+    </p>
 
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">
-                    Billing Cycle
-                  </p>
+    <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
+      ₹
+      {Number(
+        completedTransaction?.original_amount ?? plan.price ?? 0,
+      ).toFixed(2)}
+    </p>
+  </div>
 
-                  <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
-                    {plan.billing_cycle ||
-                      'MONTHLY'}
-                  </p>
-                </div>
+  <div>
+    <p className="text-xs text-[var(--color-muted)]">
+      Discount
+    </p>
 
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">
-                    Auto Renew
-                  </p>
+    <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
+      {completedTransaction
+        ? `₹${Number(
+            completedTransaction.discount_amount || 0,
+          ).toFixed(2)}`
+        : 'None'}
+    </p>
+  </div>
 
-                  <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
-                    {plan.is_auto_renew
-                      ? 'Yes'
-                      : 'No'}
-                  </p>
-                </div>
+  <div>
+    <p className="text-xs text-[var(--color-muted)]">
+      Final Price
+    </p>
 
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">
-                    Final Price
-                  </p>
-
-                  <p className="mt-1 font-semibold text-[var(--color-primary)]">
-                    ₹
-                    {Number(
-                      plan.final_price || 0,
-                    ).toFixed(2)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 grid grid-cols-1 gap-4 border-t border-[var(--color-border)] pt-5 md:grid-cols-3">
-
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">
-                    Original Price
-                  </p>
-
-                  <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
-                    ₹
-                    {Number(
-                      plan.original_price || 0,
-                    ).toFixed(2)}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">
-                    Discount
-                  </p>
-
-                  <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
-                    {plan.discount_display ||
-                      'None'}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-[var(--color-muted)]">
-                    Subscription Employees Limit
-                  </p>
-
-                  <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
-                    {
-                      'Unlimited / Not specified'}
-                  </p>
-                </div>
-              </div>
+    <p className="mt-1 font-semibold text-[var(--color-primary)]">
+      ₹
+      {Number(
+        completedTransaction?.total_amount ?? plan.price ?? 0,
+      ).toFixed(2)}
+    </p>
+  </div>
+</div>
             </>
           ) : (
             <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
@@ -661,142 +629,6 @@ export default function CompanyDetailPage() {
             </div>
           )}
         </SectionCard>
-
-        {/* Transactions */}
-        {company.transactions &&
-          company.transactions.length > 0 && (
-            <SectionCard title="Transactions">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]">
-                      <th className="pb-2 pr-4 font-medium">
-                        Transaction ID
-                      </th>
-
-                      <th className="pb-2 pr-4 font-medium">
-                        Plan
-                      </th>
-
-                      <th className="pb-2 pr-4 font-medium">
-                        Amount
-                      </th>
-
-                      <th className="pb-2 pr-4 font-medium">
-                        Discount
-                      </th>
-
-                      <th className="pb-2 pr-4 font-medium">
-                        Final Amount
-                      </th>
-
-                      <th className="pb-2 pr-4 font-medium">
-                        Status
-                      </th>
-
-                      <th className="pb-2 font-medium">
-                        Date
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {company.transactions.map(
-                      (tx) => (
-                        <tr
-                          key={tx.transaction_id}
-                          className="border-b border-[var(--color-border)] last:border-0"
-                        >
-                          <td className="py-3 pr-4 font-mono text-xs text-[var(--color-ink)]">
-                            {tx.transaction_id}
-                          </td>
-
-                          <td className="py-3 pr-4 text-[var(--color-ink-soft)]">
-                            {tx.plan_name || '—'}
-                          </td>
-
-                          <td className="py-3 pr-4 text-[var(--color-ink-soft)]">
-                            ₹
-                            {Number(
-                              tx.original_amount ||
-                                0,
-                            ).toFixed(2)}
-                          </td>
-
-                          <td className="py-3 pr-4 text-[var(--color-ink-soft)]">
-                            -₹
-                            {Number(
-                              (tx.original_amount ||
-                                0) -
-                                (tx.final_amount ||
-                                  0),
-                            ).toFixed(2)}
-                          </td>
-
-                          <td className="py-3 pr-4 font-medium text-[var(--color-primary)]">
-                            ₹
-                            {Number(
-                              tx.final_amount ||
-                                0,
-                            ).toFixed(2)}
-                          </td>
-
-                          <td className="py-3 pr-4 capitalize">
-                            {tx.payment_status ||
-                              '—'}
-                          </td>
-
-                          <td className="py-3 pr-4 text-[var(--color-muted)]">
-                            {tx.created_at
-                              ? new Date(
-                                  tx.created_at,
-                                ).toLocaleDateString()
-                              : '—'}
-                          </td>
-                        </tr>
-                      ),
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </SectionCard>
-          )}
-
-        {/* NetSuite */}
-        {/* <InfoCard
-          title="NetSuite"
-          items={[
-            {
-              label: 'Connected',
-              value: nsConnected ? (
-                <StatusBadge status="true" />
-              ) : (
-                <StatusBadge status="false" />
-              ),
-            },
-            {
-              label: 'Account ID',
-              value:
-                company.netsuite_account_id ||
-                '—',
-            },
-            {
-              label: 'Environment',
-              value:
-                company.netsuite_environment ||
-                '—',
-            },
-            {
-              label: 'Last Sync',
-              value:
-                company.netsuite_last_sync
-                  ? new Date(
-                      company.netsuite_last_sync,
-                    ).toLocaleString()
-                  : '—',
-            },
-          ]}
-        /> */}
             <SectionCard
               title="NetSuite"
               actions={
@@ -863,71 +695,6 @@ export default function CompanyDetailPage() {
                 </div>
               </div>
             </SectionCard>
-
-        {/* Assigned Modules */}
-        <SectionCard
-          title="Assigned Modules"
-          actions={
-            <Button
-              size="sm"
-              intent="secondary"
-              onClick={() =>
-                navigate(
-                  `/admin/companies/${company.id}/subscription?tab=modules`,
-                )
-              }
-            >
-              Manage Modules
-            </Button>
-          }
-        >
-          {company.assigned_modules &&
-          company.assigned_modules.length > 0 ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {company.assigned_modules.map(
-                (mod) => (
-                  <div
-                    key={mod.id}
-                    className="rounded-lg border border-[var(--color-border)] p-4"
-                  >
-                    <p className="text-sm font-medium text-[var(--color-ink)]">
-                      {mod.display_name ||
-                        mod.name}
-                    </p>
-
-                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      {mod.code}
-                    </p>
-                  </div>
-                ),
-              )}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
-              <p className="text-sm font-medium text-[var(--color-ink)]">
-                No modules assigned
-              </p>
-
-              <p className="mt-1 text-xs text-[var(--color-muted)]">
-                Assign modules from the subscription
-                management page.
-              </p>
-
-              <Button
-                size="sm"
-                intent="secondary"
-                className="mt-4"
-                onClick={() =>
-                  navigate(
-                    `/admin/companies/${company.id}/subscription?tab=modules`,
-                  )
-                }
-              >
-                Assign Modules
-              </Button>
-            </div>
-          )}
-        </SectionCard>
 
         {/* Edit Company Modal */}
         {editOpen && (
@@ -1198,7 +965,7 @@ export default function CompanyDetailPage() {
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Plan Name</p>
-                          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{activePlan.plan_name || '—'}</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{activePlan.name || '—'}</p>
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Subscription Status</p>
@@ -1206,15 +973,21 @@ export default function CompanyDetailPage() {
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Original Price</p>
-                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">₹{Number(activePlan.original_price || 0).toFixed(2)}</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">₹{Number(completedTx?.original_amount ?? activePlan.price ?? 0,).toFixed(2)}</p>
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Discount</p>
-                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.discount_display || '—'}</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{completedTx
+  ? `₹${Number(
+      completedTx.discount_amount || 0,
+    ).toFixed(2)}`
+  : '—'}</p>
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Final Price</p>
-                          <p className="mt-1 text-sm font-semibold text-[var(--color-primary)]">₹{Number(activePlan.final_price || 0).toFixed(2)}</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--color-primary)]">₹{Number(
+  completedTx?.total_amount ?? activePlan.price ?? 0,
+).toFixed(2)}</p>
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Validity</p>
@@ -1277,7 +1050,7 @@ export default function CompanyDetailPage() {
                           </div>
                           <div>
                             <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Final Price</p>
-                            <p className="mt-1 text-sm font-semibold text-[var(--color-primary)]">₹{Number(pendingTx.final_amount || 0).toFixed(2)}</p>
+                            <p className="mt-1 text-sm font-semibold text-[var(--color-primary)]">₹{Number(pendingTx.total_amount || 0).toFixed(2)}</p>
                           </div>
                         </div>
                       </div>

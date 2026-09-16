@@ -174,6 +174,9 @@ class DynamicNavigationMenuView(APIView):
                 inherited_query_params={},
             )
 
+            if top_tab.key == "cust_netsuite-integration" and not is_admin:
+                top_node["route"] = "/app/netsuite"
+
             top_node["children"] = self._build_level2_data(
                 top_tab,
                 inherited_route=top_node["route"],

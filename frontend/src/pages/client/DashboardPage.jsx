@@ -116,6 +116,7 @@ const kpis = useMemo(() => {
               </div>
 
             {/* Recent Activity */}
+            {isCompanyAdmin && (
             <Card className="p-5">
               <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">Recent Activity</h2>
               {loading ? (
@@ -147,6 +148,7 @@ const kpis = useMemo(() => {
                 </div>
               )}
             </Card>
+            )}
           </>
         )}
       </div>
