@@ -22,19 +22,6 @@ import {
   validateGender,
 } from '../../utils/formValidation.js'
 
-// const COUNTRY_OPTIONS = [
-//   { value: 'IN', label: 'India', dialCode: '+91' },
-//   { value: 'US', label: 'United States', dialCode: '+1' },
-//   { value: 'GB', label: 'United Kingdom', dialCode: '+44' },
-//   { value: 'AU', label: 'Australia', dialCode: '+61' },
-//   { value: 'CA', label: 'Canada', dialCode: '+1' },
-//   { value: 'AE', label: 'United Arab Emirates', dialCode: '+971' },
-//   { value: 'SG', label: 'Singapore', dialCode: '+65' },
-//   { value: 'DE', label: 'Germany', dialCode: '+49' },
-//   { value: 'FR', label: 'France', dialCode: '+33' },
-//   { value: 'JP', label: 'Japan', dialCode: '+81' },
-// ]
-
 export default function EmployeesPage() {
   const { toasts, addToast, removeToast } = useToast()
   const { user } = useAuth()

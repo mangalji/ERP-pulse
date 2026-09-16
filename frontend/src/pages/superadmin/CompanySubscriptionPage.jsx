@@ -16,9 +16,6 @@ import { subscriptionApi } from '../../services/subscriptions.js'
 
 const TABS = [
   { key: 'subscription', label: 'Subscription' },
-  { key: 'modules', label: 'Modules' },
-  { key: 'usage', label: 'Usage' },
-  { key: 'history', label: 'History' },
   { key: 'transactions', label: 'Transactions' },
 ]
 
@@ -28,9 +25,6 @@ export default function CompanySubscriptionPage() {
   const { toasts, addToast, removeToast } = useToast()
   const [tab, setTab] = useState('subscription')
   const [company, setCompany] = useState(null)
-  const [modules, setModules] = useState([])
-  const [usage, setUsage] = useState([])
-  const [history, setHistory] = useState([])
   const [plans, setPlans] = useState([])
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -47,9 +41,8 @@ export default function CompanySubscriptionPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [companyData, modData, histData, plansData] = await Promise.all([
+      const [companyData, plansData] = await Promise.all([
         superadminApi.getCompany(id),
-        subscriptionApi.getCompanyPlanHistory(id),
         superadminApi.listPlans(),
       ])
       setCompany(companyData)

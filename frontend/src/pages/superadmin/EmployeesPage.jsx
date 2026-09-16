@@ -368,7 +368,8 @@ if (isCompanySuspended) {
 
   return (
     <div className="flex items-center gap-1">
-      {!row.is_staff && (
+      {/* {!row.is_staff && ( */}
+      {String(row.role || '').trim().toLowerCase() === 'employee' && (
         <button
           onClick={() =>
             setConfirm({
