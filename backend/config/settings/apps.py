@@ -31,7 +31,6 @@ LOCAL_APPS = [
     "netsuite",
     "dashboard",
     "monitoring",
-    "sync",
     "ocr",
     "transactions",
     "superadmin",

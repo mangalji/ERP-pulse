@@ -1296,8 +1296,6 @@ class OCRBatchStatusView(APIView):
                     ),
 
                     "data": (
-                        # _get_live_result(str(upload.id))
-                        # if _get_live_result(str(upload.id)) is not None
                         live_data
                         if live_data is not None
                         else (
