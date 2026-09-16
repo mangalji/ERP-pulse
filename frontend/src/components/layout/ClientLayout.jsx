@@ -1,32 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
-const SYSTEM_NAV_KEYS = {
-  employees: 'employees',
-  settings: 'settings',
-}
-
-/* Employee-only items that always show for any authenticated user */
-// const EMPLOYEE_ALWAYS_ITEMS = ['/app/settings', '/app/profile']
-
 /**
  * Reusable Client Company Portal layout.
- * Top navbar + sidebar + breadcrumb + page header + profile menu
+ * Top navbar + profile menu + page content wrapper
  */
 export default function ClientLayout({ title, breadcrumb, children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
   const [openMenuKey, setOpenMenuKey] = useState(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [companyName, setCompanyName] = useState('')
   const [databaseNavItems, setDatabaseNavItems] = useState([])
   const userMenuRef = useRef(null)
-
-  const isCompanyAdmin = user?.is_superadmin || user?.is_staff || (user?.roles || []).includes('company_admin')
-
   useEffect(() => {
     const loadClientProfile = async () => {
       try {
@@ -47,12 +35,9 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     const loadNavigationMenu = async () => {
       try {
         const res = await clientApi.getNavigationMenu()
-        // console.log("database navigation:", res)
         setDatabaseNavItems(Array.isArray(res) ? res: [])
-        // const menu = Array.isArray(res) ? (res[0] || null) : res
-        // setDatabaseNavItems(menu ? [menu] : [])
       } catch (error) {
-        console.error('Failed to load transaction navigation:', error)
+        console.error('Failed to load navigation menu:', error)
         setDatabaseNavItems([])
       }
     }
@@ -216,27 +201,6 @@ export default function ClientLayout({ title, breadcrumb, children }) {
       </div>
     )
   }
-
-  const netSuiteNavItem = {
-  to: isCompanyAdmin
-    ? '/app/integrations/netsuite'
-    : '/app/netsuite',
-  label: isCompanyAdmin
-    ? 'NetSuite Integration'
-    : 'NetSuite',
-  icon: NetSuiteIcon,
-}
-
-  const netSuiteQuickAction = {
-  to: isCompanyAdmin
-    ? '/app/integrations/netsuite'
-    : '/app/netsuite',
-  label: isCompanyAdmin
-    ? 'Connect NetSuite'
-    : 'NetSuite',
-  icon: NetSuiteIcon,
-}
-
     return (
       <div className="flex min-h-screen flex-col bg-[var(--color-canvas)]">
         <header className="relative z-50 border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
@@ -278,92 +242,3 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     )
   }
 
-function DashboardIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <rect x="3" y="3" width="7" height="9" rx="1.5" />
-      <rect x="14" y="3" width="7" height="5" rx="1.5" />
-      <rect x="14" y="12" width="7" height="9" rx="1.5" />
-      <rect x="3" y="16" width="7" height="5" rx="1.5" />
-    </svg>
-  )
-}
-function InvoiceIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <path d="M14 2v6h6" />
-      <path d="M12 18v-6M9 15l3 3 3-3" />
-    </svg>
-  )
-}
-function OcrIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2" />
-      <path d="M8 12h.01M12 12h.01M16 12h.01" />
-    </svg>
-  )
-}
-function SparkleIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M12 3l1.8 4.9L19 9.5l-5.2 1.6L12 16l-1.8-4.9L5 9.5l5.2-1.6L12 3Z" />
-    </svg>
-  )
-}
-function EmployeesIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <circle cx="9" cy="7" r="3" />
-      <path d="M3 21v-2a6 6 0 0 1 12 0v2" />
-      <path d="M16 4a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.7" />
-    </svg>
-  )
-}
-function ReportIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M6 3h9l4 4v14H6z" />
-      <path d="M9 12h6M9 16h6M9 8h3" />
-    </svg>
-  )
-}
-function ReportEngineIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <path d="M14 2v6h6M9 13h6M9 17h6M9 9h2" />
-    </svg>
-  )
-}
-function GearIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
-    </svg>
-  )
-}
-function NetSuiteIcon(props) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      {...props}
-    >
-      <path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
-      <path d="M9 8h6M9 12h6M9 16h3" />
-    </svg>
-  )
-}
-function ProfileIcon(props) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" />
-    </svg>
-  )
-}
