@@ -7,6 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('accounts', '0011_alter_user_company'),
+        ('audit', '0007_fix_login_audit_timestamps'),
     ]
 
     operations = [
