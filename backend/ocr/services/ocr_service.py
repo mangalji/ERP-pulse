@@ -143,18 +143,4 @@ class OCRService:
         upload = OCRUpload.objects.select_related('user').get(pk=upload_id)
         return self._extractor().extract(upload, user)
 
-    def save_result(self, *, upload_id, result, user):
-        """
-        Persist an extraction result (delegated to the pipeline).
-
-        Kept for backward compatibility; routes to the IDP pipeline's
-        document persistence stage so callers do not bypass it.
-        """
-        from ocr.services.pipeline_service import idp_pipeline_service
-        return idp_pipeline_service.process_upload(
-            upload_id=upload_id,
-            user=user,
-        )
-
-
 ocr_service = OCRService()

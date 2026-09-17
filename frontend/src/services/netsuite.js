@@ -13,8 +13,6 @@ export const netsuiteApi = {
   
   deleteConnection: (id) => apiClient.delete(`${NETSUITE_ENDPOINTS.connections}${id}/`).then(unwrap),
   
-  switchConnection: (id) => apiClient.post(`${NETSUITE_ENDPOINTS.connections}${id}/switch/`).then(unwrap),
-
   getCompanyConnections: () => apiClient.get(NETSUITE_ENDPOINTS.companyConnections).then(unwrap),
 
   getMyConnections: () => apiClient.get(NETSUITE_ENDPOINTS.myConnections).then(unwrap),
@@ -48,14 +46,6 @@ export const netsuiteApi = {
   
   getEmployee: (id) => apiClient.get(`${NETSUITE_ENDPOINTS.employees}${id}/`).then(unwrap),
   
-  
-  
-  
-  
-  
-  
-  
-  
   getInvoices: (params) => apiClient.get(NETSUITE_ENDPOINTS.invoices, { params }).then(unwrap),
   
   getInvoice: (id) => apiClient.get(`${NETSUITE_ENDPOINTS.invoices}${id}/`).then(unwrap),
@@ -76,22 +66,7 @@ export const netsuiteApi = {
   validateDocument: (documentId, connectionId) => 
     apiClient.post('/netsuite/ocr/validate/',{document_id:documentId,connection_id: connectionId}).then(unwrap),
 
-  checkOCRReferences: (documentId, connectionId) =>
-    apiClient.post(
-    '/netsuite/ocr/check-references/',
-    {
-      document_id: documentId,
-      connection_id: connectionId,
-    },
-  ).then(unwrap),
-  
   postOCRVendorBill: (documentId, connectionId) => 
     apiClient.post('/netsuite/ocr/post-vendor-bill/',{document_id:documentId, connection_id:connectionId}).then(unwrap),
-
-  createCustomField: (payload) =>
-    apiClient
-      .post('/netsuite/ocr/custom-fields/', payload)
-      .then(unwrap),
-
   }
 

@@ -25,8 +25,8 @@ from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCR
 from ocr.serializers import (
     DocumentHistorySerializer,
     DocumentVersionSerializer,
-    UploadSerializer,
-    UploadResponseSerializer,
+    # UploadSerializer,
+    # UploadResponseSerializer,
     OCRDocumentHistorySerializer,
     OCRHistoryListSerializer,
     OCRHistoryVersionSerializer,
@@ -42,7 +42,7 @@ from ocr.exceptions import OCRException
 from ocr.services import ocr_service
 from ocr.services.extraction_persistence import persist_extraction
 from ocr.notebook_extraction_service import get_standard_field_catalog, resolve_field_config
-from ocr.tasks import process_document_task, process_ocr_upload_task
+from ocr.tasks import process_ocr_upload_task
 from ocr.utils import logger
 from ocr.services.zip_upload_service import (
     ZipValidationError,
@@ -230,43 +230,6 @@ def _batch_scope(user):
     if _is_company_admin(user):
         return OCRBatch.objects.filter(company_id=user.company_id)
     return OCRBatch.objects.filter(user_id=user.id)
-
-
-class UploadView(APIView):
-    """
-    POST /api/v1/ocr/upload/
-
-    Accepts an invoice file (PDF, PNG, JPG, JPEG, or WEBP; max 10 MB),
-    validates it via ``UploadSerializer``, delegates storage to
-    ``OCRService.upload()``, then dispatches the asynchronous IDP
-    pipeline via ``process_document_task.delay()``.
-
-    Returns HTTP 202 Accepted with the upload metadata and the Celery
-    task state, since processing runs asynchronously in the worker.
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        serializer = UploadSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        upload = ocr_service.upload(
-            file=serializer.validated_data['file'],
-            user=request.user,
-        )
-
-        process_document_task.delay(str(upload.id), request.user.id)
-
-        data = UploadResponseSerializer(upload).data
-        data["processing_status"] = OCRUpload.Status.PROCESSING
-        data["task_state"] = "PENDING"
-
-        return success_response(
-            message='Upload accepted. Processing has been queued.',
-            data=data,
-            status_code=status.HTTP_201_CREATED,
-        ) 
-
 
 
 def _build_upload_result(upload):

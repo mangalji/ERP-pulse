@@ -34,15 +34,6 @@ class OCRBatch(models.Model):
         FAILED = 'FAILED', 'Failed'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-
-    # batch = models.ForeignKey(
-    #     'OCRBatch',
-    #     on_delete=models.SET_NULL,
-    #     related_name='uploads',
-    #     null=True,
-    #     blank=True,
-    # )
-
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -348,43 +339,6 @@ class OCRDocument(models.Model):
         return f'OCRDocument {self.id} ({self.document_type})'
 
 
-class OCRDocumentPage(models.Model):
-    """
-    A single page of a processed IDP document.
-
-    Preserves page order, the rendered page image, the raw OCR text for
-    that page, and the detected layout blocks (with bounding boxes when
-    available).
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    document = models.ForeignKey(
-        OCRDocument,
-        on_delete=models.CASCADE,
-        related_name='pages',
-    )
-    page_number = models.PositiveIntegerField()
-    page_image = models.FileField(upload_to='ocr/pages/', null=True, blank=True)
-    raw_text = models.TextField(blank=True, default='')
-    layout_blocks = models.JSONField(default=dict, blank=True)
-    is_blank = models.BooleanField(default=False)
-    is_duplicate = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'ocr_document_page'
-        ordering = ['page_number']
-        constraints = [
-            models.UniqueConstraint(
-                fields=['document', 'page_number'],
-                name='unique_document_page_number',
-            ),
-        ]
-
-    def __str__(self) -> str:
-        return f'{self.document_id} page {self.page_number}'
-
-
 class OCRDocumentVersion(models.Model):
     """
     Immutable version snapshot of an IDP document.
@@ -446,98 +400,6 @@ class OCRDocumentVersion(models.Model):
 
     def __str__(self) -> str:
         return f'{self.document_id} v{self.version_number}'
-
-class OCRLineItem(models.Model):
-    """
-    Structured line-item fields returned by the approved extraction schema.
-
-    One row is stored for every line item returned by Gemini. Missing values
-    are kept as NULL. ``normalized_json`` on the parent version remains the
-    source-of-truth snapshot for the complete model response.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    version = models.ForeignKey(
-        OCRDocumentVersion,
-        on_delete=models.CASCADE,
-        related_name='line_items',
-    )
-    line_number = models.PositiveIntegerField()
-    description = models.TextField(null=True, blank=True)
-    quantity = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
-    unit_price = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
-    amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'ocr_line_item'
-        ordering = ['line_number']
-        constraints = [
-            models.UniqueConstraint(
-                fields=['version', 'line_number'],
-                name='unique_ocr_line_item_number',
-            ),
-        ]
-        indexes = [
-            models.Index(fields=['version', 'line_number'], name='ocr_line_item_version_idx'),
-        ]
-
-    def __str__(self) -> str:
-        return f'{self.version_id} line {self.line_number}'
-
-class OCRQualityMetric(models.Model):
-    """
-    Benchmark and quality metrics for the IDP engine.
-
-    Captures per-document processing results used by the Quality
-    Dashboard and benchmarking APIs. Aggregated later by document type
-    and vendor for accuracy tracking.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    upload = models.ForeignKey(
-        OCRUpload,
-        on_delete=models.CASCADE,
-        related_name='quality_metrics',
-        null=True,
-        blank=True,
-    )
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='ocr_quality_metrics',
-    )
-    company = models.ForeignKey(
-        'tenancy.Company',
-        on_delete=models.CASCADE,
-        related_name='ocr_quality_metrics',
-        null=True,
-        blank=True,
-    )
-    document_type = models.CharField(max_length=40, default=DocumentType.UNKNOWN)
-    vendor_name = models.CharField(max_length=255, blank=True, default='')
-    processing_time_ms = models.PositiveIntegerField(default=0)
-    overall_confidence = models.FloatField(default=0.0)
-    success = models.BooleanField(default=False)
-    failure_reason = models.CharField(max_length=255, blank=True, default='')
-    validation_failures = models.PositiveIntegerField(default=0)
-    ocr_accuracy = models.FloatField(default=0.0)
-    extraction_accuracy = models.FloatField(default=0.0)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'ocr_quality_metric'
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['user', '-created_at'], name='ocr_qm_user_recent_idx'),
-            models.Index(fields=['company', '-created_at'], name='ocr_qm_company_recent_idx'),
-            models.Index(fields=['document_type'], name='ocr_qm_type_idx'),
-            models.Index(fields=['success'], name='ocr_qm_success_idx'),
-        ]
-
-    def __str__(self) -> str:
-        return f'QualityMetric {self.id} ({self.document_type})'
-
 
 class MappingStatus(models.TextChoices):
     MAPPED = 'MAPPED', 'Mapped'

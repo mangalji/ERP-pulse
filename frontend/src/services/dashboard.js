@@ -5,6 +5,5 @@ export const dashboardApi = {
   getSummary: () => apiClient.get(DASHBOARD_ENDPOINTS.summary).then(unwrap),
   getRecentInvoices: () => apiClient.get(DASHBOARD_ENDPOINTS.recentInvoices).then(unwrap),
   getExecutiveSummary: () => apiClient.get(DASHBOARD_ENDPOINTS.executiveSummary).then(unwrap),
-  // getExecutiveCharts: () => apiClient.get(DASHBOARD_ENDPOINTS.executiveCharts).then(unwrap),
   getActivityFeed: (limit = 10) => apiClient.get(DASHBOARD_ENDPOINTS.activityFeed, { params: { limit } }).then(unwrap),
 }

@@ -5,46 +5,6 @@ from rest_framework import serializers
 from ocr.exceptions import InvalidFileException, UnsupportedFormatException
 from ocr.file_validation import validate_extension, validate_file_size, validate_mime_type, lookup_format
 
-class UploadSerializer(serializers.Serializer):
-    """
-    Validates the file field on POST /api/v1/ocr/upload/.
-
-    Delegates extension, size, and MIME-type checks to the reusable
-    validators in ``ocr.validators`` so the same rules can be applied
-    outside the request/serializer context (e.g. in service-layer
-    tests).
-    """
-
-    file = serializers.FileField()
-
-    def validate_file(self, value):
-        """
-        Validate the uploaded file's extension, size, and MIME type.
-
-        DRF calls this automatically for the ``file`` field. The method
-        is named ``validate_<field_name>`` per DRF convention.
-
-        ``InvalidFileException`` (a plain ``Exception`` subclass with a
-        ``status_code`` attribute) is caught and re-raised as a DRF
-        ``ValidationError`` so DRF includes it in
-        ``serializer.errors`` instead of propagating it as an unhandled
-        exception. The validators themselves stay framework-agnostic.
-        """
-        try:
-            validate_extension(value.name)
-            fmt = lookup_format(
-                extension=value.name.rsplit('.', 1)[-1].lower(),
-                mime_type=value.content_type or '',
-            )
-            validate_file_size(value.size, max_size=fmt.max_file_size_mb * 1024 * 1024)
-            validate_mime_type(value.content_type)
-        except InvalidFileException as exc:
-            raise serializers.ValidationError(str(exc)) from exc
-        except UnsupportedFormatException:
-            raise
-        return value
-
-
 class OCRSaveRequestSerializer(serializers.Serializer):
     """
     Save user-reviewed OCR data.
@@ -110,26 +70,6 @@ class DocumentHistorySerializer(serializers.Serializer):
     versions = DocumentVersionSerializer(many=True)
 
 
-class UploadResponseSerializer(serializers.Serializer):
-    """
-    Serializes the response data returned after a successful upload.
-
-    Fields:
-        upload_id:  UUID of the created ``OCRUpload`` record.
-        status:     Lifecycle status (always ``UPLOADED`` in Phase 2).
-        filename:   Original filename the user supplied.
-        size:       File size in bytes.
-        extension:  Canonical file extension (e.g. ``pdf``).
-        file_hash:  SHA256 hash of the file content.
-    """
-
-    upload_id = serializers.UUIDField(source='id')
-    status = serializers.CharField()
-    filename = serializers.CharField(source='original_filename')
-    size = serializers.IntegerField(source='file_size')
-    extension = serializers.CharField()
-    file_hash = serializers.CharField()
-
 class OCRBatchHistoryItemSerializer(serializers.Serializer):
     upload_id = serializers.UUIDField()
     filename = serializers.CharField()
@@ -190,21 +130,8 @@ class OCRBatchHistorySerializer(serializers.Serializer):
     owner_name = serializers.CharField(allow_null=True, allow_blank=True)
     files = OCRHistoryFileSerializer(many=True)
 
-class OCRLineItemHistorySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = __import__('ocr.models', fromlist=['OCRLineItem']).OCRLineItem
-        fields = [
-            'id',
-            'line_number',
-            'description',
-            'quantity',
-            'unit_price',
-            'amount',
-        ]
-
 
 class OCRHistoryVersionSerializer(serializers.ModelSerializer):
-    line_items = OCRLineItemHistorySerializer(many=True, read_only=True)
 
     class Meta:
         model = __import__('ocr.models', fromlist=['OCRDocumentVersion']).OCRDocumentVersion
@@ -223,7 +150,7 @@ class OCRHistoryVersionSerializer(serializers.ModelSerializer):
             'tax_rate',
             'total_amount',
             'payment_terms',
-            'line_items',
+            # 'line_items',
             'normalized_json',
             'created_at',
         ]

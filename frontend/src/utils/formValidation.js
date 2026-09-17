@@ -220,11 +220,3 @@ export function validateGender(value) {
 
   return ''
 }
-
-export function validationState(message, touched) {
-  if (!touched) {
-    return 'neutral'
-  }
-
-  return message ? 'error' : 'success'
-}

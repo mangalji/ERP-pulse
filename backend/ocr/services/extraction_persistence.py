@@ -12,7 +12,6 @@ from ocr.models import (
     OCRDocument,
     OCRDocumentStatus,
     OCRDocumentVersion,
-    OCRLineItem,
 )
 
 # These are the fields explicitly requested by the current approved extraction
@@ -120,8 +119,7 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
 
     The complete original AI JSON is retained in ``normalized_json``.
     When ``reviewed_result`` is provided, the user-approved/edited JSON is
-    stored in ``reviewed_json`` and its normalized fields are materialized into
-    the version columns and line-item table. This lets the application preserve
+    stored in ``reviewed_json`` and its normalized fields are materialized into the version columns while preserving line items in the JSON snapshot. This lets the application preserve
     the original AI extraction while making the reviewed result the current
     business data.
 
@@ -140,7 +138,6 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
     effective_result = reviewed_result if reviewed_result is not None else result
 
     normalized = normalize_extraction_payload(effective_result)
-    line_items = normalize_line_items(effective_result)
 
     company = getattr(user, 'company', None)
 
@@ -197,18 +194,7 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
         created_by=user,
         **normalized,
     )
-
-    OCRLineItem.objects.bulk_create([
-        OCRLineItem(
-            version=version,
-            line_number=index,
-            **item,
-        )
-        for index, item in enumerate(line_items, start=1)
-    ])
-
     document.current_version = version_number
-    # document.status = OCRDocumentStatus.EXTRACTED
     document.status = (
         OCRDocumentStatus.APPROVED if reviewed_result is not None else OCRDocumentStatus.EXTRACTED
     )

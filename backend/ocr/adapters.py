@@ -13,21 +13,19 @@ Design goals:
 """
 
 from __future__ import annotations
-
+import logging
 import csv
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from ocr.exceptions import (
     DocumentProcessingException,
     UnsupportedFormatException,
 )
-if TYPE_CHECKING:
-    from ocr.file_validation import FormatEntry
-from ocr.utils import logger
-
+from ocr.file_validation import FormatEntry, detect_format
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
 # Base adapter
@@ -682,7 +680,7 @@ def get_adapter(file_path: str | Path, upload_id: str) -> BaseDocumentAdapter:
     Raises:
         UnsupportedFormatException: If the format is not supported.
     """
-    fmt = FormatEntry.detect_format(file_path)
+    fmt = detect_format(file_path)
 
     adapter_map = {
         'pdf': PDFAdapter,

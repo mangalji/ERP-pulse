@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
-import ModuleProtectedRoute from './ModuleProtectedRoute.jsx'
 import PublicLayout from '../components/layout/PublicLayout.jsx'
 
 import LoginPage from '../pages/auth/LoginPage.jsx'
@@ -102,12 +101,6 @@ export default function AppRoutes() {
       <Route path="/app/transactions" element={
         <ProtectedRoute requiredRole="client">
           <TransactionsPage />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/app/products" element={
-        <ProtectedRoute requiredRole="client">
-          <ProductsPage />
         </ProtectedRoute>
       } />
 

@@ -28,7 +28,7 @@ from ocr.models import OCRBatch, OCRDocument, OCRUpload
 from ocr.notebook_extraction_service import notebook_gemini_extractor
 from ocr.adapters import get_adapter
 from ocr.services.gemini_quota_limiter import GeminiQuotaLimiter
-from ocr.services.pipeline_service import idp_pipeline_service
+# from ocr.services.pipeline_service import idp_pipeline_service
 
 logger = logging.getLogger(__name__)
 
@@ -1269,66 +1269,6 @@ try:
                 limiter.release(token)
 
     @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-    def process_document_task(self, upload_id: str, user_id: int) -> None:
-        """Run the full existing IDP pipeline asynchronously."""
-        retries = self.request.retries
-        logger.info(
-            "OCR pipeline started — upload_id=%s user_id=%s retry=%d",
-            upload_id,
-            user_id,
-            retries,
-        )
-
-        try:
-            upload = OCRUpload.objects.select_related(
-                "user"
-            ).get(pk=upload_id)
-
-            user = upload.user if upload.user_id == user_id else None
-
-            if user is None:
-                logger.error(
-                    "User %s does not own upload %s.",
-                    user_id,
-                    upload_id,
-                )
-                return
-
-            upload.status = OCRUpload.Status.PROCESSING
-            upload.save(update_fields=["status"])
-
-            result = idp_pipeline_service.process_upload(
-                upload_id=upload_id,
-                user=user,
-            )
-
-            logger.info(
-                "OCR pipeline completed — upload_id=%s document=%s status=%s",
-                upload_id,
-                result.get("document_id"),
-                result.get("status"),
-            )
-
-        except OCRUpload.DoesNotExist:
-            logger.error(
-                "OCR pipeline failed — upload not found — upload_id=%s",
-                upload_id,
-            )
-            return
-
-        except Exception as exc:
-            logger.exception(
-                "OCR pipeline failed — upload_id=%s retry=%d error=%s",
-                upload_id,
-                retries,
-                exc,
-            )
-            raise self.retry(
-                exc=exc,
-                countdown=2 ** retries * 60,
-            )
-
-    @shared_task(bind=True, max_retries=3, default_retry_delay=60)
     def retry_stage_task(
         self,
         document_id: str,
@@ -1375,9 +1315,6 @@ except ImportError:  # pragma: no cover
         logger.warning(
             "Celery not installed; running OCR synchronously is unavailable."
         )
-
-    def process_document_task(upload_id: str, user_id: int) -> None:
-        logger.warning("Celery not installed; process_document_task is unavailable.")
 
     def retry_stage_task(document_id: str, stage: str) -> None:
         logger.warning("Celery not installed; retry_stage_task is unavailable.")

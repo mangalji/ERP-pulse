@@ -12,7 +12,6 @@ from ocr.views import (
     DocumentVersionView,
     OCRHistoryListView,
     OCRBatchHistoryView,
-    UploadView,
     OCRReviewSaveView,
     OCRExtractionTemplateListView,
     OCRExtractionTemplateDetailView,
@@ -23,7 +22,6 @@ from ocr.views import (
 )
 
 urlpatterns = [
-    path('upload/', UploadView.as_view(), name='ocr-upload'),
     path('history/', OCRHistoryListView.as_view(), name='ocr-history'),
     path("history/batches/<uuid:batch_id>/",OCRBatchHistoryView.as_view(),name="ocr-batch-history"),
     path('documents/<uuid:document_id>/history/',DocumentHistoryView.as_view(),name='ocr-document-history'),

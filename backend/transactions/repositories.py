@@ -1,5 +1,3 @@
-from django.db import models
-
 from transactions.models import Transaction
 
 
@@ -29,7 +27,6 @@ class TransactionRepository:
         queryset = (
             Transaction.objects
             .filter(**filters)
-            .annotate(line_count=models.Count("lines"))
             .order_by("-tran_date", "-id")
         )
 

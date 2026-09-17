@@ -27,7 +27,6 @@ LOCAL_APPS = [
     "audit",
     "common",
     "accounts",
-    "invoice",
     "netsuite",
     "dashboard",
     "monitoring",

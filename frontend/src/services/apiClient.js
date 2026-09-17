@@ -11,7 +11,7 @@ import { getAccessToken } from '../utils/token.js'
  * 2. httpOnly cookie (fallback for same-origin requests). The browser
  *    sends it automatically when withCredentials is true.
  */
-export const apiClient = axios.create({
+const apiClient = axios.create({
   baseURL: API_BASE,
   withCredentials: true, // Send httpOnly cookies when on same origin
 })

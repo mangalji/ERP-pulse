@@ -15,11 +15,8 @@ export const clientApi = {
   getMe: () => apiClient.get(CLIENT_ENDPOINTS.me).then(unwrap),
 
   // ── Dashboard (reused) ──────────────────────────────────────
-  getDashboardSummary: () => dashboardApi.getSummary(),
   getExecutiveSummary: () => dashboardApi.getExecutiveSummary(),
-  // getExecutiveCharts: () => dashboardApi.getExecutiveCharts(),
   getActivityFeed: (limit) => dashboardApi.getActivityFeed(limit),
-  getRecentInvoices: () => dashboardApi.getRecentInvoices(),
 
   // ── Employees (company-scoped /client/*) ────────────────────
   listEmployees: (params) =>
@@ -33,10 +30,6 @@ export const clientApi = {
     apiClient.post(CLIENT_ENDPOINTS.employeeDeactivate(id)).then(unwrap),
   activateEmployee: (id) =>
     apiClient.post(CLIENT_ENDPOINTS.employeeActivate(id)).then(unwrap),
-  assignEmployeeRole: (id, roleId) =>
-    apiClient.post(CLIENT_ENDPOINTS.employeeAssignRole(id), { role_id: roleId }).then(unwrap),
-  removeEmployeeRole: (id, roleId) =>
-    apiClient.post(CLIENT_ENDPOINTS.employeeRemoveRole(id), { role_id: roleId }).then(unwrap),
   resendEmployeeInvitation: (id) =>
     apiClient.post(CLIENT_ENDPOINTS.employeeResendInvitation(id)).then(unwrap),
 
@@ -51,12 +44,6 @@ export const clientApi = {
   // ── Transaction navigation (DB-driven) ─────────────────────
   getNavigationMenu: () =>
     apiClient.get('/navigation/menu/').then(unwrap),
-  
-  getNavigationCustomizeData: (params = {}) =>
-    apiClient.get('/navigation/customize/', { params }).then(unwrap),
-  
-  updateNavigationAccess: (payload) =>
-    apiClient.post('/navigation/customize/access/', payload).then(unwrap),
   
   createNavigationTab: (payload) =>
     apiClient.post('/navigation/customize/tab/', payload).then(unwrap),
@@ -89,22 +76,6 @@ export const clientApi = {
       .get(`/navigation/center-categories/${categoryId}/children/`)
       .then(unwrap),
 
-  createCenterCategoryChild: (categoryId, payload) =>
-    apiClient
-      .post(
-        `/navigation/center-categories/${categoryId}/children/`,
-        payload,
-      )
-      .then(unwrap),
-
-  deleteCenterCategoryChildren: (categoryId, ids) =>
-    apiClient
-      .post(`/navigation/center-categories/${categoryId}/children/bulk-delete/`, { ids })
-      .then(unwrap),
-
-  createCenterTab: (payload) =>
-    apiClient.post('/navigation/center-tabs/', payload).then(unwrap),
-
   deleteCenterTabs: (ids) =>
     apiClient
       .post('/navigation/center-tabs/bulk-delete/', { ids })
@@ -117,10 +88,7 @@ export const clientApi = {
 
   deleteNavigationTab: (tabLevel, tabId) =>
     apiClient.delete(`/navigation/customize/tab/${tabLevel}/${tabId}/`).then(unwrap),
-  
-  getNetsuiteTransactions: (params) =>
-    apiClient.get('/api/v1/netsuite/transactions/', { params }).then(unwrap),
-  
+    
   getTransactions: (params) =>
     apiClient.get('/transactions/', { params }).then(unwrap),
 
