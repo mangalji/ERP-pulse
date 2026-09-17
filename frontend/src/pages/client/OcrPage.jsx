@@ -345,16 +345,17 @@ const selectedValidateIds = useMemo(
 
       const failedCount = Math.max(
         Number(
-          job?.failed_count ??
-            job?.result?.failed_count ??
+          job?.failed ??
+            job?.result?.failed ??
             0,
         ),
         resultFailedCount,
       )
       const completedCount = Number(
-        job?.completed_count ??
-          job?.successful_count ??
-          job?.result?.completed_count ??
+        job?.completed ??
+          job?.succeeded ??
+          job?.result?.completed ??
+          job.result?.succeeded ??
           0,
       )
 
@@ -414,14 +415,15 @@ const selectedValidateIds = useMemo(
       )
 
       const failedCount = Number(
-        job?.failed_count ??
-          job?.result?.failed_count ??
+        job?.failed ??
+          job?.result?.failed ??
           0,
       )
       const completedCount = Number(
-        job?.completed_count ??
-          job?.successful_count ??
-          job?.result?.completed_count ??
+        job?.completed ??
+          job?.succeeded ??
+          job?.result?.completed ??
+          job?.result?.succeeded ??
           0,
       )
 
