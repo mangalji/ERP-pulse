@@ -384,8 +384,8 @@ class IDPPipelineService:
         """Mark the upload as failed with a reason."""
         try:
             upload.status = OCRUpload.Status.FAILED
-            upload.failure_session = str(exc)[:500]
-            upload.save(update_fields=['status', 'failure_session'])
+            upload.failure_reason = str(exc)[:500]
+            upload.save(update_fields=['status', 'failure_reason'])
         except Exception:
             logger.exception('Failed to mark upload %s as failed.', upload.id)
 

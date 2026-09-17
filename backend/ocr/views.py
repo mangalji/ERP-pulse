@@ -569,6 +569,8 @@ class DocumentHistoryView(APIView):
                 "id": document.id,
                 "document_type": document.document_type,
                 "status": document.status,
+                "upload_id": document.upload_id,
+                "filename": (getattr(document.upload, "original_filename",None) if document.upload_id else None),
                 "current_version": document.current_version,
                 "overall_confidence": document.overall_confidence,
                 "processing_metadata": document.processing_metadata,

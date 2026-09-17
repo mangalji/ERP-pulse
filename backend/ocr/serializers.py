@@ -101,6 +101,8 @@ class DocumentHistorySerializer(serializers.Serializer):
     id = serializers.UUIDField()
     document_type = serializers.CharField()
     status = serializers.CharField()
+    upload_id = serializers.UUIDField(allow_null=True)
+    filename = serializers.CharField(allow_null=True, allow_blank=True)
     current_version = serializers.IntegerField()
     overall_confidence = serializers.FloatField(allow_null=True)
     processing_metadata = serializers.JSONField()

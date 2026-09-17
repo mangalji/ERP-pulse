@@ -1451,12 +1451,24 @@ const selectedValidateIds = useMemo(
                     connectionId={connection?.id || null}
                     validationResult={validationResult}
                     onValidate={async (documentId) => {
-                      const result = await netsuiteApi.validateDocument(documentId)
+                      const connectionId = connection?.id
+                      if(!documentId || !connectionId){
+                        throw new Error(
+                          'The OCR document or NetSuite connection is missing.',
+                        )
+                      }
+                      const result = await netsuiteApi.validateDocument(documentId, connectionId)
                       setValidationResult(result)
                       refreshOcrHistory()
                     }}
                     onPost={async (documentId, connId) => {
-                      await netsuiteApi.postVendorBill(documentId, connId || connection?.id)
+                      const connectionId = connId || connection?.id
+                      if (!documentId || !connectionId) {
+                        throw new Error(
+                          'The OCR document or NetSuite connection is missing.',
+                        )
+                      }
+                      await netsuiteApi.postOCRVendorBill(documentId, connectionId)
                       await refreshOcrHistory()
                     }}
                   />
