@@ -1,0 +1,6 @@
+{
+	"command": "python3 main.py",
+	"build_path": ".",
+	"stack": "python_3_12",
+	"memory": 2048
+}

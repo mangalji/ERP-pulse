@@ -33,6 +33,7 @@ htmlcov/
 backend/.env
 backend/.env.*
 backend/.env.render
+backend/site-packages/
 backend/db.sqlite3
 *.sqlite3
 backend/static/
@@ -143,3 +144,4 @@ agsuite-backend.tar
 agsuite-frontend.tar
 agsuite-docker-images.tar
 same_map_data.txt
+backend/file_for_zoho_env_vars.json

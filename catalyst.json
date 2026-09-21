@@ -1,0 +1,11 @@
+{
+  "appsail": [
+    {
+      "name": "agsuite-backend-app",
+      "source": "backend"
+    }
+  ],
+  "client": {
+    "source": "frontend/dist"
+  }
+}

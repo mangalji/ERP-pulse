@@ -18,7 +18,7 @@
 |-------|-----|------|
 | Frontend | [https://agsuite-erp-gamma.vercel.app](https://agsuite-erp-gamma.vercel.app) | Vercel |
 | Backend API | [https://agsuite-erp-backend.onrender.com](https://agsuite-erp-backend.onrender.com) | Render |
-| Database | Neon PostgreSQL | Neon |
+| Database | Supabase PostgreSQL | Supabase |
 | Redis | Render Key Value | Render |
 
 ---
@@ -197,7 +197,7 @@ Company (Tenant)
 - **Python** 3.12
 - **Django** 6.x
 - **Django REST Framework**
-- **PostgreSQL** (Neon in production, Docker PostgreSQL container for local Docker development, SQLite for non-Docker local development)
+- **PostgreSQL** (Supabase in production, Docker PostgreSQL container for local Docker development, SQLite for non-Docker local development)
 - **SimpleJWT** (JWT auth)
 - **OAuth 2.0** (NetSuite Authorization Code Grant)
 - **Celery + Redis** (background tasks — NetSuite reference sync, subscription sync, company purge)
@@ -225,7 +225,7 @@ Company (Tenant)
 |-------|------|
 | Backend | [Render](https://render.com) |
 | Frontend | [Vercel](https://vercel.com) |
-| Database | [Neon](https://neon.tech) (PostgreSQL) |
+| Database | [Supabase](https://supabase.com) (PostgreSQL) |
 | Redis | Render Key Value |
 
 ---
@@ -657,7 +657,7 @@ The Docker setup provides an isolated and reproducible local environment that ca
 | `SECRET_KEY` | ✅ | Django secret key |
 | `DEBUG` | ✅ | `True` for local, `False` for production |
 | `ALLOWED_HOSTS` | ✅ | Comma-separated host list |
-| `DATABASE_URL` | ✅ | `postgresql://...` (Neon) for prod, leave blank for local SQLite |
+| `DATABASE_URL` | ✅ | `postgresql://...` (Supabase) for prod, leave blank for local SQLite |
 | `FIELD_ENCRYPTION_KEY` | ✅ for NetSuite | Fernet key for NetSuite credential encryption |
 | `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` | ❌ | Default `15` |
 | `JWT_REFRESH_TOKEN_LIFETIME_DAYS` | ❌ | Default `7` |
@@ -706,10 +706,10 @@ The frontend is deployed as a static site:
 - **Output directory:** `dist`
 - **Env var:** `VITE_API_BASE_URL=https://agsuite-erp-backend.onrender.com/api/v1`
 
-### Database — Neon
+### Database — Supabase
 
-- Provision a free PostgreSQL instance on [neon.tech](https://neon.tech)
-- Copy the connection string into Render's `DATABASE_URL`
+- Provision a PostgreSQL instance on [supabase.com](https://supabase.com)
+- Copy the connection string into `DATABASE_URL`
 - Append `?sslmode=require` if not present
 
 ### Periodic Tasks

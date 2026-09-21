@@ -22,9 +22,11 @@ Usage::
 
 from __future__ import annotations
 import shutil, time
-from pathlib import Path
-import fitz
 from django.conf import settings
+
+def get_fitz():
+    import fitz
+    return fitz
 from ocr.exceptions import PDFProcessingException, PDFTooLargeException
 from ocr.utils import logger
 
@@ -65,6 +67,7 @@ class PDFProcessor:
             ``convert_to_images``.
         """
         try:
+            fitz = get_fitz()
             doc = fitz.open(str(file_path))
             is_valid = doc.is_pdf
             doc.close()
@@ -87,6 +90,7 @@ class PDFProcessor:
                 not a valid PDF.
         """
         try:
+            fitz = get_fitz()
             doc = fitz.open(str(file_path))
             count = doc.page_count
             doc.close()
@@ -125,6 +129,7 @@ class PDFProcessor:
         start = time.perf_counter()
         output_dir = self._get_output_dir(upload_id)
         output_dir.mkdir(parents=True, exist_ok=True)
+        fitz = get_fitz()
 
         try:
             doc = fitz.open(str(file_path))

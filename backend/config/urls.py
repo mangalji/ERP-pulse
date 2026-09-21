@@ -5,7 +5,14 @@ All API endpoints are namespaced under /api/v1/ per BACKEND_CONTEXT.md.
 from django.contrib import admin
 from django.urls import path, include
 
+from django.http import JsonResponse
+
+def root_health_check(request):
+    return JsonResponse({"status": "healthy", "service": "AGSuite ERP API", "version": "1.0.0"})
+
 urlpatterns = [
+    path('', root_health_check),
+    path('health/', root_health_check),
     path('admin/', admin.site.urls),
     path('api/v1/auth/', include('accounts.urls')),
     path('api/v1/netsuite/', include('netsuite.urls')),

@@ -58,7 +58,7 @@ SELECT setval(
     'dynamic_top_level_tab_internal_id_seq',
     COALESCE(
         (SELECT MAX(internal_id) FROM dynamic_top_level_tab),
-        0
+        1
     ),
     CASE
         WHEN EXISTS (
@@ -122,7 +122,7 @@ SELECT setval(
     'dynamic_level2_tab_internal_id_seq',
     COALESCE(
         (SELECT MAX(internal_id) FROM dynamic_level2_tab),
-        0
+        1
     ),
     CASE
         WHEN EXISTS (
@@ -186,7 +186,7 @@ SELECT setval(
     'dynamic_level3_tab_internal_id_seq',
     COALESCE(
         (SELECT MAX(internal_id) FROM dynamic_level3_tab),
-        0
+        1
     ),
     CASE
         WHEN EXISTS (

@@ -5,8 +5,11 @@ from django.db import migrations, models
 
 
 def migrate_current_company_plans(apps, schema_editor):
-    Company = apps.get_model("tenancy", "Company")
-    CompanyPlan = apps.get_model("superadmin", "CompanyPlan")
+    try:
+        Company = apps.get_model("tenancy", "Company")
+        CompanyPlan = apps.get_model("superadmin", "CompanyPlan")
+    except LookupError:
+        return
 
     # Only migrate the current ACTIVE/TRIAL assignment for each company.
     # If multiple current rows somehow exist, take the newest one.

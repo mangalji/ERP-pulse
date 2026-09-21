@@ -9,7 +9,21 @@ import os
 from celery import Celery
 from datetime import timedelta
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.local')
+# os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.local')
+# app = Celery('erp_pulse')
+if not os.environ.get("DJANGO_SETTINGS_MODULE"):
+    debug_value = os.environ.get(
+        "DJANGO_DEBUG",
+        os.environ.get("DEBUG", "True")
+    )
+    debug = debug_value.strip().lower() in (
+        "true", "1", "yes", "on"
+    )
+    os.environ.setdefault(
+        "DJANGO_SETTINGS_MODULE",
+        "config.settings.local" if debug else "config.settings.production",
+    )
+
 app = Celery('erp_pulse')
 
 app.config_from_object('django.conf:settings', namespace='CELERY')

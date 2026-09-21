@@ -31,7 +31,6 @@ def seed_rbac_after_first_user_created(sender, instance, created, **kwargs):
     transaction.on_commit(
         lambda: call_command(
             "seed_rbac",
-            interactive=False,
             verbosity=0,
         )
     )

@@ -23,10 +23,16 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
 from django.conf import settings
 from PIL import Image
+
+def get_cv2():
+    import cv2
+    return cv2
+
+def get_np():
+    import numpy as np
+    return np
 
 from ocr.exceptions import ImageProcessingException, InvalidImageException
 from ocr.utils import logger
