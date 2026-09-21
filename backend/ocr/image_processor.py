@@ -23,24 +23,10 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 from django.conf import settings
 from PIL import Image
-
-class _LazyModule:
-    """Import a heavy module on first attribute access (keeps boot fast)."""
-
-    def __init__(self, name):
-        self._name = name
-        self._module = None
-
-    def __getattr__(self, attr):
-        if self._module is None:
-            import importlib
-            self._module = importlib.import_module(self._name)
-        return getattr(self._module, attr)
-
-cv2 = _LazyModule("cv2")
-np = _LazyModule("numpy")
 
 from ocr.exceptions import ImageProcessingException, InvalidImageException
 from ocr.utils import logger

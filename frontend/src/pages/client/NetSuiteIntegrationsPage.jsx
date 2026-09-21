@@ -63,9 +63,7 @@ export default function NetSuiteIntegrationsPage() {
         )
       }
       window.location.href = result.authorization_url
-      // addToast('Connection created. Complete OAuth to activate.', 'success')
-      // setShowForm(false)
-      // loadData()
+  
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to create connection', 'error')
     } finally {
@@ -180,6 +178,27 @@ export default function NetSuiteIntegrationsPage() {
           </div>
           <Button onClick={() => { setEditingId(null); setShowForm(true); }}>New Connection</Button>
         </div>
+
+        <Card className="p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Redirect URI</p>
+            <Button
+              intent="secondary"
+              size="sm"
+              onClick={() => {
+                const uri = `${window.location.origin}/api/v1/netsuite/callback/`
+                navigator.clipboard.writeText(uri)
+                  .then(() => addToast('Redirect URI copied', 'success'))
+                  .catch(() => addToast('Unable to copy Redirect URI', 'error'))
+              }}
+            >
+              Copy
+            </Button>
+          </div>
+          <p className="mt-2 break-all text-sm text-[var(--color-ink)]">
+            {window.location.origin}/api/v1/netsuite/callback/
+          </p>
+        </Card>
 
         {showForm && (
           <Card className="p-6">
