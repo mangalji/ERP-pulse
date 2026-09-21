@@ -4486,8 +4486,9 @@ class NetSuiteCustomFieldService:
     between OCR custom fields and NetSuite script IDs.
     """
 
-    def __init__(self, repository=None):
+    def __init__(self, repository=None, token_manager=None):
         self.repository = repository or NetSuiteConnectionRepository()
+        self.token_manager = token_manager or NetSuiteTokenManager(repository=self.repository)
 
     def create_custom_field(self, *, company, connection_id, record_type, scope, field_label, datatype, source_field_key, source_field_label):
         connection = self.repository._get_authorized_connection(
@@ -4573,12 +4574,7 @@ class NetSuiteCustomFieldService:
         if company is not None:
             company_lifecycle_service.ensure_operational(company=company)
 
-        client = NetSuiteAuthClient(
-            account_id=connection.netsuite_account_id,
-            client_id=connection.client_id,
-            client_secret=connection.client_secret,
-        )
-        access_token = client.get_valid_access_token()
+        access_token = self.token_manager.get_valid_access_token(connection)
 
         ns_datatype = {
             'text': 'text',

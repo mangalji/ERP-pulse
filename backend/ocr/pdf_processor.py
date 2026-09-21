@@ -22,6 +22,7 @@ Usage::
 
 from __future__ import annotations
 import shutil, time
+from pathlib import Path
 from django.conf import settings
 
 def get_fitz():

@@ -187,7 +187,7 @@ class ClientPortalService:
 
         if 'gender' in data:
             gender = data.get('gender')
-            if gender not in dict(User.Gender.choices):
+            if gender not in dict(Gender.choices):
                 raise ValueError('Invalid gender selected.')
             employee.gender = gender
             update_fields.append('gender')

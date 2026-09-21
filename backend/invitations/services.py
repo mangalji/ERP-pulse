@@ -352,7 +352,7 @@ class InvitationService:
         Send invitation email using the existing email service.
         """
         frontend_url = settings.FRONTEND_URL.rstrip('/')
-        invitation_link = f"{frontend_url}/invitation/{invitation.token}"
+        invitation_link = f"{frontend_url}/#/invitation/{invitation.token}"
         print("\n" + "=" * 70)
         print("              AGSUITE INVITATION")
         print("=" * 70)

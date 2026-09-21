@@ -128,7 +128,7 @@ class NetSuiteCallbackView(APIView):
             )
         
             return redirect(
-                f"{settings.FRONTEND_URL}/settings?netsuite=failed"
+                f"{settings.FRONTEND_URL.rstrip('/')}/#/settings?netsuite=failed"
             )
 
         if not params.get('code'):
@@ -141,7 +141,7 @@ class NetSuiteCallbackView(APIView):
         )
 
         return redirect(
-    f'{settings.FRONTEND_URL}/settings?netsuite=connected'
+    f'{settings.FRONTEND_URL.rstrip('/')}/#/settings?netsuite=connected'
 )
 
 
@@ -1006,7 +1006,7 @@ class NetSuiteFieldCatalogueView(APIView):
                 {"detail": str(exc)},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Failed to load NetSuite field catalogue — user=%s",
                 getattr(request.user, "id", None),

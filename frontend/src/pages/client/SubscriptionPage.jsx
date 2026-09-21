@@ -26,7 +26,7 @@ export default function ClientSubscriptionPage() {
     try {
       const [subData, usageData] = await Promise.all([
         subscriptionApi.getMySubscription(),
-        subscriptionApi.getMyUsage(),
+        subscriptionApi.getMyUsage().catch(() => []),
       ])
       setSubscription(subData)
       setUsage(usageData || [])

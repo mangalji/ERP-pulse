@@ -12,6 +12,7 @@ def add_all_site_packages():
     user_site = site.getusersitepackages()
     
     explicit_paths = [
+        os.path.join(base_dir, "site-packages"),
         base_dir,
         "/tmp/site-packages",
         "/catalyst",
@@ -62,8 +63,6 @@ def search_and_add_site_packages():
                     if "dist-packages" in dirs:
                         p = os.path.join(root, "dist-packages")
                         found_paths.add(p)
-                    if "django" in dirs:
-                        found_paths.add(root)
                 # Limit depth to avoid scanning millions of files
                 if root.count(os.sep) - root_dir.count(os.sep) > 4:
                     dirs.clear()

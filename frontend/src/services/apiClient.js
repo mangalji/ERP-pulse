@@ -84,7 +84,7 @@ apiClient.interceptors.response.use(
       const { clearAccessToken } = await import('../utils/token.js')
       clearAccessToken()
       resolvePending(refreshError)
-      window.location.href = '/login'
+      window.location.href = '/#/login'
       return Promise.reject(refreshError)
     } finally {
       isRefreshing = false
