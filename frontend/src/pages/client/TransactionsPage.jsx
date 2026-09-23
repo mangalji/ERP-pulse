@@ -13,8 +13,6 @@ export default function TransactionsPage() {
   const queryParams = Object.fromEntries(searchParams.entries())
   const queryParamEntries = Object.entries(queryParams)
 
-  // const transactionType = searchParams.get('transaction_type') || ''
-  // const recordType = searchParams.get('record_type') || ''
   const transactionType = queryParamEntries[0]?.[1] || ''
   const recordType = queryParamEntries[1]?.[1] || ''
 
@@ -94,10 +92,6 @@ useEffect(() => {
   const hasNext = offset + rows.length < count
 
   const openNewForm = () => {
-    // setForm({
-    //   ...EMPTY_FORM,
-    //   tran_date: new Date().toISOString().slice(0, 10),
-    // })
     const initialForm = {}
 
     formFields.forEach((field) => {
@@ -197,8 +191,6 @@ useEffect(() => {
             <div className="text-sm text-[var(--color-muted)]">
               {count} record{count === 1 ? '' : 's'}
             </div>
-
-            {/* {transactionType && recordType && ( */}
             {hasProductContext && (
               <button
                 type="button"
@@ -220,26 +212,6 @@ useEffect(() => {
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              {/* <thead className="border-b border-[var(--color-border)] bg-[var(--color-background)]">
-                <tr>
-                  {[
-                    'Tran ID',
-                    'Tran Date',
-                    'Entity',
-                    'Name',
-                    'Invoice',
-                    'Amount',
-                  ].map((label) => (
-                    <th
-                      key={label}
-                      className="px-4 py-3 text-left font-medium text-[var(--color-muted)]"
-                    >
-                      {label}
-                    </th>
-                  ))}
-                </tr>
-              </thead> */}
-
               <thead className="border-b border-[var(--color-border)] bg-[var(--color-background)]">
                 <tr>
                   {tableFields.map((field) => (
@@ -276,31 +248,7 @@ useEffect(() => {
                   rows.map((row) => (
                     <tr
                       key={row.id}
-                      className="border-b border-[var(--color-border)] last:border-0"
-                    >
-                      {/* <td className="px-4 py-3 font-medium text-[var(--color-ink)]">
-                        {row.tran_id || '—'}
-                      </td>
-
-                      <td className="px-4 py-3 text-[var(--color-muted)]">
-                        {row.tran_date || '—'}
-                      </td>
-
-                      <td className="px-4 py-3 text-[var(--color-ink)]">
-                        {row.entity || '—'}
-                      </td>
-
-                      <td className="px-4 py-3 text-[var(--color-ink)]">
-                        {row.name || '—'}
-                      </td>
-
-                      <td className="px-4 py-3 text-[var(--color-muted)]">
-                        {row.invoice || '—'}
-                      </td>
-
-                      <td className="px-4 py-3 font-medium text-[var(--color-ink)]">
-                        {row.amount ?? '—'}
-                      </td> */}
+                      className="border-b border-[var(--color-border)] last:border-0">
                       {tableFields.map((field) => (
                       <td
                         key={field.name}
@@ -380,104 +328,6 @@ useEffect(() => {
               </div>
 
               <form onSubmit={handleCreate} className="space-y-5 p-5">
-                {/* <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
-                      Tran ID
-                    </label>
-
-                    <input
-                      type="text"
-                      value={form.tran_id}
-                      onChange={(event) =>
-                        updateField('tran_id', event.target.value)
-                      }
-                      required
-                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
-                      Tran Date
-                    </label>
-
-                    <input
-                      type="text"
-                      value={form.tran_date}
-                      onChange={(event) =>
-                        updateField('tran_date', event.target.value)
-                      }
-                      placeholder="DD/MM/YYYY"
-                      required
-                      inputMode="numeric"
-                      maxLength={10}
-                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
-                      Entity
-                    </label>
-
-                    <input
-                      type="text"
-                      value={form.entity}
-                      onChange={(event) =>
-                        updateField('entity', event.target.value)
-                      }
-                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
-                      Name
-                    </label>
-
-                    <input
-                      type="text"
-                      value={form.name}
-                      onChange={(event) =>
-                        updateField('name', event.target.value)
-                      }
-                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
-                      Invoice
-                    </label>
-
-                    <input
-                      type="text"
-                      value={form.invoice}
-                      onChange={(event) =>
-                        updateField('invoice', event.target.value)
-                      }
-                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
-                      Amount
-                    </label>
-
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={form.amount}
-                      onChange={(event) =>
-                        updateField('amount', event.target.value)
-                      }
-                      required
-                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    />
-                  </div>
-                </div> */}
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {formFields.map((field) => {
                     const value = form[field.name] ?? ''

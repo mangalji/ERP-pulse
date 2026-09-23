@@ -246,7 +246,7 @@ export default function OcrBatchHistoryPage() {
                   </p>
 
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
-                    {/* {file.status} */}
+                    
                     {String(file.status || '').toUpperCase()}
                   </p>
                 </div>
@@ -254,7 +254,6 @@ export default function OcrBatchHistoryPage() {
                 <Button
                   type="button"
                   intent="secondary"
-                  // 
                   disabled={
                     !['COMPLETED', 'FAILED'].includes(
                       String(file.status || '').toUpperCase(),
@@ -273,7 +272,6 @@ export default function OcrBatchHistoryPage() {
                       sessionStorage.setItem(
                         'ocr_test_result',
                         JSON.stringify({
-                          // status: 
                           status: String(file.status || 'COMPLETED').toUpperCase(),
                           batch_id: batch.batch_id,
                           files: [file],

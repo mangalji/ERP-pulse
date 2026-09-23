@@ -712,67 +712,6 @@ const selectedValidateIds = useMemo(
     }
   }, [])
 
-  // useEffect(() => {
-  //   const jobId = location.state?.validationJobId
-  //   if (!jobId) return undefined
-
-  //   let cancelled = false
-
-  //   const monitorValidationJob = async () => {
-  //     try {
-  //       setProcessing(true)
-  //       setError('')
-
-  //       const job = await waitForBatchJob(String(jobId))
-  //       if (cancelled) return
-
-  //       if (String(job?.status || '').toUpperCase() !== 'SUCCESS') {
-  //         setError(
-  //           job?.error ||
-  //             'NetSuite reference validation did not complete successfully.',
-  //         )
-  //         return
-  //       }
-
-  //       await refreshOcrHistory()
-  //     } catch (err) {
-  //       if (!cancelled) {
-  //         console.error(
-  //           'NetSuite reference validation monitoring failed:',
-  //           err,
-  //         )
-  //         setError(
-  //           err?.response?.data?.detail ||
-  //             err?.response?.data?.error ||
-  //             err?.message ||
-  //             'Unable to complete NetSuite validation.',
-  //         )
-  //       }
-  //     } finally {
-  //       if (!cancelled) {
-  //         setProcessing(false)
-  //         navigate(location.pathname, {
-  //           replace: true,
-  //           state: {},
-  //         })
-  //       }
-  //     }
-  //   }
-
-  //   monitorValidationJob()
-
-  //   return () => {
-  //     cancelled = true
-  //   }
-  // }, [
-  //   location.pathname,
-  //   location.state?.validationJobId,
-  //   navigate,
-  //   refreshOcrHistory,
-  //   waitForBatchJob,
-  // ])
-
-
   const validateFiles = useCallback((files) => {
     const incoming = Array.from(files || [])
 

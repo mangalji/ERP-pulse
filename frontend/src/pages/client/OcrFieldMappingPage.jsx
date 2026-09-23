@@ -40,13 +40,9 @@ function getApplicationFields(context) {
   const requested = context?.requested_fields
   const data = context?.data
 
-  const standardKeys = Array.isArray(requested?.standard_fields)
-    ? requested.standard_fields
-    : []
+  const standardKeys = Array.isArray(requested?.standard_fields) ? requested.standard_fields : []
 
-  const customFields = Array.isArray(requested?.custom_fields)
-    ? requested.custom_fields
-    : []
+  const customFields = Array.isArray(requested?.custom_fields) ? requested.custom_fields : []
 
   const headerFields = standardKeys.map((key) => ({
     key,
@@ -456,14 +452,10 @@ export default function OcrFieldMappingPage() {
             null
 
           return {
-            source_field_key:
-              field.key,
-            source_field_label:
-              field.label,
-            source_scope:
-              field.scope,
-            source_datatype:
-              field.type,
+            source_field_key: field.key,
+            source_field_label: field.label,
+            source_scope: field.scope,
+            source_datatype: field.type,
 
             // Only keep a target_field_id when we found it (with a
             // known, verified scope) in the current catalogue. If it
@@ -1150,56 +1142,258 @@ const handleValidateAgain = async () => {
   await runValidation()
 }
 const handlePost = async () => {
-  if (
-    validationResult?.status !==
-    'VALIDATED'
-  ) {
+  if (!context?.connection_id) {
     setError(
-      'The document must be successfully validated before posting.',
+      'A NetSuite connection is required before posting.',
     )
     return
   }
 
-  if (!documentId || !context?.connection_id) {
-    setError(
-      'The OCR document or NetSuite connection is missing.',
-    )
-    return
+  if (processingMode === 'SINGLE') {
+    if (validationResult?.status !== 'VALIDATED') {
+      setError(
+        'The document must be successfully validated before posting.',
+      )
+      return
+    }
+
+    if (!documentId) {
+      setError(
+        'The OCR document is missing.',
+      )
+      return
+    }
   }
 
-  try {
-    setPosting(true)
-    setError('')
-    setNotice('')
+  if (processingMode === 'MULTIPLE') {
+    if (
+      !Array.isArray(validationResult?.results) ||
+      validationResult.results.length === 0
+    ) {
+      setError(
+        'No batch validation results are available for posting.',
+      )
+      return
+    }
 
-    const result =
-      await netsuiteApi.postOCRVendorBill(
-        documentId,
-        context.connection_id,
+    const alreadyPostedDocumentIds = new Set(
+  Array.isArray(postingResult?.results)
+    ? postingResult.results
+        .filter((item) => {
+          const status = String(
+            item?.status || '',
+          ).toUpperCase()
+
+          return (
+            status === 'POSTED' ||
+            status === 'ALREADY_POSTED'
+          )
+        })
+        .map((item) => String(item?.document_id || ''))
+        .filter(Boolean)
+    : [],
+)
+
+const validatedDocumentIds =
+  validationResult.results
+    .filter(
+      (item) =>
+        String(item?.status || '').toUpperCase() ===
+        'VALIDATED',
+    )
+    .map((item) => item?.document_id)
+    .filter(Boolean)
+    .filter(
+      (id) =>
+        !alreadyPostedDocumentIds.has(
+          String(id),
+        ),
+    )
+
+    if (!validatedDocumentIds.length) {
+      setError(
+        'No successfully validated documents are available for posting.',
+      )
+      return
+    }
+
+    try {
+      setPosting(true)
+      setError('')
+      setNotice('')
+      setPostingResult(null)
+
+      const queued =
+        await netsuiteApi.batchPostDocuments(
+          validatedDocumentIds,
+          context.connection_id,
+        )
+
+      const jobId = queued?.job_id
+
+      if (!jobId) {
+        throw new Error(
+          'NetSuite batch posting did not return a job ID.',
+        )
+      }
+
+      setNotice(
+        `NetSuite batch posting started for ${validatedDocumentIds.length} document(s).`,
       )
 
-    setPostingResult(result)
+      const maxAttempts = 120
+      const pollIntervalMs = 1500
 
-    setNotice(
-      `✓ Vendor Bill posted successfully to NetSuite. Record ID: ${
-        result?.netsuite_record_id || 'created'
-      }`,
-    )
-  } catch (err) {
-    console.error(
-      'NetSuite Vendor Bill posting failed:',
-      err,
-    )
+      for (
+        let attempt = 0;
+        attempt < maxAttempts;
+        attempt += 1
+      ) {
+        const statusResponse =
+          await netsuiteApi.getBatchJobStatus(jobId)
 
-    setError(
-      err?.response?.data?.detail ||
-        err?.response?.data?.error ||
-        err?.message ||
-        'Unable to create the Vendor Bill in NetSuite.',
+        const statusData =
+          statusResponse?.data ??
+          statusResponse ??
+          {}
+
+        const jobStatus = String(
+          statusData.status || '',
+        ).toUpperCase()
+
+        if (
+          jobStatus === 'SUCCESS' ||
+          jobStatus === 'FAILURE' ||
+          jobStatus === 'REVOKED'
+        ) {
+          const finalResult = {
+            ...statusData,
+            job_id: jobId,
+          }
+
+          const previousResults = Array.isArray(
+  postingResult?.results,
+)
+  ? postingResult.results
+  : []
+
+const currentResults = Array.isArray(
+  finalResult.results,
+)
+  ? finalResult.results
+  : []
+
+const currentDocumentIds = new Set(
+  currentResults
+    .map((item) =>
+      String(item?.document_id || ''),
     )
-  } finally {
-    setPosting(false)
+    .filter(Boolean),
+)
+
+const mergedResults = [
+  ...previousResults.filter(
+    (item) =>
+      !currentDocumentIds.has(
+        String(item?.document_id || ''),
+      ),
+  ),
+  ...currentResults,
+]
+
+const mergedSucceeded = mergedResults.filter(
+  (item) => {
+    const status = String(
+      item?.status || '',
+    ).toUpperCase()
+
+    return (
+      status === 'POSTED' ||
+      status === 'ALREADY_POSTED'
+    )
+  },
+).length
+
+const mergedFailed = mergedResults.filter(
+  (item) => {
+    const status = String(
+      item?.status || '',
+    ).toUpperCase()
+
+    return (
+      Boolean(item?.error) ||
+      status === 'FAILED'
+    )
+  },
+).length
+
+const mergedResult = {
+  ...finalResult,
+  results: mergedResults,
+  total: mergedResults.length,
+  succeeded: mergedSucceeded,
+  failed: mergedFailed,
+  job_id: jobId,
+}
+
+setPostingResult(mergedResult)
+
+          if (jobStatus === 'SUCCESS') {
+            const failedCount =
+              Number(statusData.failed || 0)
+
+            if (failedCount === 0) {
+              setNotice(
+                '✓ All validated OCR documents were posted successfully to NetSuite.',
+              )
+            } else {
+              setNotice(
+                `Batch posting completed with ${failedCount} failed document(s). Review the posting results.`,
+              )
+            }
+          } else {
+            setError(
+              statusData.error ||
+                'NetSuite batch posting failed.',
+            )
+          }
+
+          return
+        }
+
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            pollIntervalMs,
+          ),
+        )
+      }
+
+      throw new Error(
+        'NetSuite batch posting timed out while waiting for the worker.',
+      )
+    } catch (err) {
+      console.error(
+        'NetSuite batch Vendor Bill posting failed:',
+        err,
+      )
+
+      setError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Unable to post the validated OCR documents to NetSuite.',
+      )
+    } finally {
+      setPosting(false)
+    }
+
+    return
   }
+
+  setError(
+    'Unsupported OCR processing mode.',
+  )
 }
   if (loadingContext) {
     return (
@@ -1250,128 +1444,421 @@ const handlePost = async () => {
         )}
         {validationResult && (
   <Card className="p-5 sm:p-6">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h2 className="text-base font-semibold text-[var(--color-ink)]">
-          NetSuite Validation
-        </h2>
+    {processingMode === 'MULTIPLE' ? (
+      <>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-[var(--color-ink)]">
+              NetSuite Batch Validation
+            </h2>
 
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          Vendor and Item existence was checked against the connected NetSuite account.
-        </p>
-      </div>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Validation results for all OCR documents were checked against
+              the connected NetSuite account.
+            </p>
+          </div>
 
-      <span
-        className={
-          validationResult.status === 'VALIDATED'
-            ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
-            : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
+          <span
+            className={
+              Number(validationResult.failed || 0) === 0 &&
+              Number(validationResult.completed || 0) ===
+                Number(validationResult.total || 0)
+                ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+                : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
+            }
+          >
+            {Number(validationResult.failed || 0) === 0 &&
+            Number(validationResult.completed || 0) ===
+              Number(validationResult.total || 0)
+              ? '✓ VALIDATION SUCCESSFUL'
+              : '✕ VALIDATION COMPLETED WITH ERRORS'}
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border p-4">
+            <p className="text-xs text-[var(--color-muted)]">
+              Total Documents
+            </p>
+            <p className="mt-1 text-lg font-semibold">
+              {validationResult.total || 0}
+            </p>
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <p className="text-xs text-[var(--color-muted)]">
+              Completed
+            </p>
+            <p className="mt-1 text-lg font-semibold">
+              {validationResult.completed || 0}
+            </p>
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <p className="text-xs text-[var(--color-muted)]">
+              Successful
+            </p>
+            <p className="mt-1 text-lg font-semibold text-emerald-700">
+              {validationResult.succeeded || 0}
+            </p>
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <p className="text-xs text-[var(--color-muted)]">
+              Failed
+            </p>
+            <p className="mt-1 text-lg font-semibold text-red-700">
+              {validationResult.failed || 0}
+            </p>
+          </div>
+        </div>
+
+        {Array.isArray(validationResult.results) &&
+          validationResult.results.length > 0 && (
+            <div className="mt-5 rounded-lg border">
+              <div className="border-b bg-[var(--color-canvas)] px-4 py-3">
+                <p className="text-sm font-semibold text-[var(--color-ink)]">
+                  Document Results
+                </p>
+              </div>
+
+              <div className="divide-y">
+                {validationResult.results.map((item, index) => {
+                  const status = String(
+                    item?.status || '',
+                  ).toUpperCase()
+
+                  const isSuccess =
+                    status === 'VALIDATED'
+
+                  const errors = Array.isArray(item?.errors)
+                    ? item.errors
+                    : []
+
+                  return (
+                    <div
+                      key={`${item?.document_id || 'document'}-${index}`}
+                      className="px-4 py-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-all text-sm font-medium text-[var(--color-ink)]">
+                            Document ID: {item?.document_id || 'Unknown'}
+                          </p>
+
+                          {item?.validation_id && (
+                            <p className="mt-1 text-xs text-[var(--color-muted)]">
+                              Validation ID: {item.validation_id}
+                            </p>
+                          )}
+                        </div>
+
+                        <span
+                          className={
+                            isSuccess
+                              ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+                              : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
+                          }
+                        >
+                          {isSuccess
+                            ? '✓ VALIDATED'
+                            : '✕ VALIDATION FAILED'}
+                        </span>
+                      </div>
+
+                      {(item?.error || errors.length > 0) && (
+                        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                          <p className="text-xs font-semibold text-red-800">
+                            Validation Errors
+                          </p>
+
+                          <div className="mt-1 space-y-1">
+                            {item?.error && (
+                              <p className="text-sm text-red-700">
+                                {item.error}
+                              </p>
+                            )}
+
+                            {errors.map((errorItem, errorIndex) => (
+                              <p
+                                key={`${errorItem?.type || 'error'}-${errorIndex}`}
+                                className="text-sm text-red-700"
+                              >
+                                {errorItem?.message ||
+                                  String(errorItem)}
+                                {errorItem?.extracted_name
+                                  ? ` — ${errorItem.extracted_name}`
+                                  : ''}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+  {(Number(validationResult.failed || 0) > 0 ||
+    validationResult.status === 'FAILURE') && (
+    <Button
+      type="button"
+      intent="secondary"
+      onClick={handleValidateAgain}
+      disabled={validating || saving || posting}
+      isLoading={validating}
+    >
+      Validate Again
+    </Button>
+  )}
+
+  {validationResult.status === 'SUCCESS' &&
+    Array.isArray(validationResult.results) &&
+    validationResult.results.some(
+      (item) =>
+        String(item?.status || '').toUpperCase() ===
+        'VALIDATED',
+    ) && (
+      <Button
+        type="button"
+        onClick={handlePost}
+        disabled={
+          posting ||
+          validating ||
+          (
+            postingResult?.status === 'SUCCESS' &&
+            Number(postingResult?.failed || 0) === 0
+          )
         }
+        isLoading={posting}
       >
-        {validationResult.status === 'VALIDATED'
-          ? '✓ VALIDATION SUCCESSFUL'
-          : '✕ VALIDATION FAILED'}
-      </span>
-    </div>
-
-    <div className="mt-5 grid gap-3 md:grid-cols-2">
-      <div className="rounded-lg border p-4">
-        <p className="text-xs text-[var(--color-muted)]">
-          Vendor
-        </p>
-        <p className="mt-1 font-medium">
-          {validationResult.vendor?.matched
-            ? '✓ Found in NetSuite'
-            : '✕ Not found in NetSuite'}
-        </p>
-
-        {validationResult.vendor?.extracted_name && (
-          <p className="mt-1 text-xs text-[var(--color-muted)]">
-            {validationResult.vendor.extracted_name}
+        {postingResult?.status === 'SUCCESS' &&
+        Number(postingResult?.failed || 0) === 0
+          ? 'Posted to NetSuite'
+          : 'Post to NetSuite'}
+      </Button>
+    )}
+</div>
+{postingResult &&
+  Array.isArray(postingResult.results) && (
+    <div className="mt-4 rounded-lg border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-[var(--color-ink)]">
+            NetSuite Batch Posting
           </p>
-        )}
+
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {postingResult.succeeded || 0} successful ·{' '}
+            {postingResult.failed || 0} failed ·{' '}
+            {postingResult.total || 0} total
+          </p>
+        </div>
+
+        <span
+          className={
+            postingResult.status === 'SUCCESS' &&
+            Number(postingResult.failed || 0) === 0
+              ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+              : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
+          }
+        >
+          {postingResult.status === 'SUCCESS' &&
+          Number(postingResult.failed || 0) === 0
+            ? '✓ POSTING SUCCESSFUL'
+            : '✕ POSTING COMPLETED WITH ERRORS'}
+        </span>
       </div>
 
-      <div className="rounded-lg border p-4">
-        <p className="text-xs text-[var(--color-muted)]">
-          Items
-        </p>
+      <div className="mt-4 divide-y rounded-lg border">
+        {postingResult.results.map((item, index) => {
+          const status = String(
+            item?.status || '',
+          ).toUpperCase()
 
-        <p className="mt-1 font-medium">
-          {
-            (validationResult.items || []).filter(
-              (item) => item.matched,
-            ).length
-          }
-          /
-          {(validationResult.items || []).length} matched
-        </p>
+          const isSuccess =
+            status === 'POSTED' ||
+            status === 'ALREADY_POSTED'
+
+          return (
+            <div
+              key={`${item?.document_id || 'document'}-${index}`}
+              className="px-4 py-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <p className="break-all text-sm font-medium text-[var(--color-ink)]">
+                  Document ID:{' '}
+                  {item?.document_id || 'Unknown'}
+                </p>
+
+                <span
+                  className={
+                    isSuccess
+                      ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+                      : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
+                  }
+                >
+                  {isSuccess
+                    ? `✓ ${status}`
+                    : `✕ ${status || 'FAILED'}`}
+                </span>
+              </div>
+
+              {item?.netsuite_record_id && (
+                <p className="mt-1 text-xs text-[var(--color-muted)]">
+                  NetSuite Record ID:{' '}
+                  <span className="font-medium">
+                    {item.netsuite_record_id}
+                  </span>
+                </p>
+              )}
+
+              {item?.error && (
+                <p className="mt-2 text-sm text-red-700">
+                  {item.error}
+                </p>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
+  )}
+      </>
+    ) : (
+      <>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-[var(--color-ink)]">
+              NetSuite Validation
+            </h2>
 
-    {(validationResult.errors || []).length > 0 && (
-      <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
-        <p className="text-sm font-semibold text-red-800">
-          Validation Errors
-        </p>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Vendor and Item existence was checked against the connected
+              NetSuite account.
+            </p>
+          </div>
 
-        <div className="mt-2 space-y-2">
-          {validationResult.errors.map(
-            (item, index) => (
-              <p
-                key={`${item.type}-${index}`}
-                className="text-sm text-red-700"
-              >
-                {item.message}
-                {item.extracted_name
-                  ? ` — ${item.extracted_name}`
-                  : ''}
+          <span
+            className={
+              validationResult.status === 'VALIDATED'
+                ? 'rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+                : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
+            }
+          >
+            {validationResult.status === 'VALIDATED'
+              ? '✓ VALIDATION SUCCESSFUL'
+              : '✕ VALIDATION FAILED'}
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg border p-4">
+            <p className="text-xs text-[var(--color-muted)]">
+              Vendor
+            </p>
+
+            <p className="mt-1 font-medium">
+              {validationResult.vendor?.matched
+                ? '✓ Found in NetSuite'
+                : '✕ Not found in NetSuite'}
+            </p>
+
+            {validationResult.vendor?.extracted_name && (
+              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                {validationResult.vendor.extracted_name}
               </p>
-            ),
+            )}
+          </div>
+
+          <div className="rounded-lg border p-4">
+            <p className="text-xs text-[var(--color-muted)]">
+              Items
+            </p>
+
+            <p className="mt-1 font-medium">
+              {
+                (validationResult.items || []).filter(
+                  (item) => item.matched,
+                ).length
+              }
+              /
+              {(validationResult.items || []).length} matched
+            </p>
+          </div>
+        </div>
+
+        {(validationResult.errors || []).length > 0 && (
+          <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-800">
+              Validation Errors
+            </p>
+
+            <div className="mt-2 space-y-2">
+              {validationResult.errors.map((item, index) => (
+                <p
+                  key={`${item.type}-${index}`}
+                  className="text-sm text-red-700"
+                >
+                  {item.message}
+                  {item.extracted_name
+                    ? ` — ${item.extracted_name}`
+                    : ''}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+          {validationResult.status === 'VALIDATION_FAILED' && (
+            <Button
+              type="button"
+              intent="secondary"
+              onClick={handleValidateAgain}
+              disabled={validating || saving || posting}
+              isLoading={validating}
+            >
+              Validate Again
+            </Button>
+          )}
+
+          {validationResult.status === 'VALIDATED' && (
+            <Button
+              type="button"
+              onClick={handlePost}
+              disabled={
+                posting ||
+                validating ||
+                Boolean(
+                  postingResult?.netsuite_record_id,
+                )
+              }
+              isLoading={posting}
+            >
+              {postingResult?.netsuite_record_id
+                ? 'Posted to NetSuite'
+                : 'Post to NetSuite'}
+            </Button>
           )}
         </div>
-      </div>
-    )}
-    <div className="mt-5 flex flex-wrap justify-end gap-3">
-      {validationResult.status ===
-        'VALIDATION_FAILED' && (
-        <Button type="button" intent="secondary" onClick={handleValidateAgain} disabled={ validating || saving || posting } isLoading={validating}>
-          Validate Again
-        </Button>
-      )}
 
-      {validationResult.status ===
-        'VALIDATED' && (
-        <Button
-          type="button"
-          onClick={handlePost}
-          disabled={
-            posting ||
-            validating ||
-            Boolean(
-              postingResult?.netsuite_record_id,
-            )
-          }
-          isLoading={posting}
-        >
-          {postingResult?.netsuite_record_id
-            ? 'Posted to NetSuite'
-            : 'Post to NetSuite'}
-        </Button>
-      )}
-    </div>
-
-    {postingResult?.netsuite_record_id && (
-      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-        Vendor Bill created successfully.
-        <span className="ml-1 font-semibold">
-          NetSuite Record ID:
-        </span>{' '}
-        {postingResult.netsuite_record_id}
-      </div>
+        {postingResult?.netsuite_record_id && (
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+            Vendor Bill created successfully.
+            <span className="ml-1 font-semibold">
+              NetSuite Record ID:
+            </span>{' '}
+            {postingResult.netsuite_record_id}
+          </div>
+        )}
+      </>
     )}
   </Card>
-)}
+)}        
 
         <Card className="p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-4">

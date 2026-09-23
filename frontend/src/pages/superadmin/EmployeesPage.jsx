@@ -76,10 +76,6 @@ export default function EmployeesPage() {
     try {
       const data = await superadminApi.listCompanies({ limit: 100 })
       setCompanies(data.results || [])
-      // .filter(
-      //   (company) => 
-      //     company.status !== 'SUSPENDED'
-      // )
     } catch {
       setCompanies([])
     }

@@ -78,13 +78,6 @@ export default function AppRoutes() {
 
       {/* Authentication */}
       <Route path="/login" element={<LoginPage />} />
-      {/*
-        LEGACY (Sprint 8.4): public registration retired in favor of
-        invitation-only onboarding. RegisterPage.jsx and CompleteProfilePage.jsx
-        remain on disk per DEVELOPMENT_GUIDELINES.md ("never delete files")
-        but are intentionally not routed here, so they are unreachable from
-        the UI. Do not re-add these routes without a product decision.
-      */}
       <Route path="/otp-verification" element={<OtpVerificationPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -199,31 +192,30 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route
-  path="/app/ocr/history/batch/:batchId"
-  element={
-    <ProtectedRoute requiredRole="client">
-      <OcrBatchHistoryPage />
-    </ProtectedRoute>
-  }
-/>
+      <Route path="/app/ocr/history/batch/:batchId" 
+        element={
+          <ProtectedRoute requiredRole="client">
+            <OcrBatchHistoryPage />
+          </ProtectedRoute>
+        }
+      />
 
-<Route
-  path="/app/ocr/history/:documentId"
-  element={
-    <ProtectedRoute requiredRole="client">
-      <OcrResultPage />
-    </ProtectedRoute>
-  }
-/>
       <Route
-  path="/app/ocr/result"
-  element={
-    <ProtectedRoute requiredRole="client">
-      <OcrResultPage />
-    </ProtectedRoute>
-  }
-/>
+        path="/app/ocr/history/:documentId"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <OcrResultPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/ocr/result"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <OcrResultPage />
+          </ProtectedRoute>
+        }
+      />
 
       <Route
         path="/app/employees"
