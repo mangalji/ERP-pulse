@@ -25,8 +25,6 @@ from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCR
 from ocr.serializers import (
     DocumentHistorySerializer,
     DocumentVersionSerializer,
-    # UploadSerializer,
-    # UploadResponseSerializer,
     OCRDocumentHistorySerializer,
     OCRHistoryListSerializer,
     OCRHistoryVersionSerializer,
@@ -38,11 +36,12 @@ from ocr.serializers import (
     OCRExtractionTemplateSerializer,
     OCRExtractionTemplateCreateSerializer,
 )
+from ocr.pdf_processor import get_fitz
 from ocr.exceptions import OCRException
 from ocr.services import ocr_service
 from ocr.services.extraction_persistence import persist_extraction
 from ocr.notebook_extraction_service import get_standard_field_catalog, resolve_field_config
-from ocr.tasks import process_ocr_upload_task
+from ocr.tasks import process_ocr_upload_task, process_single_ocr_upload
 from ocr.utils import logger
 from ocr.services.zip_upload_service import (
     ZipValidationError,
@@ -204,23 +203,59 @@ def _user_display_name(user):
 
 
 def _get_live_ocr_result(upload_id):
-    """Read the unsaved AI extraction result from Redis."""
+    """Read the unsaved AI extraction result from Redis, then DB fallback."""
+
+    cache_key = f"erp-pulse:ocr:live:{upload_id}"
     try:
         client = redis.Redis.from_url(
             settings.CELERY_BROKER_URL,
             decode_responses=True,
         )
-        cached = client.get(f"erp-pulse:ocr:live:{upload_id}")
-        if not cached:
-            return None
-        result = json.loads(cached)
-        return result if isinstance(result, dict) else None
+        cached = client.get(cache_key)
+        if cached:
+            result = json.loads(cached)
+
+            if isinstance(result,dict):
+                return result
+
+    except redis.RedisError as exc:
+        logger.warning(
+            "Redis live OCR result unavailable; using DB fallback — "
+            "upload_id=%s error=%s",
+            upload_id,
+            exc,
+            )
+
+    try:
+        upload = OCRUpload.objects.only(
+            "live_result_json",
+            "live_result_expires_at",
+        ).get(pk=upload_id)
+
+        if (
+            upload.live_result_json is not None
+            and upload.live_result_expires_at
+            and upload.live_result_expires_at > timezone.now()
+        ):
+            return upload.live_result_json
+
+    except OCRUpload.DoesNotExist:
+        return None
+    
     except Exception:
         logger.exception(
-            "Failed to read live OCR result during save — upload_id=%s",
+            "Failed to read DB live OCR result — upload_id=%s",
             upload_id,
         )
-        return None
+
+    return None
+    
+    # except Exception:
+    #     logger.exception(
+    #         "Failed to read live OCR result during save — upload_id=%s",
+    #         upload_id,
+    #     )
+    #     return None
 
 def _batch_scope(user):
     """
@@ -246,6 +281,8 @@ def _build_upload_result(upload):
                 "-version_number"
             ).first()
 
+    live_data = _get_live_ocr_result(str(upload.id))
+
     return {
         "upload_id": upload.id,
         "document_id": document.id if document else None,
@@ -255,9 +292,7 @@ def _build_upload_result(upload):
         ),
         "filename": upload.original_filename,
         "status": upload.status,
-        "data": (
-            version.normalized_json if version else None
-        ),
+        "data": live_data if live_data is not None else version.normalized_json if version else None,
         "error": (
             upload.failure_reason
             if upload.status == OCRUpload.Status.FAILED
@@ -839,10 +874,12 @@ class OCRStandardFieldsView(APIView):
 
 class OCRExtractView(APIView):
     """
-    Accept one/many PDF/image files or ZIP archives.
+    Accept OCR uploads in Single or Multiple mode.
 
-    The HTTP request only validates/stores files and queues per-file tasks.
-    Gemini extraction happens asynchronously in Celery workers.
+    Single mode processes one supported file synchronously without Celery.
+
+    Multiple mode accepts up to the configured file limit and queues
+    each file through the existing Celery processing pipeline.
     """
 
     permission_classes = [IsAuthenticated]
@@ -938,6 +975,7 @@ class OCRExtractView(APIView):
         if document is not None:
             version = document.versions.order_by("-version_number").first()
 
+        live_data = _get_live_ocr_result(str(upload.id))
         item = {
             "status": upload.status,
             "upload_id": str(upload.id),
@@ -946,12 +984,33 @@ class OCRExtractView(APIView):
             "version_number": version.version_number if version else None,
             "filename": upload.original_filename,
             "error": upload.failure_reason if upload.status == OCRUpload.Status.FAILED else None,
-            "data": version.normalized_json if version else None,
+            # "data": version.normalized_json if version else None,
+            "data": live_data if live_data is not None else version.normalized_json if version else None,
         }
 
         return item
 
     def post(self, request):
+
+        mode = str(
+            request.data.get("mode", "multiple")
+        ).strip().lower()
+        if mode not in {"single", "multiple"}:
+            return Response(
+                {
+                    "detail":"Invalid OCR mode, Use 'single' or 'multiple'."
+                },status=status.HTTP_400_BAD_REQUEST,
+            )
+        if mode == "multiple" and not settings.OCR_MULTIPLE_ENABLED:
+            return Response(
+                {
+                    "detail": (
+                        "Multiple OCR processing is currently unavailable. "
+                        "Please use Single mode."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         uploaded_files = self._get_uploaded_files(request)
 
         if not uploaded_files:
@@ -960,6 +1019,40 @@ class OCRExtractView(APIView):
                     "detail": (
                         "No files uploaded. Use the 'files' field for one or "
                         "more PDF/image files, or upload a ZIP archive."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if mode == "single" and len(uploaded_files) != 1:
+            return Response(
+                {
+                    "detail": (
+                        "Single mode accepts exactly one file."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if mode == "single" and self._is_zip(uploaded_files[0]):
+            return Response(
+                {
+                    "detail": (
+                        "ZIP archives are not supported in Single mode."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            mode == "multiple"
+            and len(uploaded_files) > settings.OCR_MULTI_MAX_FILES
+        ):
+            return Response(
+                {
+                    "detail": (
+                        f"Multiple mode supports a maximum of "
+                        f"{settings.OCR_MULTI_MAX_FILES} files."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -976,6 +1069,63 @@ class OCRExtractView(APIView):
             )
 
             actual_files = self._expand_inputs(uploaded_files)
+
+            if mode == "single":
+                single_file = actual_files[0]
+                filename = (getattr(single_file, "name", "") or "").lower()
+                content_type = (
+                    getattr(single_file, "content_type", "") or ""
+                ).lower()
+
+                is_pdf = (
+                    filename.endswith(".pdf")
+                    or content_type == "application/pdf"
+                )
+                if is_pdf:
+                    try:
+                        single_file.seek(0)
+                        fitz = get_fitz()
+                        pdf_doc = fitz.open(
+                            stream = single_file.read(), filetype="pdf"
+                        )
+                        page_count = pdf_doc.page_count
+                        pdf_doc.close()
+                        single_file.seek(0)
+                    except Exception:
+                        logger.exception(
+                            "Unable to inspect Single OCR PDF — filename=%s",
+                            filename,
+                        )
+                        return Response(
+                            {
+                                "detail": "The uploaded PDF could not be read. "
+                                "Please upload a valid PDF."
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    if page_count > settings.OCR_SINGLE_MAX_PAGES:
+                        return Response(
+                            {
+                                "detail": (
+                                    f"Single mode supports a maximum of "
+                                    f"{settings.OCR_SINGLE_MAX_PAGES} PDF pages. "
+                                    f"The uploaded PDF contains {page_count} pages."
+                                ),
+                                "page_count": page_count,
+                                "max_pages": settings.OCR_SINGLE_MAX_PAGES,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    
+            if (
+                mode == "multiple"
+                and len(actual_files) > settings.OCR_MULTI_MAX_FILES
+            ):
+                raise ZipValidationError(
+                    f"Multiple mode supports a maximum of "
+                    f"{settings.OCR_MULTI_MAX_FILES} files."
+                )
 
             source_type = (
                 OCRBatch.SourceType.ZIP
@@ -1003,6 +1153,11 @@ class OCRExtractView(APIView):
                 source_type=source_type,
                 original_filename=original_filename,
                 requested_fields_json=requested_fields or {},
+                processing_mode = (
+                    OCRBatch.ProcessingMode.SINGLE
+                    if mode == "single"
+                    else OCRBatch.ProcessingMode.MULTIPLE
+            ),
                 status=OCRBatch.Status.PROCESSING,
                 started_at=timezone.now(),
             )
@@ -1035,12 +1190,131 @@ class OCRExtractView(APIView):
 
             # Queue each file independently. Celery workers plus the Redis
             # limiter control actual Gemini concurrency/rate.
+            # queued = 0
+            # for upload in created_uploads:
+            #     task = getattr(process_ocr_upload_task, "delay", None)
+
+            #     if task is None:
+            #         # Development fallback if Celery is unavailable.
+            #         process_ocr_upload_task(
+            #             str(upload.id),
+            #             str(request.user.id),
+            #         )
+            #     else:
+            #         task(
+            #             str(upload.id),
+            #             str(request.user.id),
+            #         )
+
+            #     queued += 1
+
+            # return Response(
+            #     {
+            #         "batch_id": str(batch.id),
+            #         "status": batch.status,
+            #         "source_type": batch.source_type,
+            #         "source_filename": batch.original_filename,
+            #         "total_files": len(created_uploads),
+            #         "queued_files": queued,
+            #         "files": [
+            #             {
+            #                 "upload_id": str(upload.id),
+            #                 "filename": upload.original_filename,
+            #                 "status": upload.status,
+            #             }
+            #             for upload in created_uploads
+            #         ],
+            #     },
+            #     status=status.HTTP_202_ACCEPTED,
+            # )
+            if mode == "single":
+                upload = created_uploads[0]
+
+                try:
+                    result = process_single_ocr_upload(
+                        upload_id=str(upload.id),
+                        user_id=str(request.user.id),
+                        time_budget_seconds=(
+                            settings.OCR_SINGLE_TIME_BUDGET_SECONDS
+                        ),
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Single OCR processing failed — "
+                        "upload_id=%s batch_id=%s",
+                        upload.id,
+                        batch.id,
+                    )
+
+                    upload.refresh_from_db()
+
+                    if upload.status != OCRUpload.Status.FAILED:
+                        upload.status = OCRUpload.Status.FAILED
+                        upload.failure_reason = (
+                            "Single OCR processing failed."
+                        )
+                        upload.save(
+                            update_fields=[
+                                "status",
+                                "failure_reason",
+                            ]
+                        )
+
+                    batch.status = OCRBatch.Status.FAILED
+                    batch.completed_at = timezone.now()
+                    batch.save(
+                        update_fields=[
+                            "status",
+                            "completed_at",
+                        ]
+                    )
+
+                    return Response(
+                        {
+                            "batch_id": str(batch.id),
+                            "status": batch.status,
+                            "total_files": 1,
+                            "queued_files": 0,
+                            "files": [
+                                self._serialize_upload(upload)
+                            ],
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+
+                upload.refresh_from_db()
+                batch.refresh_from_db()
+
+                return Response(
+                    {
+                        "batch_id": str(batch.id),
+                        "status": batch.status,
+                        "source_type": batch.source_type,
+                        "source_filename": batch.original_filename,
+                        "total_files": 1,
+                        "queued_files": 0,
+                        "files": [
+                            self._serialize_upload(upload)
+                        ],
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+
+            # -------------------------
+            # MULTIPLE MODE
+            # -------------------------
+
             queued = 0
+
             for upload in created_uploads:
-                task = getattr(process_ocr_upload_task, "delay", None)
+                task = getattr(
+                    process_ocr_upload_task,
+                    "delay",
+                    None,
+                )
 
                 if task is None:
-                    # Development fallback if Celery is unavailable.
                     process_ocr_upload_task(
                         str(upload.id),
                         str(request.user.id),
@@ -1294,6 +1568,29 @@ class OCRBatchStatusView(APIView):
                 "created_at": batch.created_at,
                 "started_at": batch.started_at,
                 "completed_at": batch.completed_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class OCRUploadModesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(
+            {
+                "single": {
+                    "enabled": True,
+                    "max_files": 1,
+                    "max_pdf_pages": settings.OCR_SINGLE_MAX_PAGES,
+                    "time_budget_seconds": (
+                        settings.OCR_SINGLE_TIME_BUDGET_SECONDS
+                    ),
+                },
+                "multiple": {
+                    "enabled": settings.OCR_MULTIPLE_ENABLED,
+                    "max_files": settings.OCR_MULTI_MAX_FILES,
+                },
             },
             status=status.HTTP_200_OK,
         )

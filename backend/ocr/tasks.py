@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import hashlib
 import json
+from datetime import timedelta
 import logging
 import random
 import redis
@@ -238,6 +239,115 @@ def _perform_ocr_extraction(upload, requested_fields):
                 getattr(upload, "id", None),
             )
 
+def _perform_ocr_extraction_sync(
+    upload,
+    requested_fields,
+    *,
+    deadline_monotonic: float,
+) -> dict:
+    """
+    Synchronous OCR extraction for Single OCR mode.
+
+    This path intentionally bypasses the Celery/Redis extraction workflow.
+    It reuses the same document adapters and Gemini extraction contract as
+    the existing Celery path while enforcing a wall-clock deadline.
+    """
+    original_path = upload.file.path
+    adapter = get_adapter(original_path, str(upload.id))
+
+    try:
+        normalized = adapter.normalize()
+
+        if not isinstance(normalized, dict):
+            raise ValueError(
+                "Document adapter returned an invalid normalized result."
+            )
+
+        pages = normalized.get("pages") or []
+
+        if isinstance(pages, (str, bytes)):
+            pages = [pages]
+
+        page_paths = [str(path) for path in pages if path]
+
+        if not page_paths:
+            fallback_path = normalized.get("path") or original_path
+
+            if fallback_path:
+                page_paths = [str(fallback_path)]
+
+        if not page_paths:
+            raise ValueError(
+                f"Document adapter produced no pages for "
+                f"'{upload.original_filename}'."
+            )
+
+        page_results = []
+
+        for page_index, page_path in enumerate(
+            page_paths,
+            start=1,
+        ):
+            remaining = deadline_monotonic - time.monotonic()
+
+            if remaining <= 0:
+                raise GeminiTimeoutException(
+                    "Single OCR processing exceeded its time budget."
+                )
+
+            mime_type, _ = mimetypes.guess_type(page_path)
+
+            if not mime_type or not mime_type.startswith("image/"):
+                mime_type = "image/png"
+
+            # Give the Gemini request most of the remaining Single-mode budget.
+            # Keep a small reserve for response handling, persistence, and cleanup.
+            request_timeout = max(
+                1.0,
+                remaining - 2.0,
+            )
+
+            result = notebook_gemini_extractor.extract(
+                file_path=page_path,
+                mime_type=mime_type,
+                requested_fields=requested_fields,
+                timeout=request_timeout,
+                max_retries=0,
+            )
+
+            if not isinstance(result, dict):
+                raise ValueError(
+                    f"OCR extractor returned an invalid result "
+                    f"on page {page_index}."
+                )
+
+            line_items = result.get("line_items")
+
+            if line_items is not None and not isinstance(
+                line_items,
+                list,
+            ):
+                raise ValueError(
+                    f"OCR extractor returned invalid line_items "
+                    f"on page {page_index}."
+                )
+
+            page_results.append(result)
+
+        return _merge_page_extraction_results(page_results)
+
+    finally:
+        try:
+            cleanup = getattr(adapter, "cleanup", None)
+
+            if callable(cleanup):
+                cleanup()
+
+        except Exception:
+            logger.exception(
+                "OCR adapter cleanup failed — upload=%s",
+                getattr(upload, "id", None),
+            )
 
 def _canonical_config(requested_fields: Any) -> dict:
     """
@@ -490,10 +600,12 @@ def read_valid_cached_result(file_hash: str, requested_fields: Any):
 
         return result
 
-    except Exception:
-        logger.exception(
-            "OCR result cache read failed — file_hash=%s",
+    except redis.RedisError as exc:
+        logger.warning(
+            "OCR Redis cache read unavailable; continuing without cache — "
+            "file_hash=%s error=%s",
             file_hash,
+            exc,
         )
         return None
 
@@ -523,10 +635,12 @@ def write_completed_cached_result(
             ttl or OCR_EXTRACTION_CACHE_TTL_SECONDS,
             json.dumps(payload, ensure_ascii=False, default=str),
         )
-    except Exception:
-        logger.exception(
-            "OCR result cache write failed — file_hash=%s",
+    except redis.RedisError as exc:
+        logger.warning(
+            "OCR Redis cache write unavailable; continuing without cache — "
+            "file_hash=%s error=%s",
             file_hash,
+            exc,
         )
 
 
@@ -846,10 +960,12 @@ def _write_live_result(upload_id: str, result: dict) -> None:
                 default=str,
             ),
         )
-    except Exception:
-        logger.exception(
-            "OCR live-result cache write failed — upload_id=%s",
+    except redis.RedisError as exc:
+        logger.warning(
+            "OCR Redis live-result cache unavailable; "
+            "DB fallback remains available — upload_id=%s error=%s",
             upload_id,
+            exc,
         )
 
 def _refresh_batch_status(batch_id):
@@ -903,6 +1019,208 @@ def _refresh_batch_status(batch_id):
 
     batch.save(update_fields=update_fields)
 
+def process_single_ocr_upload(
+    upload_id: str,
+    user_id: str,
+    time_budget_seconds: float | None = None,
+) -> dict:
+    """
+    Process one OCR upload synchronously for Single mode.
+
+    This path does not require a Celery worker or broker. It uses the
+    same OCR adapters and Gemini extraction contract as the async path,
+    while enforcing a wall-clock time budget.
+    """
+    upload = None
+
+    if time_budget_seconds is None:
+        time_budget_seconds = getattr(
+            settings,
+            "OCR_SINGLE_TIME_BUDGET_SECONDS",
+            60,
+        )
+
+    try:
+        upload = OCRUpload.objects.select_related(
+            "user",
+            "batch",
+        ).get(pk=upload_id)
+
+        if str(upload.user_id) != str(user_id):
+            logger.error(
+                "Single OCR ownership mismatch — upload=%s user=%s owner=%s",
+                upload_id,
+                user_id,
+                upload.user_id,
+            )
+            raise PermissionError("OCR upload ownership mismatch.")
+
+        requested_fields = (
+            upload.batch.requested_fields_json
+            if upload.batch
+            else None
+        )
+
+        # A completed upload may already have a live result.
+        if (
+            upload.status == OCRUpload.Status.COMPLETED
+            and isinstance(upload.live_result_json, dict)
+        ):
+            return upload.live_result_json
+
+        started_at = timezone.now()
+
+        upload.status = OCRUpload.Status.PROCESSING
+        upload.processing_started_at = started_at
+        upload.processing_completed_at = None
+        upload.processing_duration_ms = None
+        upload.failure_reason = None
+
+        upload.save(
+            update_fields=[
+                "status",
+                "processing_started_at",
+                "processing_completed_at",
+                "processing_duration_ms",
+                "failure_reason",
+            ]
+        )
+
+        deadline_monotonic = (
+            time.monotonic()
+            + float(time_budget_seconds)
+        )
+
+        # Reuse a valid extraction cache when available.
+        result = _read_cached_result(
+            upload.file_hash,
+            requested_fields,
+        )
+
+        if result is None:
+            result = _perform_ocr_extraction_sync(
+                upload,
+                requested_fields,
+                deadline_monotonic=deadline_monotonic,
+            )
+
+        if not isinstance(result, dict):
+            raise ValueError(
+                "OCR extractor returned an invalid result shape."
+            )
+
+        line_items = result.get("line_items")
+
+        if line_items is not None and not isinstance(
+            line_items,
+            list,
+        ):
+            raise ValueError(
+                "OCR extractor returned invalid line_items."
+            )
+
+        # Keep the normal extraction cache warm.
+        _write_cached_result(
+            upload.file_hash,
+            result,
+            requested_fields,
+        )
+
+        # Redis is the fast live-result layer.
+        _write_live_result(
+            str(upload.id),
+            result,
+        )
+
+        # DB is the durable fallback for review/status APIs.
+        completed_at = timezone.now()
+
+        upload.live_result_json = result
+        upload.live_result_expires_at = (
+            completed_at
+            + timedelta(seconds=OCR_EXTRACTION_CACHE_TTL_SECONDS)
+        )
+
+        upload.status = OCRUpload.Status.COMPLETED
+        upload.processing_completed_at = completed_at
+        upload.processing_duration_ms = int(
+            (
+                completed_at - started_at
+            ).total_seconds()
+            * 1000
+        )
+        upload.failure_reason = None
+
+        upload.save(
+            update_fields=[
+                "live_result_json",
+                "live_result_expires_at",
+                "status",
+                "processing_completed_at",
+                "processing_duration_ms",
+                "failure_reason",
+            ]
+        )
+
+        if upload.batch_id:
+            _refresh_batch_status(upload.batch_id)
+
+        logger.info(
+            "Single OCR extraction completed — upload=%s",
+            upload_id,
+        )
+
+        return result
+
+    except OCRUpload.DoesNotExist:
+        logger.error(
+            "Single OCR upload not found — upload_id=%s",
+            upload_id,
+        )
+        raise
+
+    except Exception as exc:
+        logger.exception(
+            "Single OCR processing failed — upload=%s error=%s",
+            upload_id,
+            exc,
+        )
+
+        if upload is not None:
+            completed_at = timezone.now()
+
+            upload.status = OCRUpload.Status.FAILED
+            upload.processing_completed_at = completed_at
+            upload.failure_reason = str(exc)[:5000]
+
+            update_fields = [
+                "status",
+                "processing_completed_at",
+                "failure_reason",
+            ]
+
+            if upload.processing_started_at:
+                upload.processing_duration_ms = int(
+                    (
+                        completed_at
+                        - upload.processing_started_at
+                    ).total_seconds()
+                    * 1000
+                )
+                update_fields.append(
+                    "processing_duration_ms"
+                )
+
+            upload.save(
+                update_fields=update_fields
+            )
+
+            if upload.batch_id:
+                _refresh_batch_status(
+                    upload.batch_id
+                )
+
+        raise
 
 try:
     from celery import shared_task

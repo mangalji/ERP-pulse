@@ -159,7 +159,11 @@ export default function OcrPage() {
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [connection, setConnection] = useState(null)
   const [validationResult, setValidationResult] = useState(null)
-
+  const [ocrMode, setOcrMode] = useState('single')
+  const [ocrModes, setOcrModes] = useState({
+    single: true,
+    multiple: false,
+  })
   const filteredHistory = useMemo(() => {
     if (validationFilter === 'correct') {
       return history.filter(item => item.validation_status === 'VALIDATED')
@@ -652,10 +656,10 @@ const selectedValidateIds = useMemo(
 
   useEffect(() => {
     return () => {
-      selectedFiles.forEach(({ file }) => {
-        if (file) {
+      selectedFiles.forEach(({ previewUrl }) => {
+        if (previewUrl) {
           try {
-            URL.revokeObjectURL(file.previewUrl)
+            URL.revokeObjectURL(previewUrl)
           } catch {
             // Ignore cleanup errors.
           }
@@ -663,6 +667,51 @@ const selectedValidateIds = useMemo(
       })
     }
   }, [selectedFiles])
+  useEffect(() => {
+    let cancelled = false
+
+    const loadOcrModes = async () => {
+      try {
+        const response = await apiClient.get('/ocr/extract/upload-modes/')
+        const payload = response?.data ?? {}
+
+        if (cancelled) return
+
+        const singleEnabled = payload?.single?.enabled !== false
+        const multipleEnabled = payload?.multiple?.enabled === true
+
+        setOcrModes({
+          single: singleEnabled,
+          multiple: multipleEnabled,
+        })
+
+        setOcrMode((current) => {
+          if (current === 'single' && singleEnabled) return 'single'
+          if (current === 'multiple' && multipleEnabled) return 'multiple'
+          if (singleEnabled) return 'single'
+          if (multipleEnabled) return 'multiple'
+          return 'single'
+        })
+      } catch (err) {
+        console.error('Failed to load OCR upload modes:', err)
+
+        if (!cancelled) {
+          setOcrModes({
+            single: true,
+            multiple: false,
+          })
+          setOcrMode('single')
+        }
+      }
+    }
+
+    loadOcrModes()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // useEffect(() => {
   //   const jobId = location.state?.validationJobId
   //   if (!jobId) return undefined
@@ -793,17 +842,47 @@ const selectedValidateIds = useMemo(
   const addFiles = useCallback(
     (fileList) => {
       const incoming = Array.from(fileList || [])
+
       if (!incoming.length) return
+
+      if (ocrMode === 'single') {
+        if (incoming.length > 1) {
+          setError('Single mode allows only one file at a time.')
+          return
+        }
+
+        const { files, error: validationError } = validateFiles(incoming)
+
+        if (validationError) {
+          setError(validationError)
+          return
+        }
+
+        selectedFiles.forEach(({ previewUrl }) => {
+          if (previewUrl) {
+            URL.revokeObjectURL(previewUrl)
+          }
+        })
+
+        setError('')
+        setSelectedFiles(files)
+        setResults([])
+        setActiveIndex(0)
+        return
+      }
 
       const remainingSlots = MAX_FILES - selectedFiles.length
 
       if (remainingSlots <= 0) {
-        setError(`You can upload a maximum of ${MAX_FILES} files at once.`)
+        setError(
+          `You can upload a maximum of ${MAX_FILES} files at once.`,
+        )
         return
       }
 
       const limitedIncoming = incoming.slice(0, remainingSlots)
-      const { files, error: validationError } = validateFiles(limitedIncoming)
+      const { files, error: validationError } =
+        validateFiles(limitedIncoming)
 
       if (validationError) {
         setError(validationError)
@@ -814,7 +893,8 @@ const selectedValidateIds = useMemo(
       setSelectedFiles((current) => {
         const existingKeys = new Set(
           current.map(
-            ({ file }) => `${file.name}-${file.size}-${file.lastModified}`,
+            ({ file }) =>
+              `${file.name}-${file.size}-${file.lastModified}`,
           ),
         )
 
@@ -837,8 +917,9 @@ const selectedValidateIds = useMemo(
       setResults([])
       setActiveIndex(0)
     },
-    [selectedFiles.length, validateFiles],
+    [ocrMode, selectedFiles, validateFiles],
   )
+
 
   const handleFileChange = (event) => {
     addFiles(event.target.files)
@@ -881,12 +962,22 @@ const selectedValidateIds = useMemo(
   }
 
   const handleExtract = async () => {
-      if (!selectedFiles.length || processing) {
-        if (!selectedFiles.length) {
-          setError('Please select at least one document file first.')
-        }
-        return
+    if (!selectedFiles.length || processing) {
+      if (!selectedFiles.length) {
+        setError('Please select at least one document file first.')
       }
+      return
+    }
+
+    if (ocrMode === 'single' && selectedFiles.length !== 1) {
+      setError('Single mode allows exactly one file.')
+      return
+    }
+
+    if (ocrMode === 'multiple' && !ocrModes.multiple) {
+      setError('Multiple OCR is currently unavailable.')
+      return
+    }
 
     try {
       setError('')
@@ -899,6 +990,8 @@ const selectedValidateIds = useMemo(
       selectedFiles.forEach(({ file }) => {
         formData.append('files', file)
       })
+
+      formData.append('mode', ocrMode)
 
       if (extractionConfig?.template_id) {
         formData.append('template_id', extractionConfig.template_id)
@@ -931,12 +1024,38 @@ const selectedValidateIds = useMemo(
             status: item.status || 'UPLOADED',
             upload_id: item.upload_id || null,
             filename: item.filename || null,
-            data: null,
-            error: null,
+            data: item.data || null,
+            error: item.error || null,
+            preview_url: item.preview_url || null,
           }))
         : []
 
       setResults(initialFiles)
+
+      if (ocrMode === 'single') {
+        sessionStorage.setItem(
+          `ocr_test_live_results_${batchId}`,
+          JSON.stringify(initialFiles),
+        )
+
+        sessionStorage.setItem(
+          'ocr_test_result',
+          JSON.stringify({
+            status:
+              payload?.status ??
+              initialFiles[0]?.status ??
+              'COMPLETED',
+            batch_id: batchId,
+            files: initialFiles,
+            requested_fields:
+              extractionConfig?.requested_fields || null,
+          }),
+        )
+
+        clearSelectedFilesAfterExtraction()
+        await refreshOcrHistory()
+        return
+      }
 
       const terminalStatuses = new Set([
         'COMPLETED',
@@ -958,30 +1077,31 @@ const selectedValidateIds = useMemo(
           : []
 
         setResults(files)
+
         sessionStorage.setItem(
           `ocr_test_live_results_${batchId}`,
           JSON.stringify(files),
-          )
+        )
+
         setActiveIndex((current) => {
           if (!files.length) return 0
           return Math.min(current, files.length - 1)
         })
 
-        const completedOrFailed = files.some((item) => 
-          ['COMPLETED', 'FAILED'].includes(
-              item.status,
-            ),
-          )
+        const completedOrFailed = files.some((item) =>
+          ['COMPLETED', 'FAILED'].includes(item.status),
+        )
 
         if (completedOrFailed) {
           sessionStorage.setItem(
-        `ocr_test_result`,
-        JSON.stringify({
-          status: batch?.status ?? 'PROCESSING',
-          batch_id: batchId,
-          files,
-          requested_fields: extractionConfig?.requested_fields || null,
-        }),
+            'ocr_test_result',
+            JSON.stringify({
+              status: batch?.status ?? 'PROCESSING',
+              batch_id: batchId,
+              files,
+              requested_fields:
+                extractionConfig?.requested_fields || null,
+            }),
           )
         }
 
@@ -991,10 +1111,7 @@ const selectedValidateIds = useMemo(
             ['COMPLETED', 'FAILED'].includes(item.status),
           )
 
-        if (
-          allTerminal ||
-          terminalStatuses.has(batch?.status)
-        ) {
+        if (allTerminal || terminalStatuses.has(batch?.status)) {
           break
         }
 
@@ -1017,6 +1134,7 @@ const selectedValidateIds = useMemo(
       setProcessing(false)
     }
   }
+
 
   const activeResult = results[activeIndex] ?? null
 
@@ -1150,6 +1268,56 @@ const selectedValidateIds = useMemo(
               </p>
             </div>
 
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-[var(--color-ink)]">
+                OCR Mode
+              </span>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!ocrModes.single || processing) return
+                  setOcrMode('single')
+                  setError('')
+                  setResults([])
+                  setActiveIndex(0)
+                }}
+                disabled={!ocrModes.single || processing}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                  ocrMode === 'single'
+                    ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-primary)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)]'
+                } ${!ocrModes.single ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                Single
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!ocrModes.multiple || processing) return
+                  setOcrMode('multiple')
+                  setError('')
+                  setResults([])
+                  setActiveIndex(0)
+                }}
+                disabled={!ocrModes.multiple || processing}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                  ocrMode === 'multiple'
+                    ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-primary)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)]'
+                } ${!ocrModes.multiple ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                Multiple
+              </button>
+
+              <span className="text-xs text-[var(--color-muted)]">
+                {ocrMode === 'single'
+                  ? 'One file · direct result'
+                  : 'Up to 200 files · background processing'}
+              </span>
+            </div>
+
             <div
               onDragEnter={(event) => {
                 event.preventDefault()
@@ -1176,14 +1344,13 @@ const selectedValidateIds = useMemo(
                 </div>
 
                 <p className="text-sm text-[var(--color-muted)]">
-                  PDF, image, spreadsheet, or text files · up to {MAX_FILES} inputs · max
-                  20 MB per direct file
+                  PDF, image, spreadsheet, or text files · {ocrMode === 'single' ? '1 input' : `up to ${MAX_FILES} inputs`} · max 20 MB per direct file
                 </p>
 
                 <input
                   ref={inputRef}
                   type="file"
-                  multiple
+                  multiple={ocrMode === 'multiple'}
                   accept={ACCEPT}
                   onChange={handleFileChange}
                   disabled={processing}
@@ -1239,7 +1406,9 @@ const selectedValidateIds = useMemo(
                     </p>
 
                     <p className="text-xs text-[var(--color-muted)]">
-                      Files will be processed independently in one OCR batch.
+                      {ocrMode === 'single'
+                        ? 'Single file will be processed immediately.'
+                        : 'Files will be processed independently in one OCR batch.'}
                     </p>
                   </div>
                 </div>
@@ -1429,6 +1598,7 @@ const selectedValidateIds = useMemo(
                   <OcrReviewWorkspace
                     result={activeResult}
                     batchResults={results}
+                    processingMode={ocrMode}
                     onSaved={(savedResult) => {
                       setResults((current) =>
                         current.map((item, index) =>

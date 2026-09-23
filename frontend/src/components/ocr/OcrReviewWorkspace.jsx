@@ -174,6 +174,7 @@ function FieldInput({ field, value, editable, onChange }) {
 export default function OcrReviewWorkspace({
   result,
   batchResults = [],
+  processingMode = null,
   onSaved,
   showPost = true,
   compact = false,
@@ -391,28 +392,50 @@ export default function OcrReviewWorkspace({
 
     setData(cloneData(savedResult.data))
 
-    sessionStorage.setItem(
-      'ocr_field_mapping_context',
-      JSON.stringify({
-        connection_id: connectionId,
-        record_type: 'vendorBill',
-        upload_id:
-          savedResult.upload_id || null,
-        document_id:
-          savedResult.document_id,
-        version_id:
-          savedResult.version_id || null,
-        filename:
-          savedResult.filename || null,
-        data:
-          savedResult.data || {},
-        requested_fields:
-          savedResult.requested_fields || null,
-        source: 'ocr-history',
-      }),
-    )
 
-    navigate('/app/ocr/field-mapping')
+    const normalizedMode = String(processingMode || '').toUpperCase()
+
+const multipleDocuments =
+  normalizedMode === 'MULTIPLE'
+    ? (Array.isArray(batchResults) ? batchResults : [])
+        .filter((item) => item?.document_id)
+        .map((item) => ({
+          document_id: item.document_id,
+          upload_id: item.upload_id || null,
+          version_id: item.version_id || null,
+          filename: item.filename || null,
+          data: item.data || {},
+          requested_fields: item.requested_fields || null,
+        }))
+    : []
+
+sessionStorage.setItem(
+  'ocr_field_mapping_context',
+  JSON.stringify({
+    connection_id: connectionId,
+    processing_mode: normalizedMode || 'SINGLE',
+    record_type: 'vendorBill',
+
+    upload_id: savedResult.upload_id || null,
+    document_id: savedResult.document_id || null,
+    version_id: savedResult.version_id || null,
+
+    document_ids:
+      normalizedMode === 'MULTIPLE'
+        ? multipleDocuments.map((item) => item.document_id)
+        : savedResult.document_id
+          ? [savedResult.document_id]
+          : [],
+
+    documents: multipleDocuments,
+
+    filename: savedResult.filename || null,
+    data: savedResult.data || {},
+    requested_fields: savedResult.requested_fields || null,
+    source: 'ocr-history',
+  }),
+)
+  navigate('/app/ocr/field-mapping')
   } catch (err) {
     console.error(
       'Failed to save OCR data before Field Mapping:',

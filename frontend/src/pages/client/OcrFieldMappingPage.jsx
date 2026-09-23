@@ -129,81 +129,6 @@ function getApplicationFields(context) {
   return [...deduped.values()]
 }
 
-// function normalizeCatalogue(payload) {
-//   const raw = payload?.data ?? payload ?? {}
-
-//   const fieldContainer = raw?.fields
-//   const nestedFields =
-//     fieldContainer &&
-//     !Array.isArray(fieldContainer)
-//       ? [
-//           ...(Array.isArray(fieldContainer.body)
-//             ? fieldContainer.body
-//             : []),
-//           ...(Array.isArray(fieldContainer.column)
-//             ? fieldContainer.column
-//             : []),
-//         ]
-//       : []
-
-//   const candidates =
-//     nestedFields.length > 0
-//       ? nestedFields
-//       : Array.isArray(fieldContainer)
-//         ? fieldContainer
-//         : raw?.results ??
-//           raw?.items ??
-//           raw?.body_fields ??
-//           []
-
-//   const customFields = Array.isArray(raw?.custom_fields)
-//     ? raw.custom_fields
-//     : []
-
-//   const source = [...candidates, ...customFields]
-
-//   const normalized = []
-
-//   source.forEach((field) => {
-//     if (!field) return
-
-//     const id =
-//       field.id ||
-//       field.field_id ||
-//       field.internal_id ||
-//       field.script_id ||
-//       field.scriptId
-
-//     if (!id) return
-
-//     normalized.push({
-//       id: String(id),
-//       label:
-//         field.label ||
-//         field.display_label ||
-//         field.name ||
-//         String(id),
-//       type:
-//         field.type ||
-//         field.field_type ||
-//         field.datatype ||
-//         'text',
-//       scope:
-//         field.scope ||
-//         field.level ||
-//         (field.sublist_id || field.sublist ? 'line' : 'body'),
-//       reference_type:
-//         field.reference_type ||
-//         field.referenceRecordType ||
-//         null,
-//       custom:
-//         Boolean(field.custom || field.is_custom),
-//     })
-//   })
-
-//   return normalized
-// }
-
 function normalizeCatalogue(payload) {
   const raw = payload?.data ?? payload ?? {}
 
@@ -325,60 +250,6 @@ function normalizeCatalogue(payload) {
   return [...deduped.values()]
 }
 
-// function suggestTarget(applicationField, catalogue) {
-//   if (!catalogue.length) return null
-
-//   const source = normalize(applicationField.key)
-//   const sourceLabel = normalize(applicationField.label)
-
-//   const scored = catalogue.map((field) => {
-//     const target = normalize(field.id)
-//     const targetLabel = normalize(field.label)
-
-//     let score = 0
-
-//     if (source === target || sourceLabel === targetLabel) {
-//       score += 100
-//     }
-
-//     if (source && target.includes(source)) score += 35
-//     if (source && source.includes(target)) score += 25
-
-//     const sourceWords = new Set(
-//       `${source} ${sourceLabel}`.split(' ').filter(Boolean),
-//     )
-//     const targetWords = new Set(
-//       `${target} ${targetLabel}`.split(' ').filter(Boolean),
-//     )
-
-//     const overlap = [...sourceWords].filter((word) =>
-//       targetWords.has(word),
-//     ).length
-
-//     score += overlap * 10
-
-//     if (
-//       applicationField.scope === 'line' &&
-//       String(field.scope).toLowerCase() === 'line'
-//     ) {
-//       score += 20
-//     }
-
-//     if (
-//       applicationField.scope !== 'line' &&
-//       String(field.scope).toLowerCase() !== 'line'
-//     ) {
-//       score += 20
-//     }
-
-//     return { field, score }
-//   })
-
-//   scored.sort((a, b) => b.score - a.score)
-
-//   return scored[0]?.field || null
-// }
-
 export default function OcrFieldMappingPage() {
   const navigate = useNavigate()
 
@@ -455,9 +326,14 @@ export default function OcrFieldMappingPage() {
     return []
   }, [context])
 
-  const documentId = documentIds.length === 1
-    ? documentIds[0]
-    : null
+  const processingMode = String(
+    context?.processing_mode || '',
+  ).toUpperCase()
+
+  const documentId =  
+    documentIds.length === 1
+      ? documentIds[0]
+      : null
 
   const catalogueOptionsByScope = useMemo(() => {
     const body = catalogue.filter(
@@ -906,97 +782,6 @@ export default function OcrFieldMappingPage() {
   }
 }
 
-  // useEffect(() => {
-  //   if (!catalogue.length || !applicationFields.length) {
-  //     return
-  //   }
-
-  //   setMappings((current) => {
-  //     const existingBySource = new Map(
-  //       current.map((item) => [
-  //         item.source_field_key,
-  //         item,
-  //       ]),
-  //     )
-
-  //     let changed = false
-
-  //     const next = applicationFields.map((field) => {
-  //       const existing = existingBySource.get(field.key)
-
-  //       if (existing?.target_field_id) {
-  //         return existing
-  //       }
-
-  //       const options =
-  //         field.scope === 'line'
-  //           ? catalogueOptionsByScope.line
-  //           : catalogueOptionsByScope.body
-
-  //       const suggestion = suggestTarget(field, options)
-
-  //       const nextItem = {
-  //         source_field_key: field.key,
-  //         source_label: field.label,
-  //         source_scope: field.scope,
-  //         target_field_id: suggestion?.id || null,
-  //         target_field_label: suggestion?.label || null,
-  //         status: suggestion ? 'MAPPED' : 'UNRESOLVED',
-  //         confidence: suggestion ? 0.75 : 0,
-  //       }
-
-  //       if (
-  //         !existing ||
-  //         existing.target_field_id !== nextItem.target_field_id ||
-  //         existing.status !== nextItem.status
-  //       ) {
-  //         changed = true
-  //       }
-
-  //       return existing || nextItem
-  //     })
-
-  //     if (
-  //       next.length !== current.length ||
-  //       !next.every(
-  //         (item, index) =>
-  //           item?.source_field_key ===
-  //           current?.[index]?.source_field_key,
-  //       )
-  //     ) {
-  //       changed = true
-  //     }
-
-  //     return changed ? next : current
-  //   })
-  // }, [
-  //   catalogue,
-  //   applicationFields,
-  //   catalogueOptionsByScope,
-  // ])
-
-  // const updateMapping = (sourceKey, targetId) => {
-  //   const allOptions = catalogue
-  //   const target = allOptions.find(
-  //     (field) => field.id === targetId,
-  //   )
-
-  //   setMappings((current) =>
-  //     current.map((item) =>
-  //       item.source_field_key === sourceKey
-  //         ? {
-  //             ...item,
-  //             target_field_id: target?.id || null,
-  //             target_field_label: target?.label || null,
-  //             status: target ? 'MAPPED' : 'UNRESOLVED',
-  //             confidence: target ? 1 : 0,
-  //           }
-  //         : item,
-  //     ),
-  //   )
-  //   setNotice('')
-  // }
-
   const updateMapping = (
   sourceKey,
   targetId,
@@ -1138,33 +923,38 @@ export default function OcrFieldMappingPage() {
       setSaving(true)
       setError('')
       setNotice('')
-
+    
       await netsuiteApi.saveFieldMappings(
         context.connection_id,
         'vendorBill',
         buildMappingPayload(mappings),
       )
-
+    
       setNotice(
         'Field mapping saved successfully.',
       )
+    
+      return true
     } catch (err) {
       console.error(
         'Failed to save field mapping:',
         err,
       )
+    
       setError(
         err?.response?.data?.detail ||
           err?.response?.data?.error ||
           err?.message ||
           'Unable to save field mapping.',
       )
+    
+      return false
     } finally {
       setSaving(false)
     }
   }
 
-  const runValidation = async () => {
+const runValidation = async () => {
   if (!context?.connection_id) {
     setError(
       'A NetSuite connection is required for validation.',
@@ -1172,9 +962,22 @@ export default function OcrFieldMappingPage() {
     return
   }
 
-  if (!documentId) {
+  if (
+    processingMode === 'SINGLE' &&
+    !documentId
+  ) {
     setError(
-       'This OCR result has not been saved yet. Please save it before continuing.',
+      'This OCR result has not been saved yet. Please save it before continuing.',
+    )
+    return
+  }
+
+  if (
+    processingMode === 'MULTIPLE' &&
+    !documentIds.length
+  ) {
+    setError(
+      'No OCR documents are available for batch validation.',
     )
     return
   }
@@ -1184,36 +987,141 @@ export default function OcrFieldMappingPage() {
     setError('')
     setNotice('')
 
-    const result =
-      await netsuiteApi.validateDocument(
-        documentId,
-        context.connection_id,
+    if (processingMode === 'SINGLE') {
+      const result =
+        await netsuiteApi.validateDocument(
+          documentId,
+          context.connection_id,
+        )
+
+      setValidationResult(result)
+
+      sessionStorage.setItem(
+        CONTEXT_KEY,
+        JSON.stringify({
+          ...context,
+          mappings,
+          mapping_completed: true,
+          validation_result: result,
+        }),
       )
 
-    setValidationResult(result)
+      if (result?.status === 'VALIDATED') {
+        setNotice(
+          '✓ NetSuite validation successful. The document is ready to post.',
+        )
+      } else {
+        setNotice(
+          'NetSuite validation completed with validation errors. Review the result before posting.',
+        )
+      }
 
-    sessionStorage.setItem(
-      CONTEXT_KEY,
-      JSON.stringify({
-        ...context,
-        mappings,
-        mapping_completed: true,
-        validation_result: result,
-      }),
-    )
+      return
+    }
 
-    if (result?.status === 'VALIDATED') {
+    if (processingMode === 'MULTIPLE') {
+      const queued =
+        await netsuiteApi.validateBatchDocuments(
+          documentIds,
+          context.connection_id,
+        )
+
+      const jobId = queued?.job_id
+
+      if (!jobId) {
+        throw new Error(
+          'NetSuite batch validation did not return a job ID.',
+        )
+      }
+
       setNotice(
-        '✓ NetSuite validation successful. The document is ready to post.',
+        `NetSuite batch validation started for ${documentIds.length} document(s).`,
       )
-    } else {
-      setNotice(
-        'NetSuite validation failed. Review the errors and use Validate Again after correcting NetSuite data.',
+
+      const maxAttempts = 120
+      const pollIntervalMs = 1500
+
+      for (
+        let attempt = 0;
+        attempt < maxAttempts;
+        attempt += 1
+      ) {
+        const statusResponse =
+          await netsuiteApi.getBatchJobStatus(jobId)
+
+        const statusData =
+          statusResponse?.data ??
+          statusResponse ??
+          {}
+
+        const jobStatus = String(
+          statusData.status || '',
+        ).toUpperCase()
+
+        if (
+          jobStatus === 'SUCCESS' ||
+          jobStatus === 'FAILURE' ||
+          jobStatus === 'REVOKED'
+        ) {
+          const finalResult = {
+            ...statusData,
+            job_id: jobId,
+          }
+
+          setValidationResult(finalResult)
+
+          sessionStorage.setItem(
+            CONTEXT_KEY,
+            JSON.stringify({
+              ...context,
+              mappings,
+              mapping_completed: true,
+              validation_result: finalResult,
+            }),
+          )
+
+          if (jobStatus === 'SUCCESS') {
+            const failedCount =
+              Number(statusData.failed || 0)
+
+            if (failedCount === 0) {
+              setNotice(
+                '✓ All OCR documents were validated successfully against NetSuite.',
+              )
+            } else {
+              setNotice(
+                `Batch validation completed with ${failedCount} failed document(s). Review the results.`,
+              )
+            }
+          } else {
+            setError(
+              statusData.error ||
+                'NetSuite batch validation failed.',
+            )
+          }
+
+          return
+        }
+
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            pollIntervalMs,
+          ),
+        )
+      }
+
+      throw new Error(
+        'NetSuite batch validation timed out while waiting for the worker.',
       )
     }
+
+    setError(
+      'Unsupported OCR processing mode.',
+    )
   } catch (err) {
     console.error(
-      'NetSuite document validation failed:',
+      'NetSuite OCR validation failed:',
       err,
     )
 
@@ -1221,12 +1129,23 @@ export default function OcrFieldMappingPage() {
       err?.response?.data?.detail ||
         err?.response?.data?.error ||
         err?.message ||
-        'Unable to validate the document against NetSuite.',
+        'Unable to validate the OCR document(s) against NetSuite.',
     )
   } finally {
     setValidating(false)
   }
 }
+const handleContinue = async () => {
+  const saved = await handleSaveMapping()
+
+  if (!saved){
+    return 
+  }
+
+  await runValidation()
+}
+
+
 const handleValidateAgain = async () => {
   await runValidation()
 }
@@ -1282,124 +1201,6 @@ const handlePost = async () => {
     setPosting(false)
   }
 }
-  const handleContinue = async () => {
-    if (!context?.connection_id) {
-      setError(
-        'A NetSuite connection is required for validation.',
-      )
-      return
-    }
-
-    if (!documentIds.length) {
-      setError(
-        'No saved OCR documents are available for validation.',
-      )
-      return
-    }
-
-    const vendorMapped = mappings.some(
-      (item) =>
-        item?.target_field_id &&
-        ['entity', 'vendor'].includes(
-          String(item.target_field_id).toLowerCase(),
-        ),
-    )
-
-    const itemMapped = mappings.some(
-      (item) =>
-        item?.target_field_id === 'item' &&
-        item?.source_scope === 'line',
-    )
-
-    if (!vendorMapped || !itemMapped) {
-      setError(
-        'Vendor and Item fields must be mapped before continuing.',
-      )
-      return
-    }
-
-    try {
-      setSaving(true)
-      setError('')
-      setNotice('')
-
-      await netsuiteApi.saveFieldMappings(
-        context.connection_id,
-        'vendorBill',
-        buildMappingPayload(mappings),
-      )
-
-      const response = await apiClient.post(
-        '/netsuite/ocr/batch/validate/',
-        {
-          document_ids: documentIds,
-          connection_id: context.connection_id,
-        },
-      )
-
-      const queued =
-        response?.data?.data ??
-        response?.data ??
-        {}
-
-      const jobId = queued?.job_id
-
-      if (!jobId) {
-        throw new Error(
-          'NetSuite validation batch was created without a job ID.',
-        )
-      }
-
-      sessionStorage.setItem(
-        // CONTEXT_KEY,
-        'ocr_netsuite_validation_job',
-        JSON.stringify({
-          // ...context,
-          // document_ids: documentIds,
-          // mapping_completed: true,
-          // validation_job_id: String(jobId),
-          job_id: String(jobId),
-          connection_id: context.connection_id,
-          document_ids: documentIds,
-          created_at: Date.now(),
-        }),
-      )
-
-      sessionStorage.setItem(
-        CONTEXT_KEY,
-        JSON.stringify({
-          ...context,
-          documents: context.documents || [],
-          document_ids: documentIds,
-          mapping_completed: true,
-          validation_job_id: String(jobId),
-        })
-      )
-
-      navigate('/app/ocr', {
-        state: {
-          validationJobId: String(jobId),
-          documentIds,
-          connectionId: context.connection_id,
-        },
-      })
-    } catch (err) {
-      console.error(
-        'Failed to queue NetSuite reference validation:',
-        err,
-      )
-
-      setError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'Unable to start NetSuite validation.',
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
-
   if (loadingContext) {
     return (
       <ClientLayout
@@ -1416,10 +1217,7 @@ const handlePost = async () => {
   }
 
   return (
-    <ClientLayout
-      title="Field Mapping"
-      breadcrumb="OCR / Field Mapping"
-    >
+    <ClientLayout title="Field Mapping" breadcrumb="OCR / Field Mapping">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -1436,21 +1234,15 @@ const handlePost = async () => {
             )}
           </div>
 
-          <Button
-            type="button"
-            intent="secondary"
-            onClick={() => navigate('/app/ocr')}
-          >
+          <Button type="button" intent="secondary" onClick={() => navigate('/app/ocr')}>
             ← Back to OCR
           </Button>
         </div>
-
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
         )}
-
         {notice && (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
             {notice}
@@ -1540,21 +1332,10 @@ const handlePost = async () => {
         </div>
       </div>
     )}
-
     <div className="mt-5 flex flex-wrap justify-end gap-3">
-      { false && validationResult.status ===
+      {validationResult.status ===
         'VALIDATION_FAILED' && (
-        <Button
-          type="button"
-          intent="secondary"
-          onClick={handleValidateAgain}
-          disabled={
-            validating ||
-            saving ||
-            posting
-          }
-          isLoading={validating}
-        >
+        <Button type="button" intent="secondary" onClick={handleValidateAgain} disabled={ validating || saving || posting } isLoading={validating}>
           Validate Again
         </Button>
       )}
@@ -1691,7 +1472,7 @@ const handlePost = async () => {
                     >
                       <div className="min-w-0">
                         <p className="break-all text-sm font-semibold text-[var(--color-ink)]">
-                          {item.source_label}
+                          {item.source_field_label || item.source_label || item.source_field_key}
                         </p>
                         <p className="mt-1 text-xs text-[var(--color-muted)]">
                           {item.source_field_key} ·{' '}
@@ -1760,7 +1541,7 @@ const handlePost = async () => {
                 type="button"
                 intent="secondary"
                 onClick={handleSaveMapping}
-                disabled={saving || mapping}
+                disabled={saving || mapping || validating || posting}
                 isLoading={saving}
               >
                 Save Mapping
@@ -1772,9 +1553,11 @@ const handlePost = async () => {
                 disabled={
                   saving ||
                   mapping ||
+                  validating ||
+                  posting ||
                   !mappings.length
                 }
-                isLoading={saving}
+                isLoading={saving || validating}
               >
                 Continue →
               </Button>

@@ -52,6 +52,19 @@ class OCRBatch(models.Model):
         choices=SourceType.choices,
         default=SourceType.DIRECT,
     )
+
+    class ProcessingMode(models.TextChoices):
+        SINGLE = "SINGLE", "Single"
+        MULTIPLE = "MULTIPLE", "Multiple"
+
+
+    processing_mode = models.CharField(
+        max_length=10,
+        choices=ProcessingMode.choices,
+        default=ProcessingMode.MULTIPLE,
+        db_index=True,
+    )
+
     original_filename = models.CharField(
         max_length=255,
         null=True,
@@ -206,7 +219,15 @@ class OCRUpload(models.Model):
     processing_completed_at = models.DateTimeField(null=True, blank=True)
     processing_duration_ms = models.PositiveIntegerField(null=True, blank=True)
     failure_reason = models.TextField(null=True, blank=True)
-
+    live_result_json = models.JSONField(
+        null=True,
+        blank=True,
+    )
+    live_result_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

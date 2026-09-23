@@ -18,7 +18,8 @@ from ocr.views import (
     OCRStandardFieldsView,
     OCRExtractView,
     OCRBatchStatusView,
-    OCRUploadPreviewView,   
+    OCRUploadPreviewView,
+    OCRUploadModesView,   
 )
 
 urlpatterns = [
@@ -33,4 +34,5 @@ urlpatterns = [
     path("extraction-templates/<uuid:template_id>/",OCRExtractionTemplateDetailView.as_view(),name="ocr-extraction-template-detail"),
     path("extraction-fields/",OCRStandardFieldsView.as_view(),name="ocr-extraction-fields"),
     path("review/save/",OCRReviewSaveView.as_view(),name="ocr-review-save"),
+    path("extract/upload-modes/",OCRUploadModesView.as_view(),name="ocr-upload-modes"),
 ]

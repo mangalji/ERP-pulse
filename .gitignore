@@ -145,3 +145,4 @@ agsuite-frontend.tar
 agsuite-docker-images.tar
 same_map_data.txt
 backend/file_for_zoho_env_vars.json
+backend/agsuite_supabase_backup.dump

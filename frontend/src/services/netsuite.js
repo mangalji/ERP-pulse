@@ -66,6 +66,12 @@ export const netsuiteApi = {
   validateDocument: (documentId, connectionId) => 
     apiClient.post('/netsuite/ocr/validate/',{document_id:documentId,connection_id: connectionId}).then(unwrap),
 
+  validateBatchDocuments: (documentIds, connectionId) =>
+    apiClient.post('/netsuite/ocr/batch/validate/',{document_ids: documentIds, connection_id: connectionId,}).then(unwrap),
+
+  getBatchJobStatus: (jobId) =>
+  apiClient.get(`/netsuite/ocr/batch/jobs/${jobId}/`).then(unwrap),
+
   postOCRVendorBill: (documentId, connectionId) => 
     apiClient.post('/netsuite/ocr/post-vendor-bill/',{document_id:documentId, connection_id:connectionId}).then(unwrap),
   }

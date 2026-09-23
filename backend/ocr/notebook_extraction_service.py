@@ -410,19 +410,8 @@ def _slugify_field_key(label: str) -> str:
 # and OCRExtractionTemplate). A caller can select a subset of the standard
 # fields below, drop line_items entirely, and/or add custom fields with an
 # AI description/instruction and a header-or-line scope.
-#
-# requested_fields shape:
-#   {
-#     "standard_fields": ["invoice_number", ..., "line_items"],
-#     "custom_fields": [
-#       {"key": "po_number", "label": "Purchase Order Number",
-#        "description": "The PO/reference number on this invoice.",
-#        "scope": "header"},
-#       {"key": "batch_number", "label": "Batch Number",
-#        "description": "Manufacturing/lot batch number for this line.",
-#        "scope": "line"},
-#     ],
-#   }
+
+
 def resolve_field_config(
     requested_fields: dict[str, Any] | None,
 ) -> tuple[dict[str, str], dict[str, str], bool, dict[str, str], dict[str, str]]:
@@ -1102,6 +1091,9 @@ class NotebookGeminiExtractor:
         file_path: str | Path,
         mime_type: str | None = None,
         requested_fields: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+        max_retries: int | None = None,
     ) -> dict:
         """
         Read the original file bytes and extract structured JSON with Gemini.
@@ -1119,6 +1111,18 @@ class NotebookGeminiExtractor:
             header_types,
             line_types,
         ) = resolve_field_config(requested_fields)
+        effective_timeout = (
+            self.timeout if timeout is None else timeout
+        )
+        effective_max_retries = (
+            self.max_retries if max_retries is None else max_retries
+        )
+
+        if effective_timeout <= 0:
+            raise ValueError("OCR extraction timeout must be greater than 0.")
+
+        if effective_max_retries < 0:
+            raise ValueError("OCR max_retries cannot be negative.")
         header_keys = tuple(header_fields.keys())
         line_keys = tuple(line_fields.keys())
         schema = _build_schema(
@@ -1158,7 +1162,12 @@ class NotebookGeminiExtractor:
         )
 
         genai = self._get_genai()
-        client = self._create_client(genai)
+        # Reserve enough time for the mandatory verification pass.
+        primary_timeout = min(
+            max(1.0, effective_timeout),
+            35.0,
+        )
+        client = self._create_client(genai,timeout=effective_timeout)
         file_part = genai.types.Part.from_bytes(
             data=file_bytes,
             mime_type=media_type,
@@ -1168,7 +1177,7 @@ class NotebookGeminiExtractor:
         start = time.perf_counter()
 
         # Same retry shape as the supplied notebook: 3 retries + initial call.
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(effective_max_retries + 1):
             try:
                 response = client.models.generate_content(
                     model=self.model,
@@ -1255,11 +1264,11 @@ class NotebookGeminiExtractor:
                     "attempt=%d/%d error=%s",
                     request_id,
                     attempt + 1,
-                    self.max_retries + 1,
+                    effective_max_retries + 1,
                     error_text,
                 )
 
-                if attempt >= self.max_retries:
+                if attempt >= effective_max_retries:
                     raise classified from last_exception
 
                 time.sleep(wait_seconds * (attempt + 1))
@@ -1342,17 +1351,18 @@ class NotebookGeminiExtractor:
             return None
 
 
-    def _create_client(self, genai):
+    def _create_client(self, genai,*,timeout: float | None = None):
         api_key = getattr(settings, "GEMINI_API_KEY", "")
         if not api_key:
             raise GeminiConnectionException(
                 "GEMINI_API_KEY is not configured."
             )
-
         try:
+            effective_timeout = self.timeout if timeout is None else timeout
+
             return genai.Client(
                 api_key=api_key,
-                http_options={"timeout": self.timeout * 1000},
+                http_options={"timeout":int(effective_timeout * 1000),},
             )
         except Exception as exc:
             raise GeminiConnectionException(
