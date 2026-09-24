@@ -1165,36 +1165,6 @@ class NotebookGeminiExtractor:
                     include_line_items,
                 )
 
-                if _verification_is_needed(result, header_keys):
-                    elapsed = time.perf_counter() - start
-                    remaining = effective_timeout - elapsed
-                
-                    # Verification is optional. Only run it when enough time remains
-                    # to complete it without breaking the overall OCR timeout budget.
-                    if remaining > 3.0:
-                        verification_timeout = max(
-                            1.0,
-                            remaining - 2.0,
-                        )
-                
-                        audit = self._verify_extraction(
-                            provider=provider,
-                            file_path=path,
-                            mime_type=media_type,
-                            candidate=result,
-                            request_id=request_id,
-                            timeout=verification_timeout,
-                        )
-                
-                        if audit is not None:
-                            result = _merge_corrected_result(
-                                result,
-                                audit,
-                                header_keys,
-                                line_keys,
-                                include_line_items,
-                            )
-
                 result = _apply_datatype_normalization(
                     result,
                     header_types,

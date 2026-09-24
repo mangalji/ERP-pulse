@@ -746,6 +746,7 @@ class CenterCategoriesBulkDeleteView(APIView):
             "settings-company-info",
             "settings-customize",
             "settings-personal-info",
+            "settings-ai-integration",
         }
 
         protected_categories = categories.filter(
@@ -912,6 +913,7 @@ class NavigationCustomizationDataView(APIView):
                         "settings-company-info",
                         "settings-customize",
                         "settings-personal-info",
+                        "settings-ai-integration",
                     }
                 ),
                 "children": [],
@@ -1018,6 +1020,7 @@ class NavigationAccessUpdateView(APIView):
                     "settings-company-info",
                     "settings-customize",
                     "settings-personal-info",
+                    "settings-ai-integration",
                 },
                 is_active=True,
             ).first()
@@ -1298,6 +1301,7 @@ class NavigationMasterUpdateView(APIView):
                     "settings-company-info",
                     "settings-customize",
                     "settings-personal-info",
+                    "settings-ai-integration",
                 }
             )
             or (
@@ -1467,6 +1471,7 @@ class NavigationMasterUpdateView(APIView):
             "settings-company-info",
             "settings-customize",
             "settings-personal-info",
+            "settings-ai-integration",
             "center-tabs",
             "center-categories",
         }
@@ -1584,6 +1589,7 @@ class CenterCategoriesView(APIView):
                             "settings-company-info",
                             "settings-customize",
                             "settings-personal-info",
+                            "settings-ai-integration",
                         },
                     }
                     for category in page.object_list
@@ -1741,6 +1747,7 @@ class CenterTabChildrenView(APIView):
                             "settings-company-info",
                             "settings-customize",
                             "settings-personal-info",
+                            "settings-ai-integration",
                         },
                     }
                     for category in categories
