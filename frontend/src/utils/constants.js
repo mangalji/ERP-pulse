@@ -39,12 +39,6 @@ export const NETSUITE_ENDPOINTS = {
   invoices: '/netsuite/invoices/',
 }
 
-export const MONITORING_ENDPOINTS = {
-  health: '/monitoring/health/',
-  errors: '/monitoring/errors/',
-  apiUsage: '/monitoring/api-usage/',
-}
-
 export const CLIENT_ENDPOINTS = {
   me: '/client/me/',
   employees: '/client/employees/',
