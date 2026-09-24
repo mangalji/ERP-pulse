@@ -250,13 +250,6 @@ def _get_live_ocr_result(upload_id):
 
     return None
     
-    # except Exception:
-    #     logger.exception(
-    #         "Failed to read live OCR result during save — upload_id=%s",
-    #         upload_id,
-    #     )
-    #     return None
-
 def _batch_scope(user):
     """
     Employee: own batches only.
@@ -984,7 +977,6 @@ class OCRExtractView(APIView):
             "version_number": version.version_number if version else None,
             "filename": upload.original_filename,
             "error": upload.failure_reason if upload.status == OCRUpload.Status.FAILED else None,
-            # "data": version.normalized_json if version else None,
             "data": live_data if live_data is not None else version.normalized_json if version else None,
         }
 
@@ -1187,46 +1179,6 @@ class OCRExtractView(APIView):
                 raise ZipValidationError(
                     "No supported OCR files were created from this upload."
                 )
-
-            # Queue each file independently. Celery workers plus the Redis
-            # limiter control actual Gemini concurrency/rate.
-            # queued = 0
-            # for upload in created_uploads:
-            #     task = getattr(process_ocr_upload_task, "delay", None)
-
-            #     if task is None:
-            #         # Development fallback if Celery is unavailable.
-            #         process_ocr_upload_task(
-            #             str(upload.id),
-            #             str(request.user.id),
-            #         )
-            #     else:
-            #         task(
-            #             str(upload.id),
-            #             str(request.user.id),
-            #         )
-
-            #     queued += 1
-
-            # return Response(
-            #     {
-            #         "batch_id": str(batch.id),
-            #         "status": batch.status,
-            #         "source_type": batch.source_type,
-            #         "source_filename": batch.original_filename,
-            #         "total_files": len(created_uploads),
-            #         "queued_files": queued,
-            #         "files": [
-            #             {
-            #                 "upload_id": str(upload.id),
-            #                 "filename": upload.original_filename,
-            #                 "status": upload.status,
-            #             }
-            #             for upload in created_uploads
-            #         ],
-            #     },
-            #     status=status.HTTP_202_ACCEPTED,
-            # )
             if mode == "single":
                 upload = created_uploads[0]
 
