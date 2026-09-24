@@ -37,22 +37,11 @@ from ocr.exceptions import InvalidFileException, UnsupportedFormatException, Doc
 class OCRService:
     """
     Upload persistence and a thin facade over OCR extraction.
-
-    ``upload`` persists an uploaded file as an ``OCRUpload`` record.
-    ``extract`` and ``save_result`` delegate to ``OCRExtractionService``
-    so the full extraction pipeline is never duplicated here.
+    'upload' persists an uploaded file as an 'OCRUpload' record.
     """
 
-    def __init__(self, extraction_service=None) -> None:
-        # Lazy-import to avoid a circular import at module load time.
-        self._extraction_service = extraction_service
-
-    def _extractor(self):
-        """Return the shared OCRExtractionService instance."""
-        if self._extraction_service is None:
-            from ocr.extraction_service import ocr_extraction_service
-            self._extraction_service = ocr_extraction_service
-        return self._extraction_service
+    def __init__(self) -> None:
+        pass
 
     @transaction.atomic
     def upload(self, *, file, user) -> OCRUpload:
@@ -131,16 +120,5 @@ class OCRService:
             upload.id, user.id, file.size,
         )
         return upload
-
-    def extract(self, *, upload_id, user):
-        """
-        Extract structured data from an upload.
-
-        Thin delegation to ``OCRExtractionService`` — no extraction
-        logic lives here. ``upload_id`` is resolved to an ``OCRUpload``
-        before handing off to the extraction service.
-        """
-        upload = OCRUpload.objects.select_related('user').get(pk=upload_id)
-        return self._extractor().extract(upload, user)
 
 ocr_service = OCRService()
