@@ -144,7 +144,7 @@ export default function CenterCategoriesPage() {
       if (editingCategoryId) {
         const payload = {
           name,
-          route: '',
+          route: categoryForm.route.trim(),
           query_param: queryParam,
         }
 
@@ -276,6 +276,23 @@ export default function CenterCategoriesPage() {
                 </select>
               </div>
 
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">
+                  Path (optional)
+                </label>
+                <input
+                  value={categoryForm.route}
+                  onChange={(event) =>
+                    setCategoryForm((current) => ({
+                      ...current,
+                      route: event.target.value,
+                    }))
+                  }
+                  placeholder="e.g. /app/customers"
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm"
+                />
+              </div>
 
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-[var(--color-ink-soft)]">

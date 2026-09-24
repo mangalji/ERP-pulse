@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from django.conf import settings
+from ocr.ai.providers import AIProviderError
+from ocr.ai.service import ai_configuration_service
 
 from ocr.exceptions import (
     GeminiConnectionException,
@@ -1061,30 +1063,17 @@ def parse_json_response(text: str) -> dict:
 
 
 class NotebookGeminiExtractor:
-    """Gemini extractor implementing the approved notebook's core logic."""
+    """Company-scoped OCR extractor with a provider-neutral AI backend.
+
+    The class name is retained for compatibility with existing imports. The
+    implementation is no longer Gemini-specific: the active company
+    configuration resolves the provider and model at request time.
+    """
 
     def __init__(self) -> None:
-        self.model = getattr(
-            settings,
-            "OCR_GEMINI_MODEL",
-            "gemini-2.5-flash",
-        )
         self.timeout = getattr(settings, "OCR_TIMEOUT", 180)
         self.max_retries = getattr(settings, "OCR_MAX_RETRIES", 3)
         self.retry_delay = getattr(settings, "OCR_RETRY_DELAY", 1.0)
-        self._genai = None
-
-    def _get_genai(self):
-        if self._genai is None:
-            try:
-                from google import genai
-            except ImportError as exc:
-                raise GeminiConnectionException(
-                    "google-genai is not installed. "
-                    "Run: pip install google-genai"
-                ) from exc
-            self._genai = genai
-        return self._genai
 
     def extract(
         self,
@@ -1092,18 +1081,10 @@ class NotebookGeminiExtractor:
         mime_type: str | None = None,
         requested_fields: dict[str, Any] | None = None,
         *,
+        company=None,
         timeout: float | None = None,
         max_retries: int | None = None,
     ) -> dict:
-        """
-        Read the original file bytes and extract structured JSON with Gemini.
-
-        requested_fields, when given, is the dynamic extraction
-        configuration (Phase 2) — a subset of standard fields plus any
-        custom fields with their own AI description and header/line scope.
-        Omitting it (the default) extracts the full standard field set,
-        exactly as before.
-        """
         (
             header_fields,
             line_fields,
@@ -1111,25 +1092,36 @@ class NotebookGeminiExtractor:
             header_types,
             line_types,
         ) = resolve_field_config(requested_fields)
-        effective_timeout = (
-            self.timeout if timeout is None else timeout
-        )
+
+        effective_timeout = self.timeout if timeout is None else timeout
         effective_max_retries = (
             self.max_retries if max_retries is None else max_retries
         )
 
         if effective_timeout <= 0:
             raise ValueError("OCR extraction timeout must be greater than 0.")
-
         if effective_max_retries < 0:
             raise ValueError("OCR max_retries cannot be negative.")
+        if company is None:
+            raise GeminiConnectionException(
+                "No company context was supplied for OCR AI configuration."
+            )
+
         header_keys = tuple(header_fields.keys())
         line_keys = tuple(line_fields.keys())
         schema = _build_schema(
-            header_fields, line_fields, include_line_items, header_types, line_types
+            header_fields,
+            line_fields,
+            include_line_items,
+            header_types,
+            line_types,
         )
         prompt = build_prompt(
-            header_fields, line_fields, include_line_items, header_types, line_types
+            header_fields,
+            line_fields,
+            include_line_items,
+            header_types,
+            line_types,
         )
 
         path = Path(file_path)
@@ -1143,80 +1135,75 @@ class NotebookGeminiExtractor:
                 f"Unsupported OCR file type: {extension or media_type}"
             )
 
-        try:
-            file_bytes = path.read_bytes()
-        except OSError as exc:
-            raise GeminiConnectionException(
-                f"Unable to read OCR source file: {exc}"
-            ) from exc
-
-        if not file_bytes:
-            raise GeminiValidationException("Uploaded file is empty.")
-
         request_id = uuid.uuid4().hex[:8]
+        provider = ai_configuration_service.resolve_provider(company=company)
+
         logger.info(
-            "Notebook Gemini extraction started — request_id=%s file=%s model=%s",
+            "Company AI OCR extraction started — request_id=%s file=%s provider=%s model=%s",
             request_id,
             path.name,
-            self.model,
-        )
-
-        genai = self._get_genai()
-        # Reserve enough time for the mandatory verification pass.
-        primary_timeout = min(
-            max(1.0, effective_timeout),
-            35.0,
-        )
-        client = self._create_client(genai,timeout=effective_timeout)
-        file_part = genai.types.Part.from_bytes(
-            data=file_bytes,
-            mime_type=media_type,
+            getattr(provider, "__class__", type(provider)).__name__,
+            getattr(provider, "model", "unknown"),
         )
 
         last_exception: Exception | None = None
         start = time.perf_counter()
 
-        # Same retry shape as the supplied notebook: 3 retries + initial call.
         for attempt in range(effective_max_retries + 1):
             try:
-                response = client.models.generate_content(
-                    model=self.model,
-                    contents=[file_part, prompt],
-                    config=genai.types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=schema,
-                        temperature=0,
+                result = _normalize_result(
+                    provider.generate_json(
+                        file_path=path,
+                        mime_type=media_type,
+                        prompt=prompt,
+                        schema=schema,
+                        timeout=effective_timeout,
                         seed=42,
                     ),
-                )
-
-                response_text = getattr(response, "text", None)
-                result = _normalize_result(
-                    parse_json_response(response_text or ""),
                     header_keys,
                     line_keys,
                     include_line_items,
                 )
+
                 if _verification_is_needed(result, header_keys):
-                    audit = self._verify_extraction(
-                        genai=genai,
-                        client=client,
-                        file_part=file_part,
-                        candidate=result,
-                        request_id=request_id,
+                    elapsed = time.perf_counter() - start
+                    remaining = effective_timeout - elapsed
+                
+                    # Verification is optional. Only run it when enough time remains
+                    # to complete it without breaking the overall OCR timeout budget.
+                    if remaining > 3.0:
+                        verification_timeout = max(
+                            1.0,
+                            remaining - 2.0,
                         )
-                    if audit is not None:
-                        result = _merge_corrected_result(
-                            result, audit, header_keys, line_keys, include_line_items,
+                
+                        audit = self._verify_extraction(
+                            provider=provider,
+                            file_path=path,
+                            mime_type=media_type,
+                            candidate=result,
+                            request_id=request_id,
+                            timeout=verification_timeout,
+                        )
+                
+                        if audit is not None:
+                            result = _merge_corrected_result(
+                                result,
+                                audit,
+                                header_keys,
+                                line_keys,
+                                include_line_items,
                             )
 
                 result = _apply_datatype_normalization(
-                    result, header_types, line_types, line_keys
+                    result,
+                    header_types,
+                    line_types,
+                    line_keys,
                 )
 
                 logger.info(
-                    "Notebook Gemini extraction completed — request_id=%s "
-                    "attempt=%d duration_ms=%.2f",
+                    "Company AI OCR extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
                     request_id,
                     attempt + 1,
                     (time.perf_counter() - start) * 1000,
@@ -1225,43 +1212,34 @@ class NotebookGeminiExtractor:
 
             except GeminiValidationException:
                 raise
-            except Exception as exc:
+            except AIProviderError as exc:
                 last_exception = exc
                 error_text = str(exc)
                 error_lower = error_text.lower()
 
-                if ("429" in error_lower or "resource_exhausted" in error_lower or "quota" in error_lower):
+                if any(token in error_lower for token in ("429", "quota", "rate limit", "resource_exhausted")):
                     classified = GeminiRateLimitException(
-                        f"Gemini API rate limit exceeded: {error_text}"
+                        f"AI provider rate limit exceeded: {error_text}"
                     )
                     wait_seconds = 15
-                elif ("timeout" in error_lower or "deadline" in error_lower):
+                elif any(token in error_lower for token in ("timeout", "deadline")):
                     classified = GeminiTimeoutException(
-                        f"Gemini API request timed out: {error_text}"
+                        f"AI provider request timed out: {error_text}"
                     )
                     wait_seconds = 3
-                elif(
-                    "connection" in error_lower
-                    or "connect" in error_lower
-                    or "network" in error_lower
-                    or "503" in error_lower
-                    or "502" in error_lower
-                    or "500" in error_lower
-                     ):
+                elif any(token in error_lower for token in ("connection", "network", "503", "502", "500")):
                     classified = GeminiConnectionException(
-                        f" Gemini API request failed: {error_text}"
-                        )
+                        f"AI provider request failed: {error_text}"
+                    )
                     wait_seconds = 3
-
                 else:
                     classified = GeminiValidationException(
-                        f"Gemini API request failed: {error_text}"
+                        f"AI provider request failed: {error_text}"
                     )
                     wait_seconds = 0
 
                 logger.warning(
-                    "Notebook Gemini extraction failed — request_id=%s "
-                    "attempt=%d/%d error=%s",
+                    "Company AI OCR extraction failed — request_id=%s attempt=%d/%d error=%s",
                     request_id,
                     attempt + 1,
                     effective_max_retries + 1,
@@ -1271,103 +1249,76 @@ class NotebookGeminiExtractor:
                 if attempt >= effective_max_retries:
                     raise classified from last_exception
 
-                time.sleep(wait_seconds * (attempt + 1))
+                if wait_seconds:
+                    time.sleep(wait_seconds * (attempt + 1))
 
-        # Defensive fallback; the loop always returns or raises.
+            except Exception as exc:
+                last_exception = exc
+                logger.warning(
+                    "Company AI OCR extraction failed — request_id=%s attempt=%d/%d error=%s",
+                    request_id,
+                    attempt + 1,
+                    effective_max_retries + 1,
+                    exc,
+                )
+                if attempt >= effective_max_retries:
+                    raise GeminiConnectionException(
+                        f"AI provider request failed: {exc}"
+                    ) from exc
+
         raise GeminiConnectionException(
-            f"Gemini extraction failed: {last_exception}"
+            f"AI extraction failed: {last_exception}"
         ) from last_exception
 
-    def _verify_extraction(self,*,genai,client,file_part,candidate: dict,request_id: str) -> dict | None:
-        """
-        Re-read the original document and return evidence-backed corrections.
-
-        The verifier does not replace the entire primary result blindly.
-        It returns only corrections that are supported by the document.
-        """
+    def _verify_extraction(
+        self,
+        *,
+        provider,
+        file_path: Path,
+        mime_type: str,
+        candidate: dict,
+        request_id: str,
+        timeout: float,
+    ) -> dict | None:
+        """Run the existing conditional evidence-check using the same provider."""
 
         verification_prompt = VERIFICATION_PROMPT_TEMPLATE.format(
-            primary_json=json.dumps(
-                candidate,
-                ensure_ascii=False,
-            )
+            primary_json=json.dumps(candidate, ensure_ascii=False)
         )
 
         try:
-            response = client.models.generate_content(
-                model=self.model,
-                contents=[
-                    file_part,
-                    verification_prompt,
-                ],
-                config=genai.types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=_audit_schema(),
-                    temperature=0,
-                    seed=43,
-                ),
+            audit = provider.generate_json(
+                file_path=file_path,
+                mime_type=mime_type,
+                prompt=verification_prompt,
+                schema=_audit_schema(),
+                timeout=timeout,
+                seed=43,
             )
 
-            response_text = getattr(
-                response,
-                "text",
-                None,
-            )
-    
-            audit = parse_json_response(
-                response_text or ""
-            )
-    
             if not isinstance(audit, dict):
                 logger.warning(
                     "OCR verification returned invalid shape — request_id=%s",
                     request_id,
                 )
                 return None
-    
+
             logger.info(
-                "Notebook Gemini verification completed — "
-                "request_id=%s corrections=%s",
+                "Company AI OCR verification completed — request_id=%s corrections=%s",
                 request_id,
-                len(
-                    audit.get("corrections", [])
-                )
-                if isinstance(
-                    audit.get("corrections"),
-                    list,
-                )
+                len(audit.get("corrections", []))
+                if isinstance(audit.get("corrections"), list)
                 else 0,
             )
-    
             return audit
 
         except Exception as exc:
             logger.warning(
-                "Notebook Gemini verification skipped — "
-                "request_id=%s error=%s",
+                "OCR verification skipped — request_id=%s error=%s",
                 request_id,
                 exc,
             )
             return None
-
-
-    def _create_client(self, genai,*,timeout: float | None = None):
-        api_key = getattr(settings, "GEMINI_API_KEY", "")
-        if not api_key:
-            raise GeminiConnectionException(
-                "GEMINI_API_KEY is not configured."
-            )
-        try:
-            effective_timeout = self.timeout if timeout is None else timeout
-
-            return genai.Client(
-                api_key=api_key,
-                http_options={"timeout":int(effective_timeout * 1000),},
-            )
-        except Exception as exc:
-            raise GeminiConnectionException(
-                f"Failed to create Gemini client: {exc}"
-            ) from exc
 
 
 notebook_gemini_extractor = NotebookGeminiExtractor()

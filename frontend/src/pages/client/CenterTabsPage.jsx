@@ -47,7 +47,7 @@ export default function CenterTabsPage() {
     const name = form.name.trim()
     const route = form.route.trim()
     if (!name) return setError('Center Tab name is required.')
-    if (!route) return setError('Path is required.')
+    // if (!route) return setError('Path is required.')
     if (route.includes('?') || route.includes('#')) return setError('Do not enter query parameters in Path.')
 
     setSaving(true); setError(''); setMessage('')

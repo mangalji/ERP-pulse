@@ -5,7 +5,7 @@ All OCR endpoints are mounted under /api/v1/ocr/ via the root
 ``config/urls.py`` include.
 """
 
-from django.urls import path
+from django.urls import path, include
 
 from ocr.views import (
     DocumentHistoryView,
@@ -35,4 +35,5 @@ urlpatterns = [
     path("extraction-fields/",OCRStandardFieldsView.as_view(),name="ocr-extraction-fields"),
     path("review/save/",OCRReviewSaveView.as_view(),name="ocr-review-save"),
     path("extract/upload-modes/",OCRUploadModesView.as_view(),name="ocr-upload-modes"),
+    path("ai/", include("ocr.ai.urls")),
 ]

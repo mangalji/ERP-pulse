@@ -53,7 +53,9 @@ class DynamicNavigationMenuView(APIView):
         inherited_route="",
         inherited_query_params=None,
     ):
-        effective_route = tab.route or inherited_route
+        # A configured child path is independent; otherwise inherit the
+        # effective path from the parent navigation item.
+        effective_route = tab.route or inherited_route or ""
 
         effective_query_params = dict(inherited_query_params or {})
         for key in (tab.query_params or {}):
@@ -202,6 +204,7 @@ SYSTEM_KEYS = {
     "settings-company-info",
     "settings-customize",
     "settings-personal-info",
+    "settings-ai-integration",
     "center-tabs",
     "center-categories",
 }
@@ -331,16 +334,15 @@ def _ensure_system_tabs():
             "key": "employees",
             "name": "Employees",
             "route": "/app/employees",
-            # "feature_code": "system.employees",
             "sort_order": 10,
         },
         {
             "key": "settings",
             "name": "Settings",
             "route": "/app/settings",
-            # "feature_code": "system.settings",
             "sort_order": 9990,
         },
+        
     ]
 
     for tab_data in system_tabs:
@@ -349,7 +351,6 @@ def _ensure_system_tabs():
             defaults={
                 "name": tab_data["name"],
                 "route": tab_data["route"],
-                # "feature_code": tab_data["feature_code"],
                 "sort_order": tab_data["sort_order"],
                 "is_active": True,
             },
@@ -376,6 +377,12 @@ def _ensure_system_tabs():
             "route": "/app/profile",   
             "sort_order": 30,
         },
+        {
+            "key": "settings-ai-integration",
+            "name": "AI Integration",
+            "route": "/app/settings/ai-integration",
+            "sort_order": 40,
+        }
     ]
 
     for tab_data in settings_children:
@@ -574,7 +581,7 @@ class CenterTabsView(APIView):
         try:
             route = _normalize_route(
                 request.data.get("route"),
-                required=True,
+                required=False,
             )
         except ValueError as exc:
             return Response(
@@ -1116,11 +1123,9 @@ class NavigationMasterCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Paths:
-        # root   (Center Tab) -> required
-        # top    (Center Category) -> optional; inherits parent when blank
-        # level2 (Level-3) -> optional; inherits parent/category when blank
-        route_required = parent_level == "root"
+        # Path is optional at every navigation level. A blank child path
+        # inherits its parent's effective path when the menu is built.
+        route_required = False
 
         try:
             route = _normalize_route(
@@ -1335,11 +1340,8 @@ class NavigationMasterUpdateView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if level == "top":
-            route_required = True
-        else:
-            # Center Categories and Level-3 items inherit their effective path.
-            route_required = False
+        # Path is optional at every navigation level.
+        route_required = False
 
         if "route" in request.data:
             raw_route = request.data.get("route")
@@ -1354,11 +1356,11 @@ class NavigationMasterUpdateView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if level == "top" and not tab.route:
-            return Response(
-                {"detail": "Path is required for Center Tabs."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # if level == "top" and not tab.route:
+        #     return Response(
+        #         {"detail": "Path is required for Center Tabs."},
+        #         status=status.HTTP_400_BAD_REQUEST,
+        #     )
 
         current_query_keys = list((tab.query_params or {}).keys())
 

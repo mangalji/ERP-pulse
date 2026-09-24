@@ -12,6 +12,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from common.crypto import EncryptedTextField
 
 class OCRBatch(models.Model):
     """
@@ -547,3 +548,32 @@ class OCRValidationResult(models.Model):
 
     def __str__(self) -> str:
         return f'Validation {self.document_id} — {self.status}'
+
+class AIConfiguration(models.Model):
+    """One company-scoped AI provider configuration used by OCR."""
+
+    class Provider(models.TextChoices):
+        GOOGLE = "google", "Google"
+        OPENAI = "openai", "OpenAI"
+        ANTHROPIC = "anthropic", "Anthropic"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.OneToOneField(
+        "tenancy.Company",
+        on_delete=models.CASCADE,
+        related_name="ocr_ai_configuration",
+    )
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    model = models.CharField(max_length=150)
+    api_key = EncryptedTextField(default="", blank=True)
+    is_active = models.BooleanField(default=False)
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ocr_ai_configuration"
+
+    def __str__(self) -> str:
+        return f"{self.company_id} → {self.provider}:{self.model}"
+

@@ -17,6 +17,7 @@ import SuperAdminSettingsPage from '../pages/superadmin/SettingsPage.jsx'
 import SuperAdminCompanyDetailPage from '../pages/superadmin/CompanyDetailPage.jsx'
 import SuperAdminCompanySubscriptionPage from '../pages/superadmin/CompanySubscriptionPage.jsx'
 import InvitationAcceptPage from '../pages/invitations/InvitationAcceptPage.jsx'
+import AIIntegrationPage from '../pages/client/AIIntegrationPage.jsx'
 
 // Public Website
 import PublicHomePage from '../pages/public/HomePage.jsx'
@@ -228,6 +229,14 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute requiredRole="client">
             <ClientCompanySettingsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/settings/ai-integration"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <AIIntegrationPage />
           </ProtectedRoute>
         }
       />

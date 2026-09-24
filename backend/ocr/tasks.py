@@ -211,6 +211,7 @@ def _perform_ocr_extraction(upload, requested_fields):
                 file_path=page_path,
                 mime_type=mime_type,
                 requested_fields=requested_fields,
+                company=upload.batch.company,
             )
 
             if not isinstance(result, dict):
@@ -311,6 +312,7 @@ def _perform_ocr_extraction_sync(
                 file_path=page_path,
                 mime_type=mime_type,
                 requested_fields=requested_fields,
+                company=upload.batch.company,
                 timeout=request_timeout,
                 max_retries=0,
             )
