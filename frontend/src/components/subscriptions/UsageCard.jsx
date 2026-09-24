@@ -1,5 +1,4 @@
 import Card from '../ui/Card.jsx'
-import Button from '../ui/Button.jsx'
 
 export default function UsageCard({ modules }) {
   return (

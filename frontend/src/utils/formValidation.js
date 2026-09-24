@@ -74,12 +74,6 @@ export function validateEmail(value) {
   return ''
 }
 
-const COMPANY_NAME_REGEX =
-  /^[A-Za-z0-9À-ÖØ-öø-ÿ&().,'\- ]+$/
-
-const COMPANY_CODE_REGEX =
-  /^[A-Za-z0-9_-]+$/
-
 export function validateCompanyText(value, label = 'Company name') {
   const text = String(value || '').trim()
 

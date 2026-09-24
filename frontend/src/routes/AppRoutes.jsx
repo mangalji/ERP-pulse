@@ -39,29 +39,9 @@ import OcrPage from '../pages/client/OcrPage.jsx'
 import OcrFieldMappingPage from '../pages/client/OcrFieldMappingPage.jsx'
 import OcrResultPage from '../pages/client/OcrResultPage.jsx'
 import OcrBatchHistoryPage from '../pages/client/OcrBatchHistoryPage.jsx'
-/* Legacy flat pages (DashboardLayout) — retained on disk per DEVELOPMENT_GUIDELINES.md.
- * These pages are NOT routed; their legacy URLs redirect to /app/* equivalents.
- * Commented imports kept for traceability. Do not delete files.
- */
 
 function PublicRoute({ children }) {
   return <PublicLayout>{children}</PublicLayout>
-}
-function CompanyAdminRoute({ children }) {
-  const { user } = useAuth()
-
-  const isCompanyAdmin =
-    user?.is_superuser ||
-    user?.is_staff ||
-    (user?.roles || []).some(
-      (role) => String(role).toLowerCase() === 'company_admin'
-    )
-
-  if (!isCompanyAdmin) {
-    return <Navigate to="/app/settings" replace />
-  }
-
-  return children
 }
 
 function CatchAllRoute() {

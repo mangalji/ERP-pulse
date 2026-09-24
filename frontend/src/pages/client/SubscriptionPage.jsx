@@ -15,7 +15,6 @@ export default function ClientSubscriptionPage() {
   const [usage, setUsage] = useState([])
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
-  const [txLoading, setTxLoading] = useState(false)
 
   useEffect(() => {
     loadData()

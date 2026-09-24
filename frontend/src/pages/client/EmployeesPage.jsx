@@ -9,7 +9,6 @@ import EmptyState from '../../components/ui/EmptyState.jsx'
 import ErrorState from '../../components/ui/ErrorState.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
-import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 import {
   COUNTRY_OPTIONS,
@@ -24,7 +23,6 @@ import {
 
 export default function EmployeesPage() {
   const { toasts, addToast, removeToast } = useToast()
-  const { user } = useAuth()
   const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)

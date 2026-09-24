@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
-import { superadminApi } from '../../services/superadmin.js'
 
 const NAV_ITEMS = [
   { to: '/admin', label: 'Dashboard', icon: DashboardIcon, end: true },

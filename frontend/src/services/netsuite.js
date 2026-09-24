@@ -74,10 +74,9 @@ export const netsuiteApi = {
 
   postOCRVendorBill: (documentId, connectionId) => 
     apiClient.post('/netsuite/ocr/post-vendor-bill/',{document_id:documentId, connection_id:connectionId}).then(unwrap),
-  }
   batchPostDocuments: (documentIds, connectionId) =>
-  apiClient.post('/netsuite/ocr/batch/post/', {
-    document_ids: documentIds,
-    connection_id: connectionId,
-  }).then(unwrap)
-
+    apiClient.post('/netsuite/ocr/batch/post/', {
+      document_ids: documentIds,
+      connection_id: connectionId,
+    }).then(unwrap)
+}

@@ -32,14 +32,27 @@ export const authApi = {
       body.otp_code = otpCode
     }
     if (firstName !== undefined) {
-      hasFile ? body.append('first_name', firstName) : body.first_name = firstName
+      if (hasFile) {
+        body.append('first_name', firstName)
+      } else {
+        body.first_name = firstName
+      }
     }
     if (lastName !== undefined) {
-      hasFile ? body.append('last_name', lastName) : body.last_name = lastName
+      if (hasFile) {
+        body.append('last_name', lastName)
+      } else {
+        body.last_name = lastName
+      }
     }
     if (mobileNumber !== undefined) {
-      hasFile ? body.append('mobile_number', mobileNumber) : body.mobile_number = mobileNumber
+      if (hasFile) {
+        body.append('mobile_number', mobileNumber)
+      } else {
+        body.mobile_number = mobileNumber
+      }
     }
+    
     if (profilePic !== undefined && profilePic !== null) {
       body.append('profile_pic', profilePic)
     }

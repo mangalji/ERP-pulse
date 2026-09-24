@@ -2,11 +2,9 @@ import { useState, useEffect } from 'react'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
-import Badge from '../../components/ui/Badge.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import ConnectionForm from '../../components/netsuite/ConnectionForm.jsx'
 import ConnectionCard from '../../components/netsuite/ConnectionCard.jsx'
-import ConnectionTable from '../../components/netsuite/ConnectionTable.jsx'
 import AssignEmployeesDialog from '../../components/netsuite/AssignEmployeesDialog.jsx'
 import { netsuiteApi } from '../../services/netsuite.js'
 import { clientApi } from '../../services/client.js'
@@ -108,17 +106,6 @@ export default function NetSuiteIntegrationsPage() {
 
   const handleAssign = async (connectionId) => {
     setAssigningId(connectionId)
-  }
-
-  const handleAssignSubmit = async (employeeId) => {
-    if (!assigningId) return
-    try {
-      await netsuiteApi.assignEmployee(assigningId, employeeId)
-      addToast('Employee assigned', 'success')
-      setAssigningId(null)
-    } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to assign employee', 'error')
-    }
   }
 
   const handleDelete = async (id) => {

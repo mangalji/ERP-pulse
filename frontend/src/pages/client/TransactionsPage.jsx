@@ -71,7 +71,7 @@ export default function TransactionsPage() {
     })
 
     setSchema(response || { fields: [] })
-  } catch (err) {
+  } catch {
     setSchema({ fields: [] })
   }
 }, [])

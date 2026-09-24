@@ -166,11 +166,6 @@ export default function OcrBatchHistoryPage() {
               ? 'RETRYING'
               : String(batch.status || 'PROCESSING').toUpperCase()
 
-  const isTerminal = ['COMPLETED', 'FAILED', 'PARTIAL'].includes(
-    effectiveStatus,
-  )
-
-
   return (
     <ClientLayout title="OCR Batch" breadcrumb="OCR Batch">
       <div className="mx-auto w-full max-w-5xl space-y-6">

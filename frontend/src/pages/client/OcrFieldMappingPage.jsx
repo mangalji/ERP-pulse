@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
-import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 
 const CONTEXT_KEY = 'ocr_field_mapping_context'
@@ -26,14 +25,6 @@ const STANDARD_LABELS = {
   quantity: 'Quantity',
   unit_price: 'Unit Price',
   amount: 'Amount',
-}
-
-function normalize(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
 }
 
 function getApplicationFields(context) {

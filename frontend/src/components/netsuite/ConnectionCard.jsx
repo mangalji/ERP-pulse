@@ -52,21 +52,6 @@ export default function ConnectionCard({ connection, isCurrent = false, onUse, o
     }
   }
 
-  const handleRemove = async (employeeId) => {
-    if (!employeeId || !onRemoveEmployee) return
-
-    setRemovingEmployeeId(employeeId)
-
-    try {
-      await onRemoveEmployee(
-        connection.id,
-        employeeId,
-      )
-    } finally {
-      setRemovingEmployeeId(null)
-    }
-  }
-
 return (
   <>
     <Card className="p-5">
