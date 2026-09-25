@@ -103,31 +103,17 @@ def _resolve_template_config(template_id, user) -> dict:
     return config
 
 
-def _build_requested_fields(request) -> dict | None:
-    """
-    Resolve the effective requested_fields from the upload request.
-
-    An explicit template_id takes precedence over inline
-    requested_fields.
-    """
+def _build_requested_fields(request) -> dict:
+    """Resolve the mandatory company-scoped extraction template."""
     template_id = request.data.get("template_id")
-    raw_requested = _parse_requested_fields(
-        request.data.get("requested_fields")
-    )
+    if not template_id:
+        raise ValueError("An extraction template must be selected before uploading files.")
 
-    if template_id:
-        requested_fields = _resolve_template_config(
-            template_id,
-            request.user,
-        )
-    elif raw_requested is not None:
-        requested_fields = raw_requested
-    else:
-        requested_fields = None
+    requested_fields = _resolve_template_config(template_id, request.user)
+    if not requested_fields:
+        raise ValueError("The selected extraction template contains no fields.")
 
-    if requested_fields:
-        resolve_field_config(requested_fields)
-
+    resolve_field_config(requested_fields)
     return requested_fields
 
 
@@ -1094,6 +1080,14 @@ class OCRExtractView(APIView):
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        try:
+            requested_fields = _build_requested_fields(request)
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         uploaded_files = self._get_uploaded_files(request)
 
         if not uploaded_files:
@@ -1221,14 +1215,6 @@ class OCRExtractView(APIView):
                 if contains_zip and len(uploaded_files) == 1
                 else None
             )
-
-            try:
-                requested_fields = _build_requested_fields(request)
-            except ValueError as exc:
-                return Response(
-                    {"detail": str(exc)},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
 
             batch = OCRBatch.objects.create(
                 user=request.user,

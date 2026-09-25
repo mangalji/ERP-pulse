@@ -141,8 +141,13 @@ class GoogleProvider(AIProvider):
         except AIProviderError:
             raise
         except Exception as exc:
+            logger.exception(
+                "Google Gemini OCR request failed — model=%s error=%s",
+                self.model,
+                exc,
+            )
             raise AIProviderError(
-                "Google Gemini request failed."
+                f"Google Gemini request failed: {exc}."
             ) from exc
 
 

@@ -272,28 +272,9 @@ LINE_ITEM_DATA_TYPES = {
 }
 
 
-def _json_schema_type(
-    data_type: str,
-    *,
-    key: str | None = None,
-    is_line_field: bool = False,
-) -> str:
-    """
-    Gemini structured-output JSON type for a declared datatype.
-
-    Standard numeric fields keep the exact ``number`` type used by the
-    static ``EXTRACTION_SCHEMA`` (subtotal/tax_amount/tax_rate/total_amount
-    and quantity/unit_price/amount) so the default (no dynamic config)
-    extraction path is byte-for-byte unchanged. A custom field's JSON type
-    follows its declared datatype via the central registry: number -> number,
-    boolean -> boolean, currency -> number, text/date -> string. The original
-    *logical* datatype (date, currency, ...) is carried separately in the
-    field config so it is never lost.
-    """
-    numeric_set = _NUMERIC_LINE_FIELDS if is_line_field else _NUMERIC_STANDARD_FIELDS
-    if key in numeric_set:
-        return "number"
-    registry_entry = DATATYPE_REGISTRY.get(data_type)
+def _json_schema_type(data_type: str, *, key: str | None = None, is_line_field: bool = False) -> str:
+    """Return the JSON primitive implied by the configured datatype."""
+    registry_entry = DATATYPE_REGISTRY.get(_coerce_data_type(data_type))
     if registry_entry:
         return registry_entry["json_schema_type"]
     return "string"
@@ -422,404 +403,230 @@ def _slugify_field_key(label: str) -> str:
 def resolve_field_config(
     requested_fields: dict[str, Any] | None,
 ) -> tuple[dict[str, str], dict[str, str], bool, dict[str, str], dict[str, str]]:
-    """
-    Resolve a (possibly partial/absent) dynamic extraction configuration.
-
-    Falling back to the exact existing default field set — every standard
-    header field plus line_items — whenever requested_fields is falsy or
-    malformed is intentional: this is what makes every existing caller
-    that does not pass requested_fields behave exactly as before.
-
-    Returns
-    -------
-    (header_fields, line_fields, include_line_items, header_types,
-     line_types) where header_fields/line_fields map field key -> AI
-    instruction/description and header_types/line_types map field key ->
-    declared datatype ("text" / "number" / "date" / "boolean" /
-    "currency").
-
-    Raises
-    ------
-    ValueError
-        If a line-scoped custom field is configured while line_items
-        extraction is disabled — that combination is invalid and must not
-        be silently accepted (see Phase 2 rule).
-        If an explicit (non-empty) configuration requests nothing — i.e.
-        both standard_fields and custom_fields are empty — it is rejected
-        rather than silently upgraded to the full default set. An absent
-        or empty ``{}`` config remains the legacy default-extraction
-        signal and is handled by the caller.
-        If a custom field's key collides with a standard/custom field it
-        is rejected with a clear error instead of being silently dropped.
-    """
-    # An absent or empty ``{}`` config is the legacy "use defaults" signal
-    # (handled here and by callers). A *non-empty* config that requests
-    # nothing explicitly is invalid and must not be silently coerced into
-    # the full default field set.
+    """Resolve the mandatory template into the exact AI field contract."""
     if not isinstance(requested_fields, dict) or not requested_fields:
-        return (
-            dict(FIELD_DESCRIPTIONS),
-            dict(LINE_ITEM_FIELDS),
-            True,
-            dict(FIELD_DATA_TYPES),
-            dict(LINE_ITEM_DATA_TYPES),
-        )
+        raise ValueError("An extraction template is required for OCR processing.")
 
-    selected_standard = requested_fields.get("standard_fields")
+    selected_standard = requested_fields.get("standard_fields") or []
     custom_fields = requested_fields.get("custom_fields") or []
-
-    if selected_standard is None:
-        selected_standard = list(FIELD_DESCRIPTIONS.keys()) + ["line_items"]
-
-    elif not isinstance(selected_standard, list):
+    overrides = requested_fields.get("standard_field_overrides") or {}
+    if not isinstance(selected_standard, list):
         raise ValueError("standard_fields must be a list.")
-
+    if not isinstance(custom_fields, list):
+        raise ValueError("custom_fields must be a list.")
+    if not isinstance(overrides, dict):
+        raise ValueError("standard_field_overrides must be a JSON object.")
     if not selected_standard and not custom_fields:
-        raise ValueError(
-            "Extraction configuration must include at least one standard "
-            "field or one custom field."
-        )
-    
-    # if (not isinstance(selected_standard, list) or not selected_standard) and not custom_fields:
-    #     raise ValueError(
-    #         "Extraction configuration must include at least one standard "
-    #         "field or one custom field."
-    #     )
+        raise ValueError("Extraction template must contain at least one field.")
 
-    # if not isinstance(selected_standard, list) or not selected_standard:
-    #     selected_standard = list(FIELD_DESCRIPTIONS.keys()) + ["line_items"]
+    header_fields: dict[str, str] = {}
+    line_fields: dict[str, str] = {}
+    header_types: dict[str, str] = {}
+    line_types: dict[str, str] = {}
+    reserved_keys = frozenset(FIELD_DESCRIPTIONS) | frozenset(LINE_ITEM_FIELDS) | {"line_items"}
 
-    include_line_items = "line_items" in selected_standard
-
-    header_fields = {
-        key: FIELD_DESCRIPTIONS[key]
-        for key in FIELD_DESCRIPTIONS
-        if key in selected_standard
-    }
-    line_fields = {
-        key: LINE_ITEM_FIELDS[key]
-        for key in LINE_ITEM_FIELDS
-        if key in selected_standard or include_line_items
-    }
-    if line_fields:
-        include_line_items = True
-    
-    header_types = {
-        key: FIELD_DATA_TYPES.get(key, "text")
-        for key in header_fields
-    }
-
-    line_types = {
-        key: LINE_ITEM_DATA_TYPES.get(key, "text")
-        for key in line_fields
-    }
-
-    standard_field_overrides = (
-        requested_fields.get("standard_field_overrides") or {}
-    )
-
-    if not isinstance(standard_field_overrides, dict):
-        raise ValueError("standard_field_overrides must be an object.")
-
-    for key, override in standard_field_overrides.items():
-        
-        if key not in FIELD_DESCRIPTIONS and key not in LINE_ITEM_FIELDS:
+    for raw_key in selected_standard:
+        key = str(raw_key).strip()
+        if not key or key == "line_items":
             continue
-
-        if key not in selected_standard:
-            continue
-
-        if not isinstance(override, dict):
-            raise ValueError(
-                f"Invalid standard_field_overrides entry for '{key}'."
-            )
-
-        questionnaire = (
-            override.get("questionaire")
-            or override.get("description")
-            or FIELD_DESCRIPTIONS.get(key)
-            or LINE_ITEM_FIELDS.get(key)
-            or key
-        )
-
-        data_type = _coerce_data_type(
-            override.get("data_type")
-            or (
-                FIELD_DATA_TYPES.get(key)
-                if key in FIELD_DATA_TYPES
-                else LINE_ITEM_DATA_TYPES.get(key, "text")
-            )
-        )
-
-        scope = override.get("scope")
-
-        if scope not in {"header", "line", None}:
-            raise ValueError(
-                f"Invalid scope for standard field '{key}'."
-            )
-
-        current_scope = (
-            "line"
-            if key in LINE_ITEM_FIELDS
-            else "header"
-        )
-
-        target_scope = scope or current_scope
-
-        header_fields.pop(key, None)
-        line_fields.pop(key, None)
-        header_types.pop(key, None)
-        line_types.pop(key, None)
-
-        if target_scope == "line":
-            line_fields[key] = questionnaire
-            line_types[key] = data_type
-            include_line_items = True
-
+        if key in FIELD_DESCRIPTIONS:
+            description = FIELD_DESCRIPTIONS[key]
+            data_type = FIELD_DATA_TYPES.get(key, "text")
+            default_scope = "header"
+        elif key in LINE_ITEM_FIELDS:
+            description = LINE_ITEM_FIELDS[key]
+            data_type = LINE_ITEM_DATA_TYPES.get(key, "text")
+            default_scope = "line"
         else:
-            header_fields[key] = questionnaire
-            header_types[key] = data_type
-
-    reserved_keys = frozenset(FIELD_DESCRIPTIONS) | {"line_items"} | frozenset(LINE_ITEM_FIELDS)
-    seen_keys = set(header_fields) | set(line_fields)
-
-    for idx, custom in enumerate(requested_fields.get("custom_fields") or []):
-        if not isinstance(custom, dict):
-            raise ValueError(
-                f"custom_fields[{idx}] must be a dict, "
-                f"got {type(custom).__name__}"
-            )
-
-        label = str(custom.get("label") or custom.get("key") or "").strip()
-        if not label:
-            raise ValueError(
-                f"custom_fields[{idx}] must have a non-empty label or key"
-            )
-
-        key = _slugify_field_key(str(custom.get("key") or label))
-
-        if key in reserved_keys:
-            raise ValueError(
-                f"Custom field '{label}' conflicts with a standard field "
-                f"name ('{key}'). Use a different label."
-            )
-        if key in seen_keys:
-            raise ValueError(
-                f"Duplicate custom field '{label}' (resolved key '{key}'). "
-                "Each custom field must have a unique label."
-            )
-
-        # description = str(custom.get("description") or label).strip()
-        # data_type = _coerce_data_type(custom.get("data_type"))
-        # scope = "line" if custom.get("scope") == "line" else "header"
-        description = str(
-            custom.get("questionaire")
-            or custom.get("description")
-            or label
-        ).strip()
-
-        data_type = _coerce_data_type(
-            custom.get("data_type")
-        )
-        scope = (
-            "line"
-            if custom.get("scope") == "line"
-            else "header"
-        )
-
+            raise ValueError(f"Unknown standard field '{key}'.")
+        override = overrides.get(key) or {}
+        if not isinstance(override, dict):
+            raise ValueError(f"standard_field_overrides['{key}'] must be an object.")
+        description = str(override.get("questionaire") or override.get("description") or description).strip()
+        if not description:
+            raise ValueError(f"Questionaire is required for field '{key}'.")
+        data_type = _coerce_data_type(override.get("data_type") or data_type)
+        scope = override.get("scope") or default_scope
+        if scope not in {"header", "line"}:
+            raise ValueError(f"Invalid scope for field '{key}'.")
         if scope == "line":
-            if not include_line_items:
-                # A line-level custom field is meaningless without
-                # line_items extraction enabled — reject the configuration
-                # outright rather than dropping the field silently.
-                raise ValueError(
-                    f"Custom line-item field '{label}' requires line_items "
-                    "extraction to be enabled."
-                )
             line_fields[key] = description
             line_types[key] = data_type
         else:
             header_fields[key] = description
             header_types[key] = data_type
 
+    seen_keys = set(header_fields) | set(line_fields)
+    for idx, custom in enumerate(custom_fields):
+        if not isinstance(custom, dict):
+            raise ValueError(f"custom_fields[{idx}] must be a dict, got {type(custom).__name__}")
+        label = str(custom.get("label") or custom.get("key") or "").strip()
+        if not label:
+            raise ValueError(f"custom_fields[{idx}] must have a non-empty label or key")
+        key = _slugify_field_key(str(custom.get("key") or label))
+        if key in reserved_keys:
+            raise ValueError(f"Custom field '{label}' conflicts with a standard field name ('{key}').")
+        if key in seen_keys:
+            raise ValueError(f"Duplicate custom field '{label}' (resolved key '{key}').")
+        description = str(custom.get("questionaire") or custom.get("description") or "").strip()
+        if not description:
+            raise ValueError(f"Questionaire is required for custom field '{label}'.")
+        data_type = _coerce_data_type(custom.get("data_type"))
+        scope = custom.get("scope") or "header"
+        if scope not in {"header", "line"}:
+            raise ValueError(f"Invalid scope for custom field '{label}'.")
+        if scope == "line":
+            line_fields[key] = description
+            line_types[key] = data_type
+        else:
+            header_fields[key] = description
+            header_types[key] = data_type
         seen_keys.add(key)
 
-    # if not header_fields and not include_line_items:
-    #     # Never send Gemini an empty contract — fall back to the safe
-    #     # default rather than extracting nothing at all.
-    #     return (
-    #         dict(FIELD_DESCRIPTIONS),
-    #         dict(LINE_ITEM_FIELDS),
-    #         True,
-    #         dict(FIELD_DATA_TYPES),
-    #         dict(LINE_ITEM_DATA_TYPES),
-    #     )
-    if not header_fields and not line_fields:
-        raise ValueError(
-            "Extraction configuration must include at least one field."
-        )
-
+    include_line_items = bool(line_fields) or "line_items" in selected_standard
+    if include_line_items and not line_fields:
+        raise ValueError("Line-item extraction was requested but no line fields are configured.")
     return header_fields, line_fields, include_line_items, header_types, line_types
 
 
-_NUMERIC_STANDARD_FIELDS = frozenset({"subtotal", "tax_amount", "tax_rate", "total_amount"})
-_NUMERIC_LINE_FIELDS = frozenset({"quantity", "unit_price", "amount"})
+VERIFICATION_PROMPT_TEMPLATE = """You are the verification stage of a production document extraction system.
 
+Re-read the attached document in full and verify EVERY requested field against the source document before accepting the proposed result.
 
-def _field_json_type(key: str, *, is_line_field: bool) -> str:
-    """
-    JSON schema type for one field.
-
-    Standard numeric fields keep their existing number type. Every custom
-    field defaults to string — full NetSuite-side type inference (date,
-    boolean, currency, etc.) is a Phase 4 custom-field-creation concern,
-    not an OCR-extraction-contract concern, and a string is always a safe,
-    lossless container for whatever Gemini reads off the document.
-    """
-    numeric_set = _NUMERIC_LINE_FIELDS if is_line_field else _NUMERIC_STANDARD_FIELDS
-    return "number" if key in numeric_set else "string"
-
-
-# Canonical output contract used by the AGSuite ERP OCR feature.
-# This is intentionally the same contract used by the approved notebook.
-EXTRACTION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "invoice_number": {"type": "string", "nullable": True},
-        "invoice_date": {"type": "string", "nullable": True},
-        "due_date": {"type": "string", "nullable": True},
-        "vendor_name": {"type": "string", "nullable": True},
-        "customer_name": {"type": "string", "nullable": True},
-        "subsidiary": {"type": "string", "nullable": True},
-        "currency": {"type": "string", "nullable": True},
-        "subtotal": {"type": "number", "nullable": True},
-        "tax_amount": {"type": "number", "nullable": True},
-        "tax_rate": {"type": "number", "nullable": True},
-        "total_amount": {"type": "number", "nullable": True},
-        "payment_terms": {"type": "string", "nullable": True},
-        "line_items": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "description": {"type": "string", "nullable": True},
-                    "quantity": {"type": "number", "nullable": True},
-                    "unit_price": {"type": "number", "nullable": True},
-                    "amount": {"type": "number", "nullable": True},
-                },
-                "required": [
-                    "description",
-                    "quantity",
-                    "unit_price",
-                    "amount",
-                ],
-            },
-        },
-    },
-    "required": [
-        "invoice_number",
-        "invoice_date",
-        "due_date",
-        "vendor_name",
-        "customer_name",
-        "subsidiary",
-        "currency",
-        "subtotal",
-        "tax_amount",
-        "tax_rate",
-        "total_amount",
-        "payment_terms",
-        "line_items",
-    ],
-    
-}
-
-TOP_LEVEL_FIELDS = tuple(FIELD_DESCRIPTIONS.keys())
-LINE_ITEM_OUTPUT_FIELDS = tuple(LINE_ITEM_FIELDS.keys())
-
-# These fields are high-value signals for a bad extraction. A null here does
-# not automatically mean the field exists, but it triggers a verification pass
-# so the model must explicitly re-check the document.
-VERIFICATION_FIELDS = (
-    "invoice_number",
-    "invoice_date",
-    "vendor_name",
-    "currency",
-    "subtotal",
-    "total_amount",
-)
-
-VERIFICATION_PROMPT_TEMPLATE = """You are the verification and correction stage of an
-accounting document extraction system.
-
-Re-read the attached document in full.
+REQUESTED FIELD CONTRACT:
+{field_contract}
 
 PROPOSED EXTRACTION:
 {primary_json}
 
-Return ONLY this JSON structure:
-{{
-  "needs_correction": true or false,
-  "corrections": [
-    {{
-      "field": "top-level field name or line_items",
-      "reason": "brief reason based on visible document evidence",
-      "corrected_value": "corrected value"
-    }}
-  ]
-}}
+Return ONLY the requested verification JSON structure.
 
 Rules:
-- A null field is acceptable ONLY when the requested value is genuinely absent
-  or cannot be reliably determined from the document.
-- If the value is visibly present anywhere in the document and the proposed
-  extraction returned null, report a correction.
-- Re-check all visible top-level fields, including header, company/entity,
-  metadata, table, memo, account and total sections.
-- Re-check every clearly separated line-item/source row.
-- If the proposed line_items list is missing, merged, or incomplete, report
-  one correction for "line_items" containing the COMPLETE corrected array.
-- Preserve source-row order and complete descriptions.
-- Do not invent values.
-- Do not report a correction merely because an equivalent non-null value is
-  formatted differently.
-- If the proposed extraction is correct, return:
-  {{
-    "needs_correction": false,
-    "corrections": []
-  }}
+- Check every requested field, not just fields you recognize.
+- Use each field's questionaire to understand exactly what information is required.
+- Search the entire document again: headers, body, tables, footers, totals, metadata, notes, and entity blocks.
+- For line fields, re-check every clearly separated source row and preserve source-row order.
+- Do not invent or infer unsupported values.
+- A value is acceptable only when supported by visible document evidence.
+- If the proposed value is wrong or missing and the document contains the correct value, provide an evidence-backed correction.
+- If the requested value genuinely cannot be determined, keep it null.
+- Do not change a correct value merely because another equivalent formatting is possible.
+- Before returning, perform one final field-by-field comparison between the proposed result and the document.
 """
 
 
-AUDIT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "needs_correction": {"type": "boolean"},
-        "corrections": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "field": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "corrected_value": {},
-                },
-                "required": [
-                    "field",
-                    "reason",
-                    "corrected_value",
-                ],
+# AUDIT_SCHEMA: dict[str, Any] = {
+#     "type": "object",
+#     "properties": {
+#         "needs_correction": {"type": "boolean"},
+#         "corrections": {
+#             "type": "array",
+#             "items": {
+#                 "type": "object",
+#                 "properties": {
+#                     "field": {"type": "string"},
+#                     "reason": {"type": "string"},
+#                     "corrected_value": {
+#                         "anyOf": [
+#                             {"type": "string"},
+#                             {"type": "number"},
+#                             {"type": "boolean"},
+#                             {"type": "null"},
+#                             {
+#                                 "type": "array",
+#                                 "items": {
+#                                     "type": "object",
+#                                     "additionalProperties": True,
+#                                 },
+#                             },
+#                         ]
+#                     },
+#                 },
+#                 "required": [
+#                     "field",
+#                     "reason",
+#                     "corrected_value",
+#                 ],
                 
+#             },
+#         },
+#     },
+#     "required": [
+#         "needs_correction",
+#         "corrections",
+#     ],
+    
+# }
+
+def _build_audit_schema(
+    line_fields: dict[str, str],
+    line_types: dict[str, str],
+    include_line_items: bool,
+) -> dict[str, Any]:
+    corrected_value_types = [
+        {"type": "string"},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"},
+    ]
+
+    if include_line_items:
+        line_properties = {
+            key: {
+                "type": _json_schema_type(
+                    line_types.get(key, "text"),
+                    key=key,
+                    is_line_field=True,
+                ),
+            }
+            for key in line_fields
+        }
+
+        corrected_value_types.append(
+            {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": line_properties,
+                    "required": list(line_fields.keys()),
+                },
+            }
+        )
+
+    return {
+        "type": "object",
+        "properties": {
+            "needs_correction": {
+                "type": "boolean",
+            },
+            "corrections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                        },
+                        "reason": {
+                            "type": "string",
+                        },
+                        "corrected_value": {
+                            "anyOf": corrected_value_types,
+                        },
+                    },
+                    "required": [
+                        "field",
+                        "reason",
+                        "corrected_value",
+                    ],
+                },
             },
         },
-    },
-    "required": [
-        "needs_correction",
-        "corrections",
-    ],
-    
-}
-
+        "required": [
+            "needs_correction",
+            "corrections",
+        ],
+    }
 
 def _build_schema(
     header_fields: dict[str, str],
@@ -830,11 +637,6 @@ def _build_schema(
 ) -> dict[str, Any]:
     """
     Build a Gemini response_schema from a resolved field configuration.
-
-    Structurally identical to the static EXTRACTION_SCHEMA below when
-    given the full default field set — same properties, same required
-    list, same nested line_items object — so the default (no dynamic
-    configuration) extraction path is unaffected.
 
     Custom fields carry their declared datatype via header_types /
     line_types so the schema uses the appropriate JSON primitive (number
@@ -873,13 +675,19 @@ def _build_schema(
     return {"type": "object", "properties": properties, "required": required}
 
 
-def _json_object_schema() -> dict[str, Any]:
-    return EXTRACTION_SCHEMA
+# def _audit_schema() -> dict[str, Any]:
+#     return AUDIT_SCHEMA
 
-
-def _audit_schema() -> dict[str, Any]:
-    return AUDIT_SCHEMA
-
+def _audit_schema(
+    line_fields: dict[str, str],
+    line_types: dict[str, str],
+    include_line_items: bool,
+) -> dict[str, Any]:
+    return _build_audit_schema(
+        line_fields=line_fields,
+        line_types=line_types,
+        include_line_items=include_line_items,
+    )
 
 def _normalize_result(
     data: dict[str, Any],
@@ -894,12 +702,12 @@ def _normalize_result(
     is always a list (when requested). This keeps the API/DB contract stable
     without inventing any values.
 
-    header_keys/line_keys default to the static TOP_LEVEL_FIELDS/
-    LINE_ITEM_OUTPUT_FIELDS — every existing call site that doesn't pass a
-    dynamic field configuration keeps behaving exactly as before.
+    header_keys/line_keys are always supplied from the selected template.
     """
-    resolved_header_keys = header_keys if header_keys is not None else TOP_LEVEL_FIELDS
-    resolved_line_keys = line_keys if line_keys is not None else LINE_ITEM_OUTPUT_FIELDS
+    if header_keys is None or line_keys is None:
+        raise ValueError("Resolved OCR field keys are required.")
+    resolved_header_keys = header_keys
+    resolved_line_keys = line_keys
 
     normalized = {
         key: data.get(key)
@@ -928,43 +736,6 @@ def _normalize_result(
     return normalized
 
 
-def _verification_is_needed(
-    data: dict[str, Any],
-    header_keys: tuple[str, ...] | None = None,
-) -> bool:
-    """
-    Decide whether the first extraction deserves a second verification pass.
-
-    High-value missing fields always trigger verification. A non-empty
-    line-item set also triggers verification because missing/merged rows were
-    an observed failure mode in the supplied test documents.
-
-    header_keys, when given, restricts the high-value field check to fields
-    the caller actually requested — a standard field the user deliberately
-    removed from a dynamic configuration should never force an unnecessary
-    verification pass. Defaults to checking every VERIFICATION_FIELDS entry,
-    exactly as before, when no dynamic configuration is in play.
-    """
-    fields_to_check = VERIFICATION_FIELDS
-    if header_keys is not None:
-        fields_to_check = tuple(f for f in VERIFICATION_FIELDS if f in header_keys)
-
-    if any(data.get(field) is None for field in fields_to_check):
-        return True
-
-    if data.get("line_items"):
-        return True
-
-    return False
-
-
-_OVERWRITABLE_TEXTUAL_STANDARD_FIELDS = frozenset({
-    "invoice_number", "invoice_date", "due_date",
-    "vendor_name", "customer_name", "subsidiary",
-    "currency", "payment_terms",
-})
-
-
 def _merge_corrected_result(
     candidate: dict[str, Any],
     audit: dict[str, Any],
@@ -988,8 +759,10 @@ def _merge_corrected_result(
     reinflated back to the full default set on every merge, which would
     corrupt the intended dynamic contract.
     """
-    resolved_header_keys = header_keys if header_keys is not None else TOP_LEVEL_FIELDS
-    resolved_line_keys = line_keys if line_keys is not None else LINE_ITEM_OUTPUT_FIELDS
+    if header_keys is None or line_keys is None:
+        raise ValueError("Resolved OCR field keys are required.")
+    resolved_header_keys = header_keys
+    resolved_line_keys = line_keys
 
     merged = _normalize_result(
         candidate, resolved_header_keys, resolved_line_keys, include_line_items,
@@ -1015,15 +788,7 @@ def _merge_corrected_result(
             # allowed to destroy a concrete primary value.
             if merged.get(field) is None and corrected_value is not None:
                 merged[field] = corrected_value
-            elif (
-                merged.get(field) is not None
-                and corrected_value is not None
-                and field in _OVERWRITABLE_TEXTUAL_STANDARD_FIELDS
-            ):
-                # For known textual/date standard fields, a concrete
-                # verifier correction can replace the primary only when
-                # explicitly reported. Numeric fields and custom fields
-                # (unknown type) remain conservative, fill-if-null only.
+            elif merged.get(field) is not None and corrected_value is not None:
                 merged[field] = corrected_value
 
         elif field == "line_items" and include_line_items and isinstance(corrected_value, list):
@@ -1056,12 +821,7 @@ def _merge_corrected_result(
 
                         if candidate_value is None and verifier_value is not None:
                             merged_item[key] = verifier_value
-                        elif (
-                            key == "description"
-                            and isinstance(candidate_value, str)
-                            and isinstance(verifier_value, str)
-                            and len(verifier_value) > len(candidate_value)
-                        ):
+                        elif candidate_value is not None and verifier_value is not None:
                             merged_item[key] = verifier_value
 
                     merged_items.append(merged_item)
@@ -1074,79 +834,53 @@ def _merge_corrected_result(
 
 
 def build_prompt(
-    header_fields: dict[str, str] | None = None,
-    line_fields: dict[str, str] | None = None,
-    include_line_items: bool = True,
-    header_types: dict[str, str] | None = None,
-    line_types: dict[str, str] | None = None,
+    header_fields: dict[str, str],
+    line_fields: dict[str, str],
+    include_line_items: bool,
+    header_types: dict[str, str],
+    line_types: dict[str, str],
 ) -> str:
-    """
-    Build the extraction prompt from a resolved field configuration.
-
-    Defaults to the full standard field set — identical to the original,
-    static prompt text — so EXTRACTION_PROMPT below is unaffected. A
-    dynamic configuration (Phase 2) passes its own header_fields/
-    line_fields/include_line_items and, optionally, the declared datatype
-    of each field so formatting instructions can be embedded for custom
-    fields and non-default types.
-    """
-    resolved_header_fields = header_fields if header_fields is not None else FIELD_DESCRIPTIONS
-    resolved_line_fields = line_fields if line_fields is not None else LINE_ITEM_FIELDS
-    resolved_header_types = header_types or {}
-    resolved_line_types = line_types or {}
-
+    """Build the extraction prompt entirely from the resolved template contract."""
     field_lines = "\n".join(
-        f'- "{key}": {description}{_type_format_hint(resolved_header_types.get(key, "text"))}'
-        for key, description in resolved_header_fields.items()
+        f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
+        for key, description in header_fields.items()
     )
-
     if include_line_items:
         item_lines = "\n".join(
-            f'  - "{key}": {description}{_type_format_hint(resolved_line_types.get(key, "text"))}'
-            for key, description in resolved_line_fields.items()
+            f'  - "{key}": {description}{_type_format_hint(line_types.get(key, "text"))}'
+            for key, description in line_fields.items()
         )
-        line_items_section = f"""
-Line-item fields:
-{item_lines}
-"""
-        line_item_rules = """- For line_items, extract EVERY clearly separated source row.
+        line_items_section = f"\nLine-item fields:\n{item_lines}\n"
+        line_item_rules = """- Extract EVERY clearly separated source row.
 - Preserve source-row order.
 - Never merge, collapse, skip, or summarize separate rows.
-- Preserve the COMPLETE visible row information in description.
-- Do not shorten or paraphrase descriptions.
-- Before finalizing, recount source rows and compare that count with line_items.
-- Keep line_items=[] only when no clearly separated source rows exist."""
+- Preserve complete visible row information in the requested fields.
+- Before finalizing, recount source rows and compare that count with line_items."""
     else:
         line_items_section = ""
-        line_item_rules = (
-            "- This extraction does not request line items. Do not include "
-            "a line_items field in the response."
-        )
+        line_item_rules = "- Do not return line_items because no line fields were requested."
+    return f"""You are the PRIMARY extraction stage of a production business-document extraction system.
+Read the attached document in full. Layouts vary widely across invoices, receipts, purchase orders, vouchers, credit notes, debit notes, and other business documents.
 
-    return f"""You are the PRIMARY extraction stage of a production accounting document extraction system.
-Read the attached document in full. The document may be an invoice, receipt, purchase order,
-payment voucher, journal voucher, bank transfer voucher, credit note, debit note, or another
-business document. Layouts vary widely.
-
-Top-level fields:
+Top-level fields requested by the user's template:
 {field_lines}
 {line_items_section}
 Rules:
 - Respond with ONLY one valid JSON object.
 - Use EXACTLY the requested field names and structure.
+- Use each field's questionaire/instruction as the definition of what information to extract.
 - NEVER invent or guess a value.
-- Use null ONLY when the requested value is genuinely absent or cannot be determined
-  from the document after inspecting the entire document.
-- Do not return null merely because the value is in a different section, table, metadata area,
-  footer, memo, account row, or company/entity block.
+- Use null only when the requested value is genuinely absent or cannot be determined from the document.
 - Inspect the entire document before deciding a field is null.
-- Numbers must be plain JSON numbers.
+- Follow the declared datatype for every field.
 {line_item_rules}
-- Before finalizing, re-scan the document once more for top-level fields that are still null.
-- The output contract must remain exactly the same.
+- Before returning the JSON, internally re-scan the document and verify EVERY requested field against visible source evidence.
+- If an extracted value is not supported, correct it or return null.
+- The final JSON must contain only the fields defined by this template.
 """
 
-EXTRACTION_PROMPT = build_prompt()
+
+
 
 def parse_json_response(text: str) -> dict:
     """Parse Gemini's JSON response, tolerating accidental fences/extra text."""
@@ -1284,6 +1018,37 @@ class NotebookGeminiExtractor:
                     line_keys,
                 )
 
+                audit = self._verify_extraction(
+                    provider=provider,
+                    file_path=path,
+                    mime_type=media_type,
+                    candidate=result,
+                    request_id=request_id,
+                    timeout=effective_timeout,
+                    header_fields=header_fields,
+                    line_fields=line_fields,
+                    header_types=header_types,
+                    line_types=line_types,
+                )
+                if audit is None:
+                    raise GeminiValidationException(
+                        "OCR extraction could not be verified against the source document."
+                    )
+
+                result = _merge_corrected_result(
+                    result,
+                    audit,
+                    header_keys=header_keys,
+                    line_keys=line_keys,
+                    include_line_items=include_line_items,
+                )
+                result = _apply_datatype_normalization(
+                    result,
+                    header_types,
+                    line_types,
+                    line_keys,
+                )
+
                 logger.info(
                     "Company AI OCR extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
                     request_id,
@@ -1361,11 +1126,30 @@ class NotebookGeminiExtractor:
         candidate: dict,
         request_id: str,
         timeout: float,
+        header_fields: dict[str, str],
+        line_fields: dict[str, str],
+        header_types: dict[str, str],
+        line_types: dict[str, str],
     ) -> dict | None:
-        """Run the existing conditional evidence-check using the same provider."""
+        """Run a template-driven evidence check using the same provider."""
 
+        field_contract = json.dumps(
+            {
+                "header_fields": [
+                    {"key": key, "questionaire": description, "data_type": header_types[key], "scope": "header"}
+                    for key, description in header_fields.items()
+                ],
+                "line_fields": [
+                    {"key": key, "questionaire": description, "data_type": line_types[key], "scope": "line"}
+                    for key, description in line_fields.items()
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
         verification_prompt = VERIFICATION_PROMPT_TEMPLATE.format(
-            primary_json=json.dumps(candidate, ensure_ascii=False)
+            field_contract=field_contract,
+            primary_json=json.dumps(candidate, ensure_ascii=False),
         )
 
         try:
@@ -1373,7 +1157,11 @@ class NotebookGeminiExtractor:
                 file_path=file_path,
                 mime_type=mime_type,
                 prompt=verification_prompt,
-                schema=_audit_schema(),
+                schema=_audit_schema(
+                    line_fields=line_fields,
+                    line_types=line_types,
+                    include_line_items=bool(line_fields),
+                ),
                 timeout=timeout,
                 seed=43,
             )

@@ -339,6 +339,10 @@ export default function FileTemplatePage() {
       return 'Template name is required.'
     }
 
+    if (!fields.length) {
+      return 'Add at least one field to the template.'
+    }
+
     const seenKeys = new Set()
 
     for (const field of fields) {

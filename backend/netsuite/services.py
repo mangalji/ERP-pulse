@@ -15,6 +15,7 @@ import re
 import requests
 from accounts.models import User
 from django.db import transaction
+from django.db.models import Q
 from django.conf import settings
 from netsuite.client import NetSuiteAuthClient
 from netsuite.constants import NetSuiteRecordType
@@ -1362,17 +1363,43 @@ class NetSuiteVendorBillPostingService:
             mapping_status='MAPPED',
         )
 
-        custom_fields = []
+        custom_fields = {}
         for mapping in mappings:
             source_key = mapping.source_field_key
             value = data.get(source_key)
             if value is None or value == '':
                 continue
 
-            custom_fields.append({
-                'scriptId': mapping.target_field_id,
-                'value': value,
-            })
+            target_field_id = str(mapping.target_field_id or '').strip()
+            if not target_field_id:
+                continue
+
+            # Vendor Bill body custom fields must be addressed by a body
+            # custom-field script ID. Do not send line-column IDs here; they
+            # belong in the item sublist and a malformed customFieldList can
+            # make NetSuite return only the generic INVALID_CONTENT error.
+            if not target_field_id.lower().startswith('custbody_'):
+                logger.warning(
+                    "Skipping non-body custom field during Vendor Bill posting "
+                    "— script_id=%s connection=%s",
+                    target_field_id,
+                    connection.id,
+                )
+                continue
+
+            if isinstance(value, (dict, list, tuple, set)):
+                logger.warning(
+                    "Skipping non-scalar custom field value during Vendor Bill "
+                    "posting — script_id=%s connection=%s",
+                    target_field_id,
+                    connection.id,
+                )
+                continue
+            custom_fields[target_field_id] = value
+            # custom_fields.append({
+            #     'scriptId': target_field_id,
+            #     'value': value,
+            # })
 
         return custom_fields or None
 
@@ -1512,7 +1539,8 @@ class NetSuiteVendorBillPostingService:
             }
 
         # Reuse the exact vendor/item IDs selected by the successful
-        # validation result. Do not run a looser second lookup during posting.
+        # validation result. Posting never performs a second fuzzy/ambiguous
+        # item lookup.
         validated_vendor_id = validation.vendor_netsuite_id
         if not validated_vendor_id:
             raise ValueError(
@@ -1521,6 +1549,19 @@ class NetSuiteVendorBillPostingService:
 
         item_validation_results = validation.items or []
 
+        # Validation is authoritative for the exact NetSuite item selected by
+        # the user. Do not perform a second live name search during posting:
+        # a name can match multiple NetSuite item records and the posting
+        # step must never silently choose a different record than validation.
+        validated_items_by_line = {}
+        for validated_item in item_validation_results:
+            if not isinstance(validated_item, dict):
+                continue
+            line_index = validated_item.get("line_index")
+            if line_index is None:
+                continue
+            validated_items_by_line[str(line_index)] = validated_item
+
         item_mapping = (
             OCRNetSuiteFieldMapping.objects
             .filter(
@@ -1528,9 +1569,11 @@ class NetSuiteVendorBillPostingService:
                 connection=connection,
                 record_type="vendorBill",
                 mapping_status="MAPPED",
-                target_field_id__iexact="item",
+                # target_field_id__in=["item","items"],
             )
             .filter(
+                Q(target_field_id__iexact="item") 
+                | Q(target_field_id__iexact="items"),
                 source_scope__iexact="line",
             )
             .order_by("created_at")
@@ -1541,9 +1584,11 @@ class NetSuiteVendorBillPostingService:
             "internal_id": str(validated_vendor_id),
         }
 
-        posting_location_id = self._resolve_posting_location_id(
-            connection=connection,
-        )
+        # Resolve the Vendor Bill header Location from the saved field mapping
+        # first. If no mapped Location is supplied, we fall back to the
+        # temporary development default (Pune). The line-level Location is
+        # synchronized with this final header Location below.
+        posting_location_id = None
 
         payload_items = []
 
@@ -1556,7 +1601,13 @@ class NetSuiteVendorBillPostingService:
         # rest — one real line per item until we have a proper reason
         # to treat repeats as intentional (e.g. distinct rate/quantity
         # combinations).
-        seen_item_ids = set()
+        # Track the first payload line for each NetSuite item + rate pair.
+        # Duplicate OCR occurrences of the same item at the same rate are
+        # merged by increasing the first occurrence's quantity instead of
+        # silently dropping later lines. If the same item has a different
+        # rate, keep it as a separate NetSuite line so the original invoice
+        # pricing is not lost.
+        item_payload_indexes = {}
 
         if line_items:
             posting_item_source_key = (
@@ -1582,84 +1633,163 @@ class NetSuiteVendorBillPostingService:
                 if isinstance(item_name, str):
                     item_name = item_name.strip()
 
-                if not item_name:
-                    raise ValueError(
-                        f"Line {index}: item value is missing."
-                    )
-                item_result = NetSuiteValidationService().resolve_item_for_posting(
-                    # connection_id=str(connection.id),
-                    connection=connection,
-                    item_name=item_name,
-                    line_index=index,
-                )
-
-                if not item_result.get("matched"):
-                    if item_result.get("ambiguous"):
-                        raise ValueError(
-                            f'Line {index}: multiple NetSuite items matched '
-                            f'"{item_name}". Please correct the item.'
-                        )
-
-                    raise ValueError(
-                        f'Line {index}: NetSuite item '
-                        f'"{item_name}" does not exist in the selected account.'
-                    )
-
-                item_id = item_result.get("netsuite_id")
-
-                if not item_id:
-                    raise ValueError(
-                        f'Line {index}: NetSuite item ID could not be resolved.'
-                    )
-
-                if item_id in seen_item_ids:
-                    logger.warning("Skipping line %s ('%s') on Vendor Bill posting — "
-                        "NetSuite item %s already used by an earlier line "
-                        "on this bill (keeping the first occurrence only) "
-                        "— connection=%s",
-                        index,
-                        item_name,
-                        item_id,
-                        connection.id,
-                    )
-                    continue
-                seen_item_ids.add(item_id)
                 description = line.get("description")
                 quantity = line.get("quantity")
                 rate = line.get("unit_price")
 
-                # A line with a matched NetSuite item ID but no quantity
-                # and no rate isn't a real purchased line — it's usually
-                # OCR text (a GL account name, a tax/TDS/GST breakdown
-                # row, etc.) that happened to string-match some NetSuite
-                # item record. NetSuite itself rejects a Vendor Bill line
-                # with neither quantity nor rate (400 INVALID_CONTENT on
-                # the whole request, not a per-line error), and posting
-                # it even if NetSuite allowed it would be a fake/wrong
-                # line item on the bill. So skip it here instead of
-                # sending it — only lines with at least a quantity or a
-                # rate are treated as real items and go to NetSuite.
-
+                # A row without quantity AND rate is not an item line for an
+                # item-based Vendor Bill. These OCR rows are commonly GL
+                # account / tax / TDS / GST rows. Do this check BEFORE any
+                # NetSuite item lookup so text such as "Advances Paid" cannot
+                # accidentally match an unrelated item record.
                 if quantity in (None, "") and rate in (None, ""):
                     logger.warning(
-                        "Skipping line %s ('%s') on Vendor Bill posting — "
-                        "matched NetSuite item %s but has no quantity or "
-                        "rate, so it isn't a real line item — connection=%s",
+                        "Ignoring non-item OCR row before NetSuite item lookup "
+                        "— line=%s description=%r item_name=%r; no quantity or "
+                        "rate was supplied — connection=%s",
                         index,
-                        description or item_name,
-                        item_id,
+                        description,
+                        item_name,
                         connection.id,
                     )
                     continue
+
+                validated_item = validated_items_by_line.get(str(index))
+                if validated_item is None and index - 1 < len(item_validation_results):
+                    candidate = item_validation_results[index - 1]
+                    if isinstance(candidate, dict):
+                        validated_item = candidate
+
+                if not isinstance(validated_item, dict):
+                    raise ValueError(
+                        f"Line {index}: no persisted NetSuite item validation "
+                        "exists for this OCR line. Validate the document again "
+                        "before posting."
+                    )
+
+                if validated_item.get("ambiguous"):
+                    raise ValueError(
+                        f'Line {index}: multiple NetSuite items were matched '
+                        f'for "{item_name}" during validation. Please correct '
+                        "the item mapping and validate again."
+                    )
+
+                if not validated_item.get("matched"):
+                    raise ValueError(
+                        f'Line {index}: NetSuite item "{item_name}" was not '
+                        "successfully validated. Validate the document again "
+                        "before posting."
+                    )
+
+                item_id = validated_item.get("netsuite_id")
+                if not item_id:
+                    raise ValueError(
+                        f'Line {index}: validated NetSuite item ID is missing.'
+                    )
+
+                # NetSuite expects numeric transaction quantities/rates.
+                # OCR commonly stores these as strings, so normalize simple
+                # numeric strings before constructing the REST payload.
+                for numeric_name, numeric_value in (
+                    ("quantity", quantity),
+                    ("rate", rate),
+                ):
+                    if numeric_value in (None, ""):
+                        continue
+                    if isinstance(numeric_value, bool):
+                        raise ValueError(
+                            f"Line {index}: {numeric_name} must be numeric."
+                        )
+                    if isinstance(numeric_value, str):
+                        cleaned_numeric = numeric_value.strip().replace(",", "")
+                        try:
+                            parsed_numeric = float(cleaned_numeric)
+                        except ValueError as exc:
+                            raise ValueError(
+                                f"Line {index}: {numeric_name} "
+                                f"value {numeric_value!r} is not numeric."
+                            ) from exc
+
+                        if parsed_numeric.is_integer():
+                            parsed_numeric = int(parsed_numeric)
+
+                        if numeric_name == "quantity":
+                            quantity = parsed_numeric
+                        else:
+                            rate = parsed_numeric
+
+                # Merge only when the NetSuite item AND rate are the same.
+                # This preserves separate lines when the same item was sold
+                # at different prices on the source document.
+                normalized_rate = (
+                    str(rate).strip()
+                    if rate not in (None, "")
+                    else None
+                )
+                merge_key = (str(item_id), normalized_rate)
+
+                existing_index = item_payload_indexes.get(merge_key)
+
+                if existing_index is not None:
+                    existing_payload = payload_items[existing_index]
+                    existing_quantity = existing_payload.get("quantity")
+
+                    # Only merge when both duplicate lines have quantities.
+                    # If either quantity is missing, retain separate lines
+                    # rather than inventing a quantity.
+                    if (
+                        quantity not in (None, "")
+                        and existing_quantity not in (None, "")
+                    ):
+                        try:
+                            merged_quantity = (
+                                float(existing_quantity)
+                                + float(quantity)
+                            )
+
+                            if merged_quantity.is_integer():
+                                merged_quantity = int(merged_quantity)
+
+                            existing_payload["quantity"] = merged_quantity
+
+                            logger.info(
+                                "Merged duplicate NetSuite item on Vendor Bill "
+                                "— item=%s id=%s previous_quantity=%s "
+                                "added_quantity=%s final_quantity=%s rate=%s "
+                                "connection=%s",
+                                item_name,
+                                item_id,
+                                existing_quantity,
+                                quantity,
+                                merged_quantity,
+                                rate,
+                                connection.id,
+                            )
+                            continue
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "Could not numerically merge duplicate "
+                                "NetSuite item; keeping separate lines — "
+                                "item=%s id=%s previous_quantity=%s "
+                                "added_quantity=%s rate=%s connection=%s",
+                                item_name,
+                                item_id,
+                                existing_quantity,
+                                quantity,
+                                rate,
+                                connection.id,
+                            )
 
                 item_payload = {
                     "item":{
                         "id":str(item_id)
                     },
-                    "location":{
-                        "id":str(posting_location_id),
-                    },
                 }
+
+                if posting_location_id is not None:
+                    item_payload["location"] = {
+                        "id": str(posting_location_id),
+                    }
 
                 if quantity not in (None, ""):
                     item_payload["quantity"] = quantity
@@ -1670,13 +1800,11 @@ class NetSuiteVendorBillPostingService:
                 if description not in (None, ""):
                     item_payload["description"] = description
 
+                item_payload_indexes[merge_key] = len(payload_items)
                 payload_items.append(item_payload)
 
         payload = {
             "entity": {"id": vendor["internal_id"]},
-            "location":{
-                "id":str(posting_location_id),
-            },
         }
 
         if payload_items:
@@ -1726,12 +1854,24 @@ class NetSuiteVendorBillPostingService:
             "amountremaining",
             "amountpaid",
         }
+        NETSUITE_VENDOR_BILL_UNSUPPORTED_FIELDS = {
+            "entityid",
+        }
 
         for mapping in standard_field_mappings:
             target_field_id = mapping.target_field_id
             if not target_field_id or target_field_id in payload:
                 # Already set explicitly above (entity/item), or a
                 # duplicate mapping row — first mapping wins.
+                continue
+
+            if target_field_id.strip().lower() in NETSUITE_VENDOR_BILL_UNSUPPORTED_FIELDS:
+                logger.warning(
+                    "Skipping unsupported Vendor Bill body field mapping "
+                    "— field=%s connection=%s",
+                    target_field_id,
+                    connection.id,
+                )
                 continue
 
             if target_field_id.strip().lower() in NETSUITE_COMPUTED_READONLY_FIELDS:
@@ -1804,14 +1944,48 @@ class NetSuiteVendorBillPostingService:
         # not already supplied by an explicit field mapping above.
         payload_keys_lower = {key.lower() for key in payload}
 
+        # REST record field names are camelCase. In particular, the Vendor
+        # Bill REST schema uses tranId / tranDate / dueDate. The old fallback
+        # used SuiteScript/SuiteQL-style lowercase IDs (tranid/trandate/duedate),
+        # which can make NetSuite reject the entire JSON body with the generic
+        # INVALID_CONTENT response.
         if "tranid" not in payload_keys_lower and data.get("invoice_number"):
-            payload["tranid"] = data["invoice_number"]
+            payload["tranId"] = str(data["invoice_number"])[:45]
 
         if "trandate" not in payload_keys_lower and data.get("invoice_date"):
-            payload["trandate"] = data["invoice_date"]
+            payload["tranDate"] = data["invoice_date"]
 
         if "duedate" not in payload_keys_lower and data.get("due_date"):
-            payload["duedate"] = data["due_date"]
+            payload["dueDate"] = data["due_date"]
+
+        # Location is a subsidiary-sensitive NetSuite reference. Use the
+        # mapped/resolved body Location when one was supplied. Only fall back
+        # to the temporary Pune default when the document has no Location
+        # mapping/value. Then force every item line to use the same Location
+        # as the Vendor Bill header so header/line references cannot diverge.
+        mapped_location = payload.get("location")
+        if (
+            isinstance(mapped_location, dict)
+            and mapped_location.get("id") not in (None, "")
+        ):
+            posting_location_id = str(mapped_location["id"])
+        else:
+            posting_location_id = self._resolve_posting_location_id(
+                connection=connection,
+            )
+            payload["location"] = {
+                "id": str(posting_location_id),
+            }
+
+        for item_payload in payload_items:
+            item_payload["location"] = {
+                "id": str(posting_location_id),
+            }
+
+        if payload_items:
+            payload["item"] = {
+                "items": payload_items,
+            }
 
         custom_fields = self._apply_custom_fields(
             company=company,
@@ -1820,9 +1994,42 @@ class NetSuiteVendorBillPostingService:
             data=data,
         )
         if custom_fields:
-            payload["customFieldList"] = {
-                "customField": custom_fields
-            }
+            logger.warning(
+                "Skipping custom fields for Vendor Bill diagnostic test — "
+                "custom_fields=%s",
+                custom_fields,
+            )
+
+        logger.warning(
+            "Vendor Bill payload summary before NetSuite POST — "
+            "vendor_id=%s location_id=%s subsidiary=%s currency=%s "
+            "item_count=%s item_lines=%s body_keys=%s custom_fields=%s "
+            "connection=%s",
+            vendor["internal_id"],
+            posting_location_id,
+            payload.get("subsidiary"),
+            payload.get("currency"),
+            len(payload_items),
+            [
+                {
+                    "item_id": line.get("item", {}).get("id"),
+                    "quantity": line.get("quantity"),
+                    "rate": line.get("rate"),
+                    "location_id": line.get("location", {}).get("id"),
+                }
+                for line in payload_items
+            ],
+            sorted(payload.keys()),
+            len(
+                (payload.get("customFieldList") or {}).get(
+                    "customField",
+                    [],
+                )
+            )
+            if isinstance(payload.get("customFieldList"), dict)
+            else 0,
+            connection.id,
+        )
 
         posting = self.repository.save_ocr_posting(
             document=document,
@@ -3708,12 +3915,14 @@ class NetSuiteValidationService:
             None,
         )
 
+        ITEM_MAPPING_FIELD_IDS = {"item", "items"}
         item_mapping = next(
             (
                 mapping
                 for mapping in mappings
-                if str(mapping.target_field_id).lower() == "item"
-                and str(mapping.source_scope).lower() == "line"
+                if str(mapping.target_field_id).strip().lower() 
+                in ITEM_MAPPING_FIELD_IDS
+                and str(mapping.source_scope).strip().lower() == "line"
             ),
             None,
         )
@@ -3749,7 +3958,41 @@ class NetSuiteValidationService:
             connection=connection,
             vendor_name=vendor_name,
         )
+
+        # Validate only real Vendor Bill item rows. OCR can also return
+        # account/tax/TDS/GST rows inside line_items; those rows do not have
+        # quantity or unit price and must not become NetSuite item lines.
+        real_item_lines = []
+        real_item_line_indexes = []
+        for line_index, line in enumerate(line_items, start=1):
+            if not isinstance(line, dict):
+                continue
+            quantity = line.get("quantity")
+            rate = line.get("unit_price")
+            if quantity in (None, "") and rate in (None, ""):
+                continue
+            real_item_lines.append(line)
+            real_item_line_indexes.append(line_index)
+
+        if item_mapping is None and real_item_lines:
+            raise ValueError(
+                "Item field mapping is required before NetSuite reference validation."
+            )
+
         item_results = []
+        if real_item_lines:
+            raw_item_results = self._validate_items_live(
+                connection=connection,
+                line_items=real_item_lines,
+                source_field_key=item_mapping.source_field_key,
+            )
+            for result, original_line_index in zip(
+                raw_item_results,
+                real_item_line_indexes,
+            ):
+                result["line_index"] = original_line_index
+                item_results.append(result)
+
         errors = []
     
         if not vendor_name or not str(vendor_name).strip():
@@ -3771,6 +4014,24 @@ class NetSuiteValidationService:
                 "message": "Vendor does not exist in the selected NetSuite account.",
                 "extracted_name": vendor_name,
             })
+
+        for item in item_results:
+            if item.get("ambiguous"):
+                errors.append({
+                    "type": "ITEM_AMBIGUOUS",
+                    "message": "Multiple possible items matched. Please confirm the item mapping.",
+                    "extracted_name": item.get("extracted_name"),
+                    "line_index": item.get("line_index"),
+                    "candidates": item.get("candidates", []),
+                })
+            elif not item.get("matched"):
+                errors.append({
+                    "type": "ITEM_NOT_FOUND",
+                    "message": "Item does not exist in the selected NetSuite account.",
+                    "extracted_name": item.get("extracted_name"),
+                    "line_index": item.get("line_index"),
+                })
+
         status = (
             ValidationStatus.VALIDATED
             if not errors
@@ -4069,13 +4330,29 @@ class NetSuiteValidationService:
                 )
 
             elif len(candidates) > 1:
+                # Preserve the existing posting behavior: if the same exact
+                # OCR item name matches multiple active NetSuite item records,
+                # use the first active match and persist that exact ID in the
+                # validation result. Posting will then reuse this persisted ID
+                # instead of performing another lookup.
+                first_candidate = candidates[0]
+                logger.warning(
+                    "Multiple NetSuite item matches found during validation; "
+                    "using first active match — item=%r id=%s candidates=%s "
+                    "connection=%s",
+                    name,
+                    first_candidate["id"],
+                    len(candidates),
+                    connection.id,
+                )
                 results.append(
                     {
-                        "matched": False,
-                        "ambiguous": True,
-                        "netsuite_id": None,
+                        "matched": True,
+                        "ambiguous": False,
+                        "netsuite_id": str(first_candidate["id"]),
                         "extracted_name": name,
                         "line_index": line_index,
+                        "record_type": "item",
                         "round": 1,
                         "confidence": 1.0,
                         "candidates": [

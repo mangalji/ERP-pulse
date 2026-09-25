@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useState, useRef, useMemo, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import apiClient, { unwrap } from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
@@ -7,7 +7,7 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import OcrReviewWorkspace from '../../components/ocr/OcrReviewWorkspace.jsx'
-// import ExtractionConfigPanel from '../../components/ocr/ExtractionConfigPanel.jsx'
+
 
 const ALLOWED_TYPES = [
   'application/pdf',
@@ -153,7 +153,6 @@ export default function OcrPage() {
   const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
   const [previewError, setPreviewError] = useState('')
 
-  // const [extractionConfig, setExtractionConfig] = useState(null)
   const [extractionTemplates, setExtractionTemplates] = useState([])
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
 
@@ -672,6 +671,33 @@ const selectedValidateIds = useMemo(
   useEffect(() => {
     let cancelled = false
 
+    const loadExtractionTemplates = async () => {
+      try {
+        const response = await apiClient.get('/ocr/extraction-templates/')
+        const payload = response?.data?.data ?? response?.data ?? {}
+        const templates = Array.isArray(payload) ? payload : []
+
+        if (!cancelled) {
+          setExtractionTemplates(templates)
+        }
+      } catch (err) {
+        console.error('Failed to load OCR extraction templates:', err)
+        if (!cancelled) {
+          setExtractionTemplates([])
+        }
+      }
+    }
+
+    loadExtractionTemplates()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
     const loadOcrModes = async () => {
       try {
         const response = await apiClient.get('/ocr/extract/upload-modes/')
@@ -784,6 +810,11 @@ const selectedValidateIds = useMemo(
     (fileList) => {
       const incoming = Array.from(fileList || [])
 
+      if (!selectedTemplateId) {
+        setError('Please select a File Template before uploading files.')
+        return
+      }
+
       if (!incoming.length) return
 
       if (ocrMode === 'single') {
@@ -858,7 +889,7 @@ const selectedValidateIds = useMemo(
       setResults([])
       setActiveIndex(0)
     },
-    [ocrMode, selectedFiles, validateFiles],
+    [ocrMode, selectedFiles, selectedTemplateId, validateFiles],
   )
 
 
@@ -903,6 +934,11 @@ const selectedValidateIds = useMemo(
   }
 
   const handleExtract = async () => {
+    if (!selectedTemplateId) {
+      setError('Please select a File Template before uploading or extracting files.')
+      return
+    }
+
     if (!selectedFiles.length || processing) {
       if (!selectedFiles.length) {
         setError('Please select at least one document file first.')
@@ -934,14 +970,6 @@ const selectedValidateIds = useMemo(
 
       formData.append('mode', ocrMode)
 
-      // if (extractionConfig?.template_id) {
-      //   formData.append('template_id', extractionConfig.template_id)
-      // } else if (extractionConfig?.requested_fields) {
-      //   formData.append(
-      //     'requested_fields',
-      //     JSON.stringify(extractionConfig.requested_fields),
-      //   )
-      // }
       if (selectedTemplateId) {
           formData.append('template_id', selectedTemplateId)
       }
@@ -991,8 +1019,7 @@ const selectedValidateIds = useMemo(
               'COMPLETED',
             batch_id: batchId,
             files: initialFiles,
-            requested_fields:
-              extractionConfig?.requested_fields || null,
+            template_id: selectedTemplateId || null,
           }),
         )
 
@@ -1043,8 +1070,7 @@ const selectedValidateIds = useMemo(
               status: batch?.status ?? 'PROCESSING',
               batch_id: batchId,
               files,
-              requested_fields:
-                extractionConfig?.requested_fields || null,
+              template_id: selectedTemplateId || null,
             }),
           )
         }
@@ -1297,7 +1323,7 @@ const selectedValidateIds = useMemo(
                   multiple={ocrMode === 'multiple'}
                   accept={ACCEPT}
                   onChange={handleFileChange}
-                  disabled={processing}
+                  disabled={processing || !selectedTemplateId}
                   className="hidden"
                 />
 
@@ -1305,7 +1331,7 @@ const selectedValidateIds = useMemo(
                   <Button
                     type="button"
                     onClick={() => inputRef.current?.click()}
-                    disabled={processing}
+                    disabled={processing || !selectedTemplateId}
                   >
                     Choose Files
                   </Button>
@@ -1322,7 +1348,7 @@ const selectedValidateIds = useMemo(
                   <Button
                     type="button"
                     onClick={handleExtract}
-                    disabled={processing || !selectedFiles.length}
+                    disabled={processing || !selectedFiles.length || !selectedTemplateId}
                   >
                     {processing ? 'Processing...' : 'Extract Data'}
                   </Button>
@@ -1331,12 +1357,30 @@ const selectedValidateIds = useMemo(
 
               </div>
 
-              {selectedFiles.length > 0 && (
-                // <ExtractionConfigPanel onChange={setExtractionConfig} />
-                <select value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)}>
-                    ...
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <label
+                  htmlFor="ocr-extraction-template"
+                  className="text-sm font-semibold text-[var(--color-ink)]"
+                >
+                  File Template <span className="text-red-500">*</span>
+                </label>
+
+                <select
+                  id="ocr-extraction-template"
+                  value={selectedTemplateId}
+                  onChange={(event) => setSelectedTemplateId(event.target.value)}
+                  disabled={processing}
+                  required
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] sm:max-w-sm"
+                >
+                  <option value="">Select File Template</option>
+                  {extractionTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
                 </select>
-              )}
+              </div>
 
               {error && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1557,15 +1601,19 @@ const selectedValidateIds = useMemo(
                       refreshOcrHistory()
                     }}
                     customFieldTypes={
-                      extractionConfig?.requested_fields?.custom_fields?.reduce(
-                        (acc, cf) => {
-                          if (cf.label && cf.key) {
-                            acc[cf.key] = cf.data_type || 'text'
+                      (extractionTemplates.find(
+                        (template) =>
+                          String(template?.id) === String(selectedTemplateId),
+                      )?.fields_config?.custom_fields || []).reduce(
+                        (acc, field) => {
+                          const key = field?.key || field?.label
+                          if (key) {
+                            acc[key] = field?.data_type || 'text'
                           }
                           return acc
                         },
                         {},
-                      ) || {}
+                      )
                     }
                     connectionId={connection?.id || null}
                     validationResult={validationResult}
@@ -1897,8 +1945,7 @@ const selectedValidateIds = useMemo(
                     type="button"
                     intent="secondary"
                     onClick={() => loadRecentHistory(Math.max(0, recentHistoryOffset - HISTORY_PAGE_SIZE))}
-                    disabled={recentHistoryLoading || recentHistoryOffset === 0}
-                  >
+                    disabled={recentHistoryLoading || recentHistoryOffset === 0}>
                     ← Previous
                   </Button>
                   <span className="text-xs text-[var(--color-muted)]">
@@ -1909,8 +1956,7 @@ const selectedValidateIds = useMemo(
                     type="button"
                     intent="secondary"
                     onClick={() => loadRecentHistory(recentHistoryOffset + HISTORY_PAGE_SIZE)}
-                    disabled={recentHistoryLoading || recentHistoryOffset + HISTORY_PAGE_SIZE >= recentHistoryCount}
-                  >
+                    disabled={recentHistoryLoading || recentHistoryOffset + HISTORY_PAGE_SIZE >= recentHistoryCount}>
                     Next →
                   </Button>
                 </div>
@@ -1920,5 +1966,6 @@ const selectedValidateIds = useMemo(
         </Card>
       </div>
       </ClientLayout>
-    )
-  }
+  )
+}
+  
