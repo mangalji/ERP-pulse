@@ -35,6 +35,7 @@ from ocr.serializers import (
     OCRSaveRequestSerializer,
     OCRExtractionTemplateSerializer,
     OCRExtractionTemplateCreateSerializer,
+    OCRExtractionTemplateUpdateSerializer,
 )
 from ocr.pdf_processor import get_fitz
 from ocr.exceptions import OCRException
@@ -792,7 +793,8 @@ class OCRExtractionTemplateListView(APIView):
     def get(self, request):
         queryset = OCRExtractionTemplate.objects.filter(
             company=request.user.company
-        ).order_by("name")
+        # ).order_by("name")
+        ).order_by("created_at","id")
         serializer = OCRExtractionTemplateSerializer(queryset, many=True)
         return success_response(
             message="Extraction templates fetched successfully.",
@@ -823,8 +825,37 @@ class OCRExtractionTemplateListView(APIView):
         )
 
 
+# class OCRExtractionTemplateDetailView(APIView):
+#     """Retrieve/delete a company-scoped extraction template."""
+
+#     permission_classes = [IsAuthenticated]
+
+#     def _get_template(self, request, template_id):
+#         try:
+#             return OCRExtractionTemplate.objects.get(
+#                 pk=template_id,
+#                 company=request.user.company,
+#             )
+#         except (OCRExtractionTemplate.DoesNotExist, ValueError, TypeError):
+#             raise NotFound("Extraction template not found.")
+
+#     def get(self, request, template_id):
+#         template = self._get_template(request, template_id)
+#         return success_response(
+#             message="Extraction template fetched successfully.",
+#             data=OCRExtractionTemplateSerializer(template).data,
+#         )
+
+#     def delete(self, request, template_id):
+#         template = self._get_template(request, template_id)
+#         template.delete()
+#         return success_response(
+#             message="Extraction template deleted successfully.",
+#             data=None,
+#         )
+
 class OCRExtractionTemplateDetailView(APIView):
-    """Retrieve/delete a company-scoped extraction template."""
+    """Retrieve, partially update, or delete a company-scoped extraction template."""
 
     permission_classes = [IsAuthenticated]
 
@@ -834,19 +865,79 @@ class OCRExtractionTemplateDetailView(APIView):
                 pk=template_id,
                 company=request.user.company,
             )
-        except (OCRExtractionTemplate.DoesNotExist, ValueError, TypeError):
+        except (
+            OCRExtractionTemplate.DoesNotExist,
+            ValueError,
+            TypeError,
+        ):
             raise NotFound("Extraction template not found.")
 
     def get(self, request, template_id):
         template = self._get_template(request, template_id)
+
         return success_response(
             message="Extraction template fetched successfully.",
             data=OCRExtractionTemplateSerializer(template).data,
         )
 
+    def patch(self, request, template_id):
+        template = self._get_template(request, template_id)
+
+        serializer = OCRExtractionTemplateUpdateSerializer(
+            data=request.data
+        )
+        serializer.is_valid(raise_exception=True)
+
+        validated_data = serializer.validated_data
+
+        if "name" in validated_data:
+            new_name = validated_data["name"]
+
+            duplicate_exists = (
+                OCRExtractionTemplate.objects
+                .filter(
+                    company=request.user.company,
+                    name=new_name,
+                )
+                .exclude(pk=template.pk)
+                .exists()
+            )
+
+            if duplicate_exists:
+                return Response(
+                    {
+                        "detail": (
+                            "An extraction template with this name "
+                            "already exists."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            template.name = new_name
+
+        if "fields_config" in validated_data:
+            template.fields_config = validated_data["fields_config"]
+
+        template.save(
+            update_fields=[
+                field
+                for field in ("name", "fields_config")
+                if field in validated_data
+            ]
+            + ["updated_at"]
+        )
+
+        return success_response(
+            message="Extraction template updated successfully.",
+            data=OCRExtractionTemplateSerializer(template).data,
+        )
+
     def delete(self, request, template_id):
         template = self._get_template(request, template_id)
+
         template.delete()
+
         return success_response(
             message="Extraction template deleted successfully.",
             data=None,

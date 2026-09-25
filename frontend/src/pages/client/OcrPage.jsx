@@ -7,7 +7,7 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import OcrReviewWorkspace from '../../components/ocr/OcrReviewWorkspace.jsx'
-import ExtractionConfigPanel from '../../components/ocr/ExtractionConfigPanel.jsx'
+// import ExtractionConfigPanel from '../../components/ocr/ExtractionConfigPanel.jsx'
 
 const ALLOWED_TYPES = [
   'application/pdf',
@@ -153,7 +153,9 @@ export default function OcrPage() {
   const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
   const [previewError, setPreviewError] = useState('')
 
-  const [extractionConfig, setExtractionConfig] = useState(null)
+  // const [extractionConfig, setExtractionConfig] = useState(null)
+  const [extractionTemplates, setExtractionTemplates] = useState([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
 
   const [validationFilter, setValidationFilter] = useState('all')
   const [selectedIds, setSelectedIds] = useState(new Set())
@@ -932,13 +934,16 @@ const selectedValidateIds = useMemo(
 
       formData.append('mode', ocrMode)
 
-      if (extractionConfig?.template_id) {
-        formData.append('template_id', extractionConfig.template_id)
-      } else if (extractionConfig?.requested_fields) {
-        formData.append(
-          'requested_fields',
-          JSON.stringify(extractionConfig.requested_fields),
-        )
+      // if (extractionConfig?.template_id) {
+      //   formData.append('template_id', extractionConfig.template_id)
+      // } else if (extractionConfig?.requested_fields) {
+      //   formData.append(
+      //     'requested_fields',
+      //     JSON.stringify(extractionConfig.requested_fields),
+      //   )
+      // }
+      if (selectedTemplateId) {
+          formData.append('template_id', selectedTemplateId)
       }
 
       const response = await apiClient.post(
@@ -1327,7 +1332,10 @@ const selectedValidateIds = useMemo(
               </div>
 
               {selectedFiles.length > 0 && (
-                <ExtractionConfigPanel onChange={setExtractionConfig} />
+                // <ExtractionConfigPanel onChange={setExtractionConfig} />
+                <select value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)}>
+                    ...
+                </select>
               )}
 
               {error && (

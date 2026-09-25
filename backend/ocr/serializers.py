@@ -150,7 +150,6 @@ class OCRHistoryVersionSerializer(serializers.ModelSerializer):
             'tax_rate',
             'total_amount',
             'payment_terms',
-            # 'line_items',
             'normalized_json',
             'created_at',
         ]
@@ -225,4 +224,56 @@ class OCRExtractionTemplateCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"name": "Template name is required."}
             )
+        return attrs
+
+class OCRExtractionTemplateUpdateSerializer(serializers.Serializer):
+    """
+    Partial update payload for an extraction template.
+
+    Both fields are optional so the client can update only the
+    template name or only its field configuration.
+    """
+
+    name = serializers.CharField(
+        max_length=150,
+        required=False,
+    )
+    fields_config = serializers.JSONField(
+        required=False,
+    )
+
+    def validate_name(self, value):
+        value = value.strip()
+
+        if not value:
+            raise serializers.ValidationError(
+                "Template name is required."
+            )
+
+        return value
+
+    def validate_fields_config(self, value):
+        if value is None:
+            return {}
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                "fields_config must be a JSON object."
+            )
+
+        from ocr.notebook_extraction_service import resolve_field_config
+
+        try:
+            resolve_field_config(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+        return value
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                "At least one field must be provided for update."
+            )
+
         return attrs

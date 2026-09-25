@@ -377,16 +377,18 @@ def _apply_datatype_normalization(
 
 def get_standard_field_catalog() -> dict[str, Any]:
     """
-    Catalogue of the standard extraction fields for the dynamic
-    configuration UI (Phase 2). Returns header and line field descriptors
-    with their labels and declared datatypes.
+    Catalogue of standard extraction fields for the dynamic
+    File Template configuration UI.
     """
     return {
         "header_fields": [
             {
                 "key": key,
                 "label": FIELD_LABELS.get(key, key),
+                "questionaire": FIELD_DESCRIPTIONS.get(key, ""),
                 "data_type": FIELD_DATA_TYPES.get(key, "text"),
+                "scope": "header",
+                "standard": True,
             }
             for key in FIELD_DESCRIPTIONS
         ],
@@ -394,7 +396,10 @@ def get_standard_field_catalog() -> dict[str, Any]:
             {
                 "key": key,
                 "label": LINE_ITEM_LABELS.get(key, key),
+                "questionaire": LINE_ITEM_FIELDS.get(key, ""),
                 "data_type": LINE_ITEM_DATA_TYPES.get(key, "text"),
+                "scope": "line",
+                "standard": True,
             }
             for key in LINE_ITEM_FIELDS
         ],
@@ -462,29 +467,118 @@ def resolve_field_config(
 
     selected_standard = requested_fields.get("standard_fields")
     custom_fields = requested_fields.get("custom_fields") or []
-    if (not isinstance(selected_standard, list) or not selected_standard) and not custom_fields:
+
+    if selected_standard is None:
+        selected_standard = list(FIELD_DESCRIPTIONS.keys()) + ["line_items"]
+
+    elif not isinstance(selected_standard, list):
+        raise ValueError("standard_fields must be a list.")
+
+    if not selected_standard and not custom_fields:
         raise ValueError(
             "Extraction configuration must include at least one standard "
             "field or one custom field."
         )
+    
+    # if (not isinstance(selected_standard, list) or not selected_standard) and not custom_fields:
+    #     raise ValueError(
+    #         "Extraction configuration must include at least one standard "
+    #         "field or one custom field."
+    #     )
 
-    if not isinstance(selected_standard, list) or not selected_standard:
-        selected_standard = list(FIELD_DESCRIPTIONS.keys()) + ["line_items"]
+    # if not isinstance(selected_standard, list) or not selected_standard:
+    #     selected_standard = list(FIELD_DESCRIPTIONS.keys()) + ["line_items"]
 
     include_line_items = "line_items" in selected_standard
 
     header_fields = {
-        key: description
-        for key, description in FIELD_DESCRIPTIONS.items()
+        key: FIELD_DESCRIPTIONS[key]
+        for key in FIELD_DESCRIPTIONS
         if key in selected_standard
     }
-    line_fields = dict(LINE_ITEM_FIELDS) if include_line_items else {}
+    line_fields = {
+        key: LINE_ITEM_FIELDS[key]
+        for key in LINE_ITEM_FIELDS
+        if key in selected_standard or include_line_items
+    }
+    if line_fields:
+        include_line_items = True
+    
     header_types = {
-        key: FIELD_DATA_TYPES.get(key, "text") for key in header_fields
+        key: FIELD_DATA_TYPES.get(key, "text")
+        for key in header_fields
     }
+
     line_types = {
-        key: LINE_ITEM_DATA_TYPES.get(key, "text") for key in line_fields
+        key: LINE_ITEM_DATA_TYPES.get(key, "text")
+        for key in line_fields
     }
+
+    standard_field_overrides = (
+        requested_fields.get("standard_field_overrides") or {}
+    )
+
+    if not isinstance(standard_field_overrides, dict):
+        raise ValueError("standard_field_overrides must be an object.")
+
+    for key, override in standard_field_overrides.items():
+        
+        if key not in FIELD_DESCRIPTIONS and key not in LINE_ITEM_FIELDS:
+            continue
+
+        if key not in selected_standard:
+            continue
+
+        if not isinstance(override, dict):
+            raise ValueError(
+                f"Invalid standard_field_overrides entry for '{key}'."
+            )
+
+        questionnaire = (
+            override.get("questionaire")
+            or override.get("description")
+            or FIELD_DESCRIPTIONS.get(key)
+            or LINE_ITEM_FIELDS.get(key)
+            or key
+        )
+
+        data_type = _coerce_data_type(
+            override.get("data_type")
+            or (
+                FIELD_DATA_TYPES.get(key)
+                if key in FIELD_DATA_TYPES
+                else LINE_ITEM_DATA_TYPES.get(key, "text")
+            )
+        )
+
+        scope = override.get("scope")
+
+        if scope not in {"header", "line", None}:
+            raise ValueError(
+                f"Invalid scope for standard field '{key}'."
+            )
+
+        current_scope = (
+            "line"
+            if key in LINE_ITEM_FIELDS
+            else "header"
+        )
+
+        target_scope = scope or current_scope
+
+        header_fields.pop(key, None)
+        line_fields.pop(key, None)
+        header_types.pop(key, None)
+        line_types.pop(key, None)
+
+        if target_scope == "line":
+            line_fields[key] = questionnaire
+            line_types[key] = data_type
+            include_line_items = True
+
+        else:
+            header_fields[key] = questionnaire
+            header_types[key] = data_type
 
     reserved_keys = frozenset(FIELD_DESCRIPTIONS) | {"line_items"} | frozenset(LINE_ITEM_FIELDS)
     seen_keys = set(header_fields) | set(line_fields)
@@ -515,9 +609,23 @@ def resolve_field_config(
                 "Each custom field must have a unique label."
             )
 
-        description = str(custom.get("description") or label).strip()
-        data_type = _coerce_data_type(custom.get("data_type"))
-        scope = "line" if custom.get("scope") == "line" else "header"
+        # description = str(custom.get("description") or label).strip()
+        # data_type = _coerce_data_type(custom.get("data_type"))
+        # scope = "line" if custom.get("scope") == "line" else "header"
+        description = str(
+            custom.get("questionaire")
+            or custom.get("description")
+            or label
+        ).strip()
+
+        data_type = _coerce_data_type(
+            custom.get("data_type")
+        )
+        scope = (
+            "line"
+            if custom.get("scope") == "line"
+            else "header"
+        )
 
         if scope == "line":
             if not include_line_items:
@@ -536,15 +644,19 @@ def resolve_field_config(
 
         seen_keys.add(key)
 
-    if not header_fields and not include_line_items:
-        # Never send Gemini an empty contract — fall back to the safe
-        # default rather than extracting nothing at all.
-        return (
-            dict(FIELD_DESCRIPTIONS),
-            dict(LINE_ITEM_FIELDS),
-            True,
-            dict(FIELD_DATA_TYPES),
-            dict(LINE_ITEM_DATA_TYPES),
+    # if not header_fields and not include_line_items:
+    #     # Never send Gemini an empty contract — fall back to the safe
+    #     # default rather than extracting nothing at all.
+    #     return (
+    #         dict(FIELD_DESCRIPTIONS),
+    #         dict(LINE_ITEM_FIELDS),
+    #         True,
+    #         dict(FIELD_DATA_TYPES),
+    #         dict(LINE_ITEM_DATA_TYPES),
+    #     )
+    if not header_fields and not line_fields:
+        raise ValueError(
+            "Extraction configuration must include at least one field."
         )
 
     return header_fields, line_fields, include_line_items, header_types, line_types
