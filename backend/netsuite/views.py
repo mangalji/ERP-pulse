@@ -836,6 +836,18 @@ class NetSuiteCheckOCRReferencesView(APIView):
                 data=result,
             )
 
+        except NetSuiteRecordFetchException as exc:
+            logger.exception(
+                "NetSuite reference validation unavailable during preflight.",
+            )
+            return Response(
+                {
+                    "detail": str(exc),
+                    "code": "NETSUITE_VALIDATION_UNAVAILABLE",
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
         except ValueError as exc:
             return Response(
                 {"detail": str(exc)},
@@ -940,6 +952,17 @@ class NetSuitePostOCRVendorBillView(APIView):
                 data=result,
             )
 
+        except NetSuiteRecordFetchException as exc:
+            logger.exception(
+                "NetSuite verification unavailable during Vendor Bill posting.",
+            )
+            return Response(
+                {
+                    "detail": str(exc),
+                    "code": "NETSUITE_VALIDATION_UNAVAILABLE",
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         except ValueError as exc:
             return Response(
                 {"detail": str(exc)},
