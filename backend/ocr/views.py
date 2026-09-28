@@ -22,6 +22,7 @@ from rest_framework.views import APIView
 from common.common_utils import success_response
 from rest_framework.response import Response
 from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionTemplate, OCRValidationResult
+from netsuite.models import NetSuiteOCRPosting
 from ocr.serializers import (
     DocumentHistorySerializer,
     DocumentVersionSerializer,
@@ -103,17 +104,31 @@ def _resolve_template_config(template_id, user) -> dict:
     return config
 
 
-def _build_requested_fields(request) -> dict:
-    """Resolve the mandatory company-scoped extraction template."""
+def _build_requested_fields(request) -> dict | None:
+    """
+    Resolve the effective requested_fields from the upload request.
+
+    An explicit template_id takes precedence over inline
+    requested_fields.
+    """
     template_id = request.data.get("template_id")
-    if not template_id:
-        raise ValueError("An extraction template must be selected before uploading files.")
+    raw_requested = _parse_requested_fields(
+        request.data.get("requested_fields")
+    )
 
-    requested_fields = _resolve_template_config(template_id, request.user)
-    if not requested_fields:
-        raise ValueError("The selected extraction template contains no fields.")
+    if template_id:
+        requested_fields = _resolve_template_config(
+            template_id,
+            request.user,
+        )
+    elif raw_requested is not None:
+        requested_fields = raw_requested
+    else:
+        requested_fields = None
 
-    resolve_field_config(requested_fields)
+    if requested_fields:
+        resolve_field_config(requested_fields)
+
     return requested_fields
 
 
@@ -358,11 +373,9 @@ class OCRHistoryListView(APIView):
     """
     GET /api/v1/ocr/history/
 
-    Returns one row per uploaded file, newest first. Validation state is
-    derived from the latest validation result for the current OCR version.
-
-    OCRUpload exposes the OCRDocument through the ``document`` relation;
-    there is no direct ``OCRUpload.document_id`` model field.
+    Returns one top-level history record per single upload or per multiple-file
+    OCR batch. Validation/posting state is derived from the latest version of
+    every document in the record.
     """
 
     permission_classes = [IsAuthenticated]
@@ -380,116 +393,191 @@ class OCRHistoryListView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        uploads = list(
-            OCRUpload.objects
-            .filter(batch__in=_visible_batch_queryset(request.user))
-            .select_related("batch", "document", "user")
+        batches = list(
+            _visible_batch_queryset(request.user)
+            .select_related("user")
+            .prefetch_related("uploads__document__versions")
             .order_by("-created_at")
         )
 
-        documents = {}
-        current_versions = {}
+        document_by_upload = {}
+        version_by_document = {}
+        all_document_ids = []
+        all_version_ids = []
 
-        for upload in uploads:
-            document = getattr(upload, "document", None)
-            documents[upload.id] = document
+        for batch in batches:
+            for upload in batch.uploads.all().order_by("created_at"):
+                document = getattr(upload, "document", None)
+                document_by_upload[upload.id] = document
 
-            if document is not None:
-                current_versions[document.id] = (
-                    OCRDocumentVersion.objects
-                    .filter(document_id=document.id)
+                if document is None:
+                    continue
+
+                version = (
+                    document.versions
                     .order_by("-version_number")
                     .first()
                 )
-
-        document_ids = [
-            document.id
-            for document in documents.values()
-            if document is not None
-        ]
+                version_by_document[document.id] = version
+                all_document_ids.append(document.id)
+                if version is not None:
+                    all_version_ids.append(version.id)
 
         latest_validation = {}
-
-        if document_ids:
+        if all_document_ids:
             validations = (
                 OCRValidationResult.objects
-                .filter(document_id__in=document_ids)
-                .select_related("version")
+                .filter(document_id__in=all_document_ids)
                 .order_by("document_id", "-created_at")
             )
 
             for validation in validations:
                 document_id = validation.document_id
-                current_version = current_versions.get(document_id)
-
-                # Never expose a validation result belonging to an older
-                # OCR version as the current document's validation state.
+                current_version = version_by_document.get(document_id)
                 if (
                     current_version is not None
                     and validation.version_id != current_version.id
                 ):
                     continue
-
                 if document_id not in latest_validation:
                     latest_validation[document_id] = validation
 
+        latest_posting = {}
+        if all_document_ids and all_version_ids:
+            postings = (
+                NetSuiteOCRPosting.objects
+                .filter(
+                    document_id__in=all_document_ids,
+                    version_id__in=all_version_ids,
+                )
+                .order_by("document_id", "version_id", "-created_at")
+            )
+
+            for posting in postings:
+                key = (posting.document_id, posting.version_id)
+                if key not in latest_posting:
+                    latest_posting[key] = posting
+
         results = []
 
-        for upload in uploads:
-            document = documents.get(upload.id)
-            validation = (
-                latest_validation.get(document.id)
-                if document is not None
-                else None
+        for batch in batches:
+            uploads = list(batch.uploads.all().order_by("created_at"))
+            if not uploads:
+                continue
+
+            is_multiple = (
+                str(batch.processing_mode).upper()
+                == OCRBatch.ProcessingMode.MULTIPLE
+                or len(uploads) > 1
             )
+
+            document_ids = [
+                str(document_by_upload[upload.id].id)
+                for upload in uploads
+                if document_by_upload.get(upload.id) is not None
+            ]
+
+            validations = [
+                latest_validation.get(document_by_upload[upload.id].id)
+                for upload in uploads
+                if document_by_upload.get(upload.id) is not None
+            ]
+
+            postings = [
+                latest_posting.get(
+                    (
+                        document_by_upload[upload.id].id,
+                        version_by_document[document_by_upload[upload.id].id].id,
+                    )
+                )
+                for upload in uploads
+                if (
+                    document_by_upload.get(upload.id) is not None
+                    and version_by_document.get(document_by_upload[upload.id].id)
+                    is not None
+                )
+            ]
+
+            total_documents = len(uploads)
+            validated_count = sum(
+                1
+                for validation in validations
+                if validation is not None
+                and validation.status == "VALIDATED"
+            )
+            posted_count = sum(
+                1
+                for posting in postings
+                if posting is not None
+                and posting.status == "posted"
+                and posting.netsuite_record_id
+            )
+
+            if posted_count == total_documents and total_documents:
+                record_status = "POSTED"
+            elif validated_count == total_documents and total_documents:
+                record_status = "VALIDATED"
+            else:
+                record_status = "NOT_VALIDATED"
+
+            validation_errors = []
+            validation_ids = []
+            validation_dates = []
+            for validation in validations:
+                if validation is None:
+                    continue
+                if validation.errors:
+                    validation_errors.extend(validation.errors)
+                validation_ids.append(str(validation.id))
+                validation_dates.append(validation.created_at)
+
+            if is_multiple:
+                filename = f"Batch — {total_documents} files"
+                record_type = "batch"
+                single_document_id = None
+                single_upload_id = None
+            else:
+                first_upload = uploads[0]
+                filename = first_upload.original_filename
+                record_type = "single"
+                first_document = document_by_upload.get(first_upload.id)
+                single_document_id = (
+                    str(first_document.id)
+                    if first_document is not None
+                    else None
+                )
+                single_upload_id = str(first_upload.id)
 
             results.append(
                 {
-                    "type": "single",
-                    "batch_id": (
-                        str(upload.batch_id)
-                        if upload.batch_id
-                        else None
-                    ),
-                    "document_id": (
-                        str(document.id)
-                        if document
-                        else None
-                    ),
-                    "upload_id": str(upload.id),
-                    "filename": upload.original_filename,
-                    "file_count": 1,
-                    "status": upload.status,
-                    "source_type": getattr(
-                        upload.batch,
-                        "source_type",
-                        None,
-                    ),
-                    "created_at": upload.created_at,
-                    "owner_id": str(upload.user_id),
-                    "owner_name": _user_display_name(upload.user),
-                    "validation_status": (
-                        validation.status
-                        if validation
-                        else None
-                    ),
-                    "validation_errors": (
-                        validation.errors
-                        if validation
-                        else []
-                    ),
-                    "validation_id": (
-                        str(validation.id)
-                        if validation
-                        else None
-                    ),
-                    "validation_updated_at": (
-                        validation.created_at
-                        if validation
-                        else None
-                    ),
+                    "type": record_type,
+                    "batch_id": str(batch.id),
+                    "document_id": single_document_id,
+                    "document_ids": document_ids,
+                    "upload_id": single_upload_id,
+                    "filename": filename,
+                    "file_count": total_documents,
+                    "status": batch.status,
+                    "source_type": batch.source_type,
+                    "created_at": batch.created_at,
+                    "owner_id": str(batch.user_id),
+                    "owner_name": _user_display_name(batch.user),
+                    "validation_status": record_status,
+                    "validation_errors": validation_errors,
+                    "validation_id": validation_ids[-1] if validation_ids else None,
+                    "validation_updated_at": max(validation_dates) if validation_dates else None,
+                    "validated_count": validated_count,
+                    "posted_count": posted_count,
                 }
             )
+
+        status_filter = str(request.query_params.get("status", "")).strip().upper()
+        if status_filter in {"NOT_VALIDATED", "VALIDATED", "POSTED"}:
+            results = [
+                item
+                for item in results
+                if item["validation_status"] == status_filter
+            ]
 
         total = len(results)
         page_results = results[offset:offset + limit]
@@ -1080,14 +1168,6 @@ class OCRExtractView(APIView):
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        try:
-            requested_fields = _build_requested_fields(request)
-        except ValueError as exc:
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         uploaded_files = self._get_uploaded_files(request)
 
         if not uploaded_files:
@@ -1215,6 +1295,14 @@ class OCRExtractView(APIView):
                 if contains_zip and len(uploaded_files) == 1
                 else None
             )
+
+            try:
+                requested_fields = _build_requested_fields(request)
+            except ValueError as exc:
+                return Response(
+                    {"detail": str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             batch = OCRBatch.objects.create(
                 user=request.user,

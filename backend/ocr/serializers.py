@@ -96,6 +96,11 @@ class OCRHistoryEntrySerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=("single", "batch"))
     batch_id = serializers.UUIDField(allow_null=True)
     document_id = serializers.UUIDField(allow_null=True)
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
     upload_id = serializers.UUIDField(allow_null=True)
     filename = serializers.CharField(allow_null=True, allow_blank=True)
     file_count = serializers.IntegerField()

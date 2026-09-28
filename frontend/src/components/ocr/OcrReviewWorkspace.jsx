@@ -183,6 +183,9 @@ export default function OcrReviewWorkspace({
   validationResult = null,
   onValidate = null,
   onPost = null,
+  onSaveAll = null,
+  draftData = null,
+  onDataChange = null,
   mappings = [],
   onSaveMappings = null,
 }) {
@@ -198,8 +201,8 @@ export default function OcrReviewWorkspace({
     setEditing(false)
     setSaving(false)
     setViewMode('fields')
-    setData(cloneData(result?.data))
-  }, [result?.upload_id, result?.document_id, result?.version_id, result?.data])
+    setData(cloneData(draftData ?? result?.data))
+  }, [result?.upload_id, result?.document_id, result?.version_id])
 
   const lineItems = useMemo(
     () => (Array.isArray(data.line_items) ? data.line_items : []),
@@ -228,15 +231,27 @@ export default function OcrReviewWorkspace({
     return Array.from(keys)
   }, [data?.line_items])
 
+  const updateData = (updater) => {
+    setData((current) => {
+      const next =
+        typeof updater === 'function'
+          ? updater(current)
+          : updater
+
+      onDataChange?.(normalizeEditedData(next, customFieldTypes))
+      return next
+    })
+  }
+
   const setField = (key, value) => {
-    setData((current) => ({
+    updateData((current) => ({
       ...current,
       [key]: value,
     }))
   }
 
   const setLineItemField = (index, key, value) => {
-    setData((current) => {
+    updateData((current) => {
       const nextItems = Array.isArray(current.line_items)
         ? [...current.line_items]
         : []
@@ -255,7 +270,7 @@ export default function OcrReviewWorkspace({
   }
 
   const addLineItem = () => {
-    setData((current) => ({
+    updateData((current) => ({
       ...current,
       line_items: [
         ...(Array.isArray(current.line_items) ? current.line_items : []),
@@ -265,7 +280,7 @@ export default function OcrReviewWorkspace({
   }
 
   const removeLineItem = (index) => {
-    setData((current) => ({
+    updateData((current) => ({
       ...current,
       line_items: (Array.isArray(current.line_items)
         ? current.line_items
@@ -309,6 +324,7 @@ export default function OcrReviewWorkspace({
         data: responseData?.data || payload.data,
       }
       onSaved?.(savedResult)
+      onDataChange?.(normalizeEditedData(savedResult.data, customFieldTypes))
 
       setData(cloneData(savedResult.data))
       setEditing(false)
@@ -753,6 +769,19 @@ sessionStorage.setItem(
         >
           Save
         </Button>
+
+        {String(processingMode || '').toUpperCase() === 'MULTIPLE' &&
+          onSaveAll && (
+            <Button
+              type="button"
+              intent="secondary"
+              onClick={onSaveAll}
+              disabled={saving || posting}
+            >
+              Save All
+            </Button>
+          )}
+
         {result?.document_id && (
     <Button
       type="button"

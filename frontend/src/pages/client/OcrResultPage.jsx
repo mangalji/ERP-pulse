@@ -211,7 +211,7 @@ export default function OcrResultPage() {
           <Button
             type="button"
             intent="secondary"
-            onClick={() => navigate('/app/ocr')}
+            onClick={() => navigate('/app/ocr/history')}
           >
             Back to OCR
           </Button>

@@ -1100,64 +1100,60 @@ const handlePost = async () => {
       )
       return
     }
+
     try{
       setPosting(true)
       setError('')
       setNotice('')
       setPostingResult(null)
 
-      const result =
-      await netsuiteApi.postOCRVendorBill(
-        documentId,
-        context.connection_id,
-      )
+      const result = await netsuiteApi.postOCRVendorBill(documentId,context.connection_id)
+
       setPostingResult(result)
-      setNotice(
-      `✓ Vendor Bill posted successfully to NetSuite. Record ID: ${
-        result?.netsuite_record_id || 'created'
-        }`,
-      )
-    } catch(err) {
-      console.error(
-        'NetSuite Vendor Bill posting failed:',
-        err,
-      )
-      setError(
-      err?.response?.data?.detail ||
-        err?.response?.data?.error ||
-        err?.message ||
-        'Unable to create the Vendor Bill in NetSuite.',
-      )
-    } finally {
+      setNotice(`✓ Vendor Bill posted successfully to NetSuite. Record ID: ${result?.netsuite_record_id || 'created'}`)
+    }
+    catch(err){
+      console.error('NetSuite Vendor Bill posting failed:',err)
+      
+      setError(err?.response?.data?.detail || err?.response?.data?.error || err?.message || 'Unable to create the Vendor Bill in NetSuite.')
+    }
+    finally{
       setPosting(false)
     }
-    return 
+    return
   }
 
   if (processingMode === 'MULTIPLE') {
-    if (
-      !Array.isArray(validationResult?.results) ||
-      validationResult.results.length === 0
-    ) {
+    if (!Array.isArray(documentIds) || documentIds.length === 0) {
       setError(
-        'No batch validation results are available for posting.',
+        'No OCR documents are available for batch posting.',
       )
       return
     }
 
-    const validatedDocumentIds =
-      validationResult.results
-        .filter(
-          (item) =>
-            String(item?.status || '').toUpperCase() ===
-            'VALIDATED',
-        )
-        .map((item) => item?.document_id)
-        .filter(Boolean)
+    const batchResults = Array.isArray(validationResult?.results)
+      ? validationResult.results
+      : []
 
-    if (!validatedDocumentIds.length) {
+    if (batchResults.length !== documentIds.length) {
       setError(
-        'No successfully validated documents are available for posting.',
+        'The batch has not completed validation for every file yet.',
+      )
+      return
+    }
+
+    const validatedDocumentIds = batchResults
+      .filter(
+        (item) =>
+          String(item?.status || '').toUpperCase() ===
+          'VALIDATED',
+      )
+      .map((item) => item?.document_id)
+      .filter(Boolean)
+
+    if (validatedDocumentIds.length !== documentIds.length) {
+      setError(
+        'Every file in the batch must be successfully validated before posting.',
       )
       return
     }
@@ -1183,7 +1179,7 @@ const handlePost = async () => {
       }
 
       setNotice(
-        `NetSuite batch posting started for ${validatedDocumentIds.length} document(s).`,
+        `NetSuite batch posting started for all ${validatedDocumentIds.length} document(s).`,
       )
 
       const maxAttempts = 120
@@ -1227,7 +1223,7 @@ const handlePost = async () => {
                 '✓ All validated OCR documents were posted successfully to NetSuite.',
               )
             } else {
-              setNotice(
+              setError(
                 `Batch posting completed with ${failedCount} failed document(s). Review the posting results.`,
               )
             }

@@ -39,6 +39,7 @@ import OcrPage from '../pages/client/OcrPage.jsx'
 import OcrFieldMappingPage from '../pages/client/OcrFieldMappingPage.jsx'
 import OcrResultPage from '../pages/client/OcrResultPage.jsx'
 import OcrBatchHistoryPage from '../pages/client/OcrBatchHistoryPage.jsx'
+import DataExtractionHistoryPage from '../pages/client/DataExtractionHistoryPage.jsx'
 import FileTemplatePage from '../pages/client/FileTemplatePage.jsx'
 
 function PublicRoute({ children }) {
@@ -155,6 +156,14 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute requiredRole="client">
             <ClientDashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/ocr/history"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <DataExtractionHistoryPage />
           </ProtectedRoute>
         }
       />

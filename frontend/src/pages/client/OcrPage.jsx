@@ -33,7 +33,7 @@ function createPreview(file) {
 }
 
 function isImage(file) {
-  return file?.type?.startsWith('image/')
+  return file?.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|tiff)$/i.test(file?.name || '')
 }
 
 function isPdf(file) {
@@ -133,6 +133,8 @@ export default function OcrPage() {
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
   const [results, setResults] = useState([])
+  const [draftResults, setDraftResults] = useState({})
+  const [savingAll, setSavingAll] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
 
   const [history, setHistory] = useState([])
@@ -1022,8 +1024,6 @@ const selectedValidateIds = useMemo(
             template_id: selectedTemplateId || null,
           }),
         )
-
-        clearSelectedFilesAfterExtraction()
         await refreshOcrHistory()
         return
       }
@@ -1119,7 +1119,17 @@ const selectedValidateIds = useMemo(
 
   const activeFile =
     results.length > 0
-      ? activeSelectedItem?.file ?? null
+      ? activeSelectedItem?.file ?? 
+        (activeResult?.filename
+          ? {
+            name: activeResult.filename,
+            type: 
+              activeResult.mime_type ||
+              activeResult.content_type ||
+              '',
+          }
+          : null
+        )
       : selectedFiles[activeIndex]?.file ?? null
 
   const activePreviewUrl =
@@ -1682,288 +1692,6 @@ const selectedValidateIds = useMemo(
           </div>
         )}
 
-        {/* OCR Validation & Posting */}
-        <Card className="p-5 sm:p-6">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-                OCR Validation & Posting
-              </h2>
-              <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Review completed OCR files, validate them against NetSuite, and post validated Vendor Bills in bulk.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={validationFilter}
-                onChange={(e) => {
-                  setValidationFilter(e.target.value)
-                  setSelectedIds(new Set())
-                }}
-                className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-              >
-                <option value="all">All Data</option>
-                <option value="correct">Correct Data</option>
-                <option value="incorrect">Incorrect Data</option>
-              </select>
-
-              <Button
-                type="button"
-                intent="secondary"
-                size="sm"
-                onClick={toggleSelectAll}
-                disabled={!selectableHistory.length}
-              >
-                {allVisibleSelected ? 'Deselect All' : 'Select All'}
-              </Button>
-
-              {selectedValidateIds.length > 0 && (
-                <Button
-                  type="button"
-                  intent="secondary"
-                  size="sm"
-                  onClick={() => handleBatchValidate(selectedValidateIds)}
-                  disabled={processing}
-                >
-                  {selectedHistoryItems.some(
-                    (item) => item.validation_status === 'VALIDATION_FAILED',
-                  )
-                    ? `Validate Again (${selectedValidateIds.length})`
-                    : `Validate (${selectedValidateIds.length})`}
-                </Button>
-              )}
-
-              {selectedHistoryItems.some((item) => item?.status === 'COMPLETED' && !item?.document_id) && (
-                <span className="text-xs text-amber-700">Save selected OCR results before posting.</span>
-              )}
-
-              {selectedCompletedItems.length > 0 && (
-                <Button
-                  type="button"
-                  intent="primary"
-                  size="sm"
-                  onClick={handlePostSelected}
-                  disabled={processing}
-                >
-                  {`Post (${selectedPostIds.length})`}
-                </Button>
-              )}
-
-              <Button
-                type="button"
-                intent="secondary"
-                size="sm"
-                onClick={() => refreshOcrHistory()}
-                disabled={historyLoading || recentHistoryLoading}
-              >
-                {historyLoading || recentHistoryLoading ? 'Refreshing...' : 'Refresh'}
-              </Button>
-            </div>
-          </div>
-
-          {historyError && (
-            <p className="mb-4 text-sm text-red-600">{historyError}</p>
-          )}
-
-          {historyLoading ? (
-            <div className="rounded-lg border border-[var(--color-border)] p-5 text-sm text-[var(--color-muted)]">
-              Loading OCR processing history...
-            </div>
-          ) : history.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
-              <p className="text-sm font-medium text-[var(--color-ink)]">No OCR files yet</p>
-              <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Uploaded files will appear here while they move through processing and validation.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="max-h-[430px] overflow-auto rounded-lg border border-[var(--color-border)]">
-                <div className="divide-y divide-[var(--color-border)]">
-                  {filteredHistory.map((item) => {
-                    const itemId = item?.document_id || item?.upload_id
-                    const isSelected = selectedIds.has(itemId)
-                    const isCompleted = item?.status === 'COMPLETED'
-                    const isValidationFailed = item?.validation_status === 'VALIDATION_FAILED'
-                    const isSelectable = Boolean(item?.document_id) && (isCompleted || isValidationFailed)
-
-                    return (
-                      <div
-                        key={item.upload_id || item.document_id}
-                        className={`flex items-center gap-4 p-4 transition ${
-                          isSelected
-                            ? 'bg-[var(--color-primary-soft)]'
-                            : 'hover:bg-[var(--color-canvas)]'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={!isSelectable}
-                          onChange={() => isSelectable && toggleSelect(itemId)}
-                          className="h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                          title={
-                            isSelectable
-                              ? 'Select this completed OCR file'
-                              : 'Only completed OCR files can be selected'
-                          }
-                        />
-
-                        <div className="min-w-0 flex-1">
-                          <p className="break-all text-sm font-medium text-[var(--color-ink)]">
-                            {item.filename || 'Unnamed file'}
-                          </p>
-                          <p className="mt-1 text-xs text-[var(--color-muted)]">
-                            {formatDate(item.created_at)}
-                          </p>
-                        </div>
-
-                        <div className="shrink-0 text-right">
-                          <p className={`text-xs font-semibold uppercase tracking-wide ${statusClass(item.status)}`}>
-                            {statusLabel(item.status)}
-                          </p>
-                          {item.validation_status && (
-                            <p className={`mt-1 text-xs font-semibold ${item.validation_status === 'VALIDATED' ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {item.validation_status === 'VALIDATED' ? '✓ Validated' : '✕ Failed'}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {historyCount > HISTORY_PAGE_SIZE && (
-                <div className="mt-4 flex items-center justify-between gap-3">
-                  <Button
-                    type="button"
-                    intent="secondary"
-                    onClick={() => loadHistory(Math.max(0, historyOffset - HISTORY_PAGE_SIZE))}
-                    disabled={historyLoading || historyOffset === 0}
-                  >
-                    ← Previous
-                  </Button>
-                  <span className="text-xs text-[var(--color-muted)]">
-                    Page {Math.floor(historyOffset / HISTORY_PAGE_SIZE) + 1} of{' '}
-                    {Math.max(1, Math.ceil(historyCount / HISTORY_PAGE_SIZE))}
-                  </span>
-                  <Button
-                    type="button"
-                    intent="secondary"
-                    onClick={() => loadHistory(historyOffset + HISTORY_PAGE_SIZE)}
-                    disabled={historyLoading || historyOffset + HISTORY_PAGE_SIZE >= historyCount}
-                  >
-                    Next →
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </Card>
-
-        {/* Recent OCR History */}
-        <Card className="p-5 sm:p-6">
-          <div className="mb-5">
-            <h2 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
-              Recent OCR History
-            </h2>
-            <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Successfully extracted files are kept here as the permanent OCR history.
-            </p>
-          </div>
-
-          {recentHistoryError && (
-            <p className="mb-4 text-sm text-red-600">{recentHistoryError}</p>
-          )}
-
-          {recentHistoryLoading ? (
-            <div className="rounded-lg border border-[var(--color-border)] p-5 text-sm text-[var(--color-muted)]">
-              Loading completed OCR history...
-            </div>
-          ) : recentHistory.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center">
-              <p className="text-sm font-medium text-[var(--color-ink)]">No completed OCR files yet</p>
-              <p className="mt-1 text-sm text-[var(--color-muted)]">
-                A file will appear here as soon as extraction completes.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
-                {recentHistory.map((item) => (
-                  <div
-                    key={item.upload_id || item.document_id}
-                    className="flex items-center gap-4 p-4 transition hover:bg-[var(--color-canvas)]"
-                  >
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => {
-                        if (item.document_id) {
-                          navigate(`/app/ocr/history/${item.document_id}`)
-                        } else if (item.batch_id) {
-                          navigate(`/app/ocr/history/batch/${item.batch_id}`)
-                        }
-                      }}
-                    >
-                      <p className="break-all text-sm font-medium text-[var(--color-ink)]">
-                        {item.filename || 'Unnamed file'}
-                      </p>
-                      <p className="mt-1 text-xs text-[var(--color-muted)]">
-                        {formatDate(item.created_at)}
-                      </p>
-                    </button>
-
-                    <span className={`shrink-0 text-xs font-semibold uppercase tracking-wide ${statusClass(item.status)}`}>
-                      {statusLabel(item.status)}
-                    </span>
-
-                    <Button
-                      type="button"
-                      intent="secondary"
-                      size="sm"
-                      disabled={!item.document_id && !item.batch_id}
-                      onClick={() => {
-                        if (item.document_id) {
-                          navigate(`/app/ocr/history/${item.document_id}`)
-                        } else if (item.batch_id) {
-                          navigate(`/app/ocr/history/batch/${item.batch_id}`)
-                        }
-                      }}
-                    >
-                      View Result
-                    </Button>
-                  </div>
-                ))}
-              </div>
-
-              {recentHistoryCount > HISTORY_PAGE_SIZE && (
-                <div className="mt-4 flex items-center justify-between gap-3">
-                  <Button
-                    type="button"
-                    intent="secondary"
-                    onClick={() => loadRecentHistory(Math.max(0, recentHistoryOffset - HISTORY_PAGE_SIZE))}
-                    disabled={recentHistoryLoading || recentHistoryOffset === 0}>
-                    ← Previous
-                  </Button>
-                  <span className="text-xs text-[var(--color-muted)]">
-                    Page {Math.floor(recentHistoryOffset / HISTORY_PAGE_SIZE) + 1} of{' '}
-                    {Math.max(1, Math.ceil(recentHistoryCount / HISTORY_PAGE_SIZE))}
-                  </span>
-                  <Button
-                    type="button"
-                    intent="secondary"
-                    onClick={() => loadRecentHistory(recentHistoryOffset + HISTORY_PAGE_SIZE)}
-                    disabled={recentHistoryLoading || recentHistoryOffset + HISTORY_PAGE_SIZE >= recentHistoryCount}>
-                    Next →
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </Card>
       </div>
       </ClientLayout>
   )
