@@ -3,10 +3,15 @@ import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
+import OcrValidationInlineEditor from '../../components/ocr/OcrValidationInlineEditor.jsx'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 
 const CONTEXT_KEY = 'ocr_field_mapping_context'
+
+// Optional UX feature. Set to false if the product should expose only
+// Validate Again and keep corrections in OCR History.
+const ENABLE_INLINE_OCR_EDITOR = true
 
 const STANDARD_LABELS = {
   invoice_id: 'Invoice ID',
@@ -58,6 +63,175 @@ function getMappingNameCandidates(field) {
     .filter(Boolean)
     .map(normalizeMappingName)
     .filter(Boolean)
+}
+
+function ValidationErrorDisplay({ errorItem, onEdit }) {
+  const type = String(errorItem?.type || '').toUpperCase()
+
+  if (type !== 'ITEM_SUBSIDIARY_MISMATCH') {
+    return (
+      <p className="text-sm text-red-700">
+        {errorItem?.message || String(errorItem)}
+        {errorItem?.extracted_name
+          ? ` — ${errorItem.extracted_name}`
+          : ''}
+      </p>
+    )
+  }
+
+  const affectedLines = Array.isArray(errorItem?.affected_lines)
+    ? errorItem.affected_lines
+    : []
+
+  const itemSubsidiaries = Array.isArray(errorItem?.item_subsidiaries)
+    ? errorItem.item_subsidiaries.filter(Boolean)
+    : (
+        errorItem?.item_subsidiary
+          ? [errorItem.item_subsidiary]
+          : []
+      )
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-amber-900">
+            Item / Subsidiary Mismatch
+          </p>
+          <p className="mt-1 text-sm text-amber-800">
+            {errorItem?.message ||
+              'This NetSuite Item is not valid for the Vendor Bill subsidiary.'}
+          </p>
+        </div>
+
+        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+          ITEM_SUBSIDIARY_MISMATCH
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+          <p className="text-xs font-medium text-amber-700">
+            Item
+          </p>
+          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+            {errorItem?.item_name ||
+              errorItem?.extracted_name ||
+              'Unknown item'}
+          </p>
+          {errorItem?.netsuite_id && (
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Internal ID: {errorItem.netsuite_id}
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+          <p className="text-xs font-medium text-amber-700">
+            Item Subsidiaries in NetSuite
+          </p>
+
+          {itemSubsidiaries.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {itemSubsidiaries.map((subsidiary) => (
+                <span
+                  key={subsidiary}
+                  className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
+                >
+                  {subsidiary}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              NetSuite did not return the Item subsidiary display value.
+            </p>
+          )}
+
+          {itemSubsidiaries.length > 0 && (
+            <p className="mt-2 text-xs text-[var(--color-muted)]">
+              These are the subsidiaries currently associated with this Item.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-md border border-amber-200 bg-white/70 p-3 sm:col-span-2">
+          <p className="text-xs font-medium text-amber-700">
+            Vendor Bill Subsidiary
+          </p>
+          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+            {errorItem?.transaction_subsidiary_name || 'Unknown subsidiary'}
+          </p>
+          {errorItem?.transaction_subsidiary_id && (
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Internal ID: {errorItem.transaction_subsidiary_id}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {affectedLines.length > 0 && (
+        <p className="mt-3 text-xs text-amber-800">
+          Affected source line{affectedLines.length === 1 ? '' : 's'}:{' '}
+          {affectedLines.join(', ')}
+        </p>
+      )}
+
+      <div className="mt-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+          Ways to Resolve This Issue
+        </p>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          You only need to take one of the following actions, depending on
+          the actual Vendor Bill and Item setup.
+        </p>
+
+        <div className="mt-3 space-y-2">
+          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+            <p className="text-sm font-semibold text-[var(--color-ink)]">
+              Solution 1 — Associate the Item with the Vendor Bill Subsidiary
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              In NetSuite, associate this Item with the Vendor Bill subsidiary
+              if the Item should legitimately be used there.
+            </p>
+          </div>
+
+          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+            <p className="text-sm font-semibold text-[var(--color-ink)]">
+              Solution 2 — Correct the Vendor Bill Subsidiary
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Change the Vendor Bill subsidiary if the source document belongs
+              to a different subsidiary.
+            </p>
+          </div>
+
+          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+            <p className="text-sm font-semibold text-[var(--color-ink)]">
+              Solution 3 — Replace the Selected Item
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Select an Item that is associated with the Vendor Bill
+              subsidiary.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {onEdit && (
+        <div className="mt-4 flex justify-end border-t border-amber-200 pt-4">
+          <Button
+            type="button"
+            intent="secondary"
+            onClick={onEdit}
+          >
+            Edit OCR Data
+          </Button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function findNameMatchedTarget(sourceField, actualFields) {
@@ -311,6 +485,11 @@ export default function OcrFieldMappingPage() {
   const [posting, setPosting] = useState(false)
   const [postingResult, setPostingResult] = useState(null)
 
+  // Keep the optional inline editor isolated so it can be removed without
+  // changing the validation or posting flow.
+  const [inlineEditorOpen, setInlineEditorOpen] = useState(false)
+  const [validationStale, setValidationStale] = useState(false)
+
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(CONTEXT_KEY)
@@ -395,6 +574,55 @@ export default function OcrFieldMappingPage() {
     documentIds.length === 1
       ? documentIds[0]
       : null
+
+  const inlineEditorCustomFieldTypes = useMemo(() => {
+    const customFields = Array.isArray(
+      context?.requested_fields?.custom_fields,
+    )
+      ? context.requested_fields.custom_fields
+      : []
+
+    return customFields.reduce((acc, field) => {
+      if (field?.key) {
+        acc[field.key] =
+          field.data_type ||
+          field.type ||
+          'text'
+      }
+      return acc
+    }, {})
+  }, [context?.requested_fields])
+
+  const inlineEditorResult = useMemo(() => {
+    if (
+      processingMode !== 'SINGLE' ||
+      !context?.document_id
+    ) {
+      return null
+    }
+
+    return {
+      status: 'APPROVED',
+      upload_id: context.upload_id || null,
+      document_id: context.document_id,
+      version_id: context.version_id || null,
+      version_number: context.version_number || null,
+      filename: context.filename || 'OCR document',
+      data: context.data || {},
+    }
+  }, [
+    context,
+    processingMode,
+  ])
+
+  const hasItemSubsidiaryMismatch =
+    processingMode === 'SINGLE' &&
+    Array.isArray(validationResult?.errors) &&
+    validationResult.errors.some(
+      (item) =>
+        String(item?.type || '').toUpperCase() ===
+        'ITEM_SUBSIDIARY_MISMATCH',
+    )
 
   const catalogueOptionsByScope = useMemo(() => {
     const body = catalogue.filter(
@@ -924,6 +1152,7 @@ const runValidation = async () => {
         )
 
       setValidationResult(result)
+      setValidationStale(false)
 
       sessionStorage.setItem(
         CONTEXT_KEY,
@@ -998,6 +1227,7 @@ const runValidation = async () => {
           }
 
           setValidationResult(finalResult)
+          setValidationStale(false)
 
           sessionStorage.setItem(
             CONTEXT_KEY,
@@ -1074,6 +1304,53 @@ const handleContinue = async () => {
   await runValidation()
 }
 
+
+const handleInlineEditorSaved = (savedResult) => {
+  const nextContext = {
+    ...context,
+    upload_id:
+      savedResult?.upload_id ||
+      context?.upload_id ||
+      null,
+    document_id:
+      savedResult?.document_id ||
+      context?.document_id ||
+      null,
+    version_id:
+      savedResult?.version_id ||
+      context?.version_id ||
+      null,
+    version_number:
+      savedResult?.version_number ||
+      context?.version_number ||
+      null,
+    filename:
+      savedResult?.filename ||
+      context?.filename ||
+      null,
+    data:
+      savedResult?.data ||
+      context?.data ||
+      {},
+  }
+
+  setContext(nextContext)
+  sessionStorage.setItem(
+    CONTEXT_KEY,
+    JSON.stringify({
+      ...nextContext,
+      mappings,
+      mapping_completed: true,
+      validation_result: validationResult,
+    }),
+  )
+
+  setValidationStale(true)
+  setPostingResult(null)
+  setNotice(
+    'OCR changes were saved successfully. Validate Again to re-check the updated data against NetSuite.',
+  )
+}
 
 const handleValidateAgain = async () => {
   await runValidation()
@@ -1442,34 +1719,32 @@ const handlePost = async () => {
                         </span>
                       </div>
 
-                      {(item?.error || errors.length > 0) && (
-                        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-                          <p className="text-xs font-semibold text-red-800">
-                            Validation Errors
-                          </p>
+{item?.summary && (
+                         <p className="mt-3 text-xs text-[var(--color-muted)]">
+                           {Number(item.summary.source_rows || 0)} source rows ·{' '}
+                           {Number(item.summary.unique_netsuite_items || 0)} unique NetSuite items ·{' '}
+                           {Number(item.summary.matched_rows || 0)} matched
+                         </p>
+                       )}
 
-                          <div className="mt-1 space-y-1">
-                            {item?.error && (
-                              <p className="text-sm text-red-700">
-                                {item.error}
-                              </p>
-                            )}
+                       {(item?.error || errors.length > 0) && (
+                         <div className="mt-3 space-y-3">
+                           {item?.error && (
+                             <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                               <p className="text-sm text-red-700">
+                                 {item.error}
+                               </p>
+                             </div>
+                           )}
 
-                            {errors.map((errorItem, errorIndex) => (
-                              <p
-                                key={`${errorItem?.type || 'error'}-${errorIndex}`}
-                                className="text-sm text-red-700"
-                              >
-                                {errorItem?.message ||
-                                  String(errorItem)}
-                                {errorItem?.extracted_name
-                                  ? ` — ${errorItem.extracted_name}`
-                                  : ''}
-                              </p>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                           {errors.map((errorItem, errorIndex) => (
+                             <ValidationErrorDisplay
+                               key={`${errorItem?.type || 'error'}-${errorIndex}`}
+                               errorItem={errorItem}
+                             />
+                           ))}
+                         </div>
+                       )}
                     </div>
                   )
                 })}
@@ -1667,27 +1942,64 @@ const handlePost = async () => {
           </div>
         </div>
 
+        {validationResult.summary && (
+          <p className="mt-3 text-xs text-[var(--color-muted)]">
+            {Number(validationResult.summary.source_rows || 0)} source rows ·{' '}
+            {Number(validationResult.summary.unique_netsuite_items || 0)} unique NetSuite items ·{' '}
+            {Number(validationResult.summary.matched_rows || 0)} matched ·{' '}
+            {Number(validationResult.summary.unmatched_rows || 0)} unmatched
+          </p>
+        )}
         {(validationResult.errors || []).length > 0 && (
-          <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
-            <p className="text-sm font-semibold text-red-800">
-              Validation Errors
-            </p>
+          <div className="mt-5 space-y-3">
+            {validationResult.errors.map((item, index) => {
+              const firstMismatchIndex =
+                validationResult.errors.findIndex(
+                  (candidate) =>
+                    String(candidate?.type || '').toUpperCase() ===
+                    'ITEM_SUBSIDIARY_MISMATCH',
+                )
 
-            <div className="mt-2 space-y-2">
-              {validationResult.errors.map((item, index) => (
-                <p
-                  key={`${item.type}-${index}`}
-                  className="text-sm text-red-700"
-                >
-                  {item.message}
-                  {item.extracted_name
-                    ? ` — ${item.extracted_name}`
-                    : ''}
-                </p>
-              ))}
-            </div>
+              return (
+                <ValidationErrorDisplay
+                  key={`${item?.type || 'error'}-${index}`}
+                  errorItem={item}
+                  onEdit={
+                    ENABLE_INLINE_OCR_EDITOR &&
+                    hasItemSubsidiaryMismatch &&
+                    index === firstMismatchIndex &&
+                    inlineEditorResult &&
+                    !inlineEditorOpen
+                      ? () => setInlineEditorOpen(true)
+                      : undefined
+                  }
+                />
+              )
+            })}
           </div>
         )}
+
+        {validationStale && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            The OCR data has been updated after the previous validation.
+            Please validate again before posting.
+          </div>
+        )}
+
+        {ENABLE_INLINE_OCR_EDITOR &&
+          inlineEditorOpen &&
+          inlineEditorResult &&
+          hasItemSubsidiaryMismatch && (
+            <div className="mt-5">
+              <OcrValidationInlineEditor
+                result={inlineEditorResult}
+                customFieldTypes={inlineEditorCustomFieldTypes}
+                connectionId={context?.connection_id || null}
+                onSaved={handleInlineEditorSaved}
+                onClose={() => setInlineEditorOpen(false)}
+              />
+            </div>
+          )}
 
         <div className="mt-5 flex flex-wrap justify-end gap-3">
           {validationResult.status === 'VALIDATION_FAILED' && (
