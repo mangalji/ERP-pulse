@@ -6,7 +6,6 @@ import Badge from '../ui/Badge.jsx'
  */
 const STATUS_TONE = {
   ACTIVE: 'positive',
-  TRIAL: 'primary',
   SUSPENDED: 'negative',
   EXPIRED: 'neutral',
   PENDING: 'primary',

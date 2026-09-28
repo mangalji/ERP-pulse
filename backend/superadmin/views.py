@@ -130,26 +130,36 @@ class CompanyViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {'detail': 'A deleted company must be restored before activation.'}
             )
+        previous_reason = company.suspension_reason
         company.suspension_reason = CompanySuspensionReason.NONE
         effective_status = company_lifecycle_service.get_effective_status(
             company=company
             )
-        if effective_status not in {
-            Company.Status.ACTIVE,
-            Company.Status.TRIAL,
-        }:
-            # Restore the manual suspension if activation is not allowed.
-            company.suspension_reason = CompanySuspensionReason.MANUAL
-            raise ValidationError(
-                {
-                    'detail': (
-                        'Company cannot be activated because its subscription '
-                        'is not currently valid.'
-                    )
+        if effective_status != Company.Status.ACTIVE:
+            company.status = Company.Status.SUSPENDED
+            company.suspension_reason = (
+                previous_reason
+                if previous_reason in {
+                    CompanySuspensionReason.MANUAL,
+                    CompanySuspensionReason.PLAN,
                 }
+                else CompanySuspensionReason.PLAN
             )
-        company.status = effective_status
         company.save(update_fields=['status','suspension_reason'])
+        raise ValidationError(
+            {
+                "detail":(
+                    'Company cannot be activated because its subscription'
+                    'is not currently valid.'
+                )
+            }
+        )
+        company.status = Company.Status.ACTIVE
+        company.suspension_reason = CompanySuspensionReason.NONE
+
+        company.save(
+            update_fields=['status', 'suspension_reason']
+        )
 
         return success_response(message='Company activated successfully.', data={'id': str(company.id),'status':company.status})
 
@@ -346,7 +356,6 @@ class CompanyViewSet(viewsets.ModelViewSet):
             data={
             "total_companies": data["total_companies"],
             "active_companies": data["active_companies"],
-            "trial_companies": data["trial_companies"],
             "suspended_companies": data["suspended_companies"],
             "total_users": (
                 data["total_agsuite_employees"]

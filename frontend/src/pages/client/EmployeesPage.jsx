@@ -18,6 +18,7 @@ import {
   validateEmail,
   validateName,
   validatePhone,
+  PHONE_MAX_DIGITS,
   validateGender,
 } from '../../utils/formValidation.js'
 
@@ -390,7 +391,7 @@ const isFormValid = () => {
   )
 }
     required
-    maxLength={getCountryRule(form.country)?.maxDigits || 15}
+    maxLength={PHONE_MAX_DIGITS}
   />
   {touched.mobile_number && (
   <p className={`text-xs ${fieldErrors.mobile_number ? 'text-red-600' : 'text-green-600'}`}>

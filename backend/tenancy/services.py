@@ -590,10 +590,7 @@ class CompanyLifecycleService:
         return Company.Status.ACTIVE
 
     def is_operational(self, *, company):
-        return self.get_effective_status(company=company) in {
-            Company.Status.ACTIVE,
-            Company.Status.TRIAL,
-        }
+        return self.get_effective_status(company=company) == Company.Status.ACTIVE
 
     def ensure_operational(self, *, company):
         """

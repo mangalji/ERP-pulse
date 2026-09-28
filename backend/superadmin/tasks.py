@@ -59,10 +59,7 @@ def sync_company_subscription_statuses():
 
                 new_reason = (
                     CompanySuspensionReason.NONE
-                    if effective_status in {
-                        Company.Status.ACTIVE,
-                        Company.Status.TRIAL,
-                    }
+                    if effective_status == Company.Status.ACTIVE
                     else CompanySuspensionReason.PLAN
                 )
 

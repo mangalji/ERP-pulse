@@ -81,28 +81,9 @@ export function validateCompanyText(value, label = 'Company name') {
     return `${label} is required.`
   }
 
-  if (text.length < 3) {
-    return `${label} must contain at least 3 characters.`
-  }
-
   if (text.length > 100) {
     return `${label} must not exceed 100 characters.`
   }
-
-  if (!/^[A-Za-z0-9À-ÖØ-öø-ÿ&().,'\- ]+$/.test(text)) {
-    return `${label} contains unsupported characters.`
-  }
-
-  const compact = text.replace(/[^A-Za-z0-9]/g, '')
-
-  if (!compact || ALL_SAME_CHARACTER_REGEX.test(compact)) {
-    return `${label} must look like a realistic name.`
-  }
-
-  if (REPEATED_CHARACTER_REGEX.test(text)) {
-    return `${label} cannot contain the same character more than 4 times continuously.`
-  }
-
   return ''
 }
 
@@ -140,46 +121,11 @@ export function getCountryRule(country) {
   return COUNTRY_OPTIONS.find((item) => item.value === country)
 }
 
-function validateIndiaPhonePattern(digits) {
-  if (!digits) return ''
-
-  const firstDigit = digits[0]
-
-  if (!['6', '7', '8', '9'].includes(firstDigit)) {
-    return 'Indian mobile numbers must start with 6, 7, 8, or 9.'
-  }
-
-  const firstDigitCount = [...digits].filter(
-    (digit) => digit === firstDigit,
-  ).length
-
-  if (firstDigitCount >= 4) {
-    return 'The first digit cannot repeat 4 or more times in the number.'
-  }
-
-  if (ALL_SAME_CHARACTER_REGEX.test(digits)) {
-    return 'Mobile number cannot contain the same digit throughout.'
-  }
-
-  if (PHONE_LONG_REPEAT_REGEX.test(digits)) {
-    return 'Mobile number cannot contain the same digit more than 5 times continuously.'
-  }
-
-  if (digits === '1234567890' || digits === '9876543210') {
-    return 'Mobile number cannot be a simple sequential number.'
-  }
-
-  if (/^(\d)(\d)(?:\1\2){4}$/.test(digits)) {
-    return 'Mobile number cannot follow a repeating two-digit pattern.'
-  }
-
-  return ''
-}
+export const PHONE_MIN_DIGITS = 7
+export const PHONE_MAX_DIGITS = 15
 
 export function validatePhone(value, country) {
   const digits = String(value || '').replace(/\D/g, '')
-  const rule = getCountryRule(country)
-
   if (!country) {
     return 'Please select a country.'
   }
@@ -188,22 +134,13 @@ export function validatePhone(value, country) {
     return 'Mobile number is required.'
   }
 
-  if (!rule) {
-    return 'Phone validation is unavailable for the selected country.'
+  if (digits.length < PHONE_MIN_DIGITS) {
+    return `Enter a phone number with at least ${PHONE_MIN_DIGITS} digits.`
   }
 
-  if (digits.length < rule.minDigits) {
-    return `Enter exactly ${rule.minDigits} digits. Example: ${rule.example}`
+  if (digits.length > PHONE_MAX_DIGITS) {
+    return `Phone number cannot exceed ${PHONE_MAX_DIGITS} digits.`
   }
-
-  if (digits.length > rule.maxDigits) {
-    return `Enter only ${rule.maxDigits} digits. Example: ${rule.example}`
-  }
-
-  if (country === 'IN') {
-    return validateIndiaPhonePattern(digits)
-  }
-
   return ''
 }
 

@@ -34,6 +34,11 @@ class CompanySerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "contact_phone_country_code",
+            "status",
+            "suspension_reason",
+            "plan",
+            "plan_start_date",
+            "plan_end_date",
         )
         extra_kwargs = {
         "code": {
@@ -106,24 +111,10 @@ class CompanySerializer(serializers.ModelSerializer):
 
         # Company name
         if name:
-            if len(name) < 3:
-                raise serializers.ValidationError({
-                    "name": "Company name must contain at least 3 characters."
-                })
-
             if len(name) > 100:
                 raise serializers.ValidationError({
                     "name": "Company name must not exceed 100 characters."
                 })
-
-            if not re.fullmatch(
-                r"^[A-Za-z0-9À-ÖØ-öø-ÿ&().,'\- ]+$",
-                name,
-            ):
-                raise serializers.ValidationError({
-                    "name": "Company name contains unsupported characters."
-                })
-
             attrs["name"] = name
 
         # Company code

@@ -19,6 +19,7 @@ import {
   validateCompanyText,
   validateCompanyCode,
   validatePhone,
+  PHONE_MAX_DIGITS,
 } from '../../utils/formValidation.js'
 
 const PAGE_SIZE = 10
@@ -35,7 +36,6 @@ const EMPTY_FORM = {
   industry: '',
   company_size: '',
   city: '',
-  status: 'TRIAL',
 }
 
 export default function CompaniesPage() {
@@ -268,11 +268,6 @@ export default function CompaniesPage() {
     if (field === 'country') {
       message = value ? '' : 'Please select a country.'
     }
-
-    if (field === 'status') {
-      message = value ? '' : 'Please select a status.'
-    }
-
     setFieldErrors((prev) => ({
       ...prev,
       [field]: message,
@@ -318,7 +313,6 @@ export default function CompaniesPage() {
       contact_email: validateEmail(form.contact_email),
       country: form.country ? '' : 'Please select a country.',
       contact_phone: validatePhone(form.contact_phone, form.country),
-      status: form.status ? '' : 'Please select a status.',
     }
 
     setTouched({
@@ -327,7 +321,6 @@ export default function CompaniesPage() {
       contact_email: true,
       country: true,
       contact_phone: true,
-      status: true,
     })
 
     setFieldErrors(errors)
@@ -377,7 +370,6 @@ export default function CompaniesPage() {
       'contact_email',
       'country',
       'contact_phone',
-      'status',
     ]
 
     const mapped = {}
@@ -786,7 +778,7 @@ export default function CompaniesPage() {
         />
 
         {/* ─────────────────────────────────────────────────────── */}
-        {/* Active / Trial / Suspended Companies */}
+        {/* Active / Suspended Companies */}
         {/* ─────────────────────────────────────────────────────── */}
         <Card className="p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1191,10 +1183,7 @@ export default function CompaniesPage() {
                       label="Contact Phone"
                       type="tel"
                       value={form.contact_phone}
-                      maxLength={
-                        getCountryRule(form.country)
-                          ?.maxDigits || 15
-                      }
+                      maxLength={PHONE_MAX_DIGITS}
                       onChange={(e) =>
                         updateField(
                           'contact_phone',
@@ -1223,15 +1212,7 @@ export default function CompaniesPage() {
                   {form.country &&
                     getCountryRule(form.country) && (
                       <p className="mt-1 text-xs text-[var(--color-muted)]">
-                        Example:{' '}
-                        {getCountryRule(form.country).example}
-                        {' — '}
-                        Enter{' '}
-                        {getCountryRule(form.country).minDigits ===
-                        getCountryRule(form.country).maxDigits
-                          ? `exactly ${getCountryRule(form.country).minDigits}`
-                          : `${getCountryRule(form.country).minDigits}-${getCountryRule(form.country).maxDigits}`}
-                        {' '}digits without the country code.
+                        Enter Phone Number. Country is used only for the calling code.
                       </p>
                     )}
                 </div>
@@ -1295,51 +1276,6 @@ export default function CompaniesPage() {
                       updateField('city', e.target.value)
                     }
                   />
-                </div>
-
-                {/* Status */}
-                <div>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                      Status
-                    </span>
-
-                    <select
-                      value={form.status}
-                      onChange={(e) =>
-                        updateField(
-                          'status',
-                          e.target.value
-                        )
-                      }
-                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                    >
-                      <option value="TRIAL">
-                        Trial
-                      </option>
-
-                      <option value="ACTIVE">
-                        Active
-                      </option>
-
-                      <option value="SUSPENDED">
-                        Suspended
-                      </option>
-                    </select>
-
-                    {touched.status && (
-                      <p
-                        className={`mt-1 text-xs ${
-                          fieldErrors.status
-                            ? 'text-red-600'
-                            : 'text-green-600'
-                        }`}
-                      >
-                        {fieldErrors.status ||
-                          '✓ Status selected.'}
-                      </p>
-                    )}
-                  </label>
                 </div>
               </div>
             </div>

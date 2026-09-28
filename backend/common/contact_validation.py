@@ -15,45 +15,6 @@ from dataclasses import dataclass
 import phonenumbers
 from phonenumbers import NumberParseException
 
-def _validate_india_mobile_sanity(digits: str) -> None:
-    first_digit = digits[0]
-
-    if first_digit not in {'6', '7', '8', '9'}:
-        raise ValueError(
-            'Indian mobile numbers must start with 6, 7, 8, or 9.'
-        )
-
-    if digits.count(first_digit) >= 4:
-        raise ValueError(
-            'The first digit cannot repeat 4 or more times in the number.'
-        )
-
-    if len(set(digits)) == 1:
-        raise ValueError(
-            'Mobile number cannot contain the same digit throughout.'
-        )
-
-    for index in range(len(digits) - 5):
-        if len(set(digits[index:index + 6])) == 1:
-            raise ValueError(
-                'Mobile number cannot contain the same digit more than 5 times continuously.'
-            )
-
-    if digits in {'1234567890', '9876543210'}:
-        raise ValueError(
-            'Mobile number cannot be a simple sequential number.'
-        )
-
-    if (
-        len(digits) == 10
-        and all(digits[index] == digits[index % 2] for index in range(10))
-        and digits[0] != digits[1]
-    ):
-        raise ValueError(
-            'Mobile number cannot follow a repeating two-digit pattern.'
-        )
-
-
 @dataclass(frozen=True)
 class NormalizedPhone:
     number: str
@@ -79,47 +40,52 @@ def _validate_country(country: str) -> str:
 
 
 def normalize_phone(*, phone: str, country: str) -> NormalizedPhone:
-    """
-    Validate a phone number against the selected ISO country and normalize it.
-
-    Example:
-        country="IN", phone="9425457160"
-        -> "+919425457160", "+91", "IN"
-    """
     if not phone or not str(phone).strip():
         raise ValueError("Phone number is required.")
 
     region = _validate_country(country)
+    dial_code = f"+{phonenumbers.country_code_for_region(region)}"
 
     raw = str(phone).strip()
-
-    try:
-        parsed = phonenumbers.parse(raw, region)
-    except NumberParseException as exc:
-        raise ValueError(
-            "Enter a valid phone number for the selected country."
-        ) from exc
-
-    if not phonenumbers.is_possible_number(parsed):
-        raise ValueError(
-            "Enter a valid phone number for the selected country."
-        )
-
-    if not phonenumbers.is_valid_number(parsed):
-        raise ValueError(
-            "Enter a valid phone number for the selected country."
-        )
-
-    national_digits = str(parsed.national_number)
-    if region == "IN":
-        _validate_india_mobile_sanity(national_digits)
-
-    normalized = phonenumbers.format_number(
-        parsed,
-        phonenumbers.PhoneNumberFormat.E164,
+    digits = "".join(
+        character for character in raw
+        if character.isdigit()
     )
 
-    dial_code = f"+{parsed.country_code}"
+    if not digits:
+        raise ValueError("Phone number must contain digits.")
+
+    if len(digits) < 7 or len(digits) > 15:
+        raise ValueError(
+            "Phone number must contain between 7 and 15 digits."
+        )
+
+    if raw.startswith("+"):
+        normalized = f"+{digits}"
+    else:
+        try:
+            parsed = phonenumbers.parse(raw, region)
+
+            normalized = phonenumbers.format_number(
+                parsed,
+                phonenumbers.PhoneNumberFormat.E164,
+            )
+
+        except NumberParseException:
+            # Parsing failed, but the basic phone data is usable.
+            # Fall back to the selected country's calling code.
+            national_digits = digits.lstrip("0") or digits
+            normalized = f"{dial_code}{national_digits}"
+
+    normalized_digits = "".join(
+        character for character in normalized
+        if character.isdigit()
+    )
+
+    if len(normalized_digits) > 15:
+        raise ValueError(
+            "Phone number is too long for international storage."
+        )
 
     return NormalizedPhone(
         number=normalized,

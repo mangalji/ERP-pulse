@@ -30,7 +30,6 @@ class SuperAdminService:
             total=Count("id",filter=Q(is_deleted=False)),
             active=Count("id", filter=Q(is_deleted=False, status=Company.Status.ACTIVE)),
             suspended=Count("id", filter=Q(is_deleted=False, status=Company.Status.SUSPENDED)),
-            trial=Count("id", filter=Q(is_deleted=False, status=Company.Status.TRIAL)),
             soft_deleted = Count(
                 "id",
                 filter=Q(is_deleted=True)
@@ -52,7 +51,6 @@ class SuperAdminService:
             "total_companies": company_summary["total"],
             "active_companies": company_summary["active"],
             "suspended_companies": company_summary["suspended"],
-            "trial_companies": company_summary["trial"],
             "soft_deleted_companies": company_summary["soft_deleted"],
             "permanently_deleted_companies": permanent_deleted,
             "total_agsuite_employees": user_summary["agsuite"],

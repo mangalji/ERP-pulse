@@ -19,10 +19,10 @@ from django.db.models.functions import Lower
 from core.models import BaseModel
 
 class CompanyStatus(models.TextChoices):
-    TRIAL = "TRIAL", "Trial"
+    # TRIAL = "TRIAL", "Trial"
     ACTIVE = "ACTIVE", "Active"
     SUSPENDED = "SUSPENDED", "Suspended"
-    EXPIRED = "EXPIRED", "Expired"
+    # EXPIRED = "EXPIRED", "Expired"
 
 
 class CompanySuspensionReason(models.TextChoices):
@@ -45,7 +45,7 @@ class Company(BaseModel):
 
     name = models.CharField(max_length=255, help_text="Display name of the client company.")
     code = models.CharField(max_length=50, unique=True, db_index=True, help_text="Unique immutable company identifier.")
-    status = models.CharField(max_length=20,choices=CompanyStatus.choices,default=CompanyStatus.TRIAL,db_index=True)
+    status = models.CharField(max_length=20,choices=CompanyStatus.choices,default=CompanyStatus.SUSPENDED,db_index=True)
     suspension_reason = models.CharField(max_length=20,choices=CompanySuspensionReason.choices,default=CompanySuspensionReason.NONE,db_index=True)
     contact_email = models.EmailField(
         blank=True,

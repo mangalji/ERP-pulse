@@ -20,11 +20,6 @@ const statIcons = {
       <path d="M22 4 12 14l-3-3" />
     </svg>
   ),
-  trial: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-      <path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-    </svg>
-  ),
   suspended: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
       <circle cx="12" cy="12" r="9" />
@@ -94,7 +89,6 @@ export default function DashboardPage() {
     return [
       { id: 'companies', label: 'Total Companies', value: summary.total_companies, icon: statIcons.companies },
       { id: 'active', label: 'Active Companies', value: summary.active_companies, icon: statIcons.active },
-      { id: 'trial', label: 'Trial Companies', value: summary.trial_companies, icon: statIcons.trial },
       { id: 'suspended', label: 'Suspended Companies', value: summary.suspended_companies, icon: statIcons.suspended },
       { id: 'agsuite', label: 'AGSuite Employees', value: summary.total_agsuite_employees, icon: statIcons.agsuite },
       { id: 'client', label: 'Client Employees', value: summary.total_client_employees, icon: statIcons.client },
