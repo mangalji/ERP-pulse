@@ -122,7 +122,6 @@ class RequestInvitationOTPSerializer(serializers.Serializer):
 
         return attrs
 
-
 class AcceptInvitationSerializer(serializers.Serializer):
     """
     Final invitation acceptance.
@@ -133,7 +132,6 @@ class AcceptInvitationSerializer(serializers.Serializer):
 
     The invitee may optionally provide/update only the mobile number.
     """
-
     token = serializers.UUIDField()
 
     password = serializers.CharField(
@@ -162,3 +160,7 @@ class AcceptInvitationSerializer(serializers.Serializer):
         max_length=20,
         validators=[mobile_number_validator],
     )
+
+
+class InvitationValidateSerializer(serializers.Serializer):
+    token = serializers.UUIDField()

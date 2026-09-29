@@ -215,6 +215,38 @@ class VerifyProfileUpdateOTPSerializer(serializers.Serializer):
     )
     profile_pic = serializers.ImageField(required=False, allow_null=True)
 
+class ProfileUpdateSerializer(serializers.Serializer):
+    """Validates POST /api/v1/auth/profile/update/ input."""
+
+    first_name = human_name_field(required=False)
+
+    last_name = human_name_field(required=False)
+
+    mobile_number = serializers.CharField(
+        max_length=16,
+        validators=[mobile_number_validator],
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+
+    country = serializers.CharField(
+        max_length=2,
+        required=False,
+        allow_blank=True,
+    )
+
+    gender = serializers.ChoiceField(
+        choices=Gender.choices,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+
+    profile_pic = serializers.ImageField(
+        required=False,
+        allow_null=True,
+    )
 
 class LoginHistorySerializer(serializers.ModelSerializer):
     """Read-only — for the History page's login/activity list."""

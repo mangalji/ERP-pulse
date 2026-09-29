@@ -102,12 +102,12 @@ export function AuthProvider({ children }) {
     return await authApi.profileSendOtp()
   }
 
-  const profileUpdate = async (otpCode, profileData) => {
-    setError(null)
-    const res = await authApi.profileUpdate(otpCode, profileData)
-    setUser(res)
-    return res
-  }
+  const profileUpdate = async (profileData) => {
+  setError(null)
+  const res = await authApi.profileUpdate(profileData)
+  setUser(res)
+  return res
+}
 
   const logout = async () => {
     try {

@@ -93,39 +93,82 @@ class AuthenticationService:
     # Profile Update
     # -----------------------------------------------------------------
 
-    def verify_profile_update_otp(self, *, user, otp_code: str, first_name: str | None = None, last_name: str | None = None, mobile_number: str | None = None, profile_pic=None) -> User:
+    def update_profile(
+        self,
+        *,
+        user,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        mobile_number: str | None = None,
+        profile_pic=None
+    ) -> User:
         """
-        Verify PROFILE_UPDATE OTP and update user profile fields.
+        Update authenticated user's profile fields.
         Only updates fields that were provided (not None).
         """
-        self.otp_service.verify_otp(
-            user=user, purpose=OTP.Purpose.PROFILE_UPDATE, submitted_code=otp_code
-        )
-
+    
         update_fields = []
+    
         if first_name is not None:
             user.first_name = first_name
             update_fields.append('first_name')
+    
         if last_name is not None:
             user.last_name = last_name
             update_fields.append('last_name')
+    
         if mobile_number is not None:
-            # Check uniqueness if a new mobile number is provided
-
             if mobile_number != user.mobile_number and mobile_number:
                 if self.user_repository.mobile_number_exists(mobile_number):
-                    raise UserAlreadyExistsException('This mobile number is already linked to another account.')
+                    raise UserAlreadyExistsException(
+                        'This mobile number is already linked to another account.'
+                    )
+    
             user.mobile_number = mobile_number
             update_fields.append('mobile_number')
+    
         if profile_pic is not None:
             user.profile_pic = profile_pic
             update_fields.append('profile_pic')
-
+    
         if update_fields:
             user.save(update_fields=update_fields)
-
-        logger.info('Profile updated for user %s (fields: %s).', user.id, update_fields)
+    
+        logger.info(
+            'Profile updated for user %s (fields: %s).',
+            user.id,
+            update_fields,
+        )
         return user
+    
+    
+    def verify_profile_update_otp(
+        self,
+        *,
+        user,
+        otp_code: str,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        mobile_number: str | None = None,
+        profile_pic=None
+    ) -> User:
+        """
+        LEGACY — OTP-based profile update flow retained for compatibility.
+        """
+    
+        self.otp_service.verify_otp(
+            user=user,
+            purpose=OTP.Purpose.PROFILE_UPDATE,
+            submitted_code=otp_code,
+        )
+    
+        return self.update_profile(
+            user=user,
+            first_name=first_name,
+            last_name=last_name,
+            mobile_number=mobile_number,
+            profile_pic=profile_pic,
+        )
 
 
     def login(self, *, email: str, password: str) -> User:

@@ -93,13 +93,40 @@ function normalizeTemplateConfig(config) {
   }
 }
 
+
 function getCreatedBy(template) {
-  const creator = template?.created_by ?? template?.createdBy ?? template?.created_by_user
-  if (typeof creator === 'string' || typeof creator === 'number') return String(creator)
+  const creator =
+    template?.created_by_user ??
+    template?.created_by ??
+    template?.createdBy
+
+  // Prefer actual user details over a UUID.
   if (creator && typeof creator === 'object') {
-    return creator.full_name || creator.name || creator.username || creator.email || creator.display_name || '—'
+    const name =
+      creator.full_name ||
+      creator.name ||
+      creator.username ||
+      creator.email ||
+      creator.display_name
+
+    if (name) return name
   }
-  return template?.created_by_name || template?.created_by_username || template?.created_by_email || '—'
+
+  // Prefer explicit name fields before falling back to the ID.
+  const name =
+    template?.created_by_name ||
+    template?.created_by_full_name ||
+    template?.created_by_username ||
+    template?.created_by_email
+
+  if (name) return name
+
+  // Last resort: display the raw value if no user name is available.
+  if (typeof creator === 'string' || typeof creator === 'number') {
+    return String(creator)
+  }
+
+  return '—'
 }
 
 function getErrorMessage(error, fallback) {

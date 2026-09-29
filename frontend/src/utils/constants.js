@@ -77,6 +77,7 @@ export const INVITATION_ENDPOINTS = {
   detail: (id) => `/invitations/${id}/detail/`,
   validate: '/invitations/validate/',
   requestOtp: '/invitations/request-otp/',
+  resendOtp: '/invitations/resend-otp/',
   accept: '/invitations/accept/',
   send: (id) => `/invitations/${id}/send/`,
   resend: (id) => `/invitations/${id}/resend/`,

@@ -8,6 +8,9 @@ export const invitationApi = {
   requestOtp: (payload) =>
     apiClient.post(INVITATION_ENDPOINTS.requestOtp, payload).then(unwrap),
 
+  resendOtp: (payload) =>
+    apiClient.post(INVITATION_ENDPOINTS.resendOtp, payload).then(unwrap),
+
   accept: (payload) =>
     apiClient.post(INVITATION_ENDPOINTS.accept, payload).then(unwrap),
 

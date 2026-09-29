@@ -45,3 +45,8 @@ class MaxOTPAttemptsExceededException(Exception):
     wrong the maximum number of times.
     """
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
+
+
+class OTPEmailDeliveryException(Exception):
+    """Raised when an OTP email could not be sent."""
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE

@@ -21,6 +21,8 @@ export default function InvitationAcceptPage() {
   const [password, setPassword] = useState('')
   const [otp, setOtp] = useState('')
   const [mobileNumber, setMobileNumber] = useState('')
+  const [resendLoading, setResendLoading] = useState(false)
+  const [resendSecondsRemaining, setResendSecondsRemaining] = useState(60)
 
   useEffect(() => {
     if (!token) {
@@ -40,6 +42,17 @@ export default function InvitationAcceptPage() {
         setStatus('expired')
       })
   }, [token])
+    useEffect(() => {
+    if (status !== 'otp' || resendSecondsRemaining <= 0) {
+      return
+    }
+
+    const timer = setInterval(() => {
+      setResendSecondsRemaining((prev) => Math.max(prev - 1, 0))
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [status, resendSecondsRemaining])
 
   const handleRequestOtp = async ({password: submittedPassword,confirm_password, mobile_number}) =>{
     setIsSubmitting(true)
@@ -48,6 +61,8 @@ export default function InvitationAcceptPage() {
       await invitationApi.requestOtp({token, password: submittedPassword, confirm_password})
       setPassword(submittedPassword)
       setMobileNumber(mobile_number || '')
+      setOtp('')
+      setResendSecondsRemaining(60)
       setStatus('otp')
       addToast(
         'OTP sent successfully. Please check your email.',
@@ -94,6 +109,32 @@ export default function InvitationAcceptPage() {
       )
     } finally {
       setIsSubmitting(false)
+    }
+  }
+    const handleResendOtp = async () => {
+    setError('')
+    setResendLoading(true)
+
+    try {
+      await invitationApi.resendOtp({
+        token,
+      })
+
+      setOtp('')
+      setResendSecondsRemaining(60)
+
+      addToast(
+        'A new OTP has been sent to your email.',
+        'success'
+      )
+    } catch (err) {
+      setError(
+        err.payload?.message ||
+        err.message ||
+        'Failed to resend OTP.'
+      )
+    } finally {
+      setResendLoading(false)
     }
   }
 
@@ -221,6 +262,18 @@ export default function InvitationAcceptPage() {
                   Verify OTP & Activate Account
                 </Button>
               </form>
+              <button
+                type="button"
+                onClick={handleResendOtp}
+                disabled={resendLoading || resendSecondsRemaining > 0}
+                className="mt-4 w-full text-center text-sm font-medium text-[var(--color-primary)] disabled:opacity-50"
+              >
+                {resendLoading
+                  ? 'Sending...'
+                  : resendSecondsRemaining > 0
+                    ? `Resend OTP in ${resendSecondsRemaining}s`
+                    : 'Resend OTP'}
+              </button>
             </>
           )}
 

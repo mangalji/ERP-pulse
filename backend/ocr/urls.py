@@ -20,10 +20,12 @@ from ocr.views import (
     OCRBatchStatusView,
     OCRUploadPreviewView,
     OCRUploadModesView,   
+    OCRHistoryUploadDeleteView,
 )
 
 urlpatterns = [
     path('history/', OCRHistoryListView.as_view(), name='ocr-history'),
+    path("history/uploads/<uuid:upload_id>/",OCRHistoryUploadDeleteView.as_view(),name="ocr-history-upload-delete"),
     path("history/batches/<uuid:batch_id>/",OCRBatchHistoryView.as_view(),name="ocr-batch-history"),
     path('documents/<uuid:document_id>/history/',DocumentHistoryView.as_view(),name='ocr-document-history'),
     path('documents/<uuid:document_id>/history/<int:version>/',DocumentVersionView.as_view(),name='ocr-document-version'),

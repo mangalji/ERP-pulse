@@ -32,6 +32,7 @@ from accounts.serializers import (
     ForgotPasswordSerializer,
     ResetPasswordSerializer,
     VerifyProfileUpdateOTPSerializer,
+    ProfileUpdateSerializer,
 )
 from common.pagination import paginated_response
 from common.common_utils import success_response
@@ -378,17 +379,17 @@ class ProfileUpdateView(APIView):
     """
     POST /api/v1/auth/profile/update/
 
-    Verifies PROFILE_UPDATE OTP and updates user profile fields.
+    Updates the authenticated user's profile fields directly.
     """
 
     permission_classes = [IsAuthenticated]
     throttle_classes = [RegisterOTPThrottle]
 
     def post(self, request):
-        serializer = VerifyProfileUpdateOTPSerializer(data=request.data)
+        serializer = ProfileUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = authentication_service.verify_profile_update_otp(
+        user = authentication_service.update_profile(
             user=request.user,
             **serializer.validated_data,
         )

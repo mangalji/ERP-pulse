@@ -1,8 +1,12 @@
 import logging
 from django.db import transaction
 from accounts.exceptions import (
-    OTPExpiredException, OTPMismatchException, OTPNotFoundException,
-    MaxOTPAttemptsExceededException, ResendCooldownException
+    OTPExpiredException, 
+    OTPMismatchException, 
+    OTPNotFoundException,
+    MaxOTPAttemptsExceededException, 
+    ResendCooldownException,
+    OTPEmailDeliveryException,
     )
 from django.utils import timezone
 from accounts.models import OTP
@@ -61,16 +65,33 @@ class OTPService:
         can request a resend without losing the just-issued code.
         """
 
-        existing_otp = self.repository.get_latest_active_otp(user=user,purpose=purpose)
-        if existing_otp is not None:
-            seconds_since_last_send = (timezone.now() - existing_otp.created_at).total_seconds()
-            if seconds_since_last_send < OTP_RESEND_COOLDOWN_SECONDS:
-                wait_seconds = int(OTP_RESEND_COOLDOWN_SECONDS - seconds_since_last_send)
-                raise ResendCooldownException(
-                    f"Please wait {wait_seconds} more second(s) before requesting new code."
-                )
         with transaction.atomic():
-            self.repository.invalidate_previous_otps(user=user, purpose=purpose)
+            # Lock the user row so concurrent OTP generation requests
+            # for the same user are serialized.
+            user.__class__.objects.select_for_update().get(pk=user.pk)
+
+            existing_otp = self.repository.get_latest_active_otp(
+                user=user,
+                purpose=purpose,
+            )
+
+            if existing_otp is not None:
+                seconds_since_last_send = (
+                    timezone.now() - existing_otp.created_at
+                ).total_seconds()
+
+                if seconds_since_last_send < OTP_RESEND_COOLDOWN_SECONDS:
+                    wait_seconds = int(
+                        OTP_RESEND_COOLDOWN_SECONDS - seconds_since_last_send
+                    )
+                    raise ResendCooldownException(
+                        f"Please wait {wait_seconds} more second(s) before requesting new code."
+                    )
+
+            self.repository.invalidate_previous_otps(
+                user=user,
+                purpose=purpose,
+            )
 
             raw_code = generate_otp_code(length=OTP_LENGTH)
             otp_hash = hash_value(raw_code)
@@ -83,8 +104,11 @@ class OTPService:
                 expires_at=expires_at,
             )
 
-            logger.info('OTP issued for user %s (purpose=%s).', user.id, purpose)
-
+            logger.info(
+                'OTP issued for user %s (purpose=%s).',
+                user.id,
+                purpose,
+            )
         # Log OTP visibly for development (console backend prints to terminal).
         logger.info(
             "%s OTP for user %s (%s): %s (expires in %d minutes)",
@@ -97,7 +121,7 @@ class OTPService:
         # so the user can request a resend. This matches the same
         # pattern used in AuthenticationService._issue_registration_otp().
         try:
-            send_email(
+            sent_count = send_email(
                 recipient_list=[user.email],
                 subject='Your AGSuite ERP verification code',
                 message=(
@@ -106,11 +130,21 @@ class OTPService:
                 ),
                 fail_silently=True,
             )
-        except Exception:
+            if sent_count != 1:
+                raise OTPEmailDeliveryException(
+                    'We could not send the verification code right now. Please try again later.'
+                )
+        except OTPEmailDeliveryException:
+            raise
+
+        except Exception as exc:
             logger.exception(
-                "Failed to send login OTP email to %s — OTP saved in DB, user can resend.",
+                "Failed to send login OTP email to %s — OTP saved in DB",
                 user.email,
             )
+            raise OTPEmailDeliveryException(
+                'We could not send the verification code right now. Please try again later.'
+            ) from exc
 
         return otp
 
@@ -128,25 +162,61 @@ class OTPService:
             OTPExpiredException: the OTP exists but has expired.
             OTPMismatchException: the submitted code does not match.
         """
-        otp = self.repository.get_latest_active_otp(user=user, purpose=purpose)
-        if otp is None:
-            logger.warning('No active OTP found for user %s (purpose=%s).', user.id, purpose)
-            raise OTPNotFoundException('No active verification code found. Please request a new one.')
+        with transaction.atomic():
+            otp = self.repository.get_latest_active_otp(
+                user=user,
+                purpose=purpose,
+                for_update=True,
+            )
 
-        if otp.attempt_count >=MAX_OTP_ATTEMPTS:
-            logger.warning("OTP attempt limit reached for user %s (purpose=%s).",user.id, purpose)
-            raise MaxOTPAttemptsExceededException("Too many incorrect attempts. Please request a new code.")
-        
-        if is_expired(otp.expires_at):
-            logger.warning('Expired OTP verification attempt for user %s.', user.id)
-            raise OTPExpiredException('This OTP has expired. Please request a new code.')
+            if otp is None:
+                logger.warning(
+                    'No active OTP found for user %s (purpose=%s).',
+                    user.id,
+                    purpose,
+                )
+                raise OTPNotFoundException(
+                    'No active verification code found. Please request a new one.'
+                )
 
-        if not verify_value(submitted_code, otp.otp_hash):
-            new_attempt_count = self.repository.increment_attempt_count(otp).attempt_count
+            if otp.attempt_count >= MAX_OTP_ATTEMPTS:
+                logger.warning(
+                    "OTP attempt limit reached for user %s (purpose=%s).",
+                    user.id,
+                    purpose,
+                )
+                raise MaxOTPAttemptsExceededException(
+                    "Too many incorrect attempts. Please request a new code."
+                )
 
-            logger.warning('OTP mismatch for user %s (purpose=%s).', user.id, purpose, new_attempt_count, MAX_OTP_ATTEMPTS)
-            raise OTPMismatchException('The code you entered is incorrect. Please try again.')
+            if is_expired(otp.expires_at):
+                logger.warning(
+                    'Expired OTP verification attempt for user %s.',
+                    user.id,
+                )
+                raise OTPExpiredException(
+                    'This OTP has expired. Please request a new code.'
+                )
 
-        self.repository.mark_as_used(otp)
-        logger.info('OTP verified successfully for user %s (purpose=%s).', user.id, purpose)
-        return otp
+            if not verify_value(submitted_code, otp.otp_hash):
+                new_attempt_count = self.repository.increment_attempt_count(otp).attempt_count
+
+                logger.warning(
+                    'OTP mismatch for user %s (purpose=%s). Attempt %d/%d.',
+                    user.id,
+                    purpose,
+                    new_attempt_count,
+                    MAX_OTP_ATTEMPTS,
+                )
+                raise OTPMismatchException(
+                    'The code you entered is incorrect. Please try again.'
+                )
+
+            self.repository.mark_as_used(otp)
+
+            logger.info(
+                'OTP verified successfully for user %s (purpose=%s).',
+                user.id,
+                purpose,
+            )
+            return otp

@@ -1,5 +1,5 @@
+from django.db import models
 from accounts.models import OTP, User
-
 
 class UserRepository:
 
@@ -62,13 +62,18 @@ class OTPRepository:
     from and writes to the database.
     """
 
-    def get_latest_active_otp(self, user, purpose: str) -> OTP | None:
-        """Return the most recently created, unused OTP for a user/purpose, or None."""
-        return (
-            OTP.objects.filter(user=user, purpose=purpose, is_used=False)
-            .order_by('-created_at')
-            .first()
-        )
+    def get_latest_active_otp(self, user, purpose: str,*,for_update: bool = False) -> OTP | None:
+        """Return the latest active OTP, optionally acquiring a row lock."""
+        queryset = OTP.objects.filter(
+            user=user,
+            purpose=purpose,
+            is_used=False,
+        ).order_by('-created_at')
+
+        if for_update:
+            queryset = queryset.select_for_update()
+
+        return queryset.first()
 
     def create_otp(self, user, otp_hash: str, purpose: str, expires_at) -> OTP:
         """Create and persist a new OTP row."""
@@ -93,27 +98,11 @@ class OTPRepository:
         otp.save(update_fields=['is_used', 'updated_at'])
         return otp
 
-    def increment_attempt_count(self,otp:OTP) -> OTP:
+    def increment_attempt_count(self, otp: OTP) -> OTP:
         """Increment the wrong-guess counter on a specific OTP instance and persist it."""
-        otp.attempt_count += 1
-        otp.save(update_fields=['attempt_count','updated_at'])
+        OTP.objects.filter(pk=otp.pk).update(
+            attempt_count=models.F('attempt_count') + 1,
+        )
+        otp.refresh_from_db(fields=['attempt_count', 'updated_at'])
         return otp
     
-# class LoginActivityRepository:
-#     """
-#     Persistence-only operations for LoginActivity.
- 
-#     Contains no business rules — deciding *when* a login counts as
-#     "completed" belongs to AuthenticationService. This class only reads
-#     from and writes to the database.
-#     """
-#     def create(self,*,user:User,ip_address:str|None,user_agent:str|None)->LoginActivity:
-#         return LoginActivity.objects.create(
-#             user=user,
-#             ip_address=ip_address,
-#             user_agent=user_agent,
-#         )
-#     def get_queryset_by_user(self,user:User,*,limit:int=50):
-#         """FIX: Return un-evaluated QuerySet so the View layer can handle
-#         proper ORM slicing and count queries without evaluation side-effects."""
-#         return LoginActivity.objects.filter(user=user)

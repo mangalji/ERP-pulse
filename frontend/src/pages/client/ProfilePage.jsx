@@ -3,23 +3,18 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
-import OtpInput from '../../components/ui/OtpInput.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 
 export default function ProfilePage() {
-  const { user, profileSendOtp, profileUpdate } = useAuth()
+  const { user, profileUpdate } = useAuth()
   const { toasts, addToast, removeToast } = useToast()
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [mobileNumber, setMobileNumber] = useState('')
   const [profilePic, setProfilePic] = useState('')
-  const [otpCode, setOtpCode] = useState('')
-  const [step, setStep] = useState('form')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [otpLoading, setOtpLoading] = useState(false)
-  const [otpSent, setOtpSent] = useState(false)
   const [localError, setLocalError] = useState('')
 
   useEffect(() => {
@@ -63,10 +58,29 @@ export default function ProfilePage() {
     }
   }
 
-  const handleFormSubmit = (event) => {
+  const handleFormSubmit = async (event) => {
     event.preventDefault()
     setLocalError('')
-    if (!otpSent) handleSendOtp()
+    setIsSubmitting(true)
+
+    try {
+      await profilesUpdate({
+        firstName,
+        lastName,
+        mobileNumber,
+        profilePic,
+      })
+
+      addToast('Profile updated successfully', 'success')
+    } catch (err) {
+      setLocalError(
+        err.payload?.message ||
+        err.message ||
+        'Failed to update profile'
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -113,29 +127,11 @@ export default function ProfilePage() {
               onChange={(e) => setProfilePic(e.target.value)}
             />
             {localError && <p className="text-sm text-[var(--color-negative)]">{localError}</p>}
-            <Button type="submit" isLoading={isSubmitting || otpLoading} className="w-fit">
-              {otpSent ? 'Verify & Save' : 'Save changes'}
+            <Button type="submit" isLoading={isSubmitting} className="w-fit">
+              Save Changes
             </Button>
           </form>
         </Card>
-
-        {step === 'otp' && (
-          <Card className="p-6">
-            <h2 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-              Verify Profile Update
-            </h2>
-            <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Enter the verification code sent to your email.
-            </p>
-            <form onSubmit={handleVerifyOtp} className="mt-4 flex flex-col gap-4">
-              <OtpInput value={otpCode} onChange={setOtpCode} />
-              {localError && <p className="text-sm text-[var(--color-negative)]">{localError}</p>}
-              <Button type="submit" isLoading={isSubmitting} disabled={otpCode.length < 6} className="w-fit">
-                Verify & Update
-              </Button>
-            </form>
-          </Card>
-        )}
       </div>
 
       <Toast toasts={toasts} removeToast={removeToast} />

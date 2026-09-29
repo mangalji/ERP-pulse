@@ -20,6 +20,7 @@ export default function OtpVerificationPage() {
   const [editEmail, setEditEmail] = useState(false)
   const [tempEmail, setTempEmail] = useState(email)
   const [secondsRemaining, setSecondsRemaining] = useState(300)
+  const [resendSecondsRemaining, setResendSecondsRemaining] = useState(60)
 
   useEffect(() => {
     if (!emailFromState) {
@@ -40,6 +41,18 @@ export default function OtpVerificationPage() {
     }, 1000)
     return () => clearInterval(timer)
   }, [secondsRemaining, purpose, navigate])
+
+  useEffect(() => {
+    if (resendSecondsRemaining <= 0) {
+      return
+    }
+
+    const timer = setInterval(() => {
+      setResendSecondsRemaining((prev) => Math.max(prev - 1, 0))
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [resendSecondsRemaining])
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -69,6 +82,9 @@ export default function OtpVerificationPage() {
         await resendLoginOtp(email)
       } else {
       }
+      setSecondsRemaining(300)
+      setResendSecondsRemaining(60)
+      setCode('')
       setResendSuccess('A new code has been sent to your email.')
     } catch (err) {
       setLocalError(err.payload?.message || err.message || 'Failed to resend code')
@@ -159,10 +175,14 @@ export default function OtpVerificationPage() {
       <button
         type="button"
         onClick={handleResend}
-        disabled={resendLoading}
+        disabled={resendLoading || resendSecondsRemaining > 0}
         className="mt-6 w-full text-center text-sm font-medium text-[var(--color-primary)] disabled:opacity-50"
       >
-        {resendLoading ? 'Sending...' : 'Resend code'}
+        {resendLoading 
+          ? 'Sending...' 
+          :resendSecondsRemaining > 0
+            ? `Resend code in ${resendSecondsRemaining}s`
+            : 'Resend code'}
       </button>
     </AuthLayout>
   )

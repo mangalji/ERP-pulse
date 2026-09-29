@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-import logging
-from ocr.ai.catalogue_service import (
-    ai_model_catalogue_service,
-)
+
 from common.common_utils import success_response
-from ocr.ai.providers import AIProviderError
+from common.throttles import NetSuiteSyncThrottle
+from ocr.ai.catalogue_service import ai_model_catalogue_service
 from ocr.ai.config import models_for, providers_for
+from ocr.ai.diagnostics_service import net_suite_diagnostics_service
+from ocr.ai.providers import AIProviderError
 from ocr.ai.service import ai_configuration_service
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,7 @@ def _is_company_admin(user) -> bool:
         return True
     role = getattr(user, "role", None)
     return role is not None and role.name.lower() == "company admin"
+
 
 def _error_response(message: str, status_code: int):
     return Response(
@@ -101,6 +104,13 @@ def _friendly_ai_exception(
             status.HTTP_400_BAD_REQUEST,
         )
 
+    if operation == "diagnostics":
+        return (
+            "We couldn't generate resolution guidance right now. "
+            "The NetSuite validation result is still available above. Please try again.",
+            status.HTTP_502_BAD_GATEWAY,
+        )
+
     return (
         "We couldn't connect the AI provider. "
         "Please check the configuration and try again.",
@@ -120,16 +130,13 @@ class AIConfigurationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _company(self, request):
-        company = getattr(request.user, "company", None)
-        if company is None:
-            return None
-        return company
+        return getattr(request.user, "company", None)
 
     def get(self, request):
         company = self._company(request)
         if company is None:
-            return _error_response(
-                "No company is associated with this user.",
+            return Response(
+                {"detail": "No company is associated with this user."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -148,8 +155,8 @@ class AIConfigurationView(APIView):
 
         company = self._company(request)
         if company is None:
-            return _error_response(
-                "No company is associated with this user.",
+            return Response(
+                {"detail": "No company is associated with this user."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -163,10 +170,7 @@ class AIConfigurationView(APIView):
                 request=request,
             )
         except (ValueError, AIProviderError) as exc:
-            return _handle_ai_exception(
-                exc,
-                operation="connect",
-            )
+            return _handle_ai_exception(exc, operation="connect")
         except Exception:
             logger.exception("Unexpected AI configuration connection error.")
             return _error_response(
@@ -192,9 +196,9 @@ class AIConfigurationTestView(APIView):
 
         company = getattr(request.user, "company", None)
         if company is None:
-            return Response(
-                {"detail": "No company is associated with this user."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "No company is associated with this user.",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         try:
@@ -206,14 +210,9 @@ class AIConfigurationTestView(APIView):
                 user=request.user,
             )
         except (ValueError, AIProviderError) as exc:
-            return _handle_ai_exception(
-                exc,
-                operation="test",
-            )
+            return _handle_ai_exception(exc, operation="test")
         except Exception:
-            logger.exception(
-                "Unexpected AI connection test error."
-            )
+            logger.exception("Unexpected AI connection test error.")
             return _error_response(
                 "We couldn't verify the AI connection right now. Please try again.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -241,6 +240,7 @@ class AIConfigurationDisconnectView(APIView):
                 "No company is associated with this user.",
                 status.HTTP_400_BAD_REQUEST,
             )
+
         try:
             ai_configuration_service.disconnect(
                 company=company,
@@ -266,27 +266,20 @@ class AIProvidersView(APIView):
     def get(self, request):
         try:
             providers = providers_for()
-
             return success_response(
                 message="AI providers fetched successfully.",
                 data={
                     "providers": providers,
                     "models": {
-                        provider["value"]: models_for(
-                            provider["value"]
-                        )
+                        provider["value"]: models_for(provider["value"])
                         for provider in providers
                     },
                 },
             )
-
         except Exception:
-            logger.exception(
-                "Failed to load AI provider catalogue."
-            )
+            logger.exception("Failed to load AI provider catalogue.")
             return _error_response(
-                "We couldn't load the AI provider list right now. "
-                "Please try again.",
+                "We couldn't load the AI provider list right now. Please try again.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -302,7 +295,6 @@ class AIProvidersRefreshView(APIView):
             )
 
         company = getattr(request.user, "company", None)
-
         if company is None:
             return _error_response(
                 "No company is associated with this user.",
@@ -317,24 +309,65 @@ class AIProvidersRefreshView(APIView):
             )
 
             return success_response(
-                message=(
-                    f"{result['provider_name']} models refreshed successfully."
-                ),
+                message=f"{result['provider_name']} models refreshed successfully.",
                 data=result,
             )
-
         except (ValueError, AIProviderError) as exc:
-            return _handle_ai_exception(
-                exc,
-                operation="refresh",
+            return _handle_ai_exception(exc, operation="refresh")
+        except Exception:
+            logger.exception("Unexpected AI model catalogue refresh error.")
+            return _error_response(
+                "We couldn't refresh the AI model list right now. Please try again.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        except Exception:
-            logger.exception(
-                "Unexpected AI model catalogue refresh error."
-            )
+
+class NetSuiteAIDiagnosticsView(APIView):
+    """Generate guidance for persisted NetSuite validation errors only."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
+
+    def post(self, request):
+        company = getattr(request.user, "company", None)
+        if company is None:
             return _error_response(
-                "We couldn't refresh the AI model list right now. "
-                "Please try again.",
+                "No company is associated with this user.",
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        connection_id = str(request.data.get("connection_id") or "").strip()
+        validation_ids = request.data.get("validation_ids")
+
+        if not connection_id:
+            return _error_response(
+                "A NetSuite connection is required for resolution guidance.",
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not isinstance(validation_ids, list) or not validation_ids:
+            return _error_response(
+                "No NetSuite validation results were supplied.",
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = net_suite_diagnostics_service.diagnose(
+                company=company,
+                connection_id=connection_id,
+                validation_ids=validation_ids,
+            )
+
+            return success_response(
+                message="NetSuite resolution guidance generated successfully.",
+                data=result,
+            )
+        except (ValueError, AIProviderError) as exc:
+            return _handle_ai_exception(exc, operation="diagnostics")
+        except Exception:
+            logger.exception("Unexpected NetSuite AI diagnostics error.")
+            return _error_response(
+                "We couldn't generate resolution guidance right now. "
+                "The NetSuite validation result is still available above. Please try again.",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

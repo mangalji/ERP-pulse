@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext.jsx'
 import apiClient, { unwrap } from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
@@ -40,13 +41,31 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? '--' : date.toLocaleString()
 }
 
+function isCompanyAdminUser(user) {
+  if (user?.is_superadmin || user?.is_staff) return true
+
+  return (Array.isArray(user?.roles) ? user.roles : []).some((role) => {
+    const value =
+      typeof role === 'string'
+        ? role
+        : role?.name ?? role?.code ?? role?.key ?? ''
+
+    return ['company_admin', 'company admin'].includes(
+      String(value).trim().toLowerCase(),
+    )
+  })
+}
+
 export default function DataExtractionHistoryPage() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const canDeleteHistory = isCompanyAdminUser(user)
   const [filter, setFilter] = useState('ALL')
   const [records, setRecords] = useState([])
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
+  const [deletingId, setDeletingId] = useState(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [connection, setConnection] = useState(null)
@@ -187,6 +206,54 @@ export default function DataExtractionHistoryPage() {
       }
       return next
     })
+  }
+
+  const handleDelete = async (item) => {
+    if (!canDeleteHistory) return
+
+    const recordId = item?.type === 'batch' ? item?.batch_id : item?.upload_id
+    if (!recordId) {
+      setError('This history record cannot be deleted because its ID is missing.')
+      return
+    }
+
+    const label =
+      item?.filename ||
+      (item?.type === 'batch'
+        ? `Batch (${item?.file_count || 0} files)`
+        : 'OCR record')
+
+    if (
+      !window.confirm(
+        `Delete "${label}" from Data Extraction History? This cannot be undone.`,
+      )
+    ) {
+      return
+    }
+
+    try {
+      setDeletingId(item.batch_id)
+      setError('')
+      setNotice('')
+
+      const recordType = item?.type === 'batch' ? 'batch' : 'upload'
+      await apiClient.delete(
+        `/ocr/history/uploads/${recordId}/?record_type=${recordType}`,
+      )
+
+      setNotice('✓ OCR history record deleted successfully.')
+      await loadHistory()
+    } catch (err) {
+      console.error('Failed to delete OCR history record:', err)
+      setError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Unable to delete the OCR history record.',
+      )
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const runBatchAction = async () => {
@@ -357,14 +424,16 @@ export default function DataExtractionHistoryPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[760px]">
-                <div className="grid grid-cols-[44px_1.6fr_120px_120px_170px_130px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+              <div className="min-w-[1000px]">
+                <div className="grid grid-cols-[44px_1.35fr_90px_70px_150px_150px_120px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   <div />
                   <div>File / Batch</div>
                   <div>Type</div>
                   <div>Files</div>
+                  <div>Created By</div>
                   <div>Created</div>
                   <div>Status</div>
+                  <div className="text-center">{canDeleteHistory ? 'Action' : ''}</div>
                 </div>
 
                 <div className="divide-y divide-[var(--color-border)]">
@@ -375,7 +444,7 @@ export default function DataExtractionHistoryPage() {
                     return (
                       <div
                         key={item.batch_id}
-                        className={`grid grid-cols-[44px_1.6fr_120px_120px_170px_130px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
+                        className={`grid grid-cols-[44px_1.35fr_90px_70px_150px_150px_120px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
                       >
                         <div>
                           <input
@@ -404,6 +473,13 @@ export default function DataExtractionHistoryPage() {
 
                         <div className="text-sm text-[var(--color-ink)]">
                           {item.file_count}
+                        </div>
+
+                        <div
+                          className="truncate pr-2 text-sm text-[var(--color-muted)]"
+                          title={item.owner_name || ''}
+                        >
+                          {item.owner_name || '--'}
                         </div>
 
                         <div className="text-sm text-[var(--color-muted)]">
@@ -437,6 +513,45 @@ export default function DataExtractionHistoryPage() {
                             >
                               View Result
                             </Button>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-center">
+                          {canDeleteHistory && (
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(item)}
+                              disabled={working || deletingId === item.batch_id}
+                              aria-label={`Delete ${item.filename || 'OCR history record'}`}
+                              title="Delete"
+                              className="rounded-md p-2 text-[var(--color-negative)] transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {deletingId === item.batch_id ? (
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  className="h-4 w-4 animate-spin"
+                                >
+                                  <circle cx="12" cy="12" r="9" className="opacity-25" />
+                                  <path d="M21 12a9 9 0 0 1-9 9" />
+                                </svg>
+                              ) : (
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  className="h-4 w-4"
+                                >
+                                  <path d="M4 7h16" />
+                                  <path d="M10 11v6M14 11v6" />
+                                  <path d="M6 7l1 13h10l1-13" />
+                                  <path d="M9 7V4h6v3" />
+                                </svg>
+                              )}
+                            </button>
                           )}
                         </div>
                       </div>

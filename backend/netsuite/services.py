@@ -1655,10 +1655,6 @@ class NetSuiteVendorBillPostingService:
                     continue
 
                 validated_item = validated_items_by_line.get(str(index))
-                if validated_item is None and index - 1 < len(item_validation_results):
-                    candidate = item_validation_results[index - 1]
-                    if isinstance(candidate, dict):
-                        validated_item = candidate
 
                 if not isinstance(validated_item, dict):
                     raise ValueError(
@@ -2031,28 +2027,32 @@ class NetSuiteVendorBillPostingService:
             connection.id,
         )
 
-        # Final fail-closed business guard. At this point the complete payload
-        # already contains the actual final subsidiary and the actual item lines
-        # that will be posted, including any duplicate-item/rate merges.
+        # Final fail-closed item/subsidiary verification.
+        # Validation may have happened earlier and the reviewed/mapped payload
+        # is authoritative only after all final body mappings and line merges
+        # are complete. Verify the exact item IDs that are about to be posted.
         if payload_items:
-            final_subsidiary = payload.get("subsidiary")
-            final_subsidiary_id = (
-                final_subsidiary.get("id")
-                if isinstance(final_subsidiary, dict)
+            payload_subsidiary = payload.get("subsidiary")
+            payload_subsidiary_id = (
+                payload_subsidiary.get("id")
+                if isinstance(payload_subsidiary, dict)
                 else None
             )
 
-            if final_subsidiary_id in (None, ""):
+            if payload_subsidiary_id in (None, ""):
                 raise ValueError(
-                    "Vendor Bill posting was blocked because no valid final "
-                    "NetSuite subsidiary was resolved for the transaction."
+                    "Vendor Bill subsidiary could not be resolved before posting. "
+                    "Map a valid Subsidiary and validate the document again."
                 )
 
             final_item_ids = []
-            for final_line_number, line in enumerate(payload_items, start=1):
+            for line_number, item_payload in enumerate(
+                payload_items,
+                start=1,
+            ):
                 item_reference = (
-                    line.get("item")
-                    if isinstance(line, dict)
+                    item_payload.get("item")
+                    if isinstance(item_payload, dict)
                     else None
                 )
                 item_id = (
@@ -2063,47 +2063,44 @@ class NetSuiteVendorBillPostingService:
 
                 if item_id in (None, ""):
                     raise ValueError(
-                        f"Vendor Bill posting was blocked because final item "
-                        f"line {final_line_number} has no valid NetSuite item ID."
+                        f"Final Vendor Bill item line {line_number} "
+                        "does not contain a NetSuite item ID."
                     )
 
-                normalized_item_id = str(item_id).strip()
-                if normalized_item_id not in final_item_ids:
-                    final_item_ids.append(normalized_item_id)
+                final_item_ids.append(str(item_id).strip())
 
-            final_compatibility = validation_service._check_item_subsidiary_compatibility(
+            invalid_items = validation_service._validate_item_ids_for_subsidiary_live(
                 connection=connection,
                 item_ids=final_item_ids,
-                transaction_subsidiary_id=final_subsidiary_id,
+                subsidiary_id=payload_subsidiary_id,
             )
 
-            final_mismatches = []
-            for item_id in final_item_ids:
-                result = final_compatibility.get(item_id)
-                if not result or not result.get("exists"):
-                    final_mismatches.append(
-                        f'Item ID {item_id} no longer exists in the selected NetSuite account.'
-                    )
-                    continue
+            if invalid_items:
+                invalid = invalid_items[0]
+                reason = invalid.get("reason")
+                item_name = invalid.get("name") or invalid.get("netsuite_id")
+                item_id = invalid.get("netsuite_id")
 
-                if not result.get("active"):
-                    final_mismatches.append(
-                        f'Item "{result.get("displayname") or result.get("itemid") or item_id}" '
-                        f'(ID {item_id}) is inactive in the selected NetSuite account.'
-                    )
-                    continue
-
-                if not result.get("compatible"):
-                    final_mismatches.append(
-                        f'Item "{result.get("displayname") or result.get("itemid") or item_id}" '
-                        f'(ID {item_id}) is not associated with the final Vendor Bill '
-                        f'subsidiary (ID {final_subsidiary_id}).'
+                if reason == "SUBSIDIARY_MISMATCH":
+                    raise ValueError(
+                        f'NetSuite item "{item_name}" (internal ID {item_id}) '
+                        f'is not associated with Vendor Bill subsidiary ID '
+                        f'{payload_subsidiary_id}. '
+                        "Associate the item with the transaction subsidiary "
+                        "or choose a compatible item, then validate again."
                     )
 
-            if final_mismatches:
+                if reason == "INACTIVE":
+                    raise ValueError(
+                        f'NetSuite item "{item_name}" (internal ID {item_id}) '
+                        "is inactive. Activate it or choose another item, "
+                        "then validate again."
+                    )
+
                 raise ValueError(
-                    "Vendor Bill posting was blocked by final NetSuite item/subsidiary "
-                    "verification: " + " ".join(final_mismatches)
+                    f"NetSuite item internal ID {item_id} could not be "
+                    "verified immediately before posting. Validate the "
+                    "document again and retry."
                 )
 
         posting = self.repository.save_ocr_posting(
@@ -3533,6 +3530,10 @@ class NetSuiteValidationService:
         self.token_manager = token_manager or NetSuiteTokenManager(
             repository=self.repository,
         )
+        # Subsidiary ancestry is immutable for the duration of one service
+        # instance. Cache it so validation does not re-query the same chain
+        # for every item candidate. Keys are (connection_id, subsidiary_id).
+        self._subsidiary_ancestor_cache = {}
     
     @staticmethod
     def _is_company_admin(user) -> bool:
@@ -3724,265 +3725,6 @@ class NetSuiteValidationService:
             )
 
         return matches[0]
-
-    def _get_subsidiary_ancestor_ids(
-        self,
-        *,
-        connection,
-        transaction_subsidiary_id,
-    ):
-        """Return the parent-chain ancestor IDs for a NetSuite subsidiary."""
-        subsidiary_id = str(transaction_subsidiary_id or "").strip()
-        if not subsidiary_id or not subsidiary_id.isdigit():
-            raise ValueError(
-                "The resolved Vendor Bill subsidiary has an invalid NetSuite internal ID."
-            )
-
-        query = """
-            SELECT
-                id,
-                parent
-            FROM subsidiary
-            ORDER BY id
-        """
-
-        try:
-            response = self._execute_live_suiteql(
-                connection=connection,
-                query=query,
-                limit=1000,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Live NetSuite subsidiary hierarchy lookup failed — "
-                "connection=%s subsidiary=%s",
-                connection.id,
-                subsidiary_id,
-            )
-            raise NetSuiteRecordFetchException(
-                "Unable to verify the NetSuite subsidiary hierarchy."
-            ) from exc
-
-        rows = response.get("items", []) if isinstance(response, dict) else []
-        parent_by_id = {}
-
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            row_id = row.get("id")
-            if row_id is None:
-                continue
-            parent = row.get("parent")
-            parent_by_id[str(row_id)] = (
-                str(parent).strip()
-                if parent not in (None, "")
-                else None
-            )
-
-        if subsidiary_id not in parent_by_id:
-            raise NetSuiteRecordFetchException(
-                f'Unable to resolve NetSuite subsidiary hierarchy for subsidiary "{subsidiary_id}".'
-            )
-
-        ancestors = []
-        current_id = subsidiary_id
-        visited = set()
-
-        while current_id:
-            if current_id in visited:
-                raise NetSuiteRecordFetchException(
-                    "Unable to verify the NetSuite subsidiary hierarchy because "
-                    "a parent cycle was detected."
-                )
-
-            visited.add(current_id)
-            parent_id = parent_by_id.get(current_id)
-            if not parent_id:
-                break
-
-            if not parent_id.isdigit():
-                raise NetSuiteRecordFetchException(
-                    "Unable to verify the NetSuite subsidiary hierarchy because "
-                    "a parent subsidiary ID is invalid."
-                )
-
-            ancestors.append(parent_id)
-            current_id = parent_id
-
-        return ancestors
-
-    def _check_item_subsidiary_compatibility(
-        self,
-        *,
-        connection,
-        item_ids,
-        transaction_subsidiary_id,
-    ):
-        """Verify item existence, active state, and subsidiary compatibility.
-
-        This is the single authoritative helper shared by OCR validation and
-        the final fail-closed Vendor Bill posting guard.
-        """
-        requested_ids = []
-        for item_id in item_ids or []:
-            normalized_id = str(item_id or "").strip()
-            if not normalized_id:
-                continue
-            if not normalized_id.isdigit():
-                raise ValueError(
-                    f'NetSuite item ID "{item_id}" is invalid.'
-                )
-            if normalized_id not in requested_ids:
-                requested_ids.append(normalized_id)
-
-        if not requested_ids:
-            return {}
-
-        subsidiary_id = str(transaction_subsidiary_id or "").strip()
-        if not subsidiary_id or not subsidiary_id.isdigit():
-            raise ValueError(
-                "The final Vendor Bill subsidiary has an invalid NetSuite internal ID."
-            )
-
-        ancestors = self._get_subsidiary_ancestor_ids(
-            connection=connection,
-            transaction_subsidiary_id=subsidiary_id,
-        )
-
-        id_clause = ", ".join(requested_ids)
-
-        direct_clause = (
-            "BUILTIN.MNFILTER(item.subsidiary, 'MN_INCLUDE', '', 'TRUE', "
-            f"'{subsidiary_id}') = 'T'"
-        )
-
-        compatibility_clauses = [direct_clause]
-        for ancestor_id in ancestors:
-            compatibility_clauses.append(
-                "(item.includechildren = 'T' AND "
-                "BUILTIN.MNFILTER(item.subsidiary, 'MN_INCLUDE', '', 'TRUE', "
-                f"'{ancestor_id}') = 'T')"
-            )
-
-        compatibility_clause = " OR ".join(compatibility_clauses)
-
-        basic_query = f"""
-            SELECT
-                id,
-                itemid,
-                displayname,
-                isinactive,
-                subsidiary,
-                BUILTIN.DF(subsidiary) AS subsidiary_display
-            FROM item
-            WHERE id IN ({id_clause})
-            ORDER BY id
-        """
-
-        compatible_query = f"""
-            SELECT
-                id,
-                itemid,
-                displayname,
-                isinactive
-            FROM item
-            WHERE
-                id IN ({id_clause})
-                AND isinactive = 'F'
-                AND ({compatibility_clause})
-            ORDER BY id
-        """
-
-        try:
-            basic_response = self._execute_live_suiteql(
-                connection=connection,
-                query=basic_query,
-                limit=100,
-            )
-            compatible_response = self._execute_live_suiteql(
-                connection=connection,
-                query=compatible_query,
-                limit=100,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Live NetSuite item/subsidiary compatibility verification failed — "
-                "connection=%s subsidiary=%s item_ids=%s",
-                connection.id,
-                subsidiary_id,
-                requested_ids,
-            )
-            raise NetSuiteRecordFetchException(
-                "Unable to verify NetSuite item/subsidiary compatibility."
-            ) from exc
-
-        basic_rows = (
-            basic_response.get("items", [])
-            if isinstance(basic_response, dict)
-            else []
-        )
-        compatible_rows = (
-            compatible_response.get("items", [])
-            if isinstance(compatible_response, dict)
-            else []
-        )
-
-        details_by_id = {}
-        for row in basic_rows:
-            if not isinstance(row, dict) or row.get("id") is None:
-                continue
-            row_id = str(row["id"])
-            raw_subsidiary_names = row.get("subsidiary_display")
-            if raw_subsidiary_names in (None, ""):
-                item_subsidiaries = []
-            elif isinstance(raw_subsidiary_names, (list, tuple)):
-                item_subsidiaries = [
-                    str(value).strip()
-                    for value in raw_subsidiary_names
-                    if str(value).strip()
-                ]
-            else:
-                item_subsidiaries = [
-                    value.strip()
-                    for value in str(raw_subsidiary_names).split(",")
-                    if value.strip()
-                ]
-
-            details_by_id[row_id] = {
-                "id": row_id,
-                "itemid": row.get("itemid"),
-                "displayname": row.get("displayname"),
-                "isinactive": str(row.get("isinactive", "F")).upper() == "T",
-                "item_subsidiaries": item_subsidiaries,
-            }
-
-        compatible_ids = {
-            str(row["id"])
-            for row in compatible_rows
-            if isinstance(row, dict) and row.get("id") is not None
-        }
-
-        result = {}
-        for item_id in requested_ids:
-            detail = details_by_id.get(item_id)
-            exists = detail is not None
-            active = bool(detail and not detail["isinactive"])
-            compatible = bool(active and item_id in compatible_ids)
-
-            result[item_id] = {
-                "exists": exists,
-                "active": active,
-                "compatible": compatible,
-                "itemid": detail.get("itemid") if detail else None,
-                "displayname": detail.get("displayname") if detail else None,
-                "item_subsidiaries": (
-                    detail.get("item_subsidiaries", [])
-                    if detail
-                    else []
-                ),
-            }
-
-        return result
 
     @staticmethod
     def _normalize_match_name(value):
@@ -4266,12 +4008,17 @@ class NetSuiteValidationService:
                 "Vendor field mapping is required before NetSuite reference validation."
             )
 
+        # Resolve the Vendor Bill transaction subsidiary using the same
+        # mapping and live select-field resolver used during posting.
+        # Missing mapping/value is intentionally a skipped subsidiary check;
+        # an explicitly supplied but unresolvable value is a validation error.
         subsidiary_mapping = next(
             (
                 mapping
                 for mapping in mappings
                 if str(mapping.target_field_id).strip().lower() == "subsidiary"
-                and str(mapping.source_scope).strip().lower() in {"header", "body"}
+                and str(mapping.source_scope).strip().lower()
+                in {"header", "body"}
             ),
             None,
         )
@@ -4279,23 +4026,63 @@ class NetSuiteValidationService:
         transaction_subsidiary_id = None
         transaction_subsidiary_name = None
         subsidiary_check = "skipped"
+        subsidiary_validation_error = None
 
         if subsidiary_mapping is not None:
-            raw_subsidiary = data.get(subsidiary_mapping.source_field_key)
-            if isinstance(raw_subsidiary, str):
-                raw_subsidiary = raw_subsidiary.strip()
+            raw_subsidiary_value = data.get(
+                subsidiary_mapping.source_field_key
+            )
 
-            if raw_subsidiary not in (None, ""):
-                transaction_subsidiary_name = str(raw_subsidiary).strip()
-                transaction_subsidiary_id = self._resolve_select_field_live(
-                    connection=connection,
-                    target_field_id=subsidiary_mapping.target_field_id,
-                    value=raw_subsidiary,
-                )
+            if isinstance(raw_subsidiary_value, str):
+                raw_subsidiary_value = raw_subsidiary_value.strip()
+
+            if raw_subsidiary_value not in (None, ""):
+                if isinstance(raw_subsidiary_value, dict):
+                    transaction_subsidiary_name = (
+                        raw_subsidiary_value.get("name")
+                        or raw_subsidiary_value.get("label")
+                        or raw_subsidiary_value.get("text")
+                    )
+                    if transaction_subsidiary_name is not None:
+                        transaction_subsidiary_name = str(
+                            transaction_subsidiary_name
+                        ).strip()
+
+                    direct_id = raw_subsidiary_value.get("id")
+                    if direct_id not in (None, ""):
+                        transaction_subsidiary_id = str(direct_id).strip()
+                    elif transaction_subsidiary_name:
+                        transaction_subsidiary_id = (
+                            self._resolve_select_field_live(
+                                connection=connection,
+                                target_field_id="subsidiary",
+                                value=transaction_subsidiary_name,
+                            )
+                        )
+                else:
+                    transaction_subsidiary_name = str(
+                        raw_subsidiary_value
+                    ).strip()
+                    if transaction_subsidiary_name:
+                        transaction_subsidiary_id = (
+                            self._resolve_select_field_live(
+                                connection=connection,
+                                target_field_id="subsidiary",
+                                value=transaction_subsidiary_name,
+                            )
+                        )
 
                 if transaction_subsidiary_id:
-                    transaction_subsidiary_id = str(transaction_subsidiary_id)
-                    subsidiary_check = "performed"
+                    subsidiary_check = "passed"
+                else:
+                    subsidiary_validation_error = {
+                        "type": "SUBSIDIARY_NOT_FOUND",
+                        "message": (
+                            f'NetSuite subsidiary "{transaction_subsidiary_name}" '
+                            "could not be resolved in the selected account."
+                        ),
+                        "extracted_name": transaction_subsidiary_name,
+                    }
 
         vendor_name = data.get(vendor_mapping.source_field_key)
 
@@ -4350,7 +4137,8 @@ class NetSuiteValidationService:
                 connection=connection,
                 line_items=real_item_lines,
                 source_field_key=item_mapping.source_field_key,
-                transaction_subsidiary_id=transaction_subsidiary_id,
+                subsidiary_id=transaction_subsidiary_id,
+                subsidiary_name=transaction_subsidiary_name,
             )
             for result, original_line_index in zip(
                 raw_item_results,
@@ -4360,7 +4148,10 @@ class NetSuiteValidationService:
                 item_results.append(result)
 
         errors = []
-    
+
+        if subsidiary_validation_error:
+            errors.append(subsidiary_validation_error)
+
         if not vendor_name or not str(vendor_name).strip():
             errors.append({
                 "type": "VENDOR_VALUE_MISSING",
@@ -4381,10 +4172,79 @@ class NetSuiteValidationService:
                 "extracted_name": vendor_name,
             })
 
-        item_subsidiary_errors = {}
+        # Emit one subsidiary mismatch error per unique NetSuite item, while
+        # retaining every affected OCR line number for traceability.
+        mismatch_errors_by_key = {}
 
         for item in item_results:
-            if item.get("ambiguous"):
+            if item.get("item_subsidiary_mismatch"):
+                item_id = item.get("netsuite_id")
+                candidate_details = item.get("candidates") or []
+                if item_id:
+                    key = str(item_id)
+                elif candidate_details:
+                    key = str(
+                        candidate_details[0].get("netsuite_id")
+                    )
+                else:
+                    key = self._normalize_match_name(
+                        item.get("extracted_name")
+                    )
+
+                existing_error = mismatch_errors_by_key.get(key)
+                if existing_error is not None:
+                    line_index = item.get("line_index")
+                    if (
+                        line_index is not None
+                        and line_index not in existing_error["affected_lines"]
+                    ):
+                        existing_error["affected_lines"].append(line_index)
+                    continue
+
+                primary_candidate = (
+                    candidate_details[0]
+                    if candidate_details
+                    else {}
+                )
+                primary_name = (
+                    primary_candidate.get("name")
+                    or item.get("extracted_name")
+                    or "Unknown item"
+                )
+                primary_id = primary_candidate.get("netsuite_id") or item_id
+                affected_lines = [
+                    item.get("line_index")
+                ] if item.get("line_index") is not None else []
+
+                error = {
+                    "type": "ITEM_SUBSIDIARY_MISMATCH",
+                    "message": (
+                        f'NetSuite item "{primary_name}" (internal ID '
+                        f"{primary_id}) is not associated with Vendor Bill "
+                        f'subsidiary "{item.get("transaction_subsidiary") or transaction_subsidiary_name or transaction_subsidiary_id}".'
+                    ),
+                    "extracted_name": item.get("extracted_name"),
+                    "netsuite_id": primary_id,
+                    "item_name": primary_name,
+                    "item_subsidiary": primary_candidate.get(
+                        "item_subsidiary"
+                    ),
+                    "transaction_subsidiary": (
+                        item.get("transaction_subsidiary")
+                        or transaction_subsidiary_name
+                    ),
+                    "transaction_subsidiary_id": str(
+                        item.get("transaction_subsidiary_id")
+                        or transaction_subsidiary_id
+                        or ""
+                    ),
+                    "affected_lines": affected_lines,
+                    "candidates": candidate_details,
+                }
+                mismatch_errors_by_key[key] = error
+                errors.append(error)
+
+            elif item.get("ambiguous"):
                 errors.append({
                     "type": "ITEM_AMBIGUOUS",
                     "message": "Multiple possible items matched. Please confirm the item mapping.",
@@ -4392,40 +4252,6 @@ class NetSuiteValidationService:
                     "line_index": item.get("line_index"),
                     "candidates": item.get("candidates", []),
                 })
-            elif item.get("subsidiary_mismatch"):
-                for candidate in item.get("incompatible_candidates", []) or []:
-                    candidate_id = candidate.get("netsuite_id")
-                    if not candidate_id:
-                        continue
-
-                    key = str(candidate_id)
-                    error = item_subsidiary_errors.setdefault(
-                        key,
-                        {
-                            "type": "ITEM_SUBSIDIARY_MISMATCH",
-                            "message": (
-                                "Item exists in NetSuite but is not associated "
-                                "with the Vendor Bill subsidiary."
-                            ),
-                            "extracted_name": item.get("extracted_name"),
-                            "item_name": (
-                                candidate.get("name")
-                                or item.get("extracted_name")
-                            ),
-                            "netsuite_id": key,
-                            "transaction_subsidiary_name": transaction_subsidiary_name,
-                            "transaction_subsidiary_id": transaction_subsidiary_id,
-                            "affected_lines": [],
-                            "item_subsidiaries": candidate.get(
-                                "item_subsidiaries",
-                                [],
-                            ),
-                        },
-                    )
-
-                    line_index = item.get("line_index")
-                    if line_index is not None and line_index not in error["affected_lines"]:
-                        error["affected_lines"].append(line_index)
             elif not item.get("matched"):
                 errors.append({
                     "type": "ITEM_NOT_FOUND",
@@ -4434,7 +4260,26 @@ class NetSuiteValidationService:
                     "line_index": item.get("line_index"),
                 })
 
-        errors.extend(item_subsidiary_errors.values())
+        matched_items = [
+            item
+            for item in item_results
+            if item.get("matched")
+        ]
+        unique_netsuite_items = {
+            str(item.get("netsuite_id"))
+            for item in matched_items
+            if item.get("netsuite_id") not in (None, "")
+        }
+
+        summary = {
+            "source_rows": len(real_item_lines),
+            "matched_rows": len(matched_items),
+            "unique_netsuite_items": len(unique_netsuite_items),
+            "unmatched_rows": max(
+                0,
+                len(real_item_lines) - len(matched_items),
+            ),
+        }
 
         status = (
             ValidationStatus.VALIDATED
@@ -4460,34 +4305,21 @@ class NetSuiteValidationService:
             errors=errors,
         )
 
-        matched_item_ids = {
-            str(item.get("netsuite_id"))
-            for item in item_results
-            if item.get("matched") and item.get("netsuite_id")
-        }
-
-        matched_rows = sum(
-            1
-            for item in item_results
-            if item.get("matched")
-        )
-
         return {
             "validation_id": str(validation.id),
             "status": status,
             "vendor": vendor_result,
             "items": item_results,
             "errors": errors,
-            "transaction_subsidiary": {
-                "id": transaction_subsidiary_id,
-                "name": transaction_subsidiary_name,
+            "summary": summary,
+            "subsidiary": {
                 "check": subsidiary_check,
-            },
-            "summary": {
-                "source_rows": len(real_item_lines),
-                "matched_rows": matched_rows,
-                "unique_netsuite_items": len(matched_item_ids),
-                "unmatched_rows": max(len(real_item_lines) - matched_rows, 0),
+                "name": transaction_subsidiary_name,
+                "netsuite_id": (
+                    str(transaction_subsidiary_id)
+                    if transaction_subsidiary_id
+                    else None
+                ),
             },
         }
     
@@ -4585,13 +4417,380 @@ class NetSuiteValidationService:
             "confidence": 0.0,
         }
 
+    @staticmethod
+    def _suiteql_id_literal(value):
+        """Return a safe SuiteQL literal for an internal record ID."""
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+
+        # NetSuite internal IDs are normally numeric. Keep numeric IDs
+        # unquoted; fall back to the existing SQL-escaped literal helper for
+        # defensive handling of unexpected non-numeric identifiers.
+        if re.fullmatch(r"\d+", raw):
+            return raw
+
+        return NetSuiteValidationService._suiteql_literal(raw)
+
+    def _get_subsidiary_ancestors_live(
+        self,
+        *,
+        connection,
+        subsidiary_id,
+    ):
+        """Return parent subsidiary IDs from nearest parent to root.
+
+        NetSuite subsidiaries form a hierarchy. We resolve the parent chain
+        live instead of hard-coding account-specific IDs. A cycle guard keeps
+        malformed master data from causing an infinite loop.
+        """
+        raw_id = str(subsidiary_id or "").strip()
+        if not raw_id:
+            return []
+
+        cache_key = (str(connection.id), raw_id)
+        cached = self._subsidiary_ancestor_cache.get(cache_key)
+        if cached is not None:
+            return list(cached)
+
+        ancestors = []
+        seen = {raw_id}
+        current_id = raw_id
+        max_depth = 100
+
+        for _ in range(max_depth):
+            literal = self._suiteql_id_literal(current_id)
+            if literal is None:
+                break
+
+            query = f"""
+                SELECT
+                    id,
+                    parent
+                FROM subsidiary
+                WHERE id = {literal}
+                ORDER BY id
+            """
+
+            response = self._execute_live_suiteql(
+                connection=connection,
+                query=query,
+                limit=5,
+            )
+
+            rows = (
+                response.get("items", [])
+                if isinstance(response, dict)
+                else []
+            )
+
+            row = next(
+                (item for item in rows if isinstance(item, dict)),
+                None,
+            )
+
+            if row is None:
+                # The subsidiary ID was resolved from NetSuite just before
+                # this lookup. If its hierarchy record cannot be read now,
+                # ancestry-based compatibility cannot be established safely.
+                # Fail closed instead of reporting a misleading mismatch.
+                raise NetSuiteRecordFetchException(
+                    f"Unable to resolve the parent hierarchy for NetSuite "
+                    f"subsidiary {current_id}."
+                )
+
+            raw_parent = row.get("parent")
+            if isinstance(raw_parent, dict):
+                raw_parent = (
+                    raw_parent.get("id")
+                    or raw_parent.get("value")
+                    or raw_parent.get("internal_id")
+                )
+
+            parent_id = str(raw_parent or "").strip()
+            if not parent_id:
+                break
+
+            if parent_id in seen:
+                logger.error(
+                    "Cycle detected in NetSuite subsidiary hierarchy "
+                    "— subsidiary=%s parent=%s connection=%s",
+                    current_id,
+                    parent_id,
+                    connection.id,
+                )
+                raise NetSuiteRecordFetchException(
+                    "NetSuite subsidiary hierarchy contains a cycle; "
+                    "item/subsidiary compatibility cannot be validated safely."
+                )
+
+            ancestors.append(parent_id)
+            seen.add(parent_id)
+            current_id = parent_id
+
+        else:
+            logger.error(
+                "NetSuite subsidiary hierarchy exceeded maximum depth "
+                "while resolving ancestors — subsidiary=%s connection=%s",
+                raw_id,
+                connection.id,
+            )
+            raise NetSuiteRecordFetchException(
+                "NetSuite subsidiary hierarchy exceeded the safe maximum "
+                "depth; item/subsidiary compatibility cannot be validated safely."
+            )
+
+        self._subsidiary_ancestor_cache[cache_key] = tuple(ancestors)
+        return list(ancestors)
+
+    def _get_item_subsidiary_status_live(
+        self,
+        *,
+        connection,
+        item_ids,
+        subsidiary_id,
+    ):
+        """Return live compatibility status for exact NetSuite item IDs.
+
+        The result is keyed by item ID and contains one of:
+        - compatible=True
+        - reason=SUBSIDIARY_MISMATCH
+        - reason=INACTIVE
+        - reason=NOT_FOUND
+
+        SuiteQL/network failures raise NetSuiteRecordFetchException so callers
+        can fail closed instead of treating an unknown check as a match.
+        """
+        normalized_ids = []
+        seen_ids = set()
+
+        for item_id in item_ids or []:
+            raw_id = str(item_id or "").strip()
+            if not raw_id or raw_id in seen_ids:
+                continue
+            seen_ids.add(raw_id)
+            normalized_ids.append(raw_id)
+
+        if not normalized_ids:
+            return {}
+
+        normalized_subsidiary_id = str(subsidiary_id or "").strip()
+        if not normalized_subsidiary_id:
+            raise ValueError(
+                "A NetSuite transaction subsidiary is required for "
+                "item compatibility validation."
+            )
+
+        ancestors = self._get_subsidiary_ancestors_live(
+            connection=connection,
+            subsidiary_id=normalized_subsidiary_id,
+        )
+
+        subsidiary_clauses = [
+            (
+                "BUILTIN.MNFILTER(subsidiary, "
+                "'MN_INCLUDE', '', 'TRUE', "
+                f"{self._suiteql_id_literal(normalized_subsidiary_id)}) = 'T'"
+            )
+        ]
+
+        for ancestor_id in ancestors:
+            ancestor_literal = self._suiteql_id_literal(ancestor_id)
+            if ancestor_literal is None:
+                continue
+            subsidiary_clauses.append(
+                "(includechildren = 'T' AND "
+                "BUILTIN.MNFILTER(subsidiary, "
+                "'MN_INCLUDE', '', 'TRUE', "
+                f"{ancestor_literal}) = 'T')"
+            )
+
+        compatibility_clause = " OR ".join(subsidiary_clauses)
+
+        compatible_ids = set()
+
+        # Keep IN clauses bounded; candidate matching already fetches at most
+        # 100 item rows per name chunk. The helper is also reused by final
+        # posting checks, so keep it safe for future larger batches.
+        chunk_size = 100
+
+        for start in range(0, len(normalized_ids), chunk_size):
+            chunk = normalized_ids[start : start + chunk_size]
+            id_literals = [
+                self._suiteql_id_literal(item_id)
+                for item_id in chunk
+            ]
+            id_literals = [literal for literal in id_literals if literal]
+            if not id_literals:
+                continue
+
+            query = f"""
+                SELECT
+                    id
+                FROM item
+                WHERE
+                    id IN ({", ".join(id_literals)})
+                    AND isinactive = 'F'
+                    AND (
+                        {compatibility_clause}
+                    )
+                ORDER BY id
+            """
+
+            response = self._execute_live_suiteql(
+                connection=connection,
+                query=query,
+                limit=100,
+            )
+
+            rows = (
+                response.get("items", [])
+                if isinstance(response, dict)
+                else []
+            )
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                item_id = row.get("id")
+                if item_id is not None:
+                    compatible_ids.add(str(item_id).strip())
+
+        unresolved_ids = [
+            item_id
+            for item_id in normalized_ids
+            if item_id not in compatible_ids
+        ]
+
+        details_by_id = {}
+
+        for start in range(0, len(unresolved_ids), chunk_size):
+            chunk = unresolved_ids[start : start + chunk_size]
+            id_literals = [
+                self._suiteql_id_literal(item_id)
+                for item_id in chunk
+            ]
+            id_literals = [literal for literal in id_literals if literal]
+            if not id_literals:
+                continue
+
+            query = f"""
+                SELECT
+                    id,
+                    itemid,
+                    displayname,
+                    isinactive,
+                    includechildren,
+                    BUILTIN.DF(subsidiary) AS subsidiary_name
+                FROM item
+                WHERE id IN ({", ".join(id_literals)})
+                ORDER BY id
+            """
+
+            response = self._execute_live_suiteql(
+                connection=connection,
+                query=query,
+                limit=100,
+            )
+
+            rows = (
+                response.get("items", [])
+                if isinstance(response, dict)
+                else []
+            )
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                item_id = row.get("id")
+                if item_id is not None:
+                    details_by_id[str(item_id).strip()] = row
+
+        statuses = {}
+
+        for item_id in normalized_ids:
+            if item_id in compatible_ids:
+                statuses[item_id] = {
+                    "compatible": True,
+                    "subsidiary_check": "passed",
+                    "netsuite_id": item_id,
+                }
+                continue
+
+            row = details_by_id.get(item_id)
+            if row is None:
+                statuses[item_id] = {
+                    "compatible": False,
+                    "subsidiary_check": "failed",
+                    "reason": "NOT_FOUND",
+                    "netsuite_id": item_id,
+                }
+                continue
+
+            is_inactive = str(
+                row.get("isinactive", "F")
+            ).upper() == "T"
+
+            if is_inactive:
+                reason = "INACTIVE"
+            else:
+                reason = "SUBSIDIARY_MISMATCH"
+
+            item_name = (
+                row.get("displayname")
+                or row.get("itemid")
+                or item_id
+            )
+
+            statuses[item_id] = {
+                "compatible": False,
+                "subsidiary_check": "failed",
+                "reason": reason,
+                "netsuite_id": item_id,
+                "name": str(item_name),
+                "item_subsidiary": row.get("subsidiary_name"),
+                "includechildren": str(
+                    row.get("includechildren", "F")
+                ).upper() == "T",
+            }
+
+        return statuses
+
+    def _validate_item_ids_for_subsidiary_live(
+        self,
+        *,
+        connection,
+        item_ids,
+        subsidiary_id,
+    ):
+        """Return exact item IDs that cannot be posted for a subsidiary.
+
+        This is the fail-closed wrapper used immediately before Vendor Bill
+        posting. It shares the same live compatibility implementation used by
+        pre-post validation, so validation and posting cannot drift apart.
+        """
+        statuses = self._get_item_subsidiary_status_live(
+            connection=connection,
+            item_ids=item_ids,
+            subsidiary_id=subsidiary_id,
+        )
+
+        invalid_items = []
+        for item_id, status in statuses.items():
+            if status.get("compatible"):
+                continue
+            invalid_items.append(dict(status))
+
+        return invalid_items
+
     def _validate_items_live(
         self,
         *,
         connection,
         line_items,
         source_field_key,
-        transaction_subsidiary_id=None,
+        subsidiary_id=None,
+        subsidiary_name=None,
     ):
         extracted_items = []
 
@@ -4715,18 +4914,26 @@ class NetSuiteValidationService:
                         {},
                     )[str(record_id)] = row
 
-        compatibility_by_id = {}
-        if transaction_subsidiary_id:
-            candidate_ids = {
-                str(record_id)
-                for candidates_by_id in rows_by_name.values()
-                for record_id in candidates_by_id.keys()
-            }
-            compatibility_by_id = self._check_item_subsidiary_compatibility(
+        # Apply the subsidiary filter once across the full candidate set.
+        # This preserves the existing name-matching query while ensuring an
+        # incompatible candidate can never win simply because it appears first.
+        candidate_ids = []
+        if subsidiary_id not in (None, ""):
+            candidate_ids = [
+                str(row.get("id")).strip()
+                for name_rows in rows_by_name.values()
+                for row in name_rows.values()
+                if isinstance(row, dict) and row.get("id") is not None
+            ]
+
+            candidate_ids = list(dict.fromkeys(candidate_ids))
+            subsidiary_statuses = self._get_item_subsidiary_status_live(
                 connection=connection,
                 item_ids=candidate_ids,
-                transaction_subsidiary_id=transaction_subsidiary_id,
+                subsidiary_id=subsidiary_id,
             )
+        else:
+            subsidiary_statuses = {}
 
         results = []
 
@@ -4734,126 +4941,137 @@ class NetSuiteValidationService:
             name = item.get("extracted_name")
             line_index = item["line_index"]
 
+            base = {
+                "extracted_name": name,
+                "line_index": line_index,
+                "round": 1,
+                "subsidiary_check": (
+                    "passed"
+                    if subsidiary_id not in (None, "")
+                    else "skipped"
+                ),
+            }
+
             if not name:
                 results.append(
                     {
+                        **base,
                         "matched": False,
                         "ambiguous": False,
                         "netsuite_id": None,
-                        "extracted_name": name,
-                        "line_index": line_index,
                         "round": 0,
                     }
                 )
                 continue
 
-            candidates = list(
+            all_candidates = list(
                 rows_by_name.get(
                     self._normalize_match_name(name),
                     {},
                 ).values()
             )
 
-            original_candidates = list(candidates)
-
-            if transaction_subsidiary_id:
+            if subsidiary_id not in (None, ""):
                 candidates = [
                     candidate
-                    for candidate in candidates
-                    if compatibility_by_id.get(
-                        str(candidate.get("id")),
+                    for candidate in all_candidates
+                    if subsidiary_statuses.get(
+                        str(candidate.get("id")).strip(),
                         {},
                     ).get("compatible")
                 ]
 
-                if not candidates and original_candidates:
-                    incompatible_candidates = [
-                        {
-                            "netsuite_id": str(candidate["id"]),
-                            "name": (
-                                candidate.get("displayname")
-                                or candidate.get("itemid")
-                                or name
-                            ),
-                            "item_subsidiaries": compatibility_by_id.get(
-                                str(candidate.get("id")),
-                                {},
-                            ).get("item_subsidiaries", []),
-                        }
-                        for candidate in original_candidates
-                        if not compatibility_by_id.get(
-                            str(candidate.get("id")),
-                            {},
-                        ).get("compatible")
-                    ]
+                if all_candidates and not candidates:
+                    candidate_details = []
+                    for candidate in all_candidates:
+                        candidate_id = str(candidate.get("id")).strip()
+                        status = subsidiary_statuses.get(candidate_id, {})
+                        candidate_details.append(
+                            {
+                                "netsuite_id": candidate_id,
+                                "name": (
+                                    candidate.get("displayname")
+                                    or candidate.get("itemid")
+                                    or name
+                                ),
+                                "item_subsidiary": status.get(
+                                    "item_subsidiary"
+                                ),
+                                "includechildren": bool(
+                                    status.get("includechildren")
+                                ),
+                                "reason": status.get("reason")
+                                or "SUBSIDIARY_MISMATCH",
+                            }
+                        )
 
                     results.append(
                         {
+                            **base,
                             "matched": False,
                             "ambiguous": False,
-                            "subsidiary_mismatch": bool(incompatible_candidates),
-                            "error_code": (
-                                "ITEM_SUBSIDIARY_MISMATCH"
-                                if incompatible_candidates
-                                else None
-                            ),
                             "netsuite_id": None,
-                            "extracted_name": name,
-                            "line_index": line_index,
+                            "item_subsidiary_mismatch": True,
+                            "transaction_subsidiary": subsidiary_name,
+                            "transaction_subsidiary_id": str(
+                                subsidiary_id
+                            ),
+                            "candidates": candidate_details[
+                                : self.MAX_SIMILAR_CANDIDATES
+                            ],
                             "round": 1,
                             "confidence": 0.0,
-                            "incompatible_candidates": incompatible_candidates,
                         }
                     )
                     continue
+
+                # Only the compatible candidates participate in the existing
+                # first-match selection logic. If exactly one remains, the
+                # subsidiary filter is the reason the ambiguity disappeared.
+                if len(candidates) == 1 and len(all_candidates) > 1:
+                    base["resolved_by"] = "subsidiary"
+            else:
+                candidates = all_candidates
 
             if len(candidates) == 1:
                 record = candidates[0]
 
                 results.append(
                     {
+                        **base,
                         "matched": True,
                         "ambiguous": False,
                         "netsuite_id": str(record["id"]),
-                        "extracted_name": name,
-                        "line_index": line_index,
                         "record_type": "item",
-                        "round": 1,
                         "confidence": 1.0,
                     }
                 )
 
             elif len(candidates) > 1:
-                # Preserve the existing posting behavior: if the same exact
-                # OCR item name matches multiple active NetSuite item records,
-                # use the first active match and persist that exact ID in the
-                # validation result. Posting will then reuse this persisted ID
-                # instead of performing another lookup.
+                # Preserve the existing behavior among the remaining
+                # subsidiary-compatible candidates: first active match wins.
                 first_candidate = candidates[0]
                 logger.warning(
                     "Multiple NetSuite item matches found during validation; "
-                    "using first active match — item=%r id=%s candidates=%s "
-                    "connection=%s",
+                    "using first active compatible match — item=%r id=%s "
+                    "candidates=%s subsidiary=%s connection=%s",
                     name,
                     first_candidate["id"],
                     len(candidates),
+                    subsidiary_id,
                     connection.id,
                 )
                 results.append(
                     {
+                        **base,
                         "matched": True,
                         "ambiguous": False,
                         "netsuite_id": str(first_candidate["id"]),
-                        "extracted_name": name,
-                        "line_index": line_index,
                         "record_type": "item",
-                        "round": 1,
                         "confidence": 1.0,
                         "candidates": [
                             {
-                                "netsuite_id": str(
-                                    candidate["id"]
-                                ),
+                                "netsuite_id": str(candidate["id"]),
                                 "name": (
                                     candidate.get("displayname")
                                     or candidate.get("itemid")
@@ -4870,12 +5088,10 @@ class NetSuiteValidationService:
             else:
                 results.append(
                     {
+                        **base,
                         "matched": False,
                         "ambiguous": False,
                         "netsuite_id": None,
-                        "extracted_name": name,
-                        "line_index": line_index,
-                        "round": 1,
                         "confidence": 0.0,
                     }
                 )

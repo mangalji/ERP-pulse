@@ -19,6 +19,7 @@ from .serializers import (
     AcceptInvitationSerializer,
     CreateInvitationSerializer,
     InvitationSerializer,
+    InvitationValidateSerializer,
     RequestInvitationOTPSerializer,
 )
 from .services import invitation_service
@@ -199,6 +200,33 @@ class InvitationViewSet(viewsets.ViewSet):
                 {'detail': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='resend-otp',
+        permission_classes=[AllowAny],
+        throttle_classes=[RegisterOTPThrottle],
+    )
+    def resend_otp(self, request):
+        """
+        POST /api/v1/invitations/resend-otp/
+
+        Resend the invitation-specific OTP.
+        This is intentionally separate from public-resend, which resends
+        the invitation link itself.
+        """
+        serializer = InvitationValidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = invitation_service.resend_invitation_otp(
+            token=serializer.validated_data['token'],
+        )
+
+        return success_response(
+            message='A new OTP has been sent successfully. Please check your email.',
+            data={'email': user.email},
+        )
 
     @action(detail=False, methods=['post'])
     def accept(self, request):

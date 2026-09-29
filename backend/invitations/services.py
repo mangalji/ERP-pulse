@@ -202,6 +202,45 @@ class InvitationService:
         self.otp_service.generate_and_send_otp(user=user,purpose=OTP.Purpose.INVITATION)
         return user
 
+    def resend_invitation_otp(self, token):
+        """
+        Validate the invitation and send a new invitation-specific OTP.
+        The shared OTPService enforces the resend cooldown.
+        """
+        invitation = self.validate_token(token)
+    
+        try:
+            user = User.objects.get(
+                email__iexact=invitation.email,
+            )
+        except User.DoesNotExist:
+            raise ValueError(
+                "The user account associated with this invitation was not found."
+            )
+    
+        if user.company_id != invitation.company_id:
+            raise ValueError(
+                "The invited user does not belong to the invited company."
+            )
+    
+        if user.is_active:
+            raise ValueError(
+                "This user account is already active."
+            )
+    
+        if user.has_usable_password():
+            raise ValueError(
+                "This user already has a password. "
+                "Please use the normal login or password reset flow."
+            )
+    
+        self.otp_service.generate_and_send_otp(
+            user=user,
+            purpose=OTP.Purpose.INVITATION,
+        )
+    
+        return user
+
     def accept_invitation(self, token, password, otp, mobile_number=None):
         """
         Verify the invitation OTP and complete account activation.

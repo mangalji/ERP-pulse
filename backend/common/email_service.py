@@ -71,15 +71,15 @@ def send_email(
                 recipient_list=recipient_list,
                 sender_email=sender_email
             )
-        else:
-            django_send_mail(
-                subject=subject,
-                message=message,
-                from_email=sender_email,
-                recipient_list=recipient_list,
-                fail_silently=False,
-            )
-        return len(recipient_list)
+            return len(recipient_list)
+        
+        return django_send_mail(
+            subject=subject,
+            message=message,
+            from_email=sender_email,
+            recipient_list=recipient_list,
+            fail_silently=False,
+        )
 
     except Exception as exc:
         logger.error(

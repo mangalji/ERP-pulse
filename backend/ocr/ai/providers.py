@@ -252,6 +252,17 @@ class AIProvider(ABC):
     ) -> dict:
         raise NotImplementedError
 
+    @abstractmethod
+    def generate_structured_json(
+        self,
+        *,
+        prompt: str,
+        schema: dict[str, Any],
+        timeout: float,
+    ) -> dict:
+        """Generate structured JSON without requiring a document file."""
+        raise NotImplementedError
+
 
 class GoogleProvider(AIProvider):
     """Google Gemini provider adapter."""
@@ -424,6 +435,50 @@ class GoogleProvider(AIProvider):
                 "Google Gemini request failed."
             )
 
+    def generate_structured_json(
+        self,
+        *,
+        prompt: str,
+        schema: dict[str, Any],
+        timeout: float,
+    ) -> dict:
+        genai, errors = self._load_sdk()
+
+        try:
+            client = self._client(genai, timeout=timeout)
+            response = client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=genai.types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                    temperature=0,
+                ),
+            )
+
+            return _parse_json_text(
+                getattr(response, "text", "") or ""
+            )
+
+        except AIProviderError:
+            raise
+
+        except errors.APIError as exc:
+            self._raise_status_error(
+                message="Google Gemini structured response failed.",
+                status_code=getattr(exc, "code", None),
+                error_text=str(exc),
+            )
+
+        except Exception:
+            logger.exception(
+                "Google Gemini structured response failed — model=%s",
+                self.model,
+            )
+            raise AIProviderError(
+                "Google Gemini structured response failed."
+            )
+
 
 class OpenAIProvider(AIProvider):
     """OpenAI provider adapter."""
@@ -548,6 +603,56 @@ class OpenAIProvider(AIProvider):
             timeout=timeout,
             provider_name="OpenAI",
             error_message="OpenAI rejected the OCR request.",
+        )
+
+        body = self._response_json(
+            response,
+            error_message="OpenAI returned an unexpected response.",
+        )
+
+        return _parse_json_text(
+            body.get("output_text", "")
+        )
+
+    def generate_structured_json(
+        self,
+        *,
+        prompt: str,
+        schema: dict[str, Any],
+        timeout: float,
+    ) -> dict:
+        payload = {
+            "model": self.model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        }
+                    ],
+                }
+            ],
+            "store": False,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "netsuite_error_diagnostics",
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+        }
+
+        response = self._request(
+            requests.post,
+            url=self.API_URL,
+            headers=self._headers(),
+            json=payload,
+            timeout=timeout,
+            provider_name="OpenAI",
+            error_message="OpenAI structured response failed.",
         )
 
         body = self._response_json(
@@ -739,6 +844,62 @@ class AnthropicProvider(AIProvider):
             timeout=timeout,
             provider_name="Anthropic",
             error_message="Anthropic rejected the OCR request.",
+        )
+
+        body = self._response_json(
+            response,
+            error_message="Anthropic returned an unexpected response.",
+        )
+
+        text_parts = [
+            item.get("text", "")
+            for item in body.get("content", [])
+            if isinstance(item, dict) and item.get("type") == "text"
+        ]
+
+        return _parse_json_text("".join(text_parts))
+
+    def generate_structured_json(
+        self,
+        *,
+        prompt: str,
+        schema: dict[str, Any],
+        timeout: float,
+    ) -> dict:
+        schema_hint = json.dumps(
+            schema,
+            ensure_ascii=False,
+        )
+
+        structured_prompt = (
+            f"{prompt}\n\n"
+            "Return ONLY one JSON object. It must conform to this JSON Schema:\n"
+            f"{schema_hint}"
+        )
+
+        payload = {
+            "model": self.model,
+            "max_tokens": 8192,
+            "system": (
+                "You are a production NetSuite diagnostics assistant. "
+                "Follow the requested JSON contract exactly."
+            ),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": structured_prompt,
+                }
+            ],
+        }
+
+        response = self._request(
+            requests.post,
+            url=self.API_URL,
+            headers=self._headers(),
+            json=payload,
+            timeout=timeout,
+            provider_name="Anthropic",
+            error_message="Anthropic structured response failed.",
         )
 
         body = self._response_json(
