@@ -6,11 +6,16 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+import logging
+from ocr.ai.catalogue_service import (
+    ai_model_catalogue_service,
+)
 from common.common_utils import success_response
-from ocr.ai.config import PROVIDERS, models_for
 from ocr.ai.providers import AIProviderError
+from ocr.ai.config import models_for, providers_for
 from ocr.ai.service import ai_configuration_service
+
+logger = logging.getLogger(__name__)
 
 
 def _is_company_admin(user) -> bool:
@@ -18,6 +23,97 @@ def _is_company_admin(user) -> bool:
         return True
     role = getattr(user, "role", None)
     return role is not None and role.name.lower() == "company admin"
+
+def _error_response(message: str, status_code: int):
+    return Response(
+        {
+            "success": False,
+            "message": message,
+            "data": {},
+        },
+        status=status_code,
+    )
+
+
+def _friendly_ai_exception(
+    exc,
+    *,
+    operation: str,
+) -> tuple[str, int]:
+    if isinstance(exc, ValueError):
+        return str(exc), status.HTTP_400_BAD_REQUEST
+
+    if getattr(exc, "quota_exhausted", False):
+        return (
+            "The AI provider has reached the usage limit for this API key. "
+            "Please check your provider quota or plan.",
+            status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    provider_status = getattr(exc, "status_code", None)
+
+    if provider_status in {401, 403}:
+        return (
+            "The API key was rejected by the AI provider. "
+            "Please check the key and try again.",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    if provider_status == 404:
+        return (
+            "The selected AI model is not available. "
+            "Please refresh the model list and try again.",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    if getattr(exc, "rate_limited", False):
+        return (
+            "The AI provider is temporarily limiting requests. "
+            "Please wait a moment and try again.",
+            status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    if provider_status in {408, 500, 502, 503, 504}:
+        return (
+            "The AI provider is temporarily unavailable. "
+            "Please try again in a moment.",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    if getattr(exc, "retryable", False):
+        return (
+            "The AI provider is temporarily unavailable. "
+            "Please try again in a moment.",
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    if operation == "refresh":
+        return (
+            "We couldn't refresh the AI model list. "
+            "Please try again.",
+            status.HTTP_502_BAD_GATEWAY,
+        )
+
+    if operation == "test":
+        return (
+            "We couldn't verify the AI connection. "
+            "Please check the API key and model and try again.",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    return (
+        "We couldn't connect the AI provider. "
+        "Please check the configuration and try again.",
+        status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _handle_ai_exception(exc, *, operation: str):
+    message, status_code = _friendly_ai_exception(
+        exc,
+        operation=operation,
+    )
+    return _error_response(message, status_code)
 
 
 class AIConfigurationView(APIView):
@@ -32,8 +128,8 @@ class AIConfigurationView(APIView):
     def get(self, request):
         company = self._company(request)
         if company is None:
-            return Response(
-                {"detail": "No company is associated with this user."},
+            return _error_response(
+                "No company is associated with this user.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -52,8 +148,8 @@ class AIConfigurationView(APIView):
 
         company = self._company(request)
         if company is None:
-            return Response(
-                {"detail": "No company is associated with this user."},
+            return _error_response(
+                "No company is associated with this user.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -67,9 +163,15 @@ class AIConfigurationView(APIView):
                 request=request,
             )
         except (ValueError, AIProviderError) as exc:
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _handle_ai_exception(
+                exc,
+                operation="connect",
+            )
+        except Exception:
+            logger.exception("Unexpected AI configuration connection error.")
+            return _error_response(
+                "We couldn't connect the AI provider right now. Please try again.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         return success_response(
@@ -83,9 +185,9 @@ class AIConfigurationTestView(APIView):
 
     def post(self, request):
         if not _is_company_admin(request.user):
-            return Response(
-                {"detail": "Only a Company Admin can manage AI integration."},
-                status=status.HTTP_403_FORBIDDEN,
+            return _error_response(
+                "Only a Company Admin can manage AI integration.",
+                status.HTTP_403_FORBIDDEN,
             )
 
         company = getattr(request.user, "company", None)
@@ -104,9 +206,17 @@ class AIConfigurationTestView(APIView):
                 user=request.user,
             )
         except (ValueError, AIProviderError) as exc:
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _handle_ai_exception(
+                exc,
+                operation="test",
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected AI connection test error."
+            )
+            return _error_response(
+                "We couldn't verify the AI connection right now. Please try again.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         return success_response(
@@ -120,23 +230,29 @@ class AIConfigurationDisconnectView(APIView):
 
     def post(self, request):
         if not _is_company_admin(request.user):
-            return Response(
-                {"detail": "Only a Company Admin can manage AI integration."},
-                status=status.HTTP_403_FORBIDDEN,
+            return _error_response(
+                "Only a Company Admin can manage AI integration.",
+                status.HTTP_403_FORBIDDEN,
             )
 
         company = getattr(request.user, "company", None)
         if company is None:
-            return Response(
-                {"detail": "No company is associated with this user."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "No company is associated with this user.",
+                status.HTTP_400_BAD_REQUEST,
             )
-
-        ai_configuration_service.disconnect(
-            company=company,
-            user=request.user,
-            request=request,
-        )
+        try:
+            ai_configuration_service.disconnect(
+                company=company,
+                user=request.user,
+                request=request,
+            )
+        except Exception:
+            logger.exception("Unexpected AI disconnect error.")
+            return _error_response(
+                "We couldn't disconnect the AI provider right now. Please try again.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         return success_response(
             message="AI provider disconnected successfully.",
@@ -148,13 +264,77 @@ class AIProvidersView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return success_response(
-            message="AI providers fetched successfully.",
-            data={
-                "providers": list(PROVIDERS),
-                "models": {
-                    provider["value"]: models_for(provider["value"])
-                    for provider in PROVIDERS
+        try:
+            providers = providers_for()
+
+            return success_response(
+                message="AI providers fetched successfully.",
+                data={
+                    "providers": providers,
+                    "models": {
+                        provider["value"]: models_for(
+                            provider["value"]
+                        )
+                        for provider in providers
+                    },
                 },
-            },
-        )
+            )
+
+        except Exception:
+            logger.exception(
+                "Failed to load AI provider catalogue."
+            )
+            return _error_response(
+                "We couldn't load the AI provider list right now. "
+                "Please try again.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class AIProvidersRefreshView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _is_company_admin(request.user):
+            return _error_response(
+                "Only a Company Admin can refresh AI models.",
+                status.HTTP_403_FORBIDDEN,
+            )
+
+        company = getattr(request.user, "company", None)
+
+        if company is None:
+            return _error_response(
+                "No company is associated with this user.",
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = ai_model_catalogue_service.refresh_provider(
+                company=company,
+                provider=request.data.get("provider"),
+                supplied_api_key=request.data.get("api_key"),
+            )
+
+            return success_response(
+                message=(
+                    f"{result['provider_name']} models refreshed successfully."
+                ),
+                data=result,
+            )
+
+        except (ValueError, AIProviderError) as exc:
+            return _handle_ai_exception(
+                exc,
+                operation="refresh",
+            )
+
+        except Exception:
+            logger.exception(
+                "Unexpected AI model catalogue refresh error."
+            )
+            return _error_response(
+                "We couldn't refresh the AI model list right now. "
+                "Please try again.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

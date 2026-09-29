@@ -8,10 +8,10 @@ from django.utils import timezone
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from ocr.ai.config import (
-    DEFAULT_MODELS,
-    model_exists,
     models_for,
     provider_exists,
+    providers_for,
+    model_exists,
 )
 from ocr.ai.providers import AIProviderError, build_provider
 from ocr.models import AIConfiguration
@@ -24,6 +24,9 @@ class AIConfigurationService:
             .filter(company=company)
             .first()
         )
+
+    def providers(self) -> list[dict]:
+       return providers_for()
 
     def serialize(self, configuration: AIConfiguration | None) -> dict:
         if configuration is None:
@@ -53,11 +56,16 @@ class AIConfigurationService:
         *,
         configuration: AIConfiguration | None,
         supplied_api_key: str | None,
+        provider: str,
     ) -> str:
         supplied = (supplied_api_key or "").strip()
         if supplied:
             return supplied
-        if configuration is not None:
+        if (
+            configuration is not None
+            and configuration.is_active
+            and configuration.provider == provider
+        ):
             return configuration.api_key or ""
         return ""
 
@@ -82,6 +90,7 @@ class AIConfigurationService:
         key = self._resolve_key(
             configuration=configuration,
             supplied_api_key=api_key,
+            provider=provider
         )
         if not key:
             raise ValueError("API key is required.")

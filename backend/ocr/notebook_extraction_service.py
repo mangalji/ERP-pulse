@@ -488,146 +488,6 @@ def resolve_field_config(
         raise ValueError("Line-item extraction was requested but no line fields are configured.")
     return header_fields, line_fields, include_line_items, header_types, line_types
 
-
-VERIFICATION_PROMPT_TEMPLATE = """You are the verification stage of a production document extraction system.
-
-Re-read the attached document in full and verify EVERY requested field against the source document before accepting the proposed result.
-
-REQUESTED FIELD CONTRACT:
-{field_contract}
-
-PROPOSED EXTRACTION:
-{primary_json}
-
-Return ONLY the requested verification JSON structure.
-
-Rules:
-- Check every requested field, not just fields you recognize.
-- Use each field's questionaire to understand exactly what information is required.
-- Search the entire document again: headers, body, tables, footers, totals, metadata, notes, and entity blocks.
-- For line fields, re-check every clearly separated source row and preserve source-row order.
-- Do not invent or infer unsupported values.
-- A value is acceptable only when supported by visible document evidence.
-- If the proposed value is wrong or missing and the document contains the correct value, provide an evidence-backed correction.
-- If the requested value genuinely cannot be determined, keep it null.
-- Do not change a correct value merely because another equivalent formatting is possible.
-- Before returning, perform one final field-by-field comparison between the proposed result and the document.
-"""
-
-
-# AUDIT_SCHEMA: dict[str, Any] = {
-#     "type": "object",
-#     "properties": {
-#         "needs_correction": {"type": "boolean"},
-#         "corrections": {
-#             "type": "array",
-#             "items": {
-#                 "type": "object",
-#                 "properties": {
-#                     "field": {"type": "string"},
-#                     "reason": {"type": "string"},
-#                     "corrected_value": {
-#                         "anyOf": [
-#                             {"type": "string"},
-#                             {"type": "number"},
-#                             {"type": "boolean"},
-#                             {"type": "null"},
-#                             {
-#                                 "type": "array",
-#                                 "items": {
-#                                     "type": "object",
-#                                     "additionalProperties": True,
-#                                 },
-#                             },
-#                         ]
-#                     },
-#                 },
-#                 "required": [
-#                     "field",
-#                     "reason",
-#                     "corrected_value",
-#                 ],
-                
-#             },
-#         },
-#     },
-#     "required": [
-#         "needs_correction",
-#         "corrections",
-#     ],
-    
-# }
-
-def _build_audit_schema(
-    line_fields: dict[str, str],
-    line_types: dict[str, str],
-    include_line_items: bool,
-) -> dict[str, Any]:
-    corrected_value_types = [
-        {"type": "string"},
-        {"type": "number"},
-        {"type": "boolean"},
-        {"type": "null"},
-    ]
-
-    if include_line_items:
-        line_properties = {
-            key: {
-                "type": _json_schema_type(
-                    line_types.get(key, "text"),
-                    key=key,
-                    is_line_field=True,
-                ),
-            }
-            for key in line_fields
-        }
-
-        corrected_value_types.append(
-            {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": line_properties,
-                    "required": list(line_fields.keys()),
-                },
-            }
-        )
-
-    return {
-        "type": "object",
-        "properties": {
-            "needs_correction": {
-                "type": "boolean",
-            },
-            "corrections": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "field": {
-                            "type": "string",
-                        },
-                        "reason": {
-                            "type": "string",
-                        },
-                        "corrected_value": {
-                            "anyOf": corrected_value_types,
-                        },
-                    },
-                    "required": [
-                        "field",
-                        "reason",
-                        "corrected_value",
-                    ],
-                },
-            },
-        },
-        "required": [
-            "needs_correction",
-            "corrections",
-        ],
-    }
-
 def _build_schema(
     header_fields: dict[str, str],
     line_fields: dict[str, str],
@@ -673,21 +533,6 @@ def _build_schema(
         required.append("line_items")
 
     return {"type": "object", "properties": properties, "required": required}
-
-
-# def _audit_schema() -> dict[str, Any]:
-#     return AUDIT_SCHEMA
-
-def _audit_schema(
-    line_fields: dict[str, str],
-    line_types: dict[str, str],
-    include_line_items: bool,
-) -> dict[str, Any]:
-    return _build_audit_schema(
-        line_fields=line_fields,
-        line_types=line_types,
-        include_line_items=include_line_items,
-    )
 
 def _normalize_result(
     data: dict[str, Any],
@@ -735,104 +580,6 @@ def _normalize_result(
     normalized["line_items"] = normalized_items
     return normalized
 
-
-def _merge_corrected_result(
-    candidate: dict[str, Any],
-    audit: dict[str, Any],
-    header_keys: tuple[str, ...] | None = None,
-    line_keys: tuple[str, ...] | None = None,
-    include_line_items: bool = True,
-) -> dict[str, Any]:
-    """
-    Apply only evidence-backed corrections.
-
-    A verifier is never allowed to erase a non-null primary value merely by
-    returning null. Scalar corrections are applied when the primary value is
-    null. Line items are replaced only when the verifier found a larger or
-    clearly corrected row set; individual missing fields in line items are
-    filled from the verifier when the primary field is null.
-
-    header_keys/line_keys default to the static field sets, exactly as
-    before, when no dynamic configuration is passed. When a dynamic
-    configuration IS passed, every _normalize_result call below must also
-    receive it — otherwise a reduced/custom field set would silently get
-    reinflated back to the full default set on every merge, which would
-    corrupt the intended dynamic contract.
-    """
-    if header_keys is None or line_keys is None:
-        raise ValueError("Resolved OCR field keys are required.")
-    resolved_header_keys = header_keys
-    resolved_line_keys = line_keys
-
-    merged = _normalize_result(
-        candidate, resolved_header_keys, resolved_line_keys, include_line_items,
-    )
-
-    if not isinstance(audit, dict) or not audit.get("needs_correction"):
-        return merged
-
-    corrections = audit.get("corrections")
-    if not isinstance(corrections, list):
-        return merged
-
-    for correction in corrections:
-        if not isinstance(correction, dict):
-            continue
-
-        field = correction.get("field")
-        corrected_value = correction.get("corrected_value")
-
-        if field in resolved_header_keys:
-            # Primary non-null values are retained unless the verifier can
-            # provide a concrete replacement. A null verifier value is never
-            # allowed to destroy a concrete primary value.
-            if merged.get(field) is None and corrected_value is not None:
-                merged[field] = corrected_value
-            elif merged.get(field) is not None and corrected_value is not None:
-                merged[field] = corrected_value
-
-        elif field == "line_items" and include_line_items and isinstance(corrected_value, list):
-            candidate_items = merged.get("line_items") or []
-
-            # Prefer the verifier when it found more source rows.
-            if len(corrected_value) > len(candidate_items):
-                merged["line_items"] = _normalize_result(
-                    {"line_items": corrected_value},
-                    resolved_header_keys,
-                    resolved_line_keys,
-                    include_line_items,
-                )["line_items"]
-                continue
-
-            # Otherwise fill missing fields and prefer longer descriptions.
-            if len(corrected_value) == len(candidate_items):
-                merged_items = []
-                for index, candidate_item in enumerate(candidate_items):
-                    verifier_item = corrected_value[index]
-                    merged_item = dict(candidate_item)
-
-                    for key in resolved_line_keys:
-                        candidate_value = merged_item.get(key)
-                        verifier_value = (
-                            verifier_item.get(key)
-                            if isinstance(verifier_item, dict)
-                            else None
-                        )
-
-                        if candidate_value is None and verifier_value is not None:
-                            merged_item[key] = verifier_value
-                        elif candidate_value is not None and verifier_value is not None:
-                            merged_item[key] = verifier_value
-
-                    merged_items.append(merged_item)
-
-                merged["line_items"] = merged_items
-
-    return _normalize_result(
-        merged, resolved_header_keys, resolved_line_keys, include_line_items,
-    )
-
-
 def build_prompt(
     header_fields: dict[str, str],
     line_fields: dict[str, str],
@@ -874,8 +621,8 @@ Rules:
 - Inspect the entire document before deciding a field is null.
 - Follow the declared datatype for every field.
 {line_item_rules}
-- Before returning the JSON, internally re-scan the document and verify EVERY requested field against visible source evidence.
-- If an extracted value is not supported, correct it or return null.
+- Return only the extracted values supported by the document.
+- Use null when a requested value is genuinely absent or cannot be determined.
 - The final JSON must contain only the fields defined by this template.
 """
 
@@ -918,7 +665,7 @@ class NotebookGeminiExtractor:
 
     def __init__(self) -> None:
         self.timeout = getattr(settings, "OCR_TIMEOUT", 180)
-        self.max_retries = getattr(settings, "OCR_MAX_RETRIES", 3)
+        self.max_retries = getattr(settings, "OCR_MAX_RETRIES", 2)
         self.retry_delay = getattr(settings, "OCR_RETRY_DELAY", 1.0)
 
     def extract(
@@ -1018,37 +765,6 @@ class NotebookGeminiExtractor:
                     line_keys,
                 )
 
-                audit = self._verify_extraction(
-                    provider=provider,
-                    file_path=path,
-                    mime_type=media_type,
-                    candidate=result,
-                    request_id=request_id,
-                    timeout=effective_timeout,
-                    header_fields=header_fields,
-                    line_fields=line_fields,
-                    header_types=header_types,
-                    line_types=line_types,
-                )
-                if audit is None:
-                    raise GeminiValidationException(
-                        "OCR extraction could not be verified against the source document."
-                    )
-
-                result = _merge_corrected_result(
-                    result,
-                    audit,
-                    header_keys=header_keys,
-                    line_keys=line_keys,
-                    include_line_items=include_line_items,
-                )
-                result = _apply_datatype_normalization(
-                    result,
-                    header_types,
-                    line_types,
-                    line_keys,
-                )
-
                 logger.info(
                     "Company AI OCR extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
                     request_id,
@@ -1062,27 +778,42 @@ class NotebookGeminiExtractor:
             except AIProviderError as exc:
                 last_exception = exc
                 error_text = str(exc)
-                error_lower = error_text.lower()
+                status_code = getattr(exc, "status_code", None)
+                rate_limited = getattr(exc, "rate_limited", False)
+                retryable = getattr(exc, "retryable", False)
+                quota_exhausted = getattr(exc, "quota_exhausted", False)
 
-                if any(token in error_lower for token in ("429", "quota", "rate limit", "resource_exhausted")):
+                if quota_exhausted:
+                    classified = GeminiRateLimitException(
+                        f"AI provider quota exhausted: {error_text}"
+                    )
+                    should_retry = False
+                    wait_seconds = 0
+                
+                elif rate_limited:
                     classified = GeminiRateLimitException(
                         f"AI provider rate limit exceeded: {error_text}"
                     )
+                    should_retry = True
                     wait_seconds = 15
-                elif any(token in error_lower for token in ("timeout", "deadline")):
-                    classified = GeminiTimeoutException(
-                        f"AI provider request timed out: {error_text}"
-                    )
-                    wait_seconds = 3
-                elif any(token in error_lower for token in ("connection", "network", "503", "502", "500")):
-                    classified = GeminiConnectionException(
-                        f"AI provider request failed: {error_text}"
-                    )
-                    wait_seconds = 3
+
+                elif retryable:
+                    if status_code in {408, 504}:
+                        classified = GeminiTimeoutException(
+                            f"AI provider request timed out: {error_text}"
+                        )
+                    else:
+                        classified = GeminiConnectionException(
+                            f"AI provider temporary request failure: {error_text}"
+                        )
+                    should_retry = True
+                    wait_seconds = min(2 ** attempt, 8)
+
                 else:
                     classified = GeminiValidationException(
                         f"AI provider request failed: {error_text}"
                     )
+                    should_retry = False
                     wait_seconds = 0
 
                 logger.warning(
@@ -1093,11 +824,11 @@ class NotebookGeminiExtractor:
                     error_text,
                 )
 
-                if attempt >= effective_max_retries:
+                if not should_retry or attempt >= effective_max_retries:
                     raise classified from last_exception
 
                 if wait_seconds:
-                    time.sleep(wait_seconds * (attempt + 1))
+                    time.sleep(wait_seconds)
 
             except Exception as exc:
                 last_exception = exc
@@ -1116,79 +847,5 @@ class NotebookGeminiExtractor:
         raise GeminiConnectionException(
             f"AI extraction failed: {last_exception}"
         ) from last_exception
-
-    def _verify_extraction(
-        self,
-        *,
-        provider,
-        file_path: Path,
-        mime_type: str,
-        candidate: dict,
-        request_id: str,
-        timeout: float,
-        header_fields: dict[str, str],
-        line_fields: dict[str, str],
-        header_types: dict[str, str],
-        line_types: dict[str, str],
-    ) -> dict | None:
-        """Run a template-driven evidence check using the same provider."""
-
-        field_contract = json.dumps(
-            {
-                "header_fields": [
-                    {"key": key, "questionaire": description, "data_type": header_types[key], "scope": "header"}
-                    for key, description in header_fields.items()
-                ],
-                "line_fields": [
-                    {"key": key, "questionaire": description, "data_type": line_types[key], "scope": "line"}
-                    for key, description in line_fields.items()
-                ],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        verification_prompt = VERIFICATION_PROMPT_TEMPLATE.format(
-            field_contract=field_contract,
-            primary_json=json.dumps(candidate, ensure_ascii=False),
-        )
-
-        try:
-            audit = provider.generate_json(
-                file_path=file_path,
-                mime_type=mime_type,
-                prompt=verification_prompt,
-                schema=_audit_schema(
-                    line_fields=line_fields,
-                    line_types=line_types,
-                    include_line_items=bool(line_fields),
-                ),
-                timeout=timeout,
-                seed=43,
-            )
-
-            if not isinstance(audit, dict):
-                logger.warning(
-                    "OCR verification returned invalid shape — request_id=%s",
-                    request_id,
-                )
-                return None
-
-            logger.info(
-                "Company AI OCR verification completed — request_id=%s corrections=%s",
-                request_id,
-                len(audit.get("corrections", []))
-                if isinstance(audit.get("corrections"), list)
-                else 0,
-            )
-            return audit
-
-        except Exception as exc:
-            logger.warning(
-                "OCR verification skipped — request_id=%s error=%s",
-                request_id,
-                exc,
-            )
-            return None
-
 
 notebook_gemini_extractor = NotebookGeminiExtractor()

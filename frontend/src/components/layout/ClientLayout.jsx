@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 
@@ -10,6 +10,42 @@ import { clientApi } from '../../services/client.js'
 export default function ClientLayout({ title, breadcrumb, children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const refreshCounterRef = useRef(0)
+
+  const handleNavClick = (event, to) => {
+    const target = new URL(to, window.location.origin)
+
+    // Normal navigation: let React Router handle it.
+    if (
+      target.pathname !== location.pathname ||
+      target.search !== location.search
+    ) {
+      return
+    }
+
+    // Same selected route: force the page to remount.
+    event.preventDefault()
+
+    setOpenMenuKey(null)
+    setUserMenuOpen(false)
+
+    refreshCounterRef.current += 1
+
+    navigate(
+      {
+        pathname: location.pathname,
+        search: location.search,
+      },
+      {
+        replace: true,
+        state: {
+          ...(location.state || {}),
+          __refreshKey: refreshCounterRef.current,
+        },
+      },
+    )
+  }
   const [openMenuKey, setOpenMenuKey] = useState(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [companyName, setCompanyName] = useState('')
@@ -102,6 +138,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
               {route ? (
                 <NavLink
                   to={route}
+                  onClick={(event) => handleNavClick(event, route)}
                   className={({ isActive }) =>
                     `flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                       isActive
@@ -144,6 +181,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
           ) : route ? (
             <NavLink
               to={route}
+              onClick={(event) => handleNavClick(event, route)}
               className={({ isActive }) =>
                 `flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
@@ -183,7 +221,9 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     return (
       <div key={item.key} className="group/submenu relative">
         {route ? (
-          <NavLink to={route} className={({ isActive }) => `flex w-full items-center justify-between gap-4 rounded-md px-3 py-2 text-left text-sm transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-canvas)]'}`}>
+          <NavLink to={route} 
+          onClick={(event) => handleNavClick(event, route)}
+          className={({ isActive }) => `flex w-full items-center justify-between gap-4 rounded-md px-3 py-2 text-left text-sm transition-colors ${isActive ? 'bg-[var(--color-primary-soft)] text-[var(--color-primary-dark)]' : 'text-[var(--color-ink)] hover:bg-[var(--color-canvas)]'}`}>
             <span>{item.name}</span>
             {hasChildren && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5 shrink-0"><path d="m9 6 6 6-6 6" /></svg>}
           </NavLink>
@@ -206,7 +246,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
         <header className="relative z-50 border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
           <div className="flex min-h-16 items-center justify-between gap-4 px-3 sm:px-6">
             <div className="flex min-w-0 flex-1 items-center gap-4">
-              <NavLink to="/app" className="flex shrink-0 items-center gap-2" aria-label="Go to Dashboard">
+              <NavLink to="/app" onClick={(event) => handleNavClick(event, '/app')} className="flex shrink-0 items-center gap-2" aria-label="Go to Dashboard">
                 <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">E</span>
                 <span className="hidden font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)] sm:inline">AGSuite ERP</span>
               </NavLink>

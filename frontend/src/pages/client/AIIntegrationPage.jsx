@@ -11,12 +11,23 @@ const EMPTY_FORM = {
   api_key: '',
 }
 
+const getFriendlyError = (err, fallback) => {
+  const message =
+    err?.payload?.message ||
+    err?.response?.data?.message
+
+  return typeof message === 'string' && message.trim()
+    ? message
+    : fallback
+}
+
 export default function AIIntegrationPage() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [providers, setProviders] = useState([])
   const [models, setModels] = useState({})
   const [connected, setConnected] = useState(false)
   const [apiKeySet, setApiKeySet] = useState(false)
+  const [savedProvider, setSavedProvider] = useState('')
   const [lastTestedAt, setLastTestedAt] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
@@ -31,6 +42,7 @@ export default function AIIntegrationPage() {
   const load = async () => {
     setLoading(true)
     setError('')
+
     try {
       const [providerData, configData] = await Promise.all([
         aiIntegrationApi.getProviders(),
@@ -41,19 +53,23 @@ export default function AIIntegrationPage() {
       setModels(providerData?.models || {})
 
       const config = configData || {}
+      const configuredProvider = config.provider || ''
+
       setForm({
-        provider: config.provider || '',
+        provider: configuredProvider,
         model: config.model || '',
         api_key: '',
       })
       setConnected(Boolean(config.connected))
       setApiKeySet(Boolean(config.api_key_set))
+      setSavedProvider(configuredProvider)
       setLastTestedAt(config.last_tested_at || null)
     } catch (err) {
       setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to load AI integration settings.',
+        getFriendlyError(
+          err,
+          'Unable to load AI integration settings. Please try again.',
+        ),
       )
     } finally {
       setLoading(false)
@@ -66,32 +82,116 @@ export default function AIIntegrationPage() {
 
   const changeProvider = (provider) => {
     const firstModel = models?.[provider]?.[0]?.value || ''
+
     setForm((current) => ({
       ...current,
       provider,
       model: firstModel,
     }))
+
     setMessage('')
     setError('')
   }
 
+  const handleRefreshModels = async () => {
+    if (!form.provider) {
+      setError('Please select an AI provider first.')
+      return
+    }
+
+    const canUseSavedKey =
+      Boolean(apiKeySet) && savedProvider === form.provider
+
+    if (!form.api_key && !canUseSavedKey) {
+      setError(
+        'Please enter the API key for this provider before refreshing models.',
+      )
+      return
+    }
+
+    setBusy('refresh')
+    setMessage('')
+    setError('')
+
+    try {
+      const result = await aiIntegrationApi.refreshModels({
+        provider: form.provider,
+        ...(form.api_key ? { api_key: form.api_key } : {}),
+      })
+
+      const refreshedModels = Array.isArray(result?.models)
+        ? result.models
+        : []
+
+      setModels((current) => ({
+        ...current,
+        [form.provider]: refreshedModels,
+      }))
+
+      setForm((current) => ({
+        ...current,
+        model: refreshedModels.some(
+          (item) => item.value === current.model,
+        )
+          ? current.model
+          : refreshedModels[0]?.value || '',
+      }))
+
+      setMessage(
+        result?.message ||
+          `${result?.count || refreshedModels.length} model(s) refreshed successfully.`,
+      )
+    } catch (err) {
+      setError(
+        getFriendlyError(
+          err,
+          'We couldn’t refresh the AI model list. Please try again.',
+        ),
+      )
+    } finally {
+      setBusy('')
+    }
+  }
+
   const handleTest = async () => {
+    if (!form.provider) {
+      setError('Please select an AI provider first.')
+      return
+    }
+
+    if (!form.model) {
+      setError('Please select an AI model first.')
+      return
+    }
+
+    if (!form.api_key && !(apiKeySet && savedProvider === form.provider)) {
+      setError(
+        'Please enter the API key for this provider before testing the connection.',
+      )
+      return
+    }
+
     setBusy('test')
     setMessage('')
     setError('')
+
     try {
       const result = await aiIntegrationApi.test({
         provider: form.provider,
         model: form.model,
         ...(form.api_key ? { api_key: form.api_key } : {}),
       })
-      setMessage(result?.message || 'Connection test successful.')
+
+      setMessage(
+        result?.message || 'AI connection test successful.',
+      )
       setLastTestedAt(new Date().toISOString())
     } catch (err) {
       setError(
-        err?.payload?.message ||
-          err?.message ||
-          'AI provider connection test failed.',
+        getFriendlyError(
+          err,
+          'We couldn’t verify the AI connection. Please check the API key and model.',
+        ),
       )
     } finally {
       setBusy('')
@@ -99,21 +199,46 @@ export default function AIIntegrationPage() {
   }
 
   const handleConnect = async () => {
+    if (!form.provider) {
+      setError('Please select an AI provider first.')
+      return
+    }
+
+    if (!form.model) {
+      setError('Please select an AI model first.')
+      return
+    }
+
+    if (!form.api_key) {
+      setError(
+        'Please enter the API key before connecting the AI provider.',
+      )
+      return
+    }
+
     setBusy('connect')
     setMessage('')
     setError('')
+
     try {
       const result = await aiIntegrationApi.connect(form)
+
       setConnected(Boolean(result?.connected))
       setApiKeySet(Boolean(result?.api_key_set))
-      setMessage(result?.message || 'AI provider connected successfully.')
+      setSavedProvider(form.provider)
+      setMessage(
+        result?.message || 'AI provider connected successfully.',
+      )
       setForm((current) => ({ ...current, api_key: '' }))
-      setLastTestedAt(result?.last_tested_at || new Date().toISOString())
+      setLastTestedAt(
+        result?.last_tested_at || new Date().toISOString(),
+      )
     } catch (err) {
       setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to connect the AI provider.',
+        getFriendlyError(
+          err,
+          'We couldn’t connect the AI provider. Please check your configuration and try again.',
+        ),
       )
     } finally {
       setBusy('')
@@ -121,23 +246,31 @@ export default function AIIntegrationPage() {
   }
 
   const handleDisconnect = async () => {
-    if (!window.confirm('Disconnect the configured AI provider?')) return
+    if (!window.confirm('Disconnect the configured AI provider?')) {
+      return
+    }
 
     setBusy('disconnect')
     setMessage('')
     setError('')
+
     try {
       const result = await aiIntegrationApi.disconnect()
+
       setConnected(false)
       setApiKeySet(false)
+      setSavedProvider('')
       setForm((current) => ({ ...current, api_key: '' }))
-      setMessage(result?.message || 'AI provider disconnected successfully.')
+      setMessage(
+        result?.message || 'AI provider disconnected successfully.',
+      )
       setLastTestedAt(null)
     } catch (err) {
       setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to disconnect the AI provider.',
+        getFriendlyError(
+          err,
+          'We couldn’t disconnect the AI provider. Please try again.',
+        ),
       )
     } finally {
       setBusy('')
@@ -167,7 +300,7 @@ export default function AIIntegrationPage() {
                 AI Integration
               </h1>
               <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Configure the AI provider used by your company&apos;s OCR.
+                Configure the AI provider and model used by your company&apos;s AI features.
               </p>
             </div>
 
@@ -193,6 +326,7 @@ export default function AIIntegrationPage() {
                   disabled={busy !== ''}
                 >
                   <option value="">Select provider</option>
+
                   {providers.map((provider) => (
                     <option key={provider.value} value={provider.value}>
                       {provider.label}
@@ -202,9 +336,20 @@ export default function AIIntegrationPage() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--color-ink)]">
-                  AI Model
-                </label>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="block text-sm font-medium text-[var(--color-ink)]">
+                    AI Model
+                  </label>
+
+                  <Button
+                    type="button"
+                    onClick={handleRefreshModels}
+                    disabled={!form.provider || busy !== ''}
+                  >
+                    {busy === 'refresh' ? 'Refreshing...' : 'Refresh Models'}
+                  </Button>
+                </div>
+
                 <select
                   value={form.model}
                   onChange={(event) =>
@@ -216,19 +361,29 @@ export default function AIIntegrationPage() {
                   className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
                   disabled={!form.provider || busy !== ''}
                 >
-                  <option value="">Select model</option>
+                  <option value="">
+                    {providerModels.length
+                      ? 'Select model'
+                      : 'No models loaded — refresh to load models'}
+                  </option>
+
                   {providerModels.map((model) => (
                     <option key={model.value} value={model.value}>
                       {model.label}
                     </option>
                   ))}
                 </select>
+
+                <p className="mt-1 text-xs text-[var(--color-muted)]">
+                  Refresh the list to fetch models currently available from the selected provider.
+                </p>
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--color-ink)]">
                   API Key
                 </label>
+
                 <input
                   type="password"
                   value={form.api_key}
@@ -271,7 +426,11 @@ export default function AIIntegrationPage() {
                 <Button
                   type="button"
                   onClick={handleTest}
-                  disabled={!form.provider || !form.model || busy !== ''}
+                  disabled={
+                    !form.provider ||
+                    !form.model ||
+                    busy !== ''
+                  }
                 >
                   {busy === 'test' ? 'Testing...' : 'Test'}
                 </Button>
@@ -290,7 +449,9 @@ export default function AIIntegrationPage() {
                     onClick={handleDisconnect}
                     disabled={busy !== ''}
                   >
-                    {busy === 'disconnect' ? 'Disconnecting...' : 'Disconnect'}
+                    {busy === 'disconnect'
+                      ? 'Disconnecting...'
+                      : 'Disconnect'}
                   </Button>
                 ) : (
                   <Button
@@ -303,7 +464,9 @@ export default function AIIntegrationPage() {
                       busy !== ''
                     }
                   >
-                    {busy === 'connect' ? 'Connecting...' : 'Connect'}
+                    {busy === 'connect'
+                      ? 'Connecting...'
+                      : 'Connect'}
                   </Button>
                 )}
               </div>

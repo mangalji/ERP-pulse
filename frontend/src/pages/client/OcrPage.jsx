@@ -162,7 +162,7 @@ export default function OcrPage() {
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [connection, setConnection] = useState(null)
   const [validationResult, setValidationResult] = useState(null)
-  const [ocrMode, setOcrMode] = useState('single')
+  const [ocrMode, setOcrMode] = useState('')
   const [ocrModes, setOcrModes] = useState({
     single: true,
     multiple: false,
@@ -715,13 +715,6 @@ const selectedValidateIds = useMemo(
           multiple: multipleEnabled,
         })
 
-        setOcrMode((current) => {
-          if (current === 'single' && singleEnabled) return 'single'
-          if (current === 'multiple' && multipleEnabled) return 'multiple'
-          if (singleEnabled) return 'single'
-          if (multipleEnabled) return 'multiple'
-          return 'single'
-        })
       } catch (err) {
         console.error('Failed to load OCR upload modes:', err)
 
@@ -730,7 +723,6 @@ const selectedValidateIds = useMemo(
             single: true,
             multiple: false,
           })
-          setOcrMode('single')
         }
       }
     }
@@ -814,6 +806,11 @@ const selectedValidateIds = useMemo(
 
       if (!selectedTemplateId) {
         setError('Please select a File Template before uploading files.')
+        return
+      }
+
+      if (!ocrMode) {
+        setError('Please select an OCR mode before uploading files.')
         return
       }
 
@@ -938,6 +935,11 @@ const selectedValidateIds = useMemo(
   const handleExtract = async () => {
     if (!selectedTemplateId) {
       setError('Please select a File Template before uploading or extracting files.')
+      return
+    }
+
+    if (!ocrMode) {
+      setError('Please select an OCR mode before extracting files.')
       return
     }
 
@@ -1235,68 +1237,11 @@ const selectedValidateIds = useMemo(
     <ClientLayout title="OCR" breadcrumb="OCR">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         {/* Upload / actions */}
-        <Card className="p-5 sm:p-6">
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-1">
-              <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">
-                OCR
-              </h1>
-
-              <p className="text-sm text-[var(--color-muted)]">
-                Upload PDF, image, spreadsheet, or text files and extract structured
-                document data.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-[var(--color-ink)]">
-                OCR Mode
-              </span>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (!ocrModes.single || processing) return
-                  setOcrMode('single')
-                  setError('')
-                  setResults([])
-                  setActiveIndex(0)
-                }}
-                disabled={!ocrModes.single || processing}
-                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                  ocrMode === 'single'
-                    ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-primary)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)]'
-                } ${!ocrModes.single ? 'cursor-not-allowed opacity-50' : ''}`}
-              >
-                Single
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (!ocrModes.multiple || processing) return
-                  setOcrMode('multiple')
-                  setError('')
-                  setResults([])
-                  setActiveIndex(0)
-                }}
-                disabled={!ocrModes.multiple || processing}
-                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                  ocrMode === 'multiple'
-                    ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-primary)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink)]'
-                } ${!ocrModes.multiple ? 'cursor-not-allowed opacity-50' : ''}`}
-              >
-                Multiple
-              </button>
-
-              <span className="text-xs text-[var(--color-muted)]">
-                {ocrMode === 'single'
-                  ? 'One file · direct result'
-                  : 'Up to 200 files · background processing'}
-              </span>
-            </div>
+        <Card className="p-4 sm:p-5">
+          <div className="flex flex-col gap-3">
+            <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">
+              OCR
+            </h1>
 
             <div
               onDragEnter={(event) => {
@@ -1312,76 +1257,26 @@ const selectedValidateIds = useMemo(
                 setDragActive(false)
               }}
               onDrop={handleDrop}
-              className={`rounded-2xl border-2 border-dashed p-5 transition sm:p-7 ${
+              className={`flex flex-wrap items-center gap-3 rounded-xl border border-dashed p-3 transition ${
                 dragActive
                   ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+                  : 'border-transparent bg-[var(--color-canvas)]'
               }`}
             >
-              <div className="flex flex-col items-center justify-center text-center">
-                <div className="mb-3 rounded-full bg-[var(--color-canvas)] px-4 py-2 text-sm font-medium text-[var(--color-ink)]">
-                  Drag & drop files here
-                </div>
-
-                <p className="text-sm text-[var(--color-muted)]">
-                  PDF, image, spreadsheet, or text files · {ocrMode === 'single' ? '1 input' : `up to ${MAX_FILES} inputs`} · max 20 MB per direct file
-                </p>
-
-                <input
-                  ref={inputRef}
-                  type="file"
-                  multiple={ocrMode === 'multiple'}
-                  accept={ACCEPT}
-                  onChange={handleFileChange}
-                  disabled={processing || !selectedTemplateId}
-                  className="hidden"
-                />
-
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  <Button
-                    type="button"
-                    onClick={() => inputRef.current?.click()}
-                    disabled={processing || !selectedTemplateId}
-                  >
-                    Choose Files
-                  </Button>
-
-                  <Button
-                    type="button"
-                    intent="secondary"
-                    onClick={clearSelection}
-                    disabled={processing || !selectedFiles.length}
-                  >
-                    Clear
-                  </Button>
-
-                  <Button
-                    type="button"
-                    onClick={handleExtract}
-                    disabled={processing || !selectedFiles.length || !selectedTemplateId}
-                  >
-                    {processing ? 'Processing...' : 'Extract Data'}
-                  </Button>
-                </div>
-              </div>
-
-              </div>
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="flex min-w-[300px] flex-1 items-center gap-2 sm:max-w-xl">
                 <label
                   htmlFor="ocr-extraction-template"
-                  className="text-sm font-semibold text-[var(--color-ink)]"
+                  className="shrink-0 text-sm font-medium text-[var(--color-ink)]"
                 >
                   File Template <span className="text-red-500">*</span>
                 </label>
-
                 <select
                   id="ocr-extraction-template"
                   value={selectedTemplateId}
                   onChange={(event) => setSelectedTemplateId(event.target.value)}
                   disabled={processing}
                   required
-                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)] sm:max-w-sm"
+                  className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
                 >
                   <option value="">Select File Template</option>
                   {extractionTemplates.map((template) => (
@@ -1392,7 +1287,73 @@ const selectedValidateIds = useMemo(
                 </select>
               </div>
 
-              {error && (
+              <div className="min-w-[150px]">
+                <select
+                  id="ocr-processing-mode"
+                  value={ocrMode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value
+                    setOcrMode(nextMode)
+                    setError('')
+                    setResults([])
+                    setActiveIndex(0)
+                  }}
+                  disabled={processing}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+                >
+                  <option value="">Select Mode</option>
+                  <option value="single" disabled={!ocrModes.single}>Single</option>
+                  <option value="multiple" disabled={!ocrModes.multiple}>Multiple</option>
+                </select>
+              </div>
+
+              <input
+                ref={inputRef}
+                type="file"
+                multiple={ocrMode === 'multiple'}
+                accept={ACCEPT}
+                onChange={handleFileChange}
+                disabled={processing || !selectedTemplateId || !ocrMode}
+                className="hidden"
+              />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  onClick={() => inputRef.current?.click()}
+                  disabled={processing || !selectedTemplateId || !ocrMode}
+                >
+                  Choose Files
+                </Button>
+
+                {!!selectedFiles.length && (
+                  <>
+                    <Button
+                      type="button"
+                      onClick={handleExtract}
+                      disabled={processing || !selectedTemplateId || !ocrMode}
+                    >
+                      {processing ? 'Processing...' : 'Extract'}
+                    </Button>
+                    <Button
+                      type="button"
+                      intent="secondary"
+                      onClick={clearSelection}
+                      disabled={processing}
+                    >
+                      Clear
+                    </Button>
+                  </>
+                )}
+              </div>
+              {dragActive && (
+                <p className="w-full text-xs font-medium text-[var(--color-primary)]">
+                  Drop files to add them
+                </p>
+              )}
+            </div>
+
+            {error && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}
               </div>
@@ -1400,18 +1361,10 @@ const selectedValidateIds = useMemo(
 
             {!!selectedFiles.length && (
               <div>
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-[var(--color-ink)]">
-                      Selected files ({selectedFiles.length})
-                    </p>
-
-                    <p className="text-xs text-[var(--color-muted)]">
-                      {ocrMode === 'single'
-                        ? 'Single file will be processed immediately.'
-                        : 'Files will be processed independently in one OCR batch.'}
-                    </p>
-                  </div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-[var(--color-ink)]">
+                    Selected files ({selectedFiles.length})
+                  </p>
                 </div>
 
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -1458,9 +1411,9 @@ const selectedValidateIds = useMemo(
 
         {/* Result workspace */}
         {(selectedFiles.length > 0 || results.length > 0) && (
-          <div className="grid min-h-[560px] gap-6 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             {/* Left: preview */}
-            <Card className="flex min-h-[520px] flex-col overflow-hidden">
+            <Card className="flex h-[480px] min-h-0 max-h-[70vh] flex-col overflow-hidden">
               <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
                 <div className="min-w-0">
                   <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
@@ -1483,7 +1436,7 @@ const selectedValidateIds = useMemo(
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-1 items-center justify-center bg-[var(--color-canvas)] p-4">
+              <div className="min-h-0 flex-1 overflow-auto bg-[var(--color-canvas)] p-3">
                 {previewError && (
                   <div className="max-w-md rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
                     {previewError}
@@ -1495,11 +1448,11 @@ const selectedValidateIds = useMemo(
                   (isPdf(activeFile) || isImage(activeFile)) &&
                   activePreviewUrl && (
                     isPdf(activeFile) ? (
-                      <div className="flex h-full w-full flex-col gap-3">
+                      <div className="flex min-h-full w-full flex-col gap-2">
                         <iframe
                           title={activeFile.name}
                           src={activePreviewUrl}
-                          className="min-h-[420px] w-full rounded-lg border border-[var(--color-border)] bg-white"
+                          className="h-[340px] min-h-0 w-full rounded-lg border border-[var(--color-border)] bg-white"
                         />
                         <a
                           href={activePreviewUrl}
@@ -1514,7 +1467,7 @@ const selectedValidateIds = useMemo(
                       <img
                         src={activePreviewUrl}
                         alt={activeFile.name}
-                        className="max-h-[430px] max-w-full rounded-lg object-contain shadow-sm"
+                        className="max-h-[340px] max-w-full rounded-lg object-contain shadow-sm"
                       />
                     )
                   )}
@@ -1573,7 +1526,7 @@ const selectedValidateIds = useMemo(
             </Card>
 
             {/* Right: review workspace */}
-            <Card className="flex min-h-[520px] flex-col overflow-hidden">
+            <Card className="flex h-[480px] min-h-0 max-h-[70vh] flex-col overflow-hidden">
               <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
                 <div className="min-w-0">
                   <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">

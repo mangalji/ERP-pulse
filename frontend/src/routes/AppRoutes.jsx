@@ -54,8 +54,12 @@ function CatchAllRoute() {
 }
 
 export default function AppRoutes() {
+  const location = useLocation()
   return (
-    <Routes>
+    <Routes 
+      location={location}
+      key={location.state?.__refreshKey ?? 'app-routes'}
+      >
       {/* Public Website */}
       <Route path="/" element={<PublicRoute><PublicHomePage /></PublicRoute>} />
 

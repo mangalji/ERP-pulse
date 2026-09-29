@@ -5,6 +5,7 @@ from ocr.ai.views import (
     AIConfigurationTestView,
     AIConfigurationView,
     AIProvidersView,
+    AIProvidersRefreshView,
 )
 
 urlpatterns = [
@@ -12,4 +13,5 @@ urlpatterns = [
     path("config/test/", AIConfigurationTestView.as_view(), name="ocr-ai-config-test"),
     path("config/disconnect/", AIConfigurationDisconnectView.as_view(), name="ocr-ai-config-disconnect"),
     path("providers/", AIProvidersView.as_view(), name="ocr-ai-providers"),
+    path("providers/refresh/", AIProvidersRefreshView.as_view(),name="ocr-ai-providers-refresh"),
 ]

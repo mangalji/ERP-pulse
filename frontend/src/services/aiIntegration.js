@@ -5,6 +5,7 @@ const AI_ENDPOINTS = {
   test: '/ocr/ai/config/test/',
   disconnect: '/ocr/ai/config/disconnect/',
   providers: '/ocr/ai/providers/',
+  refreshModels: '/ocr/ai/providers/refresh/',
 }
 
 export const aiIntegrationApi = {
@@ -20,4 +21,7 @@ export const aiIntegrationApi = {
 
   disconnect: () =>
     apiClient.post(AI_ENDPOINTS.disconnect).then(unwrap),
+  
+  refreshModels: (payload) =>
+  apiClient.post(AI_ENDPOINTS.refreshModels, payload).then(unwrap),
 }

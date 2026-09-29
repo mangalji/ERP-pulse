@@ -184,16 +184,52 @@ class OCRHistoryListSerializer(serializers.Serializer):
 class OCRExtractionTemplateSerializer(serializers.ModelSerializer):
     """Read/write representation of a saved dynamic extraction template."""
 
+    created_by_name = serializers.SerializerMethodField()
+
     class Meta:
-        model = __import__('ocr.models', fromlist=['OCRExtractionTemplate']).OCRExtractionTemplate
+        model = __import__(
+            'ocr.models',
+            fromlist=['OCRExtractionTemplate']
+        ).OCRExtractionTemplate
+
         fields = [
             'id',
             'name',
             'fields_config',
+            'created_by',
+            'created_by_name',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+
+        read_only_fields = [
+            'id',
+            'created_by',
+            'created_by_name',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_created_by_name(self, obj):
+        """Return the creator's name with sensible fallbacks."""
+        user = getattr(obj, 'created_by', None)
+
+        if user is None:
+            return None
+
+        get_full_name = getattr(user, 'get_full_name', None)
+
+        if callable(get_full_name):
+            full_name = (get_full_name() or '').strip()
+            if full_name:
+                return full_name
+
+        for attribute in ('name', 'username', 'email'):
+            value = getattr(user, attribute, None)
+            if value:
+                return str(value).strip() or None
+
+        return None
 
 
 class OCRExtractionTemplateCreateSerializer(serializers.Serializer):

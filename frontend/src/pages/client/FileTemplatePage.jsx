@@ -35,6 +35,7 @@ function normalizeCatalogField(field) {
     data_type: field?.data_type || 'text',
     scope: field?.scope === 'line' ? 'line' : 'header',
     standard: true,
+    enabled: field?.enabled !== false,
   }
 }
 
@@ -52,6 +53,7 @@ function normalizeCustomField(field, index = 0) {
     data_type: field?.data_type || 'text',
     scope: field?.scope === 'line' ? 'line' : 'header',
     standard: false,
+    enabled: field?.enabled !== false,
   }
 }
 
@@ -61,6 +63,8 @@ function normalizeTemplateConfig(config) {
       standard_fields: [],
       standard_field_overrides: {},
       custom_fields: [],
+      disabled_standard_fields: [],
+      disabled_custom_fields: [],
     }
   }
 
@@ -78,7 +82,24 @@ function normalizeTemplateConfig(config) {
           normalizeCustomField(field, index),
         )
       : [],
+    disabled_standard_fields: Array.isArray(config.disabled_standard_fields)
+      ? config.disabled_standard_fields
+      : [],
+    disabled_custom_fields: Array.isArray(config.disabled_custom_fields)
+      ? config.disabled_custom_fields.map((field, index) =>
+          normalizeCustomField(field, index),
+        )
+      : [],
   }
+}
+
+function getCreatedBy(template) {
+  const creator = template?.created_by ?? template?.createdBy ?? template?.created_by_user
+  if (typeof creator === 'string' || typeof creator === 'number') return String(creator)
+  if (creator && typeof creator === 'object') {
+    return creator.full_name || creator.name || creator.username || creator.email || creator.display_name || '—'
+  }
+  return template?.created_by_name || template?.created_by_username || template?.created_by_email || '—'
 }
 
 function getErrorMessage(error, fallback) {
@@ -92,12 +113,78 @@ function getErrorMessage(error, fallback) {
   )
 }
 
+
+function ActionIcon({ name, className = 'h-5 w-5' }) {
+  const common = {
+    className,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': true,
+  }
+
+  if (name === 'view') {
+    return (
+      <svg {...common}>
+        <path d="M2.5 12s3.5-7 9.5-7 9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7Z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    )
+  }
+
+  if (name === 'edit') {
+    return (
+      <svg {...common}>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+      </svg>
+    )
+  }
+
+  if (name === 'delete') {
+    return (
+      <svg {...common}>
+        <path d="M3 6h18" />
+        <path d="M8 6V4h8v2" />
+        <path d="m19 6-1 14H6L5 6" />
+        <path d="M10 10v6M14 10v6" />
+      </svg>
+    )
+  }
+
+  if (name === 'file') {
+    return (
+      <svg {...common}>
+        <rect x="5" y="3" width="14" height="18" rx="2" />
+        <path d="M9 8h6M9 12h6" />
+      </svg>
+    )
+  }
+
+  if (name === 'back') {
+    return (
+      <svg {...common}>
+        <path d="m15 18-6-6 6-6" />
+        <path d="M9 12h12" />
+      </svg>
+    )
+  }
+
+  return null
+}
+
 export default function FileTemplatePage() {
   const [catalog, setCatalog] = useState(null)
   const [templates, setTemplates] = useState([])
 
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
   const [templateName, setTemplateName] = useState('')
+  const [mode, setMode] = useState('empty') // empty | view | edit | new
+  const isDetailPage = mode !== 'empty'
+  const [highlightedFieldId, setHighlightedFieldId] = useState(null)
 
   // One unified editor list for standard + custom fields.
   const [fields, setFields] = useState([])
@@ -146,21 +233,11 @@ export default function FileTemplatePage() {
     setError('')
 
     try {
-      const [catalogData] = await Promise.all([
-        loadCatalog(),
-        loadTemplates(),
-      ])
+      await Promise.all([loadCatalog(), loadTemplates()])
 
-      const initialFields = [
-        ...(Array.isArray(catalogData?.header_fields)
-          ? catalogData.header_fields
-          : []),
-        ...(Array.isArray(catalogData?.line_fields)
-          ? catalogData.line_fields
-          : []),
-      ].map(normalizeCatalogField)
-
-      setFields(initialFields)
+      // Keep the editor empty until the user opens a template or starts a new one.
+      setFields([])
+      setMode('empty')
     } catch (err) {
       setError(
         getErrorMessage(
@@ -184,70 +261,87 @@ export default function FileTemplatePage() {
     setSelectedTemplateId(null)
     setTemplateName('')
     setFields(createDefaultFields())
+    setMode('new')
+    setHighlightedFieldId(null)
     setMessage('')
     setError('')
   }
 
-  const selectTemplate = (template) => {
-    const config = normalizeTemplateConfig(template?.fields_config)
+  const openTemplate = (template, nextMode = 'view') => {
+    if (!template?.id) return
+    selectTemplate(template, nextMode)
+  }
 
-    const selectedStandardKeys = new Set(
-      config.standard_fields,
-    )
+  const startNewTemplate = () => {
+    resetEditor()
+  }
+
+  const handleBackToTemplates = () => {
+    setSelectedTemplateId(null)
+    setTemplateName('')
+    setFields([])
+    setMode('empty')
+    setHighlightedFieldId(null)
+    setError('')
+    setMessage('')
+  }
+
+  const selectTemplate = (template, nextMode = 'view') => {
+    const config = normalizeTemplateConfig(template?.fields_config)
+    const selectedStandardKeys = new Set([
+      ...config.standard_fields,
+      ...config.disabled_standard_fields,
+    ])
+    const disabledStandardKeys = new Set(config.disabled_standard_fields)
 
     const standardFields = catalogFields
-      .filter((field) =>
-        selectedStandardKeys.has(field?.key),
-      )
+      .filter((field) => selectedStandardKeys.has(field?.key))
       .map((field) => {
         const normalized = normalizeCatalogField(field)
-        const override =
-          config.standard_field_overrides?.[
-            normalized.original_key
-          ]
-
-        if (!override || typeof override !== 'object') {
-          return normalized
-        }
+        const override = config.standard_field_overrides?.[normalized.original_key]
 
         return {
           ...normalized,
-          label:
-            override.label ||
-            normalized.label,
+          label: override?.label || normalized.label,
           description:
-            override.description ||
-            override.questionaire ||
+            override?.description ||
+            override?.questionaire ||
             normalized.description,
-          data_type:
-            override.data_type ||
-            normalized.data_type,
+          data_type: override?.data_type || normalized.data_type,
           scope:
-            override.scope === 'line'
+            override?.scope === 'line'
               ? 'line'
-              : override.scope === 'header'
+              : override?.scope === 'header'
                 ? 'header'
                 : normalized.scope,
+          enabled: !disabledStandardKeys.has(normalized.original_key) &&
+            override?.enabled !== false,
         }
       })
 
-    const customFields = config.custom_fields.map(
-      (field, index) =>
-        normalizeCustomField(field, index),
-    )
+    const customFields = [
+      ...config.custom_fields.map((field, index) =>
+        normalizeCustomField({ ...field, enabled: field?.enabled !== false }, index),
+      ),
+      ...config.disabled_custom_fields.map((field, index) =>
+        normalizeCustomField({ ...field, enabled: false }, index + config.custom_fields.length),
+      ),
+    ]
 
     setSelectedTemplateId(template?.id || null)
     setTemplateName(template?.name || '')
     setFields([...standardFields, ...customFields])
+    setMode(nextMode)
+    setHighlightedFieldId(null)
     setMessage('')
     setError('')
   }
 
   const addCustomField = () => {
+    const id = createFieldId('custom')
     setFields((current) => [
-      ...current,
       {
-        id: createFieldId('custom'),
+        id,
         key: '',
         original_key: null,
         label: '',
@@ -255,12 +349,23 @@ export default function FileTemplatePage() {
         data_type: 'text',
         scope: 'header',
         standard: false,
+        enabled: true,
       },
+      ...current,
     ])
-
+    setHighlightedFieldId(id)
     setMessage('')
     setError('')
   }
+
+  useEffect(() => {
+    if (!highlightedFieldId) return
+    const fieldRow = document.getElementById(`template-field-${highlightedFieldId}`)
+    fieldRow?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    fieldRow?.querySelector('input')?.focus()
+    const timeout = window.setTimeout(() => setHighlightedFieldId(null), 2200)
+    return () => window.clearTimeout(timeout)
+  }, [highlightedFieldId, fields])
 
   const updateField = (id, patch) => {
     setFields((current) =>
@@ -275,34 +380,32 @@ export default function FileTemplatePage() {
     setError('')
   }
 
-  const removeField = (id) => {
+  const toggleField = (id) => {
     setFields((current) =>
-      current.filter((field) => field.id !== id),
+      current.map((field) =>
+        field.id === id ? { ...field, enabled: field.enabled === false } : field,
+      ),
     )
-
     setMessage('')
     setError('')
   }
 
   const buildFieldsConfig = () => {
     const standardFields = fields
-      .filter((field) => field.standard)
-      .map(
-        (field) =>
-          field.original_key ||
-          field.key?.trim(),
-      )
+      .filter((field) => field.standard && field.enabled !== false)
+      .map((field) => field.original_key || field.key?.trim())
+      .filter(Boolean)
+
+    const disabledStandardFields = fields
+      .filter((field) => field.standard && field.enabled === false)
+      .map((field) => field.original_key || field.key?.trim())
       .filter(Boolean)
 
     const standardFieldOverrides = {}
-
     fields
       .filter((field) => field.standard)
       .forEach((field) => {
-        const key =
-          field.original_key ||
-          field.key?.trim()
-
+        const key = field.original_key || field.key?.trim()
         if (!key) return
 
         standardFieldOverrides[key] = {
@@ -311,41 +414,46 @@ export default function FileTemplatePage() {
           questionaire: field.description?.trim(),
           data_type: field.data_type,
           scope: field.scope,
+          enabled: field.enabled !== false,
         }
       })
 
-    const customFields = fields
-      .filter((field) => !field.standard)
-      .map((field) => ({
-        key:
-          field.key?.trim() ||
-          field.label?.trim(),
-        label: field.label?.trim(),
-        description: field.description?.trim(),
-        questionaire: field.description?.trim(),
-        data_type: field.data_type,
-        scope: field.scope,
-      }))
+    const serializeCustomField = (field) => ({
+      key: field.key?.trim() || field.label?.trim(),
+      label: field.label?.trim(),
+      description: field.description?.trim(),
+      questionaire: field.description?.trim(),
+      data_type: field.data_type,
+      scope: field.scope,
+      enabled: field.enabled !== false,
+    })
 
     return {
       standard_fields: standardFields,
+      disabled_standard_fields: disabledStandardFields,
       standard_field_overrides: standardFieldOverrides,
-      custom_fields: customFields,
+      custom_fields: fields
+        .filter((field) => !field.standard && field.enabled !== false)
+        .map(serializeCustomField),
+      disabled_custom_fields: fields
+        .filter((field) => !field.standard && field.enabled === false)
+        .map(serializeCustomField),
     }
   }
 
-  const validateBeforeSave = () => {
-    if (!templateName.trim()) {
+  const validateBeforeSave = (name = templateName) => {
+    if (!name.trim()) {
       return 'Template name is required.'
     }
 
-    if (!fields.length) {
-      return 'Add at least one field to the template.'
+    const activeFields = fields.filter((field) => field.enabled !== false)
+    if (!activeFields.length) {
+      return 'Use at least one field in the template before saving.'
     }
 
     const seenKeys = new Set()
 
-    for (const field of fields) {
+    for (const field of activeFields) {
       const label = field.label?.trim()
 
       if (!label) {
@@ -380,96 +488,119 @@ export default function FileTemplatePage() {
     return ''
   }
 
-  const handleSave = async () => {
+  const handleSave = async ({ saveAs = false } = {}) => {
     setError('')
     setMessage('')
 
-    const validationError = validateBeforeSave()
+    let nameToSave = templateName.trim()
+    if (saveAs) {
+      const suggestedName = selectedTemplateId
+        ? `${templateName.trim()} (Copy)`
+        : templateName.trim()
+      const enteredName = window.prompt('Name for the new template:', suggestedName)
+      if (enteredName === null) return
+      nameToSave = enteredName.trim()
+      if (!nameToSave) {
+        setError('Template name is required for Save As.')
+        return
+      }
+    }
 
+    const validationError = validateBeforeSave(nameToSave)
     if (validationError) {
       setError(validationError)
       return
     }
+    if (!nameToSave) {
+      setError('Template name is required.')
+      return
+    }
 
     setSaving(true)
-
     try {
       const payload = {
-        name: templateName.trim(),
+        name: nameToSave,
         fields_config: buildFieldsConfig(),
       }
 
-      let response
+      const shouldCreate = saveAs || !selectedTemplateId
+      const response = shouldCreate
+        ? await apiClient.post('/ocr/extraction-templates/', payload)
+        : await apiClient.patch(
+            `/ocr/extraction-templates/${selectedTemplateId}/`,
+            payload,
+          )
 
-      if (selectedTemplateId) {
-        response = await apiClient.patch(
-          `/ocr/extraction-templates/${selectedTemplateId}/`,
-          payload,
-        )
-      } else {
-        response = await apiClient.post(
-          '/ocr/extraction-templates/',
-          payload,
-        )
-      }
-
-      const saved =
-        response?.data?.data ??
-        response?.data ??
-        {}
-
-      await loadTemplates()
+      const saved = response?.data?.data ?? response?.data ?? {}
+      const updatedTemplates = await loadTemplates()
 
       if (saved?.id) {
-        setSelectedTemplateId(saved.id)
+        const refreshedSaved = updatedTemplates.find(
+          (item) => String(item.id) === String(saved.id),
+        )
+        if (refreshedSaved) {
+          selectTemplate(refreshedSaved, 'view')
+        } else {
+          setSelectedTemplateId(saved.id)
+          setTemplateName(saved.name || nameToSave)
+          setMode('view')
+        }
+      } else if (shouldCreate) {
+        const created = updatedTemplates.find((item) => item.name === nameToSave)
+        if (created) {
+          selectTemplate(created, 'view')
+        } else {
+          setSelectedTemplateId(null)
+          setTemplateName(nameToSave)
+          setMode('view')
+        }
+      } else {
+        const refreshed = updatedTemplates.find(
+          (item) => String(item.id) === String(selectedTemplateId),
+        )
+        if (refreshed) {
+          selectTemplate(refreshed, 'view')
+        } else {
+          setMode('view')
+        }
       }
 
       setMessage(
-        selectedTemplateId
-          ? 'Template updated successfully.'
-          : 'Template created successfully.',
+        saveAs
+          ? 'A new template was created. The original template was not changed.'
+          : shouldCreate
+            ? 'Template created successfully.'
+            : 'Template updated successfully.',
       )
     } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          'Unable to save the template.',
-        ),
-      )
+      setError(getErrorMessage(err, 'Unable to save the template.'))
     } finally {
       setSaving(false)
     }
   }
 
-  const handleDelete = async () => {
-    if (!selectedTemplateId) return
-
+  const handleDeleteTemplate = async (template) => {
+    if (!template?.id) return
     const confirmed = window.confirm(
-      `Delete "${templateName}" template? This action cannot be undone.`,
+      `Delete "${template.name}" template? This action cannot be undone.`,
     )
-
     if (!confirmed) return
 
     setDeleting(true)
     setError('')
     setMessage('')
-
     try {
-      await apiClient.delete(
-        `/ocr/extraction-templates/${selectedTemplateId}/`,
-      )
-
+      await apiClient.delete(`/ocr/extraction-templates/${template.id}/`)
       await loadTemplates()
-      resetEditor()
-
-      setMessage('Template deleted successfully.')
+      if (String(selectedTemplateId) === String(template.id)) {
+        setSelectedTemplateId(null)
+        setTemplateName('')
+        setFields([])
+        setMode('empty')
+      }
+      setMessage(`"${template.name}" template deleted successfully.`)
     } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          'Unable to delete the template.',
-        ),
-      )
+      setError(getErrorMessage(err, 'Unable to delete the template.'))
     } finally {
       setDeleting(false)
     }
@@ -488,317 +619,390 @@ export default function FileTemplatePage() {
   return (
     <ClientLayout>
       <div className="space-y-6 p-4 sm:p-6">
-        <div>
-          <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
-            File Templates
-          </h1>
-
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Create reusable OCR extraction templates and define the
-            fields that should be extracted from uploaded documents.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            {isDetailPage && (
+              <button
+                type="button"
+                onClick={handleBackToTemplates}
+                className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-[var(--color-muted)] transition hover:text-[var(--color-ink)]"
+              >
+                <ActionIcon name="back" />
+                Back to templates
+              </button>
+            )}
+            <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
+              {isDetailPage
+                ? mode === 'new'
+                  ? 'New Template'
+                  : mode === 'edit'
+                    ? `Edit ${templateName || 'Template'}`
+                    : templateName || 'Template Details'
+                : 'File Templates'}
+            </h1>
+            {!isDetailPage && (
+              <p className="mt-1 text-sm text-[var(--color-muted)]">
+                Create reusable OCR extraction templates and define the fields that should be extracted from uploaded documents.
+              </p>
+            )}
+          </div>
+          {!isDetailPage && (
+            <Button type="button" onClick={startNewTemplate}>
+              + New Template
+            </Button>
+          )}
         </div>
 
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
         )}
-
         {message && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
             {message}
           </div>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <Card className="p-5">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-[var(--color-ink)]">
-                  Templates
-                </h2>
-
-                <p className="mt-1 text-xs text-[var(--color-muted)]">
-                  {templates.length} saved template
-                  {templates.length === 1 ? '' : 's'}
-                </p>
-              </div>
-
-              <Button
-                type="button"
-                intent="secondary"
-                size="sm"
-                onClick={resetEditor}
-              >
-                New
-              </Button>
+        {!isDetailPage ? (
+          <Card className="p-4 sm:p-6">
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-[var(--color-ink)]">Templates</h2>
+              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                {templates.length} saved template{templates.length === 1 ? '' : 's'}
+              </p>
             </div>
 
             {templates.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-sm text-[var(--color-muted)]">
+              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-8 text-center text-sm text-[var(--color-muted)]">
                 No templates created yet.
               </div>
             ) : (
-              <div className="space-y-2">
-                {templates.map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => selectTemplate(template)}
-                    className={`w-full rounded-lg border px-3 py-3 text-left transition ${
-                      selectedTemplateId === template.id
-                        ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)]'
-                        : 'border-[var(--color-border)] hover:bg-[var(--color-canvas)]'
-                    }`}
-                  >
-                    <p className="truncate text-sm font-medium text-[var(--color-ink)]">
-                      {template.name}
-                    </p>
-
-                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                      Created{' '}
-                      {template.created_at
-                        ? new Date(
-                            template.created_at,
-                          ).toLocaleDateString()
-                        : '—'}
-                    </p>
-                  </button>
-                ))}
+              <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+                <table className="w-full min-w-[760px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--color-border)] bg-[var(--color-canvas)] text-left">
+                      <th scope="col" className="w-20 px-4 py-3 font-semibold text-[var(--color-ink)]">S. No.</th>
+                      <th scope="col" className="px-4 py-3 font-semibold text-[var(--color-ink)]">Name</th>
+                      <th scope="col" className="px-4 py-3 font-semibold text-[var(--color-ink)]">Created By</th>
+                      <th scope="col" className="px-4 py-3 font-semibold text-[var(--color-ink)]">Created At</th>
+                      <th scope="col" className="w-40 px-4 py-3 text-right font-semibold text-[var(--color-ink)]">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {templates.map((template, index) => (
+                      <tr
+                        key={template.id}
+                        className="border-b border-[var(--color-border)] last:border-b-0 transition-colors hover:bg-[var(--color-canvas)]/60"
+                      >
+                        <td className="px-4 py-4 text-[var(--color-muted)]">{index + 1}</td>
+                        <td className="px-4 py-4">
+                          <button
+                            type="button"
+                            onClick={() => openTemplate(template, 'view')}
+                            className="font-medium text-[var(--color-ink)] text-left hover:text-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] rounded-sm"
+                            title={`View ${template.name}`}
+                          >
+                            {template.name || 'Untitled template'}
+                          </button>
+                        </td>
+                        <td className="px-4 py-4 text-[var(--color-ink)]">{getCreatedBy(template)}</td>
+                        <td className="px-4 py-4 whitespace-nowrap text-[var(--color-muted)]">
+                          {template.created_at ? new Date(template.created_at).toLocaleString() : '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-3 sm:gap-4">
+                            <button
+                              type="button"
+                              title="View template"
+                              aria-label={`View ${template.name}`}
+                              onClick={() => openTemplate(template, 'view')}
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[var(--color-ink)] transition hover:bg-[var(--color-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                            >
+                              <ActionIcon name="view" />
+                            </button>
+                            <button
+                              type="button"
+                              title="Edit template"
+                              aria-label={`Edit ${template.name}`}
+                              onClick={() => openTemplate(template, 'edit')}
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[var(--color-ink)] transition hover:bg-[var(--color-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+                            >
+                              <ActionIcon name="edit" />
+                            </button>
+                            <button
+                              type="button"
+                              title="Delete template"
+                              aria-label={`Delete ${template.name}`}
+                              disabled={deleting}
+                              onClick={() => handleDeleteTemplate(template)}
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-50"
+                            >
+                              <ActionIcon name="delete" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </Card>
-
-          <Card className="p-5 sm:p-6">
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-[var(--color-ink)]">
-                Template Name
-              </label>
-
-              <input
-                type="text"
-                value={templateName}
-                onChange={(event) =>
-                  setTemplateName(event.target.value)
-                }
-                placeholder="e.g. Vendor Invoice"
-                className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm text-[var(--color-ink)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
-                maxLength={150}
-              />
-            </div>
-
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-[var(--color-ink)]">
-                  Fields
-                </h2>
-
-                <p className="mt-1 text-xs text-[var(--color-muted)]">
-                  Standard and custom fields can be edited or removed.
-                  The original key of a standard field is preserved for
-                  the existing OCR extraction contract.
+        ) : (
+          <div className="min-w-0">
+            {mode === 'empty' ? (
+              <Card className="flex min-h-72 flex-col items-center justify-center p-8 text-center">
+                <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--color-canvas)] text-[var(--color-muted)]">
+                  <ActionIcon name="file" className="h-6 w-6" />
+                </span>
+                <h2 className="text-base font-semibold text-[var(--color-ink)]">Loading template</h2>
+                <p className="mt-2 max-w-md text-sm text-[var(--color-muted)]">
+                  Please wait while the template details are loaded.
                 </p>
-              </div>
-
-              <Button
-                type="button"
-                intent="secondary"
-                size="sm"
-                onClick={addCustomField}
-              >
-                + Add Field
-              </Button>
-            </div>
-
-            <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-              <table className="min-w-[980px] w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--color-border)] bg-[var(--color-canvas)] text-left">
-                    <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">
-                      Field Name
-                    </th>
-
-                    <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">
-                      Questionaire
-                    </th>
-
-                    <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">
-                      Datatype
-                    </th>
-
-                    <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">
-                      Scope
-                    </th>
-
-                    <th className="w-24 px-4 py-3 text-right font-semibold text-[var(--color-ink)]">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {fields.map((field) => (
-                    <tr
-                      key={field.id}
-                      className="border-b border-[var(--color-border)] align-top"
-                    >
-                      <td className="px-4 py-3">
+              </Card>
+            ) : (
+              <Card className="min-w-0 p-4 sm:p-6">
+                <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                      {mode === 'view' ? 'Template details' : mode === 'new' ? 'New template' : 'Edit template'}
+                    </p>
+                    {mode === 'view' ? (
+                      <h2 className="break-words text-xl font-semibold text-[var(--color-ink)]">
+                        {templateName}
+                      </h2>
+                    ) : (
+                      <div>
+                        <label htmlFor="template-name" className="block text-sm font-medium text-[var(--color-ink)]">
+                          Template Name
+                        </label>
                         <input
+                          id="template-name"
                           type="text"
-                          value={field.label}
-                          onChange={(event) =>
-                            updateField(field.id, {
-                              label: event.target.value,
-                              ...(!field.standard
-                                ? {
-                                    key:
-                                      field.key ||
-                                      event.target.value
-                                        .toLowerCase()
-                                        .replace(
-                                          /[^a-z0-9]+/g,
-                                          '_',
-                                        )
-                                        .replace(
-                                          /^_+|_+$/g,
-                                          '',
-                                        ),
-                                  }
-                                : {}),
-                            })
-                          }
-                          placeholder="Field name"
-                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
+                          value={templateName}
+                          onChange={(event) => setTemplateName(event.target.value)}
+                          placeholder="e.g. Vendor Invoice"
+                          className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm text-[var(--color-ink)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                          maxLength={150}
                         />
-
-                        {field.standard && (
-                          <p className="mt-1 text-xs text-[var(--color-muted)]">
-                            Key: {field.original_key}
-                          </p>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <textarea
-                          value={field.description}
-                          onChange={(event) =>
-                            updateField(field.id, {
-                              description:
-                                event.target.value,
-                            })
-                          }
-                          placeholder="What should AI extract?"
-                          rows={2}
-                          className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
-                        />
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <select
-                          value={field.data_type}
-                          onChange={(event) =>
-                            updateField(field.id, {
-                              data_type:
-                                event.target.value,
-                            })
-                          }
-                          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
-                        >
-                          {DATA_TYPE_OPTIONS.map(
-                            (option) => (
-                              <option
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <select
-                          value={field.scope}
-                          onChange={(event) =>
-                            updateField(field.id, {
-                              scope:
-                                event.target.value,
-                            })
-                          }
-                          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
-                        >
-                          {SCOPE_OPTIONS.map(
-                            (option) => (
-                              <option
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </option>
-                            ),
-                          )}
-                        </select>
-                      </td>
-
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removeField(field.id)
-                          }
-                          className="text-xs font-medium text-red-600 hover:text-red-700"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {fields.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-8 text-center text-sm text-[var(--color-muted)]"
+                      </div>
+                    )}
+                  </div>
+                  {mode === 'view' && (
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        type="button"
+                        intent="secondary"
+                        onClick={() => {
+                          const selected = templates.find((item) => String(item.id) === String(selectedTemplateId))
+                          if (selected) selectTemplate(selected, 'edit')
+                        }}
                       >
-                        No fields configured.
-                      </td>
-                    </tr>
+                        Edit
+                      </Button>
+                      <button
+                        type="button"
+                        title="Delete template"
+                        aria-label="Delete template"
+                        disabled={deleting}
+                        onClick={() => handleDeleteTemplate(templates.find((item) => String(item.id) === String(selectedTemplateId)))}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-200 text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                      >
+                        <ActionIcon name="delete" />
+                      </button>
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
 
-            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-              {selectedTemplateId && (
-                <Button
-                  type="button"
-                  intent="secondary"
-                  onClick={handleDelete}
-                  disabled={deleting || saving}
-                >
-                  {deleting
-                    ? 'Deleting...'
-                    : 'Delete Template'}
-                </Button>
-              )}
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-[var(--color-ink)]">Fields</h3>
+                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                      Standard and custom fields can be edited or temporarily disabled. Disabled fields remain visible and can be restored with Use.
+                    </p>
+                  </div>
+                  {mode !== 'view' && (
+                    <Button type="button" intent="secondary" size="sm" onClick={addCustomField}>
+                      + Add Field
+                    </Button>
+                  )}
+                </div>
 
-              <Button
-                type="button"
-                onClick={handleSave}
-                disabled={saving || deleting}
-              >
-                {saving
-                  ? 'Saving...'
-                  : selectedTemplateId
-                    ? 'Update Template'
-                    : 'Save Template'}
-              </Button>
-            </div>
-          </Card>
-        </div>
+                <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+                  <table className="min-w-[980px] w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-[var(--color-border)] bg-[var(--color-canvas)] text-left">
+                        <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Field Name</th>
+                        <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Questionaire</th>
+                        <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Datatype</th>
+                        <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Scope</th>
+                        <th className="w-24 px-4 py-3 text-right font-semibold text-[var(--color-ink)]">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fields.map((field) => {
+                        const disabledField = field.enabled === false
+                        return (
+                          <tr
+                            id={`template-field-${field.id}`}
+                            key={field.id}
+                            className={`border-b border-[var(--color-border)] align-top transition-colors ${
+                              disabledField
+                                ? 'bg-gray-100/80 text-gray-400'
+                                : highlightedFieldId === field.id
+                                  ? 'bg-amber-50 ring-2 ring-inset ring-amber-300'
+                                  : ''
+                            }`}
+                          >
+                            <td className="px-4 py-3">
+                              {mode === 'view' || disabledField ? (
+                                <div className={`rounded-md border border-transparent px-3 py-2 ${disabledField ? 'text-gray-400' : 'text-[var(--color-ink)]'}`}>
+                                  {field.label || 'Unnamed field'}
+                                </div>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={field.label}
+                                  onChange={(event) => updateField(field.id, {
+                                    label: event.target.value,
+                                    ...(!field.standard ? {
+                                      key: field.key || event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''),
+                                    } : {}),
+                                  })}
+                                  placeholder="Field name"
+                                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
+                                />
+                              )}
+                              {field.standard && (
+                                <p className={`mt-1 px-1 text-xs ${disabledField ? 'text-gray-400' : 'text-[var(--color-muted)]'}`}>
+                                  Key: {field.original_key}
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              {mode === 'view' || disabledField ? (
+                                <div className={`min-h-10 rounded-md px-3 py-2 ${disabledField ? 'text-gray-400' : 'text-[var(--color-ink)]'}`}>
+                                  {field.description || '—'}
+                                </div>
+                              ) : (
+                                <textarea
+                                  value={field.description}
+                                  onChange={(event) => updateField(field.id, { description: event.target.value })}
+                                  placeholder="What should AI extract?"
+                                  rows={2}
+                                  className="w-full resize-y rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
+                                />
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              {mode === 'view' || disabledField ? (
+                                <div className={`px-3 py-2 ${disabledField ? 'text-gray-400' : 'text-[var(--color-ink)]'}`}>
+                                  {DATA_TYPE_OPTIONS.find((option) => option.value === field.data_type)?.label || field.data_type}
+                                </div>
+                              ) : (
+                                <select
+                                  value={field.data_type}
+                                  onChange={(event) => updateField(field.id, { data_type: event.target.value })}
+                                  className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
+                                >
+                                  {DATA_TYPE_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              {mode === 'view' || disabledField ? (
+                                <div className={`px-3 py-2 ${disabledField ? 'text-gray-400' : 'text-[var(--color-ink)]'}`}>
+                                  {SCOPE_OPTIONS.find((option) => option.value === field.scope)?.label || field.scope}
+                                </div>
+                              ) : (
+                                <select
+                                  value={field.scope}
+                                  onChange={(event) => updateField(field.id, { scope: event.target.value })}
+                                  className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
+                                >
+                                  {SCOPE_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {mode !== 'view' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleField(field.id)}
+                                  className={`whitespace-nowrap text-xs font-medium ${
+                                    disabledField ? 'text-emerald-700 hover:text-emerald-800' : 'text-[var(--color-muted)] hover:text-red-600'
+                                  }`}
+                                >
+                                  {disabledField ? 'Use' : 'Remove'}
+                                </button>
+                              ) : (
+                                <span className={`text-xs ${disabledField ? 'text-gray-400' : 'text-[var(--color-muted)]'}`}>
+                                  {disabledField ? 'Disabled' : '—'}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {fields.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
+                            No fields configured. Click Add Field to create one.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {mode !== 'view' && (
+                  <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                    <Button
+                      type="button"
+                      intent="secondary"
+                      onClick={() => {
+                        if (selectedTemplateId) {
+                          const selected = templates.find((item) => String(item.id) === String(selectedTemplateId))
+                          if (selected) selectTemplate(selected, 'view')
+                          else handleBackToTemplates()
+                        } else {
+                          handleBackToTemplates()
+                        }
+                        setError('')
+                        setMessage('')
+                      }}
+                      disabled={saving || deleting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      intent="secondary"
+                      onClick={() => handleSave({ saveAs: true })}
+                      disabled={saving || deleting}
+                    >
+                      {saving ? 'Saving...' : 'Save As'}
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => handleSave()}
+                      disabled={saving || deleting}
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
+                )}
+              </Card>
+            )}
+          </div>
+        )}
       </div>
     </ClientLayout>
   )
+
 }
