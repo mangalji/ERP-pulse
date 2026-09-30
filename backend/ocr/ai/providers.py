@@ -464,6 +464,13 @@ class GoogleProvider(AIProvider):
             raise
 
         except errors.APIError as exc:
+            logger.error(
+                "Google Gemini structured response failed — "
+                "model=%s status=%s error=%s",
+                self.model,
+                getattr(exc, "code", None),
+                str(exc),
+            )
             self._raise_status_error(
                 message="Google Gemini structured response failed.",
                 status_code=getattr(exc, "code", None),

@@ -6,7 +6,7 @@ const AI_ENDPOINTS = {
   disconnect: '/ocr/ai/config/disconnect/',
   providers: '/ocr/ai/providers/',
   refreshModels: '/ocr/ai/providers/refresh/',
-  netSuiteDiagnostics: '/ocr/ai/netsuite/diagnose/',
+  diagnoseNetSuiteValidation:'/netsuite/ocr/validation-diagnostics/',
 }
 
 export const aiIntegrationApi = {
@@ -30,6 +30,6 @@ export const aiIntegrationApi = {
 
   diagnoseNetSuiteValidation: (payload) =>
     apiClient
-      .post(AI_ENDPOINTS.netSuiteDiagnostics, payload)
+      .post(AI_ENDPOINTS.diagnoseNetSuiteValidation, payload)
       .then(unwrap),
 }

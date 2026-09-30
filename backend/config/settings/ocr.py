@@ -113,6 +113,6 @@ OCR_GEMINI_CONCURRENCY_LEASE_SECONDS: int = config(
     cast=int,
 )
 OCR_SINGLE_MAX_PAGES: int = config('OCR_SINGLE_MAX_PAGES', default=3, cast=int)
-OCR_SINGLE_TIME_BUDGET_SECONDS: int = config('OCR_SINGLE_TIME_BUDGET_SECONDS', default=60, cast=int)
+OCR_SINGLE_TIME_BUDGET_SECONDS: int = config('OCR_SINGLE_TIME_BUDGET_SECONDS', default=180, cast=int)
 OCR_MULTI_MAX_FILES: int = config('OCR_MULTI_MAX_FILES', default=200, cast=int)
 OCR_MULTIPLE_ENABLED: bool = config('OCR_MULTIPLE_ENABLED', default=False, cast=bool)

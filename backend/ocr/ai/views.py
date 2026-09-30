@@ -13,7 +13,8 @@ from common.common_utils import success_response
 from common.throttles import NetSuiteSyncThrottle
 from ocr.ai.catalogue_service import ai_model_catalogue_service
 from ocr.ai.config import models_for, providers_for
-from ocr.ai.diagnostics_service import net_suite_diagnostics_service
+# from ocr.ai.diagnostics_service import net_suite_diagnostics_service
+from netsuite.diagnostics_service import net_suite_diagnostics_service
 from ocr.ai.providers import AIProviderError
 from ocr.ai.service import ai_configuration_service
 

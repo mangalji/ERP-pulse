@@ -22,6 +22,8 @@ from common.common_utils import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import NetSuiteAuthorizationDeniedException, NetSuiteConnectionNotFoundException, NetSuiteRecordFetchException, NetSuiteTokenExchangeException
+from ocr.ai.providers import AIProviderError
+from netsuite.diagnostics_service import net_suite_diagnostics_service
 from celery.result import AsyncResult
 from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting
 from accounts.models import User
@@ -1343,6 +1345,94 @@ class NetSuiteValidateDocumentView(APIView):
             current = current.__cause__ or current.__context__
 
         return None
+
+
+class NetSuiteValidationDiagnosticsView(APIView):
+    """Generate AI explanations for persisted NetSuite validation errors."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
+
+    def post(self, request):
+        company = getattr(request.user, "company", None)
+
+        if company is None:
+            return Response(
+                {
+                    "detail": (
+                        "No company is associated with this user."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        validation_ids = request.data.get(
+            "validation_ids"
+        )
+
+        connection_id = request.data.get(
+            "connection_id"
+        )
+
+        if not isinstance(validation_ids, list):
+            return Response(
+                {
+                    "detail": (
+                        "validation_ids must be a list."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not connection_id:
+            return Response(
+                {
+                    "detail": (
+                        "A NetSuite connection is required."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = net_suite_diagnostics_service.diagnose(
+                company=company,
+                connection_id=connection_id,
+                validation_ids=validation_ids,
+            )
+
+        except (ValueError, AIProviderError) as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.exception(
+                "Failed to generate NetSuite validation diagnostics "
+                "— user=%s connection=%s",
+                getattr(request.user, "id", None),
+                connection_id,
+            )
+
+            return Response(
+                {
+                    "detail": (
+                        "We could not prepare the resolution "
+                        "guidance right now. The validation result "
+                        "is still available."
+                    )
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return success_response(
+            message=(
+                "NetSuite validation diagnostics generated "
+                "successfully."
+            ),
+            data=result,
+        )
 
 
 class NetSuiteCreateCustomFieldView(APIView):

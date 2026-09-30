@@ -303,19 +303,74 @@ def _perform_ocr_extraction_sync(
 
             # Give the Gemini request most of the remaining Single-mode budget.
             # Keep a small reserve for response handling, persistence, and cleanup.
-            request_timeout = max(
-                1.0,
-                remaining - 2.0,
-            )
+            
+            max_single_ai_retries = 1
 
-            result = notebook_gemini_extractor.extract(
-                file_path=page_path,
-                mime_type=mime_type,
-                requested_fields=requested_fields,
-                company=upload.batch.company,
-                timeout=request_timeout,
-                max_retries=0,
-            )
+            result = None
+
+            for ai_attempt in range(max_single_ai_retries + 1):
+
+                remaining = deadline_monotonic - time.monotonic()
+
+                if remaining <= 0:
+                    raise GeminiTimeoutException(
+                        "Single OCR processing exceeded its time budget."
+                    )
+                
+            
+                request_timeout = max(
+                    1.0,
+                    remaining - 2.0,
+                )
+
+                try:
+
+
+                    result = notebook_gemini_extractor.extract(
+                        file_path=page_path,
+                        mime_type=mime_type,
+                        requested_fields=requested_fields,
+                        company=upload.batch.company,
+                        timeout=request_timeout,
+                        max_retries=0,
+                    )
+                    break
+                except (GeminiConnectionException, GeminiRateLimitException, GeminiTimeoutException) as exc:
+                    if ai_attempt >= max_single_ai_retries:
+                        raise
+
+                    remaining_after_failure = (
+                        deadline_monotonic - time.monotonic()
+                    )
+
+                    if remaining_after_failure <= 3.0:
+                        raise GeminiTimeoutException(
+                            "Single OCR processing did not have enough time "
+                            "for another AI attempt."
+                        ) from exc
+
+                    retry_delay = min(
+                        3.0,
+                        remaining_after_failure - 2.0,
+                    )
+
+                    logger.warning(
+                        "Retrying Single OCR Gemini request — "
+                        "upload=%s page=%s attempt=%d/%d "
+                        "delay=%.1fs error=%s",
+                        upload.id,
+                        page_index,
+                        ai_attempt + 1,
+                        max_single_ai_retries + 1,
+                        retry_delay,
+                        exc,
+                    )
+                    time.sleep(retry_delay)
+
+            if result is None:
+                raise GeminiConnectionException(
+                    "Gemini OCR did not return a result."
+                )
 
             if not isinstance(result, dict):
                 raise ValueError(
@@ -1039,7 +1094,7 @@ def process_single_ocr_upload(
         time_budget_seconds = getattr(
             settings,
             "OCR_SINGLE_TIME_BUDGET_SECONDS",
-            60,
+            180,
         )
 
     try:

@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button.jsx'
 import OcrValidationInlineEditor from '../../components/ocr/OcrValidationInlineEditor.jsx'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
+import { aiIntegrationApi } from '../../services/aiIntegration.js'
 
 const CONTEXT_KEY = 'ocr_field_mapping_context'
 
@@ -65,162 +66,322 @@ function getMappingNameCandidates(field) {
     .filter(Boolean)
 }
 
-function ValidationErrorDisplay({ errorItem, onEdit }) {
-  const type = String(errorItem?.type || '').toUpperCase()
-
-  if (type !== 'ITEM_SUBSIDIARY_MISMATCH') {
-    return (
-      <p className="text-sm text-red-700">
-        {errorItem?.message || String(errorItem)}
-        {errorItem?.extracted_name
-          ? ` — ${errorItem.extracted_name}`
-          : ''}
-      </p>
-    )
-  }
-
-  const affectedLines = Array.isArray(errorItem?.affected_lines)
-    ? errorItem.affected_lines
-    : []
-
-  const itemSubsidiaries = Array.isArray(errorItem?.item_subsidiaries)
-    ? errorItem.item_subsidiaries.filter(Boolean)
-    : (
-        errorItem?.item_subsidiary
-          ? [errorItem.item_subsidiary]
-          : []
-      )
-
+function AIDiagnosticGuidance({
+  diagnostic,
+  diagnosing,
+}) {
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-amber-900">
-            Item / Subsidiary Mismatch
-          </p>
-          <p className="mt-1 text-sm text-amber-800">
-            {errorItem?.message ||
-              'This NetSuite Item is not valid for the Vendor Bill subsidiary.'}
-          </p>
-        </div>
+    <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-800">
+          AI Resolution Guidance
+        </p>
 
-        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
-          ITEM_SUBSIDIARY_MISMATCH
-        </span>
+        {diagnosing && !diagnostic && (
+          <span className="text-xs text-slate-500">
+            Analyzing…
+          </span>
+        )}
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-md border border-amber-200 bg-white/70 p-3">
-          <p className="text-xs font-medium text-amber-700">
-            Item
-          </p>
-          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
-            {errorItem?.item_name ||
-              errorItem?.extracted_name ||
-              'Unknown item'}
-          </p>
-          {errorItem?.netsuite_id && (
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              Internal ID: {errorItem.netsuite_id}
+      {diagnostic ? (
+        <div className="mt-3 space-y-4">
+          {diagnostic.title && (
+            <p className="text-sm font-semibold text-[var(--color-ink)]">
+              {diagnostic.title}
             </p>
           )}
-        </div>
+          {diagnostic.what_happened && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                What Happened
+              </p>
 
-        <div className="rounded-md border border-amber-200 bg-white/70 p-3">
-          <p className="text-xs font-medium text-amber-700">
-            Item Subsidiaries in NetSuite
-          </p>
-
-          {itemSubsidiaries.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {itemSubsidiaries.map((subsidiary) => (
-                <span
-                  key={subsidiary}
-                  className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
-                >
-                  {subsidiary}
-                </span>
-              ))}
+              <p className="mt-1 text-sm text-[var(--color-muted)]">
+                {diagnostic.what_happened}
+              </p>
             </div>
-          ) : (
-            <p className="mt-1 text-sm text-[var(--color-muted)]">
-              NetSuite did not return the Item subsidiary display value.
-            </p>
           )}
 
-          {itemSubsidiaries.length > 0 && (
-            <p className="mt-2 text-xs text-[var(--color-muted)]">
-              These are the subsidiaries currently associated with this Item.
-            </p>
-          )}
-        </div>
+          {Array.isArray(diagnostic.likely_reasons) &&
+            diagnostic.likely_reasons.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  Likely Reasons
+                </p>
 
-        <div className="rounded-md border border-amber-200 bg-white/70 p-3 sm:col-span-2">
-          <p className="text-xs font-medium text-amber-700">
-            Vendor Bill Subsidiary
-          </p>
-          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
-            {errorItem?.transaction_subsidiary_name || 'Unknown subsidiary'}
-          </p>
-          {errorItem?.transaction_subsidiary_id && (
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              Internal ID: {errorItem.transaction_subsidiary_id}
-            </p>
-          )}
+                <div className="mt-2 space-y-1">
+                  {diagnostic.likely_reasons.map(
+                    (reason, reasonIndex) => (
+                      <p
+                        key={reasonIndex}
+                        className="text-sm text-[var(--color-muted)]"
+                      >
+                        • {reason}
+                      </p>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
+
+          {Array.isArray(diagnostic.possible_solutions) &&
+            diagnostic.possible_solutions.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  How to Resolve It
+                </p>
+
+                <div className="mt-2 grid gap-3 md:grid-cols-3">
+                  {diagnostic.possible_solutions.map(
+                    (solution, solutionIndex) => (
+                      <div
+                        key={solutionIndex}
+                        className="rounded-md border border-slate-200 bg-white p-3"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-[var(--color-ink)]">
+                            {solution.title}
+                          </p>
+
+                          {solution.recommended && (
+                            <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                              Recommended
+                            </span>
+                          )}
+                        </div>
+
+                        {Array.isArray(solution.steps) &&
+                          solution.steps.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {solution.steps.map(
+                                (step, stepIndex) => (
+                                  <p
+                                    key={stepIndex}
+                                    className="text-sm text-[var(--color-muted)]"
+                                  >
+                                    {stepIndex + 1}. {step}
+                                  </p>
+                                ),
+                              )}
+                            </div>
+                          )}
+
+                        {solution.reason && (
+                          <p className="mt-2 line-clamp-2 text-xs text-[var(--color-muted)]">
+                            {solution.reason}
+                          </p>
+                        )}
+                      </div>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
+
+          {Array.isArray(diagnostic.additional_checks) &&
+            diagnostic.additional_checks.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  Additional Checks
+                </p>
+
+                <div className="mt-2 space-y-1">
+                  {diagnostic.additional_checks.map(
+                    (check, checkIndex) => (
+                      <p
+                        key={checkIndex}
+                        className="text-sm text-[var(--color-muted)]"
+                      >
+                        • {check}
+                      </p>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
         </div>
+      ) : diagnosing ? (
+        <p className="mt-2 text-sm text-[var(--color-muted)]">
+          We are analyzing the validation issue and preparing
+          resolution guidance.
+        </p>
+      ) : (
+        <p className="mt-2 text-sm text-[var(--color-muted)]">
+          Resolution guidance is currently unavailable.
+          The validation result above is still valid.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function ValidationErrorDisplay({ errorItem, onEdit, diagnostic, diagnosing }) {
+  // const type = String(errorItem?.type || '').toUpperCase()
+
+  // if (type !== 'ITEM_SUBSIDIARY_MISMATCH') {
+  //   return (
+  //     <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+  //       <p className="text-sm text-red-700">
+  //         {errorItem?.message || String(errorItem)}
+  //         {errorItem?.extracted_name
+  //           ? ` — ${errorItem.extracted_name}`
+  //           : ''}
+  //       </p>
+  //       <AIDiagnosticGuidance
+  //         diagnostic={diagnostic}
+  //         diagnosing={diagnosing}
+  //       />
+  //     </div>
+  //   )
+  // }
+
+  // const affectedLines = Array.isArray(errorItem?.affected_lines)
+  //   ? errorItem.affected_lines
+  //   : []
+
+  // const itemSubsidiaries = Array.isArray(errorItem?.item_subsidiaries)
+  //   ? errorItem.item_subsidiaries.filter(Boolean)
+  //   : (
+  //       errorItem?.item_subsidiary
+  //         ? [errorItem.item_subsidiary]
+  //         : []
+  //     )
+
+  // return (
+  //   <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+  //     <div className="flex flex-wrap items-start justify-between gap-3">
+  //       <div>
+  //         <p className="text-sm font-semibold text-amber-900">
+  //           Item / Subsidiary Mismatch
+  //         </p>
+  //         <p className="mt-1 text-sm text-amber-800">
+  //           {errorItem?.message ||
+  //             'This NetSuite Item is not valid for the Vendor Bill subsidiary.'}
+  //         </p>
+  //       </div>
+
+  //       <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+  //         ITEM_SUBSIDIARY_MISMATCH
+  //       </span>
+  //     </div>
+
+  //     <div className="mt-4 grid gap-3 sm:grid-cols-2">
+  //       <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+  //         <p className="text-xs font-medium text-amber-700">
+  //           Item
+  //         </p>
+  //         <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+  //           {errorItem?.item_name ||
+  //             errorItem?.extracted_name ||
+  //             'Unknown item'}
+  //         </p>
+  //         {errorItem?.netsuite_id && (
+  //           <p className="mt-1 text-xs text-[var(--color-muted)]">
+  //             Internal ID: {errorItem.netsuite_id}
+  //           </p>
+  //         )}
+  //       </div>
+
+  //       <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+  //         <p className="text-xs font-medium text-amber-700">
+  //           Item Subsidiaries in NetSuite
+  //         </p>
+
+  //         {itemSubsidiaries.length > 0 ? (
+  //           <div className="mt-2 flex flex-wrap gap-2">
+  //             {itemSubsidiaries.map((subsidiary) => (
+  //               <span
+  //                 key={subsidiary}
+  //                 className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
+  //               >
+  //                 {subsidiary}
+  //               </span>
+  //             ))}
+  //           </div>
+  //         ) : (
+  //           <p className="mt-1 text-sm text-[var(--color-muted)]">
+  //             NetSuite did not return the Item subsidiary display value.
+  //           </p>
+  //         )}
+
+  //         {itemSubsidiaries.length > 0 && (
+  //           <p className="mt-2 text-xs text-[var(--color-muted)]">
+  //             These are the subsidiaries currently associated with this Item.
+  //           </p>
+  //         )}
+  //       </div>
+
+  //       <div className="rounded-md border border-amber-200 bg-white/70 p-3 sm:col-span-2">
+  //         <p className="text-xs font-medium text-amber-700">
+  //           Vendor Bill Subsidiary
+  //         </p>
+  //         <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+  //           {errorItem?.transaction_subsidiary_name || 'Unknown subsidiary'}
+  //         </p>
+  //         {errorItem?.transaction_subsidiary_id && (
+  //           <p className="mt-1 text-xs text-[var(--color-muted)]">
+  //             Internal ID: {errorItem.transaction_subsidiary_id}
+  //           </p>
+  //         )}
+  //       </div>
+  //     </div>
+
+  //     {affectedLines.length > 0 && (
+  //       <p className="mt-3 text-xs text-amber-800">
+  //         Affected source line{affectedLines.length === 1 ? '' : 's'}:{' '}
+  //         {affectedLines.join(', ')}
+  //       </p>
+  //     )}
+  //     {onEdit && (
+  //       <div className="mt-4 flex justify-end border-t border-amber-200 pt-4">
+  //         <Button
+  //           type="button"
+  //           intent="secondary"
+  //           onClick={onEdit}
+  //         >
+  //           Edit OCR Data
+  //         </Button>
+  //       </div>
+  //     )}
+  //     <AIDiagnosticGuidance
+  //       diagnostic={diagnostic}
+  //       diagnosing={diagnosing}
+  //     />
+  //   </div>
+  // )
+  return (
+    <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="text-sm font-semibold text-red-900">
+          Validation Error
+        </p>
+
+        {errorItem?.type && (
+          <span className="rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-semibold text-red-800">
+            {String(errorItem.type)}
+          </span>
+        )}
       </div>
 
-      {affectedLines.length > 0 && (
-        <p className="mt-3 text-xs text-amber-800">
-          Affected source line{affectedLines.length === 1 ? '' : 's'}:{' '}
-          {affectedLines.join(', ')}
+      {errorItem?.message && (
+        <p className="mt-2 text-sm text-red-800">
+          {errorItem.message}
         </p>
       )}
 
-      <div className="mt-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
-          Ways to Resolve This Issue
+      {errorItem?.extracted_name && (
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
+          Affected value: {errorItem.extracted_name}
         </p>
-        <p className="mt-1 text-sm text-[var(--color-muted)]">
-          You only need to take one of the following actions, depending on
-          the actual Vendor Bill and Item setup.
-        </p>
+      )}
 
-        <div className="mt-3 space-y-2">
-          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
-            <p className="text-sm font-semibold text-[var(--color-ink)]">
-              Solution 1 — Associate the Item with the Vendor Bill Subsidiary
-            </p>
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              In NetSuite, associate this Item with the Vendor Bill subsidiary
-              if the Item should legitimately be used there.
-            </p>
-          </div>
-
-          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
-            <p className="text-sm font-semibold text-[var(--color-ink)]">
-              Solution 2 — Correct the Vendor Bill Subsidiary
-            </p>
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              Change the Vendor Bill subsidiary if the source document belongs
-              to a different subsidiary.
-            </p>
-          </div>
-
-          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
-            <p className="text-sm font-semibold text-[var(--color-ink)]">
-              Solution 3 — Replace the Selected Item
-            </p>
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              Select an Item that is associated with the Vendor Bill
-              subsidiary.
-            </p>
-          </div>
-        </div>
-      </div>
-
+      <AIDiagnosticGuidance
+        diagnostic={diagnostic}
+        diagnosing={diagnosing}
+      />
       {onEdit && (
-        <div className="mt-4 flex justify-end border-t border-amber-200 pt-4">
+        <div className="mt-4 flex justify-end border-t border-red-200 pt-4">
           <Button
             type="button"
             intent="secondary"
@@ -230,6 +391,7 @@ function ValidationErrorDisplay({ errorItem, onEdit }) {
           </Button>
         </div>
       )}
+
     </div>
   )
 }
@@ -483,6 +645,9 @@ export default function OcrFieldMappingPage() {
   const [validating, setValidating] = useState(false)
   const [validationResult, setValidationResult] = useState(null)
   const [posting, setPosting] = useState(false)
+  const [aiDiagnostics, setAiDiagnostics] = useState([])
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [diagnosticError, setDiagnosticError] = useState('')
   const [postingResult, setPostingResult] = useState(null)
 
   // Keep the optional inline editor isolated so it can be removed without
@@ -512,6 +677,16 @@ export default function OcrFieldMappingPage() {
   const applicationFields = useMemo(
     () => getApplicationFields(context),
     [context],
+  )
+  const aiDiagnosticsByReference = useMemo(
+    () =>
+      new Map(
+        (aiDiagnostics || []).map((diagnostic) => [
+          diagnostic.error_reference,
+          diagnostic,
+        ]),
+      ),
+    [aiDiagnostics],
   )
 
   const documentIds = useMemo(() => {
@@ -615,14 +790,14 @@ export default function OcrFieldMappingPage() {
     processingMode,
   ])
 
-  const hasItemSubsidiaryMismatch =
-    processingMode === 'SINGLE' &&
-    Array.isArray(validationResult?.errors) &&
-    validationResult.errors.some(
-      (item) =>
-        String(item?.type || '').toUpperCase() ===
-        'ITEM_SUBSIDIARY_MISMATCH',
-    )
+  // const hasItemSubsidiaryMismatch =
+  //   processingMode === 'SINGLE' &&
+  //   Array.isArray(validationResult?.errors) &&
+  //   validationResult.errors.some(
+  //     (item) =>
+  //       String(item?.type || '').toUpperCase() ===
+  //       'ITEM_SUBSIDIARY_MISMATCH',
+  //   )
 
   const catalogueOptionsByScope = useMemo(() => {
     const body = catalogue.filter(
@@ -1120,6 +1295,62 @@ export default function OcrFieldMappingPage() {
     }
   }
 
+const requestNetSuiteDiagnostics = useCallback(
+  async (validationIds) => {
+    const ids = [
+      ...new Set(
+        (validationIds || [])
+          .filter(Boolean)
+          .map(String),
+      ),
+    ]
+
+    if (
+      !ids.length ||
+      !context?.connection_id
+    ) {
+      setAiDiagnostics([])
+      setDiagnosticError('')
+      return
+    }
+
+    setAiDiagnostics([])
+    setDiagnosticError('')
+    setDiagnosing(true)
+
+    try {
+      const result =
+        await aiIntegrationApi.diagnoseNetSuiteValidation(
+          {
+            validation_ids: ids,
+            connection_id:
+              context.connection_id,
+          },
+        )
+
+      setAiDiagnostics(
+        Array.isArray(result?.diagnostics)
+          ? result.diagnostics
+          : [],
+      )
+    } catch (err) {
+      console.error(
+        'NetSuite resolution guidance failed:',
+        err,
+      )
+
+      setDiagnosticError(
+        'We couldn’t prepare the resolution guidance right now. '
+        + 'The validation result above is still available. '
+        + 'Please try again.',
+      )
+    } finally {
+      setDiagnosing(false)
+    }
+  },
+  [context?.connection_id],
+)
+
 const runValidation = async () => {
   if (!context?.connection_id) {
     setError(
@@ -1152,6 +1383,8 @@ const runValidation = async () => {
     setValidating(true)
     setError('')
     setNotice('')
+    setAiDiagnostics([])
+    setDiagnosticError('')
 
     if (processingMode === 'SINGLE') {
       const result =
@@ -1181,6 +1414,20 @@ const runValidation = async () => {
         setNotice(
           'NetSuite validation completed with validation errors. Review the result before posting.',
         )
+
+        const validationErrors = 
+          Array.isArray(result?.errors)
+            ? result.errors
+            : []
+        
+        if (
+          result?.validation_id &&
+          validationErrors.length > 0
+        ){
+          void requestNetSuiteDiagnostics([
+            result.validation_id,
+          ])
+        }
       }
 
       return
@@ -1247,6 +1494,24 @@ const runValidation = async () => {
               validation_result: finalResult,
             }),
           )
+
+          const failedValidationIds = 
+            Array.isArray(finalResult?.results)
+              ? finalResult.results
+                .filter(
+                  (item) =>
+                    Array.isArray(item?.errors) &&
+                    item.errors.length > 0 &&
+                    item?.validation_id,
+                )
+                .map((item) => item.validation_id)
+              : []
+            
+              if(failedValidationIds.length > 0){
+                void requestNetSuiteDiagnostics(
+                  failedValidationIds,
+                )
+              }
 
           if (jobStatus === 'SUCCESS') {
             const failedCount =
@@ -1606,6 +1871,11 @@ const handlePost = async () => {
         )}
         {validationResult && (
   <Card className="p-5 sm:p-6">
+    {diagnosticError && (
+      <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        {diagnosticError}
+      </div>
+    )}
     {processingMode === 'MULTIPLE' ? (
       <>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1750,6 +2020,12 @@ const handlePost = async () => {
                              <ValidationErrorDisplay
                                key={`${errorItem?.type || 'error'}-${errorIndex}`}
                                errorItem={errorItem}
+                               diagnostic={
+                                aiDiagnosticsByReference.get(
+                                  `${item?.validation_id}:${errorIndex}`,
+                                )
+                               }
+                               diagnosing={diagnosing}
                              />
                            ))}
                          </div>
@@ -1962,21 +2238,26 @@ const handlePost = async () => {
         {(validationResult.errors || []).length > 0 && (
           <div className="mt-5 space-y-3">
             {validationResult.errors.map((item, index) => {
-              const firstMismatchIndex =
-                validationResult.errors.findIndex(
-                  (candidate) =>
-                    String(candidate?.type || '').toUpperCase() ===
-                    'ITEM_SUBSIDIARY_MISMATCH',
-                )
+              // const firstMismatchIndex =
+              //   validationResult.errors.findIndex(
+              //     (candidate) =>
+              //       String(candidate?.type || '').toUpperCase() ===
+              //       'ITEM_SUBSIDIARY_MISMATCH',
+              //   )
 
               return (
                 <ValidationErrorDisplay
                   key={`${item?.type || 'error'}-${index}`}
                   errorItem={item}
+                  diagnostic={
+                    aiDiagnosticsByReference.get(
+                      `${validationResult.validation_id}:${index}`,
+                    )}
+                  diagnosing={diagnosing}
                   onEdit={
                     ENABLE_INLINE_OCR_EDITOR &&
-                    hasItemSubsidiaryMismatch &&
-                    index === firstMismatchIndex &&
+                    // hasItemSubsidiaryMismatch &&
+                    index === 0 &&
                     inlineEditorResult &&
                     !inlineEditorOpen
                       ? () => setInlineEditorOpen(true)
@@ -1997,8 +2278,8 @@ const handlePost = async () => {
 
         {ENABLE_INLINE_OCR_EDITOR &&
           inlineEditorOpen &&
-          inlineEditorResult &&
-          hasItemSubsidiaryMismatch && (
+          inlineEditorResult && (
+          // hasItemSubsidiaryMismatch && (
             <div className="mt-5">
               <OcrValidationInlineEditor
                 result={inlineEditorResult}
