@@ -641,6 +641,7 @@ export default function OcrFieldMappingPage() {
   const [catalogueLoading, setCatalogueLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [reauthRequired, setReauthRequired] = useState(false)
   const [notice, setNotice] = useState('')
   const [validating, setValidating] = useState(false)
   const [validationResult, setValidationResult] = useState(null)
@@ -824,6 +825,7 @@ export default function OcrFieldMappingPage() {
 
     setCatalogueLoading(true)
     setError('')
+    setReauthRequired(false)
     setNotice('')
 
     try {
@@ -1065,6 +1067,7 @@ export default function OcrFieldMappingPage() {
       setError(message)
 
       if (errorCode === 'NETSUITE_REAUTH_REQUIRED'){
+        setReauthRequired(true)
         setMappings([])
         setCatalogue([])
         throw err
@@ -1859,7 +1862,22 @@ const handlePost = async () => {
             ← Back to OCR
           </Button>
         </div>
-        {error && (
+        {reauthRequired && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <span>
+              NetSuite connection needs reconnecting. A Company Admin must
+              reconnect it before fields can be refreshed or documents validated.
+            </span>
+            <Button
+              type="button"
+              intent="primary"
+              onClick={() => navigate('/app/integrations/netsuite')}
+            >
+              Go to NetSuite connections
+            </Button>
+          </div>
+        )}
+        {error && !reauthRequired && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>

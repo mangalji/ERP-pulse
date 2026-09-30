@@ -104,6 +104,21 @@ export default function NetSuiteIntegrationsPage() {
     }
   }
 
+  const handleReconnect = async (id) => {
+    try {
+      const result = await netsuiteApi.reconnectConnection(id)
+      if (!result?.authorization_url) {
+        throw new Error('NetSuite authorization URL was not returned.')
+      }
+      window.location.href = result.authorization_url
+    } catch (err) {
+      addToast(
+        err.payload?.message || err.message || 'Failed to start reconnect',
+        'error',
+      )
+    }
+  }
+
   const handleAssign = async (connectionId) => {
     setAssigningId(connectionId)
   }
@@ -210,6 +225,7 @@ export default function NetSuiteIntegrationsPage() {
                 isCurrent={conn.id === currentConnectionId}
                 onUse={handleUse}
                 onTest={handleTest}
+                onReconnect={handleReconnect}
                 onAssign={handleAssign}
                 onRemoveEmployee={handleRemoveEmployee}
                 onDelete={handleDelete}

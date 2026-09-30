@@ -1,3 +1,6 @@
+from django.conf import settings
+
+
 class NetSuiteRecordType:
     CUSTOMER = 'customer'
     EMPLOYEE = 'employee'
@@ -52,3 +55,10 @@ class NetSuiteRecordType:
             cls.SUBTOTAL_ITEM,
             cls.ITEM_GROUP,
         ]
+
+# Must match "Maximum Time For Token Rotation (In Hours)" on the NetSuite
+# integration record. After this long the user must re-authorize; refresh
+# rotation cannot extend it. NetSuite's maximum is 720 hours (30 days).
+NETSUITE_MAX_TOKEN_ROTATION_HOURS = getattr(
+    settings, "NETSUITE_MAX_TOKEN_ROTATION_HOURS", 720
+)

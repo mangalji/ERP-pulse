@@ -51,6 +51,10 @@ class EmployeeConnectionSerializer(serializers.ModelSerializer):
 
 class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
     token_expires_in_seconds = serializers.SerializerMethodField()
+    reauth_required_by = serializers.DateTimeField(
+        source="refresh_token_expires_at", read_only=True
+    )
+    needs_reauth = serializers.SerializerMethodField()
     health = serializers.ReadOnlyField()
     company_name = serializers.CharField(source='company.name', read_only=True)
     employee_assignments = EmployeeConnectionSerializer(
@@ -76,10 +80,18 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
             "last_error",
             "consecutive_failures",
             "token_expires_in_seconds",
+            "reauth_required_by",
+            "needs_reauth",
             "company",
             "company_name",
             "employee_assignments",
         )
+
+    def get_needs_reauth(self, obj):
+        if obj.status == "error" and not obj.refresh_token:
+            return True
+        deadline = obj.refresh_token_expires_at
+        return bool(deadline and deadline <= timezone.now())
 
     def get_token_expires_in_seconds(self, obj):
         if not obj.access_token_expires_at:

@@ -838,6 +838,8 @@ class NetSuiteCheckOCRReferencesView(APIView):
                 data=result,
             )
 
+        except NetSuiteTokenExchangeException:
+            return _reauth_required_response()
         except NetSuiteRecordFetchException as exc:
             logger.exception(
                 "NetSuite reference validation unavailable during preflight.",
@@ -954,6 +956,8 @@ class NetSuitePostOCRVendorBillView(APIView):
                 data=result,
             )
 
+        except NetSuiteTokenExchangeException:
+            return _reauth_required_response()
         except NetSuiteRecordFetchException as exc:
             logger.exception(
                 "NetSuite verification unavailable during Vendor Bill posting.",
@@ -984,6 +988,50 @@ class NetSuitePostOCRVendorBillView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+def _reauth_required_response(http_status=status.HTTP_401_UNAUTHORIZED):
+    """Single shape for "NetSuite connection needs reconnecting"."""
+    return Response(
+        {
+            "detail": (
+                "Your NetSuite connection needs to be reconnected. "
+                "The authorization has expired or is no longer valid. "
+                "Please reconnect your NetSuite account and try again."
+            ),
+            "code": "NETSUITE_REAUTH_REQUIRED",
+        },
+        status=http_status,
+    )
+
+
+class NetSuiteReconnectView(APIView):
+    """
+    POST /company/connections/<id>/reconnect/
+    Returns a fresh NetSuite authorize URL for an existing connection.
+    Company Admin only (they own the client credentials / consent).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can reconnect NetSuite."
+            )
+        try:
+            url = NetSuiteConnectionService().get_reconnect_url(
+                user=request.user,
+                connection_id=connection_id,
+            )
+        except NetSuiteConnectionNotFoundException as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            message="Reconnect URL generated.",
+            data={"authorization_url": url},
+        )
 
 
 class NetSuiteFieldCatalogueView(APIView):
@@ -1018,27 +1066,23 @@ class NetSuiteFieldCatalogueView(APIView):
                 force_refresh=force_refresh,
             )
             serializer = NetSuiteFieldCatalogueSerializer(catalogue)
-            return success_response(
-                message=(
-                    'NetSuite Vendor Bill field catalogue refreshed successfully.'
-                    if force_refresh and catalogue.get('source') == 'netsuite'
-                    else 'NetSuite field catalogue loaded successfully.'
-                ),
-                data=serializer.data,
-            )
+            live = catalogue.get('source') == 'netsuite'
+            refresh_failed = bool(force_refresh and not live)
+            if refresh_failed:
+                message = (
+                    'Could not refresh from NetSuite; showing saved '
+                    'field data instead.'
+                )
+            elif force_refresh:
+                message = 'NetSuite Vendor Bill field catalogue refreshed successfully.'
+            else:
+                message = 'NetSuite field catalogue loaded successfully.'
+            data = dict(serializer.data)
+            data['refresh_failed'] = refresh_failed
+            return success_response(message=message, data=data)
         except NetSuiteTokenExchangeException:
-            return Response(
-                {
-                    "detail": (
-                        "Your NetSuite connection needs to be reconnected. "
-                        "The authorization has expired or is no longer valid. "
-                        "Please reconnect your NetSuite account and try again."
-                    ),
-                    "code": "NETSUITE_REAUTH_REQUIRED",
-                },
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        
+            return _reauth_required_response()
+
         except NetSuiteConnectionNotFoundException as exc:
             message = str(exc)
             if 'not active' in message.lower():
@@ -1285,6 +1329,8 @@ class NetSuiteValidateDocumentView(APIView):
                 message='NetSuite document validation completed.',
                 data=result,
             )
+        except NetSuiteTokenExchangeException:
+            return _reauth_required_response()
         except NetSuiteRecordFetchException as exc:
             token_error = self._find_exception(
                 exc,
