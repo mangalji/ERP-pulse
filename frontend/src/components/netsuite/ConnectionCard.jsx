@@ -3,8 +3,14 @@ import Card from '../ui/Card.jsx'
 import Button from '../ui/Button.jsx'
 import Badge from '../ui/Badge.jsx'
 
-export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onAssign, onDelete, onEdit, onRemoveEmployee, employees = [] }) {
+export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onReconnect, onAssign, onDelete, onEdit, onRemoveEmployee, employees = [] }) {
   const assignedCount = employees.length
+  const daysUntilReauth = connection.reauth_required_by
+    ? Math.ceil(
+        (new Date(connection.reauth_required_by).getTime() - Date.now()) /
+          86400000,
+      )
+    : null
   const [showAssigned, setShowAssigned] = useState(false)
   const [removingEmployeeId, setRemovingEmployeeId] = useState(null)
 
@@ -91,6 +97,17 @@ return (
             )}
           </div>
 
+          {connection.needs_reauth ? (
+            <p className="mt-2 text-xs font-medium text-red-600">
+              NetSuite authorization has expired. Click Reconnect to continue.
+            </p>
+          ) : daysUntilReauth !== null && daysUntilReauth <= 5 ? (
+            <p className="mt-2 text-xs font-medium text-amber-600">
+              NetSuite requires re-authorization in {daysUntilReauth} day
+              {daysUntilReauth !== 1 ? 's' : ''}.
+            </p>
+          ) : null}
+
           {assignedCount > 0 && (
             <button
               type="button"
@@ -112,6 +129,18 @@ return (
           >
             {isCurrent ? 'Using' : 'Use'}
           </Button>
+
+          {(connection.needs_reauth ||
+            connection.status === 'error' ||
+            (daysUntilReauth !== null && daysUntilReauth <= 5)) && (
+            <Button
+              intent="primary"
+              size="sm"
+              onClick={() => onReconnect?.(connection.id)}
+            >
+              Reconnect
+            </Button>
+          )}
 
           <Button
             intent="secondary"

@@ -79,9 +79,14 @@ class NetSuiteConnectionRepository:
         *,
         user: User,
         connection_id,
+        include_error: bool = False,
     ) -> NetSuiteConnection | None:
 
         """
+        ``include_error=True`` also returns connections in ``error`` status
+        so the caller can tell "needs re-authorization" apart from
+        "no such connection".
+
         Return a connection only when the current user is authorized
         to use it.
 
@@ -97,7 +102,9 @@ class NetSuiteConnectionRepository:
             .filter(
                 id=connection_id,
                 company_id=user.company_id,
-                status="connected",
+                status__in=(
+                    ["connected", "error"] if include_error else ["connected"]
+                ),
                 is_active=True,
             )
             .first()
@@ -472,6 +479,8 @@ class NetSuiteConnectionRepository:
             connection.refresh_token_expires_at = refresh_token_expires_at
             connection.status = "connected"
             connection.is_active = True
+            connection.last_error = None
+            connection.consecutive_failures = 0
 
             connection.save(
                 update_fields=[
@@ -481,6 +490,8 @@ class NetSuiteConnectionRepository:
                 "refresh_token_expires_at",
                 "status",
                 "is_active",
+                "last_error",
+                "consecutive_failures",
                 "updated_at",
                 ]
             )

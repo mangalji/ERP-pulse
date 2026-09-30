@@ -16,9 +16,11 @@ import requests
 from accounts.models import User
 from django.db import transaction
 from django.db.models import Q
+from datetime import timedelta
 from django.conf import settings
+from django.utils import timezone
 from netsuite.client import NetSuiteAuthClient
-from netsuite.constants import NetSuiteRecordType
+from netsuite.constants import NETSUITE_MAX_TOKEN_ROTATION_HOURS, NetSuiteRecordType
 from netsuite.exceptions import (
     NetSuiteStateMismatchException, 
     NetSuiteConnectionNotFoundException, 
@@ -37,6 +39,19 @@ from tenancy.services import company_lifecycle_service
 from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, MappingStatus, ValidationStatus
 
 logger = logging.getLogger(__name__)
+
+def raise_if_reauth_required(connection) -> None:
+    """
+    A connection whose tokens were cleared after ``invalid_grant`` can never
+    refresh silently. Report that as a token error (-> 401
+    NETSUITE_REAUTH_REQUIRED) instead of a generic "not active" message.
+    """
+    if connection.status == "error" and not connection.refresh_token:
+        raise NetSuiteTokenExchangeException(
+            "NETSUITE_INVALID_GRANT: NetSuite authorization is no longer "
+            "valid. Re-authorization is required."
+        )
+
 
 class NetSuiteConnectionService:    
     """
@@ -69,6 +84,22 @@ class NetSuiteConnectionService:
         self._ensure_user_company_operational(user=user)
         return build_authorization_url(user_id=str(user.id),connection_id=str(connection.id),account_id=connection.netsuite_account_id,
         client_id=connection.client_id,)
+
+    def get_reconnect_url(self, *, user: User, connection_id) -> str:
+        """
+        Build a fresh authorize URL for an EXISTING connection so its
+        stored client credentials are reused and only the OAuth grant is
+        renewed. The callback (complete_OAuth) restores status/is_active.
+        """
+        connection = self.repository.get_for_company(
+            connection_id=connection_id,
+            company=user.company,
+        )
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException(
+                "NetSuite connection not found or not accessible."
+            )
+        return self.get_authorization_url(user=user, connection=connection)
 
     def handle_callback(self, *, code: str, state: str) -> User:
         """
@@ -106,6 +137,12 @@ class NetSuiteConnectionService:
                 access_token=token_set.access_token,
                 refresh_token=token_set.refresh_token,
                 access_token_expires_at=token_set.access_token_expires_at,
+                # NetSuite forces re-authorization this long after consent,
+                # however often the refresh token is rotated.
+                refresh_token_expires_at=(
+                    timezone.now()
+                    + timedelta(hours=NETSUITE_MAX_TOKEN_ROTATION_HOURS)
+                ),
             )
             if user.current_netsuite_connection_id is None:
                 user.current_netsuite_connection = connection
@@ -2217,6 +2254,8 @@ class NetSuiteFieldMappingService:
             raise NetSuiteConnectionNotFoundException(
                 "NetSuite connection not found or not accessible."
             )
+        if connection.is_active:
+            raise_if_reauth_required(connection)
         if connection.status != "connected" or not connection.is_active:
             raise NetSuiteConnectionNotFoundException(
                 "NetSuite connection is not active."
@@ -3969,9 +4008,12 @@ class NetSuiteValidationService:
         connection = self.repository.get_authorized_for_user(
             user=user,
             connection_id=connection_id,
+            include_error=True,
         )
         if connection is None:
             raise ValueError("No NetSuite connection available.")
+
+        raise_if_reauth_required(connection)
 
         if (
             connection.status != "connected"
