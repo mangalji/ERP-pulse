@@ -1,8 +1,6 @@
-import { useCallback, useState, useRef, useMemo, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import apiClient, { unwrap } from '../../services/apiClient.js'
+import { useCallback, useState, useRef, useEffect } from 'react'
+import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
-import { useToast } from '../../components/ui/Toast.jsx'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -28,7 +26,9 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024
 const MAX_FILES = 200
 
 function createPreview(file) {
-  if (!file) return null
+  if (!file || (!isPdf(file) && !isImage(file))) {
+    return null
+  }
   return URL.createObjectURL(file)
 }
 
@@ -98,68 +98,17 @@ export default function OcrPage() {
     setActiveIndex(0)
   }, [])
 
-  const waitForBatchJob = useCallback(async (jobId) => {
-    if (!jobId) {
-      throw new Error('Batch operation was created without a job ID.')
-    }
-
-    const startedAt = Date.now()
-    const maxPollingMs = 30 * 60 * 1000
-
-    while (Date.now() - startedAt < maxPollingMs) {
-      const response = await apiClient.get(
-        `/netsuite/ocr/batch/jobs/${jobId}/`,
-      )
-
-      const job = unwrap(response) || {}
-      const status = String(job?.status || '').toUpperCase()
-
-      if (['SUCCESS', 'FAILURE', 'REVOKED'].includes(status)) {
-        return job
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-    }
-
-    throw new Error('Batch operation timed out after 30 minutes.')
-  }, [])
-
-  const navigate = useNavigate()
-  const location = useLocation()
   const inputRef = useRef(null)
-  const { addToast } = useToast()
-
   const [selectedFiles, setSelectedFiles] = useState([])
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
   const [results, setResults] = useState([])
-  const [draftResults, setDraftResults] = useState({})
-  const [savingAll, setSavingAll] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
-
-  const [history, setHistory] = useState([])
-  const [historyLoading, setHistoryLoading] = useState(true)
-  const [historyError, setHistoryError] = useState('')
-  const [historyOffset, setHistoryOffset] = useState(0)
-  const [historyCount, setHistoryCount] = useState(0)
-
-  const [recentHistory, setRecentHistory] = useState([])
-  const [recentHistoryLoading, setRecentHistoryLoading] = useState(true)
-  const [recentHistoryError, setRecentHistoryError] = useState('')
-  const [recentHistoryOffset, setRecentHistoryOffset] = useState(0)
-  const [recentHistoryCount, setRecentHistoryCount] = useState(0)
-
-  const HISTORY_PAGE_SIZE = 10
-
   const [dragActive, setDragActive] = useState(false)
   const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
   const [previewError, setPreviewError] = useState('')
-
   const [extractionTemplates, setExtractionTemplates] = useState([])
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
-
-  const [validationFilter, setValidationFilter] = useState('all')
-  const [selectedIds, setSelectedIds] = useState(new Set())
   const [connection, setConnection] = useState(null)
   const [validationResult, setValidationResult] = useState(null)
   const [ocrMode, setOcrMode] = useState('')
@@ -167,481 +116,6 @@ export default function OcrPage() {
     single: true,
     multiple: false,
   })
-  const filteredHistory = useMemo(() => {
-    if (validationFilter === 'correct') {
-      return history.filter(item => item.validation_status === 'VALIDATED')
-    }
-    if (validationFilter === 'incorrect') {
-      return history.filter(item => item.validation_status === 'VALIDATION_FAILED')
-    }
-    return history
-  }, [history, validationFilter])
-
- const selectableHistory = useMemo(
-  () =>
-    filteredHistory.filter((item) => {
-      const hasDocument = Boolean(item?.document_id)
-
-      const canRetryValidation =
-        item?.validation_status === 'VALIDATION_FAILED'
-
-      const isCompleted =
-        item?.status === 'COMPLETED'
-
-      return (
-        hasDocument &&
-        (isCompleted || canRetryValidation)
-      )
-    }),
-  [filteredHistory],
-)
-
-  const toggleSelectAll = useCallback(() => {
-    setSelectedIds((current) => {
-      const visibleIds = new Set(
-        selectableHistory
-          .map((item) => item?.document_id || item?.upload_id)
-          .filter(Boolean),
-      )
-      if (visibleIds.size > 0 && [...visibleIds].every((id) => current.has(id))) {
-        const next = new Set(current)
-        visibleIds.forEach((id) => next.delete(id))
-        return next
-      }
-      return new Set([...current, ...visibleIds])
-    })
-  }, [selectableHistory])
-
-  const toggleSelect = useCallback((id) => {
-    setSelectedIds((current) => {
-      const next = new Set(current)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
-  }, [])
-
-  const allVisibleSelected = useMemo(() => {
-    const visibleIds = selectableHistory
-      .map((item) => item?.document_id || item?.upload_id)
-      .filter(Boolean)
-    return visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id))
-  }, [selectableHistory, selectedIds])
-
-  const selectedHistoryItems = useMemo(
-    () =>
-      filteredHistory.filter((item) => {
-        const id = item?.document_id || item?.upload_id
-        return id && selectedIds.has(id)
-      }),
-    [filteredHistory, selectedIds],
-  )
-
-const selectedValidateIds = useMemo(
-  () =>
-    selectedHistoryItems
-      .filter(
-        (item) =>
-          item?.document_id &&
-          (
-            item?.validation_status === 'VALIDATION_FAILED' ||
-            (
-              item?.status === 'COMPLETED' &&
-              !item?.validation_status
-            )
-          ),
-      )
-      .map((item) => item.document_id),
-  [selectedHistoryItems],
-)
-
-  const selectedCompletedItems = useMemo(
-    () =>
-      selectedHistoryItems.filter(
-        (item) => item?.status === 'COMPLETED',
-      ),
-    [selectedHistoryItems],
-  )
-
-  const handlePostSelected = async () => {
-    const notSaved = selectedCompletedItems.filter(
-      (item) => !item?.document_id,
-    )
-
-    const notValidated = selectedCompletedItems.filter(
-      (item) =>
-        item?.document_id &&
-        item?.validation_status !== 'VALIDATED',
-    )
-
-    if (notSaved.length) {
-      setError(
-        'Save the selected OCR results before posting. ' +
-          `${notSaved.length} selected file(s) are not saved yet.`,
-      )
-      return
-    }
-
-    if (notValidated.length) {
-      setError(
-        'Validate the selected OCR files before posting. ' +
-          `${notValidated.length} selected file(s) are not validated yet.`,
-      )
-      return
-    }
-
-    if (!selectedPostIds.length) {
-      setError('No selected completed files are ready to post.')
-      return
-    }
-
-    await handleBatchPost(selectedPostIds)
-  }
-
-  const selectedPostIds = useMemo(
-    () =>
-      selectedHistoryItems
-        .filter(
-          (item) =>
-            item.status === 'COMPLETED' &&
-            item.document_id &&
-            item.validation_status === 'VALIDATED',
-        )
-        .map((item) => item.document_id),
-    [selectedHistoryItems],
-  )
-
-  const handleBatchValidate = async (ids = [...selectedValidateIds]) => {
-    if (!ids.length) {
-      setError('Select at least one completed document that needs validation.')
-      return
-    }
-
-    try {
-      setProcessing(true)
-      setError('')
-
-      const response = await apiClient.post(
-        '/netsuite/ocr/batch/validate/',
-        {
-          document_ids: ids,
-          connection_id: connection?.id || null,
-        },
-      )
-
-      const queued = unwrap(response) || {}
-      const job = await waitForBatchJob(
-        queued?.job_id || queued?.id,
-      )
-
-      const jobResults = Array.isArray(job?.results)
-        ? job.results
-        : Array.isArray(job?.result?.results)
-          ? job.result.results
-          : []
-
-      const resultFailedCount = jobResults.filter(
-        (item) =>
-          ['FAILED', 'VALIDATION_FAILED'].includes(
-            String(item?.status || '').toUpperCase(),
-          ),
-      ).length
-
-      const failedCount = Math.max(
-        Number(
-          job?.failed ??
-            job?.result?.failed ??
-            0,
-        ),
-        resultFailedCount,
-      )
-      const completedCount = Number(
-        job?.completed ??
-          job?.succeeded ??
-          job?.result?.completed ??
-          job.result?.succeeded ??
-          0,
-      )
-
-      if (String(job?.status || '').toUpperCase() !== 'SUCCESS') {
-        setError(
-          job?.error ||
-            job?.detail ||
-            'Batch validation did not complete successfully.',
-        )
-      } else if (failedCount > 0) {
-        setError(`${failedCount} document(s) failed validation.`)
-      } else {
-        addToast(
-          completedCount
-            ? `Batch validation completed for ${completedCount} document(s).`
-            : 'Batch validation completed.',
-          'success',
-        )
-      }
-
-      setSelectedIds(new Set())
-      await refreshOcrHistory()
-    } catch (err) {
-      console.error('Batch validation job failed:', err)
-      setError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'Batch validation failed.',
-      )
-    } finally {
-      setProcessing(false)
-    }
-  }
-
-  const handleBatchPost = async (ids = [...selectedPostIds]) => {
-    if (!ids.length) {
-      setError('Select at least one validated document to post.')
-      return
-    }
-
-    try {
-      setProcessing(true)
-      setError('')
-
-      const response = await apiClient.post(
-        '/netsuite/ocr/batch/post/',
-        {
-          document_ids: ids,
-          connection_id: connection?.id || null,
-        },
-      )
-
-      const queued = unwrap(response) || {}
-      const job = await waitForBatchJob(
-        queued?.job_id || queued?.id,
-      )
-
-      const failedCount = Number(
-        job?.failed ??
-          job?.result?.failed ??
-          0,
-      )
-      const completedCount = Number(
-        job?.completed ??
-          job?.succeeded ??
-          job?.result?.completed ??
-          job?.result?.succeeded ??
-          0,
-      )
-
-      if (String(job?.status || '').toUpperCase() !== 'SUCCESS') {
-        setError(
-          job?.error ||
-            job?.detail ||
-            'Batch posting did not complete successfully.',
-        )
-      } else if (failedCount > 0) {
-        setError(`${failedCount} document(s) failed to post.`)
-      } else {
-        addToast(
-          completedCount
-            ? `Batch posting completed for ${completedCount} document(s).`
-            : 'Batch posting completed.',
-          'success',
-        )
-      }
-
-      setSelectedIds(new Set())
-      await refreshOcrHistory()
-    } catch (err) {
-      console.error('Batch posting job failed:', err)
-      setError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'Batch posting failed.',
-      )
-    } finally {
-      setProcessing(false)
-    }
-  }
-
-  const fetchHistoryPage = useCallback(async (offset = 0, status = null) => {
-    const numericOffset = Number(offset)
-    const safeOffset = Number.isFinite(numericOffset)
-      ? Math.max(0, Math.floor(numericOffset))
-      : 0
-
-    const params = new URLSearchParams({
-      offset: String(safeOffset),
-      limit: String(HISTORY_PAGE_SIZE),
-    })
-
-    if (status) params.set('status', status)
-
-    const response = await apiClient.get(`/ocr/history/?${params.toString()}`)
-    const payload = response?.data?.data ?? response?.data ?? {}
-    const items = Array.isArray(payload)
-      ? payload
-      : payload?.results ?? payload?.items ?? []
-
-    return {
-      items: Array.isArray(items) ? items : [],
-      count: Number(payload?.count ?? items.length),
-      offset: safeOffset,
-    }
-  }, [])
-
-  const loadHistory = useCallback(async (offset = 0) => {
-    try {
-      setHistoryLoading(true)
-      setHistoryError('')
-      const result = await fetchHistoryPage(offset)
-      setHistory(result.items)
-      setHistoryCount(result.count)
-      setHistoryOffset(result.offset)
-    } catch (err) {
-      console.error('Failed to load OCR history:', err)
-      setHistoryError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'Failed to load OCR history.',
-      )
-    } finally {
-      setHistoryLoading(false)
-    }
-  }, [fetchHistoryPage])
-
-  const loadRecentHistory = useCallback(async (offset = 0) => {
-    try {
-      setRecentHistoryLoading(true)
-      setRecentHistoryError('')
-      const result = await fetchHistoryPage(offset, 'COMPLETED')
-      setRecentHistory(result.items)
-      setRecentHistoryCount(result.count)
-      setRecentHistoryOffset(result.offset)
-    } catch (err) {
-      console.error('Failed to load completed OCR history:', err)
-      setRecentHistoryError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'Failed to load completed OCR history.',
-      )
-    } finally {
-      setRecentHistoryLoading(false)
-    }
-  }, [fetchHistoryPage])
-
-  const refreshOcrHistory = useCallback(async () => {
-    await Promise.all([
-      loadHistory(historyOffset),
-      loadRecentHistory(recentHistoryOffset),
-    ])
-  }, [
-    loadHistory,
-    loadRecentHistory,
-    historyOffset,
-    recentHistoryOffset,
-  ])
-
-  useEffect(() => {
-  let cancelled = false
-
-  const stateJobId =
-    location.state?.validationJobId
-
-  const storedJob = (() => {
-    try {
-      const raw = sessionStorage.getItem(
-        'ocr_netsuite_validation_job',
-      )
-
-      return raw ? JSON.parse(raw) : null
-    } catch {
-      return null
-    }
-  })()
-
-  const jobId =
-    stateJobId ||
-    storedJob?.job_id ||
-    null
-
-  if (!jobId) {
-    return undefined
-  }
-
-  const monitor = async () => {
-    try {
-      const job = await waitForBatchJob(
-        String(jobId),
-      )
-
-      if (cancelled) {
-        return
-      }
-
-      const status = String(
-        job?.status || '',
-      ).toUpperCase()
-
-      if (status === 'SUCCESS') {
-        await refreshOcrHistory()
-      } else {
-        setError(
-          job?.error ||
-            'NetSuite validation batch did not complete successfully.',
-        )
-      }
-    } catch (err) {
-      if (!cancelled) {
-        console.error(
-          'NetSuite validation batch monitoring failed:',
-          err,
-        )
-
-        setError(
-          err?.response?.data?.detail ||
-            err?.response?.data?.error ||
-            err?.message ||
-            'Unable to complete NetSuite validation.',
-        )
-      }
-    } finally {
-      if (!cancelled) {
-        sessionStorage.removeItem(
-          'ocr_netsuite_validation_job',
-        )
-
-        navigate(
-          location.pathname,
-          {
-            replace: true,
-            state: {},
-          },
-        )
-      }
-    }
-  }
-
-  monitor()
-
-  return () => {
-    cancelled = true
-  }
-}, [
-  location,
-  navigate,
-  refreshOcrHistory,
-  waitForBatchJob,
-])
-
-  useEffect(() => {
-    loadHistory(0)
-    loadRecentHistory(0)
-  }, [loadHistory, loadRecentHistory])
 
   useEffect(() => {
     let cancelled = false
@@ -657,9 +131,15 @@ const selectedValidateIds = useMemo(
     return () => { cancelled = true }
   }, [])
 
+  const selectedFilesRef = useRef([])
+
+  useEffect(() => {
+    selectedFilesRef.current = selectedFiles
+  },[selectedFiles])
+
   useEffect(() => {
     return () => {
-      selectedFiles.forEach(({ previewUrl }) => {
+      selectedFilesRef.current.forEach(({ previewUrl }) => {
         if (previewUrl) {
           try {
             URL.revokeObjectURL(previewUrl)
@@ -669,7 +149,8 @@ const selectedValidateIds = useMemo(
         }
       })
     }
-  }, [selectedFiles])
+  }, [])
+
   useEffect(() => {
     let cancelled = false
 
@@ -773,16 +254,7 @@ const selectedValidateIds = useMemo(
       }
 
       const category = getFileCategory(file)
-      const categoryLimits = {
-        PDF: 20 * 1024 * 1024,
-        DOCX: 20 * 1024 * 1024,
-        Image: 20 * 1024 * 1024,
-        Spreadsheet: 10 * 1024 * 1024,
-        CSV: 10 * 1024 * 1024,
-        Text: 5 * 1024 * 1024,
-      }
-
-      const limit = categoryLimits[category] || MAX_FILE_SIZE
+      const limit = category === 'Text' ? 5 * 1024 * 1024 : MAX_FILE_SIZE
       if (file.size > limit) {
         return {
           files: [],
@@ -973,10 +445,7 @@ const selectedValidateIds = useMemo(
       })
 
       formData.append('mode', ocrMode)
-
-      if (selectedTemplateId) {
-          formData.append('template_id', selectedTemplateId)
-      }
+      formData.append('template_id', selectedTemplateId)
 
       const response = await apiClient.post(
         '/ocr/extract/',
@@ -1010,11 +479,6 @@ const selectedValidateIds = useMemo(
 
       if (ocrMode === 'single') {
         sessionStorage.setItem(
-          `ocr_test_live_results_${batchId}`,
-          JSON.stringify(initialFiles),
-        )
-
-        sessionStorage.setItem(
           'ocr_test_result',
           JSON.stringify({
             status:
@@ -1026,7 +490,6 @@ const selectedValidateIds = useMemo(
             template_id: selectedTemplateId || null,
           }),
         )
-        await refreshOcrHistory()
         return
       }
 
@@ -1050,12 +513,6 @@ const selectedValidateIds = useMemo(
           : []
 
         setResults(files)
-
-        sessionStorage.setItem(
-          `ocr_test_live_results_${batchId}`,
-          JSON.stringify(files),
-        )
-
         setActiveIndex((current) => {
           if (!files.length) return 0
           return Math.min(current, files.length - 1)
@@ -1091,7 +548,6 @@ const selectedValidateIds = useMemo(
       }
 
       clearSelectedFilesAfterExtraction()
-      await refreshOcrHistory()
     } catch (err) {
       console.error('OCR batch submission failed:', err)
 
@@ -1204,15 +660,6 @@ const selectedValidateIds = useMemo(
     setActiveIndex((current) =>
       current >= results.length - 1 ? 0 : current + 1,
     )
-  }
-
-  const formatDate = (value) => {
-    if (!value) return '--'
-
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return '--'
-
-    return date.toLocaleString()
   }
 
   const statusLabel = (status) => {
@@ -1561,7 +1008,6 @@ const selectedValidateIds = useMemo(
                             : item,
                         ),
                       )
-                      refreshOcrHistory()
                     }}
                     customFieldTypes={
                       (extractionTemplates.find(
@@ -1589,7 +1035,6 @@ const selectedValidateIds = useMemo(
                       }
                       const result = await netsuiteApi.validateDocument(documentId, connectionId)
                       setValidationResult(result)
-                      refreshOcrHistory()
                     }}
                     onPost={async (documentId, connId) => {
                       const connectionId = connId || connection?.id
@@ -1599,7 +1044,6 @@ const selectedValidateIds = useMemo(
                         )
                       }
                       await netsuiteApi.postOCRVendorBill(documentId, connectionId)
-                      await refreshOcrHistory()
                     }}
                   />
                 ) : (
@@ -1644,9 +1088,7 @@ const selectedValidateIds = useMemo(
             </Card>
           </div>
         )}
-
       </div>
       </ClientLayout>
   )
 }
-  

@@ -127,10 +127,11 @@ export default function DataExtractionHistoryPage() {
     }
   }, [])
 
-  const visibleSelectableRecords = useMemo(
-    () => records.filter((item) => item?.document_ids?.length),
-    [records],
-  )
+  const visibleSelectableRecords = records
+  // const visibleSelectableRecords = useMemo(
+  //   () => records.filter((item) => item?.document_ids?.length),
+  //   [records],
+  // )
 
   const selectedRecords = useMemo(
     () => records.filter((item) => selectedIds.has(item?.batch_id)),
@@ -255,97 +256,177 @@ export default function DataExtractionHistoryPage() {
       setDeletingId(null)
     }
   }
+  const waitForBatchJob = async (jobId) => {
+  const maxAttempts = 120
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const statusResponse = await netsuiteApi.getBatchJobStatus(jobId)
+    const job = statusResponse?.data ?? statusResponse ?? {}
+    const jobStatus = String(job?.status || '').toUpperCase()
+
+    if (['SUCCESS', 'FAILURE', 'REVOKED'].includes(jobStatus)) {
+      return job
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+  }
+
+  throw new Error('NetSuite batch job timed out.')
+}
 
   const runBatchAction = async () => {
-    if (!selectedDocumentIds.length) {
-      setError('Select at least one history record first.')
-      return
-    }
+  if (!selectedRecords.length) {
+    setError('Select at least one history record first.')
+    return
+  }
 
-    if (!connection?.id) {
-      setError('A NetSuite connection is required before validation or posting.')
-      return
-    }
+  if (!connection?.id) {
+    setError('A NetSuite connection is required before validation or posting.')
+    return
+  }
 
-    try {
-      setWorking(true)
-      setError('')
-      setNotice('')
+  try {
+    setWorking(true)
+    setError('')
+    setNotice('')
 
-      if (allSelectedAreValidated) {
+    const singleRecords = selectedRecords.filter(
+      (item) => item?.type !== 'batch',
+    )
+
+    const batchRecords = selectedRecords.filter(
+      (item) => item?.type === 'batch',
+    )
+
+    if (allSelectedAreValidated) {
+      const singleDocumentIds = [
+        ...new Set(
+          singleRecords
+            .map((item) => item?.document_id)
+            .filter(Boolean),
+        ),
+      ]
+
+      const batchDocumentIds = [
+        ...new Set(
+          batchRecords.flatMap((item) =>
+            Array.isArray(item?.document_ids)
+              ? item.document_ids
+              : item?.document_id
+                ? [item.document_id]
+                : [],
+          ),
+        ),
+      ]
+
+      if (batchDocumentIds.length) {
         const queued = await netsuiteApi.batchPostDocuments(
-          selectedDocumentIds,
-          connection?.id || null,
+          batchDocumentIds,
+          connection.id,
         )
 
         const jobId = queued?.job_id
+
         if (!jobId) {
-          throw new Error('NetSuite batch posting did not return a job ID.')
+          throw new Error(
+            'NetSuite batch posting did not return a job ID.',
+          )
         }
 
-        const maxAttempts = 120
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-          const statusResponse = await netsuiteApi.getBatchJobStatus(jobId)
-          const job = statusResponse?.data ?? statusResponse ?? {}
-          const jobStatus = String(job?.status || '').toUpperCase()
+        const job = await waitForBatchJob(jobId)
 
-          if (['SUCCESS', 'FAILURE', 'REVOKED'].includes(jobStatus)) {
-            if (jobStatus === 'SUCCESS' && Number(job?.failed || 0) === 0) {
-              setNotice('✓ Selected OCR record(s) posted successfully to NetSuite.')
-            } else {
-              setError(
-                job?.error ||
-                  `${Number(job?.failed || 0)} document(s) failed to post.`,
-              )
-            }
-            break
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 1500))
-        }
-      } else {
-        const queued = await netsuiteApi.validateBatchDocuments(
-          selectedUnvalidatedDocumentIds,
-          connection?.id || null,
-        )
-
-        const jobId = queued?.job_id
-        if (!jobId) {
-          throw new Error('NetSuite batch validation did not return a job ID.')
-        }
-
-        const maxAttempts = 120
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-          const statusResponse = await netsuiteApi.getBatchJobStatus(jobId)
-          const job = statusResponse?.data ?? statusResponse ?? {}
-          const jobStatus = String(job?.status || '').toUpperCase()
-
-          if (['SUCCESS', 'FAILURE', 'REVOKED'].includes(jobStatus)) {
-            if (jobStatus === 'SUCCESS') {
-              setNotice('✓ Selected OCR record(s) were validated again.')
-            } else {
-              setError(job?.error || 'Batch validation failed.')
-            }
-            break
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 1500))
+        if (job.status !== 'SUCCESS' || Number(job?.failed || 0) > 0) {
+          throw new Error(
+            job?.error ||
+              `${Number(job?.failed || 0)} document(s) failed to post.`,
+          )
         }
       }
 
-      await loadHistory()
-    } catch (err) {
-      console.error('Data Extraction History action failed:', err)
-      setError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'The OCR history action failed.',
+      for (const documentId of singleDocumentIds) {
+        await netsuiteApi.postOCRVendorBill(
+          documentId,
+          connection.id,
+        )
+      }
+
+      setNotice(
+        '✓ Selected OCR record(s) posted successfully to NetSuite.',
       )
-    } finally {
-      setWorking(false)
+    } else {
+      const singleValidationIds = [
+        ...new Set(
+          singleRecords
+            .flatMap((item) =>
+              Array.isArray(item?.unvalidated_document_ids)
+                ? item.unvalidated_document_ids
+                : item?.document_id
+                  ? [item.document_id]
+                  : [],
+            )
+            .filter(Boolean),
+        ),
+      ]
+
+      const batchValidationIds = [
+        ...new Set(
+          batchRecords.flatMap((item) =>
+            Array.isArray(item?.unvalidated_document_ids)
+              ? item.unvalidated_document_ids
+              : [],
+          ),
+        ),
+      ]
+
+      if (batchValidationIds.length) {
+        const queued = await netsuiteApi.validateBatchDocuments(
+          batchValidationIds,
+          connection.id,
+        )
+
+        const jobId = queued?.job_id
+
+        if (!jobId) {
+          throw new Error(
+            'NetSuite batch validation did not return a job ID.',
+          )
+        }
+
+        const job = await waitForBatchJob(jobId)
+
+        if (job.status !== 'SUCCESS') {
+          throw new Error(
+            job?.error || 'Batch validation failed.',
+          )
+        }
+      }
+
+      for (const documentId of singleValidationIds) {
+        await netsuiteApi.validateDocument(
+          documentId,
+          connection.id,
+        )
+      }
+
+      setNotice(
+        '✓ Selected OCR record(s) were validated again.',
+      )
     }
+
+    await loadHistory()
+  } catch (err) {
+    console.error('Data Extraction History action failed:', err)
+
+    setError(
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'The OCR history action failed.',
+    )
+  } finally {
+    setWorking(false)
   }
+}
 
   return (
     <ClientLayout
@@ -354,8 +435,8 @@ export default function DataExtractionHistoryPage() {
     >
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <Card className="p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">
                 Data Extraction History
               </h1>
@@ -364,7 +445,7 @@ export default function DataExtractionHistoryPage() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <select
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}

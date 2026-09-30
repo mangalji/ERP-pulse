@@ -143,7 +143,7 @@ class NetSuiteCallbackView(APIView):
         )
 
         return redirect(
-    f'{settings.FRONTEND_URL.rstrip('/')}/#/settings?netsuite=connected'
+    f'{settings.FRONTEND_URL.rstrip('/')}/#/app/integrations/netsuite?netsuite=connected'
 )
 
 
