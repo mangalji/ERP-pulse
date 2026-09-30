@@ -161,6 +161,13 @@ class NetSuiteTokenManager:
             message = str(exc)
 
             if message.startswith("NETSUITE_INVALID_GRANT:"):
+                self.repository.mark_token_invalid(
+                    connection,
+                    error_message=(
+                        "NetSuite refresh token is no longer valid. "
+                        "Re-authorization is required."
+                    ),
+                )
                 raise
 
             self.repository.record_sync_failure(

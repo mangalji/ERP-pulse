@@ -3,46 +3,15 @@ import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
+import OcrValidationInlineEditor from '../../components/ocr/OcrValidationInlineEditor.jsx'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
-import { aiIntegrationApi } from '../../services/aiIntegration.js'
 
 const CONTEXT_KEY = 'ocr_field_mapping_context'
 
-const USER_FRIENDLY_MESSAGES = {
-  loadContext:
-    'We couldn’t load this result. Please return to OCR and open it again.',
-  loadFields:
-    'We couldn’t load the fields needed for this step. Please try again.',
-  mapFields:
-    'We couldn’t prepare the fields for mapping. Please try again.',
-  refreshFields:
-    'We couldn’t refresh the fields right now. Please try again.',
-  saveMapping:
-    'We couldn’t save the field mapping. Please review it and try again.',
-  validate:
-    'We couldn’t complete the check right now. Please try again.',
-  batchValidate:
-    'We couldn’t complete the check for the selected documents. Please try again.',
-  post:
-    'We couldn’t create the Vendor Bill right now. Please try again.',
-  batchPost:
-    'We couldn’t finish processing the selected documents. Please try again.',
-  missingDocument:
-    'This result is not ready yet. Please save it and try again.',
-  missingDocuments:
-    'No documents are available for this check. Please return to OCR and try again.',
-  missingConnection:
-    'Please connect your NetSuite account before continuing.',
-  invalidMode:
-    'We couldn’t determine how to process these documents. Please return to OCR and try again.',
-  generic:
-    'Something went wrong. Please try again.',
-}
-
-function getValidationErrorMessage() {
-  return 'We found a problem with this document. Please review the guidance below.'
-}
+// Optional UX feature. Set to false if the product should expose only
+// Validate Again and keep corrections in OCR History.
+const ENABLE_INLINE_OCR_EDITOR = true
 
 const STANDARD_LABELS = {
   invoice_id: 'Invoice ID',
@@ -72,170 +41,219 @@ function normalize(value) {
     .replace(/\s+/g, ' ')
 }
 
-function getErrorReference(validationId, errorIndex) {
-  return `${validationId}:${errorIndex}`
+
+const MAPPING_TOKEN_ALIASES = {
+  qty: 'quantity',
+  amt: 'amount',
+  desc: 'description',
+  no: 'number',
+  num: 'number',
 }
 
-function ValidationErrorDisplay({
-  errorItem,
-  diagnostic,
-  diagnosing,
-  diagnosticError,
-}) {
-  if (!errorItem || typeof errorItem !== 'object') {
+function normalizeMappingName(value) {
+  return normalize(value)
+    .split(' ')
+    .filter(Boolean)
+    .map((token) => MAPPING_TOKEN_ALIASES[token] || token)
+    .join('')
+}
+
+function getMappingNameCandidates(field) {
+  return [field?.label, field?.id, field?.key]
+    .filter(Boolean)
+    .map(normalizeMappingName)
+    .filter(Boolean)
+}
+
+function ValidationErrorDisplay({ errorItem, onEdit }) {
+  const type = String(errorItem?.type || '').toUpperCase()
+
+  if (type !== 'ITEM_SUBSIDIARY_MISMATCH') {
     return (
       <p className="text-sm text-red-700">
-        {getValidationErrorMessage()}
+        {errorItem?.message || String(errorItem)}
+        {errorItem?.extracted_name
+          ? ` — ${errorItem.extracted_name}`
+          : ''}
       </p>
     )
   }
 
-  const detailFields = [
-    ['Item', errorItem.item_name || errorItem.extracted_name],
-    ['Item Subsidiary', errorItem.item_subsidiary],
-    ['Vendor Bill Subsidiary', errorItem.transaction_subsidiary],
-    [
-      'Affected Lines',
-      Array.isArray(errorItem.affected_lines)
-        ? errorItem.affected_lines.join(', ')
-        : '',
-    ],
-  ].filter(([, value]) => value !== undefined && value !== null && value !== '')
+  const affectedLines = Array.isArray(errorItem?.affected_lines)
+    ? errorItem.affected_lines
+    : []
+
+  const itemSubsidiaries = Array.isArray(errorItem?.item_subsidiaries)
+    ? errorItem.item_subsidiaries.filter(Boolean)
+    : (
+        errorItem?.item_subsidiary
+          ? [errorItem.item_subsidiary]
+          : []
+      )
 
   return (
-    <div className="rounded-lg border border-red-300 bg-white p-4 text-sm text-red-800">
-      <p className="font-semibold">
-        Needs your attention
-      </p>
-
-      <p className="mt-2 text-xs leading-5 text-red-700">
-        {diagnostic?.what_happened || getValidationErrorMessage()}
-      </p>
-
-      {detailFields.length > 0 && (
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-          {detailFields.map(([label, value]) => (
-            <div key={label}>
-              <span className="font-semibold">{label}:</span>{' '}
-              {value}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-800">
-            Resolution Guidance
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-amber-900">
+            Item / Subsidiary Mismatch
           </p>
-          {diagnosing && (
-            <span className="text-xs text-slate-500">
-              Analyzing…
-            </span>
+          <p className="mt-1 text-sm text-amber-800">
+            {errorItem?.message ||
+              'This NetSuite Item is not valid for the Vendor Bill subsidiary.'}
+          </p>
+        </div>
+
+        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+          ITEM_SUBSIDIARY_MISMATCH
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+          <p className="text-xs font-medium text-amber-700">
+            Item
+          </p>
+          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+            {errorItem?.item_name ||
+              errorItem?.extracted_name ||
+              'Unknown item'}
+          </p>
+          {errorItem?.netsuite_id && (
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Internal ID: {errorItem.netsuite_id}
+            </p>
           )}
         </div>
 
-        {diagnostic && (
-          <div className="mt-3 space-y-4 text-xs text-slate-700">
-            {diagnostic.what_happened && (
-              <div>
-                <p className="font-semibold text-slate-900">
-                  What happened
-                </p>
-                <p className="mt-1 leading-5">
-                  {diagnostic.what_happened}
-                </p>
-              </div>
-            )}
-
-            {diagnostic.likely_reasons?.length > 0 && (
-              <div>
-                <p className="font-semibold text-slate-900">
-                  Possible reasons
-                </p>
-                <ul className="mt-1 list-disc space-y-1 pl-5">
-                  {diagnostic.likely_reasons.map((reason, index) => (
-                    <li key={`reason-${index}`}>{reason}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {diagnostic.possible_solutions?.length > 0 && (
-              <div>
-                <p className="font-semibold text-slate-900">
-                  Possible solutions
-                </p>
-
-                <div className="mt-2 space-y-2">
-                  {diagnostic.possible_solutions.map((solution, index) => (
-                    <div
-                      key={`solution-${index}`}
-                      className={
-                        solution.recommended
-                          ? 'rounded-md border border-emerald-300 bg-emerald-50 px-3 py-3'
-                          : 'rounded-md border border-slate-200 bg-white px-3 py-3'
-                      }
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-slate-900">
-                          {index + 1}. {solution.title}
-                        </span>
-                        {solution.recommended && (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                            Recommended
-                          </span>
-                        )}
-                      </div>
-
-                      {solution.reason && (
-                        <p className="mt-1 leading-5">
-                          {solution.reason}
-                        </p>
-                      )}
-
-                      {solution.steps?.length > 0 && (
-                        <ol className="mt-2 list-decimal space-y-1 pl-5">
-                          {solution.steps.map((step, stepIndex) => (
-                            <li key={`step-${stepIndex}`}>{step}</li>
-                          ))}
-                        </ol>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {diagnostic.additional_checks?.length > 0 && (
-              <div>
-                <p className="font-semibold text-slate-900">
-                  Check these details if the cause is still unclear
-                </p>
-                <ul className="mt-1 list-disc space-y-1 pl-5">
-                  {diagnostic.additional_checks.map((check, index) => (
-                    <li key={`check-${index}`}>{check}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-
-        {!diagnostic && diagnosing && (
-          <p className="mt-2 text-xs text-slate-600">
-            Reviewing the NetSuite validation details…
+        <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+          <p className="text-xs font-medium text-amber-700">
+            Item Subsidiaries in NetSuite
           </p>
-        )}
 
-        {!diagnostic && !diagnosing && diagnosticError && (
-          <p className="mt-2 text-xs text-slate-600">
-            {diagnosticError}
+          {itemSubsidiaries.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {itemSubsidiaries.map((subsidiary) => (
+                <span
+                  key={subsidiary}
+                  className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900"
+                >
+                  {subsidiary}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              NetSuite did not return the Item subsidiary display value.
+            </p>
+          )}
+
+          {itemSubsidiaries.length > 0 && (
+            <p className="mt-2 text-xs text-[var(--color-muted)]">
+              These are the subsidiaries currently associated with this Item.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-md border border-amber-200 bg-white/70 p-3 sm:col-span-2">
+          <p className="text-xs font-medium text-amber-700">
+            Vendor Bill Subsidiary
           </p>
-        )}
+          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
+            {errorItem?.transaction_subsidiary_name || 'Unknown subsidiary'}
+          </p>
+          {errorItem?.transaction_subsidiary_id && (
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Internal ID: {errorItem.transaction_subsidiary_id}
+            </p>
+          )}
+        </div>
       </div>
+
+      {affectedLines.length > 0 && (
+        <p className="mt-3 text-xs text-amber-800">
+          Affected source line{affectedLines.length === 1 ? '' : 's'}:{' '}
+          {affectedLines.join(', ')}
+        </p>
+      )}
+
+      <div className="mt-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+          Ways to Resolve This Issue
+        </p>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">
+          You only need to take one of the following actions, depending on
+          the actual Vendor Bill and Item setup.
+        </p>
+
+        <div className="mt-3 space-y-2">
+          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+            <p className="text-sm font-semibold text-[var(--color-ink)]">
+              Solution 1 — Associate the Item with the Vendor Bill Subsidiary
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              In NetSuite, associate this Item with the Vendor Bill subsidiary
+              if the Item should legitimately be used there.
+            </p>
+          </div>
+
+          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+            <p className="text-sm font-semibold text-[var(--color-ink)]">
+              Solution 2 — Correct the Vendor Bill Subsidiary
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Change the Vendor Bill subsidiary if the source document belongs
+              to a different subsidiary.
+            </p>
+          </div>
+
+          <div className="rounded-md border border-amber-200 bg-white/70 p-3">
+            <p className="text-sm font-semibold text-[var(--color-ink)]">
+              Solution 3 — Replace the Selected Item
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              Select an Item that is associated with the Vendor Bill
+              subsidiary.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {onEdit && (
+        <div className="mt-4 flex justify-end border-t border-amber-200 pt-4">
+          <Button
+            type="button"
+            intent="secondary"
+            onClick={onEdit}
+          >
+            Edit OCR Data
+          </Button>
+        </div>
+      )}
     </div>
   )
+}
+
+function findNameMatchedTarget(sourceField, actualFields) {
+  if (sourceField.is_custom) return null
+
+  const sourceCandidates = getMappingNameCandidates(sourceField)
+  if (!sourceCandidates.length) return null
+
+  const expectedScope =
+    sourceField.scope === 'line' ? 'line' : 'body'
+
+  const matches = actualFields.filter((target) => {
+    if (target.scope !== expectedScope) return false
+    if (target.is_custom) return false
+
+    const targetCandidates = getMappingNameCandidates(target)
+    return targetCandidates.some((targetName) =>
+      sourceCandidates.includes(targetName),
+    )
+  })
+
+  return matches.length === 1 ? matches[0] : null
 }
 
 function getApplicationFields(context) {
@@ -249,6 +267,7 @@ function getApplicationFields(context) {
   const headerFields = standardKeys.map((key) => ({
     key,
     label: STANDARD_LABELS[key] || key,
+    is_custom: false,
     scope: 'body',
     type: 'text',
   }))
@@ -257,6 +276,7 @@ function getApplicationFields(context) {
     key: field.id || field.key,
     label: field.label || field.id || field.key,
     description: field.description || '',
+    is_custom: true,
     scope:
       field.scope === 'line'
         ? 'line'
@@ -276,6 +296,7 @@ function getApplicationFields(context) {
   const fallback = fallbackKeys.map((key) => ({
     key,
     label: STANDARD_LABELS[key] || key,
+    is_custom: false,
     scope: 'body',
     type: typeof data?.[key] === 'number' ? 'number' : 'text',
   }))
@@ -284,9 +305,12 @@ function getApplicationFields(context) {
   const deduped = new Map()
 
   fields.forEach((field) => {
-    if (field.key) {
-      deduped.set(field.key, field)
-    }
+    if (!field.key) return
+
+    const identity =
+      `${field.key}:${field.scope === 'line' ? 'line' : 'body'}`
+
+    deduped.set(identity, field)
   })
 
   const lineItemFields = new Set()
@@ -306,16 +330,13 @@ function getApplicationFields(context) {
 
   lineItemFields.forEach((key) => {
     if (!key) return
-    // Do NOT overwrite a field that was already explicitly defined as a
-    // header/custom field (e.g. requested.standard_fields). Line items
-    // often reuse common key names like "description", and letting the
-    // auto-detected line-item key silently flip an explicit header
-    // field's scope to 'line' causes a header-mapped selection to be
-    // saved with the wrong scope and get rejected by the backend.
-    if (deduped.has(key)) return
-    deduped.set(key, {
+    const identity = `${key}:line`
+
+    if (deduped.has(identity)) return
+    deduped.set(identity, {
       key,
       label: STANDARD_LABELS[key] || key,
+      is_custom: false,
       scope: 'line',
       type:
         typeof lineItems?.[0]?.[key] === 'number'
@@ -457,31 +478,32 @@ export default function OcrFieldMappingPage() {
   const [loadingContext, setLoadingContext] = useState(true)
   const [catalogueLoading, setCatalogueLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [mapping, setMapping] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [mapAttempt, setMapAttempt] = useState(0)
-  const [refreshingFields, setRefreshingFields] = useState(false)
   const [validating, setValidating] = useState(false)
   const [validationResult, setValidationResult] = useState(null)
   const [posting, setPosting] = useState(false)
   const [postingResult, setPostingResult] = useState(null)
-  const [aiDiagnostics, setAiDiagnostics] = useState([])
-  const [diagnosing, setDiagnosing] = useState(false)
-  const [diagnosticError, setDiagnosticError] = useState('')
+
+  // Keep the optional inline editor isolated so it can be removed without
+  // changing the validation or posting flow.
+  const [inlineEditorOpen, setInlineEditorOpen] = useState(false)
+  const [validationStale, setValidationStale] = useState(false)
 
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(CONTEXT_KEY)
       if (!raw) {
-        setError(USER_FRIENDLY_MESSAGES.loadContext)
+        setError(
+          'No OCR result is available for Field Mapping. Return to OCR and select a completed result.',
+        )
         return
       }
 
       setContext(JSON.parse(raw))
     } catch (err) {
       console.error('Failed to load OCR mapping context:', err)
-      setError(USER_FRIENDLY_MESSAGES.loadContext)
+      setError('The OCR mapping context is invalid or expired.')
     } finally {
       setLoadingContext(false)
     }
@@ -490,16 +512,6 @@ export default function OcrFieldMappingPage() {
   const applicationFields = useMemo(
     () => getApplicationFields(context),
     [context],
-  )
-
-  const aiDiagnosticsByReference = useMemo(
-    () => new Map(
-      (aiDiagnostics || []).map((diagnostic) => [
-        diagnostic.error_reference,
-        diagnostic,
-      ]),
-    ),
-    [aiDiagnostics],
   )
 
   const documentIds = useMemo(() => {
@@ -563,6 +575,55 @@ export default function OcrFieldMappingPage() {
       ? documentIds[0]
       : null
 
+  const inlineEditorCustomFieldTypes = useMemo(() => {
+    const customFields = Array.isArray(
+      context?.requested_fields?.custom_fields,
+    )
+      ? context.requested_fields.custom_fields
+      : []
+
+    return customFields.reduce((acc, field) => {
+      if (field?.key) {
+        acc[field.key] =
+          field.data_type ||
+          field.type ||
+          'text'
+      }
+      return acc
+    }, {})
+  }, [context?.requested_fields])
+
+  const inlineEditorResult = useMemo(() => {
+    if (
+      processingMode !== 'SINGLE' ||
+      !context?.document_id
+    ) {
+      return null
+    }
+
+    return {
+      status: 'APPROVED',
+      upload_id: context.upload_id || null,
+      document_id: context.document_id,
+      version_id: context.version_id || null,
+      version_number: context.version_number || null,
+      filename: context.filename || 'OCR document',
+      data: context.data || {},
+    }
+  }, [
+    context,
+    processingMode,
+  ])
+
+  const hasItemSubsidiaryMismatch =
+    processingMode === 'SINGLE' &&
+    Array.isArray(validationResult?.errors) &&
+    validationResult.errors.some(
+      (item) =>
+        String(item?.type || '').toUpperCase() ===
+        'ITEM_SUBSIDIARY_MISMATCH',
+    )
+
   const catalogueOptionsByScope = useMemo(() => {
     const body = catalogue.filter(
       (field) =>
@@ -577,10 +638,7 @@ export default function OcrFieldMappingPage() {
   }, [catalogue])
 
   const loadCatalogueAndSavedMappings = useCallback(
-  async ({
-    forceRefresh = false,
-    runAiMapping = false,
-  } = {}) => {
+  async () => {
     if (!context?.connection_id) {
       const message =
         'No NetSuite connection is available for this OCR result.'
@@ -589,8 +647,7 @@ export default function OcrFieldMappingPage() {
       throw new Error(message)
     }
 
-    setCatalogueLoading(!forceRefresh)
-    setRefreshingFields(forceRefresh)
+    setCatalogueLoading(true)
     setError('')
     setNotice('')
 
@@ -602,7 +659,7 @@ export default function OcrFieldMappingPage() {
         netsuiteApi.getFieldCatalogue(
           context.connection_id,
           'vendorBill',
-          forceRefresh,
+          true,
         ),
 
         netsuiteApi.listFieldMappings(
@@ -688,6 +745,7 @@ export default function OcrFieldMappingPage() {
             source_field_label: field.label,
             source_scope: field.scope,
             source_datatype: field.type,
+            is_custom: Boolean(field.is_custom),
 
             // Only keep a target_field_id when we found it (with a
             // known, verified scope) in the current catalogue. If it
@@ -739,160 +797,79 @@ export default function OcrFieldMappingPage() {
           }
         })
 
-      let nextMappings =
-        initialMappings
-
-      if (
-        runAiMapping &&
-        actualFields.length > 0 &&
-        applicationFields.length > 0
-      ) {
-        const aiResponse = await netsuiteApi.suggestFieldMappings(
-          context.connection_id,
-          'vendorBill',
-          applicationFields.map((field) => ({
-            key: field.key,
-            label: field.label,
-            description: field.description || '',
-            scope: field.scope === 'line' ? 'line' : 'header',
-            datatype: [
-              'text',
-              'number',
-              'date',
-              'boolean',
-              'currency',
-            ].includes(field.type)
-              ? field.type
-              : 'text',
-            is_custom: Boolean(field.is_custom),
-          })),
+      const nextMappings = initialMappings.map((item) => {
+        const savedMapping = savedBySource.get(
+          item.source_field_key,
         )
 
-        const aiPayload = aiResponse?.data ?? aiResponse ?? {}
-        const aiMappings = Array.isArray(aiPayload)
-          ? aiPayload
-          : aiPayload?.mappings || aiPayload?.results || []
+        const savedMatchMethod =
+          savedMapping?.metadata?.match_method
 
-        const targetsByKey = new Map(
-          actualFields.map((field) => [
-            `${String(field.id).toLowerCase()}:${field.scope}`,
-            field,
-          ]),
-        )
-
-        nextMappings = initialMappings.map((item) => {
-          // A mapping already saved for this source field is authoritative.
-          // AI should never silently replace a user's confirmed mapping.
-          const savedMapping = savedBySource.get(
-            item.source_field_key,
-          )
-          if (savedMapping?.target_field_id) {
-            return item
-          }
-
-          const suggestion = aiMappings.find(
-            (mapping) =>
-              String(
-                mapping?.source_field_key ||
-                  mapping?.source_key ||
-                  mapping?.source_field ||
-                  '',
-              ) === item.source_field_key,
-          )
-
-          if (!suggestion) {
-            return item
-          }
-
-          const status = String(
-            suggestion.status ||
-              suggestion.mapping_status ||
-              'UNRESOLVED',
-          ).toUpperCase()
-
-          let targetId =
-            suggestion.target_field_id ||
-            suggestion.suggested_target_id ||
-            suggestion.target_field ||
-            null
-
-          if (
-            targetId &&
-            typeof targetId === 'object'
-          ) {
-            targetId =
-              targetId.field_id ||
-              targetId.id ||
-              targetId.internal_id ||
-              null
-          }
-
-          const nestedTarget =
-            suggestion.suggested_target ||
-            suggestion.target ||
-            null
-
-          if (
-            !targetId &&
-            nestedTarget &&
-            typeof nestedTarget === 'object'
-          ) {
-            targetId =
-              nestedTarget.field_id ||
-              nestedTarget.id ||
-              nestedTarget.internal_id ||
-              null
-          }
-
-          const expectedScope =
-            item.source_scope === 'line'
-              ? 'line'
-              : 'body'
-
-          const target = targetId
-            ? targetsByKey.get(
-                `${String(targetId).toLowerCase()}:${expectedScope}`,
-              )
-            : null
-
-          if (status !== 'MAPPED' || !target) {
-            return {
-              ...item,
-              target_field_id: null,
-              target_field_label: null,
-              target_scope: null,
-              target_datatype: null,
-              is_required: false,
-              is_custom: false,
-              reference_type: null,
-              status:
-                status === 'AMBIGUOUS'
-                  ? 'AMBIGUOUS'
-                  : 'UNRESOLVED',
-              confidence:
-                suggestion.confidence ?? null,
-              candidates:
-                suggestion.candidates || [],
-              metadata: suggestion.metadata || {},
-            }
-          }
-
+        if (
+          savedMapping?.target_field_id &&
+          savedMatchMethod === 'manual'
+        ) {
           return {
             ...item,
-            target_field_id: target.id,
-            target_field_label: target.label,
-            target_scope: target.scope,
-            target_datatype: target.type,
-            is_required: Boolean(target.is_required),
-            is_custom: Boolean(target.is_custom),
-            reference_type: target.reference_type || null,
+            target_field_id: savedMapping.target_field_id,
+            target_field_label: savedMapping.target_field_label || null,
+            target_scope: savedMapping.target_scope || null,
+            target_datatype: savedMapping.target_datatype || null,
+            is_required: Boolean(savedMapping.is_required),
+            is_custom: Boolean(savedMapping.is_custom),
+            reference_type: savedMapping.reference_type || null,
             status: 'MAPPED',
-            confidence: suggestion.confidence ?? null,
-            candidates: suggestion.candidates || [],
-            metadata: suggestion.metadata || {},
+            confidence: savedMapping.confidence ?? 1,
+            metadata: {
+              ...(savedMapping.metadata || {}),
+              match_method: 'manual',
+            },
           }
-        })
-      }
+        }
+
+        const target = findNameMatchedTarget(
+          {
+            key: item.source_field_key,
+            label: item.source_field_label,
+            id: item.source_field_key,
+            scope: item.source_scope,
+            is_custom: Boolean(item.is_custom),
+          },
+          actualFields,
+        )
+
+        if (!target) {
+          return {
+            ...item,
+            target_field_id: null,
+            target_field_label: null,
+            target_scope: null,
+            target_datatype: null,
+            is_required: false,
+            is_custom: false,
+            reference_type: null,
+            status: 'UNRESOLVED',
+            confidence: null,
+            candidates: [],
+            metadata: { match_method: null },
+          }
+        }
+
+        return {
+          ...item,
+          target_field_id: target.id,
+          target_field_label: target.label,
+          target_scope: target.scope,
+          target_datatype: target.type,
+          is_required: Boolean(target.is_required),
+          is_custom: Boolean(target.is_custom),
+          reference_type: target.reference_type || null,
+          status: 'MAPPED',
+          confidence: 1,
+          candidates: [],
+          metadata: { match_method: 'name' },
+        }
+      })
 
       setMappings(nextMappings)
     } catch (err) {
@@ -901,7 +878,22 @@ export default function OcrFieldMappingPage() {
         err,
       )
 
-      setError(USER_FRIENDLY_MESSAGES.loadFields)
+      const message =
+        err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to load NetSuite Vendor Bill fields.'
+      
+      const errorCode = 
+        err?.response?.data?.code || null
+      
+      setError(message)
+
+      if (errorCode === 'NETSUITE_REAUTH_REQUIRED'){
+        setMappings([])
+        setCatalogue([])
+        throw err
+      }
 
       setMappings(
         applicationFields.map(
@@ -932,7 +924,6 @@ export default function OcrFieldMappingPage() {
       throw err
     } finally {
       setCatalogueLoading(false)
-      setRefreshingFields(false)
     }
   },
   [
@@ -941,55 +932,16 @@ export default function OcrFieldMappingPage() {
   ],
 )
 
-  const handleMapFields = async () => {
-    if (!context?.connection_id) {
-      setError(USER_FRIENDLY_MESSAGES.missingConnection)
-      return
-    }
+  useEffect(() => {
+    if (!context?.connection_id) return
 
-    try {
-      setMapping(true)
-
-      await loadCatalogueAndSavedMappings({
-        forceRefresh: false,
-        runAiMapping: true,
-      })
-
-      setMapAttempt((current) => Math.min(2, current + 1))
-
-      setNotice(
-        'NetSuite Vendor Bill fields loaded. Review the suggested mappings below.',
+    loadCatalogueAndSavedMappings().catch((err) => {
+      console.error(
+        'Automatic NetSuite field mapping load failed:',
+        err,
       )
-    } catch (err) {
-      console.error('Field mapping load failed:', err)
-      setError(USER_FRIENDLY_MESSAGES.mapFields)
-      setNotice('')
-    } finally {
-      setMapping(false)
-      setCatalogueLoading(false)
-      setRefreshingFields(false)
-    }
-  }
-
-  const handleRefreshFields = async () => {
-  if (!context?.connection_id) {
-    setError(USER_FRIENDLY_MESSAGES.missingConnection)
-    return
-  }
-
-  try {
-    await loadCatalogueAndSavedMappings({
-      forceRefresh: true,
-      runAiMapping: false,
     })
-
-    setNotice(
-      'NetSuite Vendor Bill fields were refreshed from the connected account.',
-    )
-  } catch (err) {
-    console.error('NetSuite field refresh failed:', err)
-  }
-}
+  }, [context?.connection_id, loadCatalogueAndSavedMappings])
 
   const updateMapping = (
   sourceKey,
@@ -1056,6 +1008,11 @@ export default function OcrFieldMappingPage() {
 
             confidence:
               target ? 1 : 0,
+
+            metadata: {
+              ...(item.metadata || {}),
+              match_method: target ? 'manual' : null,
+            },
           }
         : item,
     ),
@@ -1115,7 +1072,9 @@ export default function OcrFieldMappingPage() {
 
   const handleSaveMapping = async () => {
     if (!context?.connection_id) {
-      setError(USER_FRIENDLY_MESSAGES.missingConnection)
+      setError(
+        'A NetSuite connection is required to save mapping.',
+      )
       return
     }
 
@@ -1148,7 +1107,12 @@ export default function OcrFieldMappingPage() {
         err,
       )
     
-      setError(USER_FRIENDLY_MESSAGES.saveMapping)
+      setError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Unable to save field mapping.',
+      )
     
       return false
     } finally {
@@ -1156,57 +1120,11 @@ export default function OcrFieldMappingPage() {
     }
   }
 
-const requestNetSuiteDiagnostics = useCallback(
-  async (validationIds) => {
-    const ids = [
-      ...new Set(
-        (validationIds || [])
-          .filter(Boolean)
-          .map(String),
-      ),
-    ]
-
-    if (!ids.length || !context?.connection_id) {
-      setAiDiagnostics([])
-      setDiagnosticError('')
-      return
-    }
-
-    setAiDiagnostics([])
-    setDiagnosticError('')
-    setDiagnosing(true)
-
-    try {
-      const result =
-        await aiIntegrationApi.diagnoseNetSuiteValidation({
-          validation_ids: ids,
-          connection_id: context.connection_id,
-        })
-
-      setAiDiagnostics(
-        Array.isArray(result?.diagnostics)
-          ? result.diagnostics
-          : [],
-      )
-    } catch (err) {
-      console.error(
-        'NetSuite resolution guidance failed:',
-        err,
-      )
-
-      setDiagnosticError(
-        'We couldn’t prepare the resolution guidance right now. The validation result above is still available. Please try again.',
-      )
-    } finally {
-      setDiagnosing(false)
-    }
-  },
-  [context?.connection_id],
-)
-
 const runValidation = async () => {
   if (!context?.connection_id) {
-    setError(USER_FRIENDLY_MESSAGES.missingConnection)
+    setError(
+      'A NetSuite connection is required for validation.',
+    )
     return
   }
 
@@ -1214,7 +1132,9 @@ const runValidation = async () => {
     processingMode === 'SINGLE' &&
     !documentId
   ) {
-    setError(USER_FRIENDLY_MESSAGES.missingDocument)
+    setError(
+      'This OCR result has not been saved yet. Please save it before continuing.',
+    )
     return
   }
 
@@ -1222,7 +1142,9 @@ const runValidation = async () => {
     processingMode === 'MULTIPLE' &&
     !documentIds.length
   ) {
-    setError(USER_FRIENDLY_MESSAGES.missingDocuments)
+    setError(
+      'No OCR documents are available for batch validation.',
+    )
     return
   }
 
@@ -1230,8 +1152,6 @@ const runValidation = async () => {
     setValidating(true)
     setError('')
     setNotice('')
-    setAiDiagnostics([])
-    setDiagnosticError('')
 
     if (processingMode === 'SINGLE') {
       const result =
@@ -1241,20 +1161,7 @@ const runValidation = async () => {
         )
 
       setValidationResult(result)
-
-      const singleValidationErrors =
-        Array.isArray(result?.errors)
-          ? result.errors
-          : []
-
-      if (singleValidationErrors.length > 0 && result?.validation_id) {
-        void requestNetSuiteDiagnostics([
-          result.validation_id,
-        ])
-      } else {
-        setAiDiagnostics([])
-        setDiagnosticError('')
-      }
+      setValidationStale(false)
 
       sessionStorage.setItem(
         CONTEXT_KEY,
@@ -1329,27 +1236,7 @@ const runValidation = async () => {
           }
 
           setValidationResult(finalResult)
-
-          const failedValidationIds =
-            Array.isArray(finalResult?.results)
-              ? finalResult.results
-                  .filter(
-                    (item) =>
-                      Array.isArray(item?.errors) &&
-                      item.errors.length > 0 &&
-                      item?.validation_id,
-                  )
-                  .map((item) => item.validation_id)
-              : []
-
-          if (failedValidationIds.length > 0) {
-            void requestNetSuiteDiagnostics(
-              failedValidationIds,
-            )
-          } else {
-            setAiDiagnostics([])
-            setDiagnosticError('')
-          }
+          setValidationStale(false)
 
           sessionStorage.setItem(
             CONTEXT_KEY,
@@ -1375,7 +1262,10 @@ const runValidation = async () => {
               )
             }
           } else {
-            setError(USER_FRIENDLY_MESSAGES.batchValidate)
+            setError(
+              statusData.error ||
+                'NetSuite batch validation failed.',
+            )
           }
 
           return
@@ -1389,7 +1279,9 @@ const runValidation = async () => {
         )
       }
 
-      throw new Error(USER_FRIENDLY_MESSAGES.batchValidate)
+      throw new Error(
+        'NetSuite batch validation timed out while waiting for the worker.',
+      )
     }
 
     setError(
@@ -1402,9 +1294,10 @@ const runValidation = async () => {
     )
 
     setError(
-      processingMode === 'MULTIPLE'
-        ? USER_FRIENDLY_MESSAGES.batchValidate
-        : USER_FRIENDLY_MESSAGES.validate,
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to validate the OCR document(s) against NetSuite.',
     )
   } finally {
     setValidating(false)
@@ -1421,12 +1314,61 @@ const handleContinue = async () => {
 }
 
 
+const handleInlineEditorSaved = (savedResult) => {
+  const nextContext = {
+    ...context,
+    upload_id:
+      savedResult?.upload_id ||
+      context?.upload_id ||
+      null,
+    document_id:
+      savedResult?.document_id ||
+      context?.document_id ||
+      null,
+    version_id:
+      savedResult?.version_id ||
+      context?.version_id ||
+      null,
+    version_number:
+      savedResult?.version_number ||
+      context?.version_number ||
+      null,
+    filename:
+      savedResult?.filename ||
+      context?.filename ||
+      null,
+    data:
+      savedResult?.data ||
+      context?.data ||
+      {},
+  }
+
+  setContext(nextContext)
+  sessionStorage.setItem(
+    CONTEXT_KEY,
+    JSON.stringify({
+      ...nextContext,
+      mappings,
+      mapping_completed: true,
+      validation_result: validationResult,
+    }),
+  )
+
+  setValidationStale(true)
+  setPostingResult(null)
+  setNotice(
+    'OCR changes were saved successfully. Validate Again to re-check the updated data against NetSuite.',
+  )
+}
+
 const handleValidateAgain = async () => {
   await runValidation()
 }
 const handlePost = async () => {
   if (!context?.connection_id) {
-    setError(USER_FRIENDLY_MESSAGES.missingConnection)
+    setError(
+      'A NetSuite connection is required before posting.',
+    )
     return
   }
 
@@ -1439,67 +1381,65 @@ const handlePost = async () => {
     }
 
     if (!documentId) {
-      setError(USER_FRIENDLY_MESSAGES.missingDocument)
+      setError(
+        'The OCR document is missing.',
+      )
       return
     }
 
-    try {
+    try{
       setPosting(true)
       setError('')
       setNotice('')
       setPostingResult(null)
 
-      const result =
-        await netsuiteApi.postOCRVendorBill(
-          documentId,
-          context.connection_id,
-        )
+      const result = await netsuiteApi.postOCRVendorBill(documentId,context.connection_id)
 
       setPostingResult(result)
-
-      setNotice(
-        `✓ Vendor Bill posted successfully to NetSuite. Record ID: ${
-          result?.netsuite_record_id || 'created'
-        }`,
-      )
-    } catch (err) {
-      console.error(
-        'NetSuite Vendor Bill posting failed:',
-        err,
-      )
-
-      setError(USER_FRIENDLY_MESSAGES.post)
-    } finally {
+      setNotice(`✓ Vendor Bill posted successfully to NetSuite. Record ID: ${result?.netsuite_record_id || 'created'}`)
+    }
+    catch(err){
+      console.error('NetSuite Vendor Bill posting failed:',err)
+      
+      setError(err?.response?.data?.detail || err?.response?.data?.error || err?.message || 'Unable to create the Vendor Bill in NetSuite.')
+    }
+    finally{
       setPosting(false)
     }
-
     return
   }
 
   if (processingMode === 'MULTIPLE') {
-    if (
-      !Array.isArray(validationResult?.results) ||
-      validationResult.results.length === 0
-    ) {
+    if (!Array.isArray(documentIds) || documentIds.length === 0) {
       setError(
-        'No batch validation results are available for posting.',
+        'No OCR documents are available for batch posting.',
       )
       return
     }
 
-    const validatedDocumentIds =
-      validationResult.results
-        .filter(
-          (item) =>
-            String(item?.status || '').toUpperCase() ===
-            'VALIDATED',
-        )
-        .map((item) => item?.document_id)
-        .filter(Boolean)
+    const batchResults = Array.isArray(validationResult?.results)
+      ? validationResult.results
+      : []
 
-    if (!validatedDocumentIds.length) {
+    if (batchResults.length !== documentIds.length) {
       setError(
-        'No successfully validated documents are available for posting.',
+        'The batch has not completed validation for every file yet.',
+      )
+      return
+    }
+
+    const validatedDocumentIds = batchResults
+      .filter(
+        (item) =>
+          String(item?.status || '').toUpperCase() ===
+          'VALIDATED',
+      )
+      .map((item) => item?.document_id)
+      .filter(Boolean)
+
+    if (validatedDocumentIds.length !== documentIds.length) {
+      setError(
+        'Every file in the batch must be successfully validated before posting.',
       )
       return
     }
@@ -1519,11 +1459,13 @@ const handlePost = async () => {
       const jobId = queued?.job_id
 
       if (!jobId) {
-        throw new Error(USER_FRIENDLY_MESSAGES.batchPost)
+        throw new Error(
+          'NetSuite batch posting did not return a job ID.',
+        )
       }
 
       setNotice(
-        `NetSuite batch posting started for ${validatedDocumentIds.length} document(s).`,
+        `NetSuite batch posting started for all ${validatedDocumentIds.length} document(s).`,
       )
 
       const maxAttempts = 120
@@ -1567,12 +1509,15 @@ const handlePost = async () => {
                 '✓ All validated OCR documents were posted successfully to NetSuite.',
               )
             } else {
-              setNotice(
+              setError(
                 `Batch posting completed with ${failedCount} failed document(s). Review the posting results.`,
               )
             }
           } else {
-            setError(USER_FRIENDLY_MESSAGES.batchPost)
+            setError(
+              statusData.error ||
+                'NetSuite batch posting failed.',
+            )
           }
 
           return
@@ -1586,14 +1531,21 @@ const handlePost = async () => {
         )
       }
 
-      throw new Error(USER_FRIENDLY_MESSAGES.batchPost)
+      throw new Error(
+        'NetSuite batch posting timed out while waiting for the worker.',
+      )
     } catch (err) {
       console.error(
         'NetSuite batch Vendor Bill posting failed:',
         err,
       )
 
-      setError(USER_FRIENDLY_MESSAGES.batchPost)
+      setError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Unable to post the validated OCR documents to NetSuite.',
+      )
     } finally {
       setPosting(false)
     }
@@ -1601,7 +1553,9 @@ const handlePost = async () => {
     return
   }
 
-  setError(USER_FRIENDLY_MESSAGES.invalidMode)
+  setError(
+    'Unsupported OCR processing mode.',
+  )
 }
   if (loadingContext) {
     return (
@@ -1774,43 +1728,32 @@ const handlePost = async () => {
                         </span>
                       </div>
 
-                      {(item?.error || errors.length > 0) && (
-                        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-                          <p className="text-xs font-semibold text-red-800">
-                            Validation Errors
-                          </p>
+{item?.summary && (
+                         <p className="mt-3 text-xs text-[var(--color-muted)]">
+                           {Number(item.summary.source_rows || 0)} source rows ·{' '}
+                           {Number(item.summary.unique_netsuite_items || 0)} unique NetSuite items ·{' '}
+                           {Number(item.summary.matched_rows || 0)} matched
+                         </p>
+                       )}
 
-                          <div className="mt-1 space-y-1">
-                            {item?.error && errors.length === 0 && (
-                              <p className="text-sm text-red-700">
-                                {USER_FRIENDLY_MESSAGES.batchValidate}
-                              </p>
-                            )}
+                       {(item?.error || errors.length > 0) && (
+                         <div className="mt-3 space-y-3">
+                           {item?.error && (
+                             <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                               <p className="text-sm text-red-700">
+                                 {item.error}
+                               </p>
+                             </div>
+                           )}
 
-                            {errors.map((errorItem, errorIndex) => {
-                              const errorReference =
-                                getErrorReference(
-                                  item.validation_id,
-                                  errorIndex,
-                                )
-                              const diagnostic =
-                                aiDiagnosticsByReference.get(
-                                  errorReference,
-                                )
-
-                              return (
-                                <ValidationErrorDisplay
-                                  key={`${errorItem?.type || 'error'}-${errorIndex}`}
-                                  errorItem={errorItem}
-                                  diagnostic={diagnostic}
-                                  diagnosing={diagnosing}
-                                  diagnosticError={diagnosticError}
-                                />
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
+                           {errors.map((errorItem, errorIndex) => (
+                             <ValidationErrorDisplay
+                               key={`${errorItem?.type || 'error'}-${errorIndex}`}
+                               errorItem={errorItem}
+                             />
+                           ))}
+                         </div>
+                       )}
                     </div>
                   )
                 })}
@@ -1825,7 +1768,7 @@ const handlePost = async () => {
       type="button"
       intent="secondary"
       onClick={handleValidateAgain}
-      disabled={validating || saving || posting || diagnosing}
+      disabled={validating || saving || posting}
       isLoading={validating}
     >
       Validate Again
@@ -1935,7 +1878,7 @@ const handlePost = async () => {
 
               {item?.error && (
                 <p className="mt-2 text-sm text-red-700">
-                  {USER_FRIENDLY_MESSAGES.batchPost}
+                  {item.error}
                 </p>
               )}
             </div>
@@ -1954,8 +1897,8 @@ const handlePost = async () => {
             </h2>
 
             <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Vendor, Item, and Item/Subsidiary compatibility were checked
-              against the connected NetSuite account.
+              Vendor and Item existence was checked against the connected
+              NetSuite account.
             </p>
           </div>
 
@@ -1997,51 +1940,75 @@ const handlePost = async () => {
             </p>
 
             <p className="mt-1 font-medium">
-              {validationResult.summary
-                ? `${Number(validationResult.summary.source_rows || 0)} source rows · ${Number(validationResult.summary.unique_netsuite_items || 0)} unique NetSuite items`
-                : `${(validationResult.items || []).filter((item) => item.matched).length}/${(validationResult.items || []).length} matched`}
+              {
+                (validationResult.items || []).filter(
+                  (item) => item.matched,
+                ).length
+              }
+              /
+              {(validationResult.items || []).length} matched
             </p>
-
-            {validationResult.summary && (
-              <p className="mt-1 text-xs text-[var(--color-muted)]">
-                {Number(validationResult.summary.matched_rows || 0)} matched ·{' '}
-                {Number(validationResult.summary.unmatched_rows || 0)} unmatched
-              </p>
-            )}
           </div>
         </div>
 
+        {validationResult.summary && (
+          <p className="mt-3 text-xs text-[var(--color-muted)]">
+            {Number(validationResult.summary.source_rows || 0)} source rows ·{' '}
+            {Number(validationResult.summary.unique_netsuite_items || 0)} unique NetSuite items ·{' '}
+            {Number(validationResult.summary.matched_rows || 0)} matched ·{' '}
+            {Number(validationResult.summary.unmatched_rows || 0)} unmatched
+          </p>
+        )}
         {(validationResult.errors || []).length > 0 && (
-          <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
-            <p className="text-sm font-semibold text-red-800">
-              Validation Errors
-            </p>
-
-            <div className="mt-2 space-y-2">
-              {validationResult.errors.map((item, index) => {
-                const errorReference =
-                  getErrorReference(
-                    validationResult.validation_id,
-                    index,
-                  )
-                const diagnostic =
-                  aiDiagnosticsByReference.get(
-                    errorReference,
-                  )
-
-                return (
-                  <ValidationErrorDisplay
-                    key={`${item.type || 'error'}-${index}`}
-                    errorItem={item}
-                    diagnostic={diagnostic}
-                    diagnosing={diagnosing}
-                    diagnosticError={diagnosticError}
-                  />
+          <div className="mt-5 space-y-3">
+            {validationResult.errors.map((item, index) => {
+              const firstMismatchIndex =
+                validationResult.errors.findIndex(
+                  (candidate) =>
+                    String(candidate?.type || '').toUpperCase() ===
+                    'ITEM_SUBSIDIARY_MISMATCH',
                 )
-              })}
-            </div>
+
+              return (
+                <ValidationErrorDisplay
+                  key={`${item?.type || 'error'}-${index}`}
+                  errorItem={item}
+                  onEdit={
+                    ENABLE_INLINE_OCR_EDITOR &&
+                    hasItemSubsidiaryMismatch &&
+                    index === firstMismatchIndex &&
+                    inlineEditorResult &&
+                    !inlineEditorOpen
+                      ? () => setInlineEditorOpen(true)
+                      : undefined
+                  }
+                />
+              )
+            })}
           </div>
         )}
+
+        {validationStale && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            The OCR data has been updated after the previous validation.
+            Please validate again before posting.
+          </div>
+        )}
+
+        {ENABLE_INLINE_OCR_EDITOR &&
+          inlineEditorOpen &&
+          inlineEditorResult &&
+          hasItemSubsidiaryMismatch && (
+            <div className="mt-5">
+              <OcrValidationInlineEditor
+                result={inlineEditorResult}
+                customFieldTypes={inlineEditorCustomFieldTypes}
+                connectionId={context?.connection_id || null}
+                onSaved={handleInlineEditorSaved}
+                onClose={() => setInlineEditorOpen(false)}
+              />
+            </div>
+          )}
 
         <div className="mt-5 flex flex-wrap justify-end gap-3">
           {validationResult.status === 'VALIDATION_FAILED' && (
@@ -2049,7 +2016,7 @@ const handlePost = async () => {
               type="button"
               intent="secondary"
               onClick={handleValidateAgain}
-              disabled={validating || saving || posting || diagnosing}
+              disabled={validating || saving || posting}
               isLoading={validating}
             >
               Validate Again
@@ -2091,54 +2058,13 @@ const handlePost = async () => {
 )}        
 
         <Card className="p-5 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="text-base font-semibold text-[var(--color-ink)]">
-                AI-assisted Mapping
-              </h2>
-              <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Fetch the actual Vendor Bill fields from this NetSuite connection, then preselect the best match for every application field.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-  {mapAttempt > 0 && (
-    <span className="rounded-full bg-[var(--color-canvas)] px-3 py-1 text-xs font-medium text-[var(--color-muted)]">
-      AI mapping uses up to 2 attempts automatically
-    </span>
-  )}
-
-  <Button
-    type="button"
-    intent="secondary"
-    onClick={handleRefreshFields}
-    disabled={
-      refreshingFields ||
-      mapping ||
-      catalogueLoading ||
-      !context?.connection_id
-    }
-    isLoading={refreshingFields}
-  >
-    Refresh Fields
-  </Button>
-
-  <Button
-    type="button"
-    onClick={handleMapFields}
-    disabled={
-      mapping ||
-      catalogueLoading ||
-      refreshingFields ||
-      !context?.connection_id ||
-      mapAttempt >= 2
-    }
-    isLoading={mapping || catalogueLoading}
-  >
-    {mapAttempt === 0
-      ? 'Map Fields'
-      : 'Run AI Mapping Again'}
-  </Button>
-</div>
+          <div>
+            <h2 className="text-base font-semibold text-[var(--color-ink)]">
+              NetSuite Field Mapping
+            </h2>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Fields are automatically matched by normalized field names. Unmatched or custom fields can be mapped manually below.
+            </p>
           </div>
 
           {!context?.connection_id && (
@@ -2153,13 +2079,13 @@ const handlePost = async () => {
             </div>
           )}
 
-          {!catalogueLoading && catalogue.length === 0 && mapAttempt === 0 && (
+          {!catalogueLoading && catalogue.length === 0 && context?.connection_id && (
             <div className="mt-5 rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
               <p className="text-sm font-medium text-[var(--color-ink)]">
-                Mapping table is not loaded yet
+                No NetSuite Vendor Bill fields were returned.
               </p>
               <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Click “Map Fields” to fetch the connected NetSuite field catalogue.
+                Check the NetSuite connection and try again.
               </p>
             </div>
           )}
@@ -2230,19 +2156,17 @@ const handlePost = async () => {
                             }`}
                           >
                             {item.status === 'MAPPED'
-                              ? 'AI suggestion / mapped'
-                              : 'Unresolved'}
+                              ? item.metadata?.match_method === 'name'
+                                ? 'Auto-matched by name'
+                                : 'Mapped'
+                              : 'Unresolved — select manually'}
                           </span>
 
-                          {item.confidence !== null &&
-                            item.confidence !== undefined && (
-                              <span className="text-[11px] text-[var(--color-muted)]">
-                                {Math.round(
-                                  Number(item.confidence) * 100,
-                                )}
-                                % confidence
-                              </span>
-                            )}
+                          {item.metadata?.match_method === 'name' && (
+                            <span className="text-[11px] text-[var(--color-muted)]">
+                              Exact normalized name match
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2258,7 +2182,7 @@ const handlePost = async () => {
                 type="button"
                 intent="secondary"
                 onClick={handleSaveMapping}
-                disabled={saving || mapping || validating || posting}
+                disabled={saving || validating || posting}
                 isLoading={saving}
               >
                 Save Mapping
@@ -2269,7 +2193,6 @@ const handlePost = async () => {
                 onClick={handleContinue}
                 disabled={
                   saving ||
-                  mapping ||
                   validating ||
                   posting ||
                   !mappings.length

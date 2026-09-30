@@ -129,23 +129,24 @@ class NetSuiteConnectionService:
                 },
             )
 
-            # Reference/master data is synchronized asynchronously. OAuth
-            # callback must remain fast and must not block on a large account.
-            try:
-                from netsuite.tasks import sync_netsuite_reference_data
+            # Reference/master-data synchronization is intentionally not triggered
+            # from the OAuth callback. Connecting a NetSuite account must not depend
+            # on Celery or Redis availability.
+            # try:
+            #     from netsuite.tasks import sync_netsuite_reference_data
 
-                if hasattr(sync_netsuite_reference_data, "delay"):
-                    sync_netsuite_reference_data.delay(str(connection.id))
-                else:
-                    logger.warning(
-                        "Celery task dispatch unavailable; reference sync not queued — connection=%s",
-                        connection.id,
-                    )
-            except Exception:
-                logger.exception(
-                    "Failed to queue NetSuite reference sync — connection=%s",
-                    connection.id,
-                )
+            #     if hasattr(sync_netsuite_reference_data, "delay"):
+            #         sync_netsuite_reference_data.delay(str(connection.id))
+            #     else:
+            #         logger.warning(
+            #             "Celery task dispatch unavailable; reference sync not queued — connection=%s",
+            #             connection.id,
+            #         )
+            # except Exception:
+            #     logger.exception(
+            #         "Failed to queue NetSuite reference sync — connection=%s",
+            #         connection.id,
+            #     )
 
         except Exception as exc:
 
@@ -2668,6 +2669,9 @@ class NetSuiteFieldMappingService:
             )
             return self._catalogue_payload(catalogue, source="netsuite", stale=False)
 
+        except NetSuiteTokenExchangeException:
+            raise
+
         except Exception as exc:
             logger.exception(
                 "Failed to fetch NetSuite metadata catalogue — connection=%s record_type=%s",
@@ -3590,6 +3594,9 @@ class NetSuiteValidationService:
                 limit=limit,
                 offset=0,
             )
+        
+        except NetSuiteTokenExchangeException:
+            raise
 
         except Exception as exc:
             logger.exception(
@@ -3673,6 +3680,10 @@ class NetSuiteValidationService:
                 query=query,
                 limit=10,
             )
+
+        except NetSuiteTokenExchangeException:
+            raise
+
         except Exception as exc:
             logger.exception(
                 "Live NetSuite %s lookup failed — connection=%s value=%r",

@@ -70,7 +70,52 @@ def raise_for_record_response(response: requests.Response, *, path: str) -> None
 
 
 def raise_for_token_response(response: requests.Response) -> None:
-    if not response.ok:
+    if response.ok:
+        return
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    error_code = (
+        payload.get("error")
+        if isinstance(payload, dict)
+        else None
+    )
+
+    error_description = (
+        payload.get("error_description")
+        if isinstance(payload, dict)
+        else None
+    )
+
+    if error_code == "invalid_grant":
         raise NetSuiteTokenExchangeException(
-            'NetSuite rejected the authentication request. Please reconnect your account.'
+            "NETSUITE_INVALID_GRANT: "
+            "The NetSuite refresh token is no longer valid."
         )
+
+    if error_code == "invalid_client":
+        raise NetSuiteTokenExchangeException(
+            "NETSUITE_INVALID_CLIENT: "
+            "The NetSuite client credentials were rejected."
+        )
+
+    if error_code == "unsupported_grant_type":
+        raise NetSuiteTokenExchangeException(
+            "NETSUITE_UNSUPPORTED_GRANT: "
+            "NetSuite rejected the OAuth grant type."
+        )
+
+    safe_code = str(error_code or "unknown_error")
+
+    logger.error(
+        "NetSuite token request rejected — status=%s error=%s",
+        response.status_code,
+        safe_code,
+    )
+
+    raise NetSuiteTokenExchangeException(
+        f"NETSUITE_TOKEN_ERROR: {error_description or safe_code}"
+    )

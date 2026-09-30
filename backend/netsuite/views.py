@@ -21,7 +21,7 @@ from common.pagination import paginated_response
 from common.common_utils import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
-from netsuite.exceptions import NetSuiteAuthorizationDeniedException, NetSuiteConnectionNotFoundException, NetSuiteRecordFetchException
+from netsuite.exceptions import NetSuiteAuthorizationDeniedException, NetSuiteConnectionNotFoundException, NetSuiteRecordFetchException, NetSuiteTokenExchangeException
 from celery.result import AsyncResult
 from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting
 from accounts.models import User
@@ -1024,7 +1024,33 @@ class NetSuiteFieldCatalogueView(APIView):
                 ),
                 data=serializer.data,
             )
+        except NetSuiteTokenExchangeException:
+            return Response(
+                {
+                    "detail": (
+                        "Your NetSuite connection needs to be reconnected. "
+                        "The authorization has expired or is no longer valid. "
+                        "Please reconnect your NetSuite account and try again."
+                    ),
+                    "code": "NETSUITE_REAUTH_REQUIRED",
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        
         except NetSuiteConnectionNotFoundException as exc:
+            message = str(exc)
+            if 'not active' in message.lower():
+                return Response(
+                {
+                        "detail": (
+                            "Your NetSuite connection needs to be reconnected. "
+                            "The authorization has expired or is no longer valid. "
+                            "Please reconnect your NetSuite account and try again."
+                        ),
+                        "code": "NETSUITE_REAUTH_REQUIRED",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_404_NOT_FOUND,
@@ -1140,8 +1166,23 @@ class NetSuiteFieldMappingListCreateView(APIView):
                 ).data,
             )
         except NetSuiteConnectionNotFoundException as exc:
+            message = str(exc)
+
+            if "not active" in message.lower():
+                return Response(
+                    {
+                        "detail": (
+                            "Your NetSuite connection needs to be reconnected. "
+                            "The authorization has expired or is no longer valid. "
+                            "Please reconnect your NetSuite account and try again."
+                        ),
+                        "code": "NETSUITE_REAUTH_REQUIRED",
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
             return Response(
-                {"detail": str(exc)},
+                {"detail": message},
                 status=status.HTTP_404_NOT_FOUND,
             )
         except ValueError as exc:
@@ -1187,6 +1228,19 @@ class NetSuiteFieldMappingListCreateView(APIView):
                 message="Mappings saved successfully.",
             )
         except NetSuiteConnectionNotFoundException as exc:
+            message = str(exc)
+            if "not active" in message.lower():
+                return Response(
+                    {
+                        "detail": (
+                            "Your NetSuite connection needs to be reconnected. "
+                            "The authorization has expired or is no longer valid. "
+                            "Please reconnect your NetSuite account and try again."
+                        ),
+                        "code": "NETSUITE_REAUTH_REQUIRED",
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_404_NOT_FOUND,
@@ -1230,6 +1284,22 @@ class NetSuiteValidateDocumentView(APIView):
                 data=result,
             )
         except NetSuiteRecordFetchException as exc:
+            token_error = self._find_exception(
+                exc,
+                NetSuiteTokenExchangeException,
+            )
+            if token_error is not None:
+                return Response(
+                    {
+                        "detail": (
+                            "Your NetSuite connection needs to be reconnected. "
+                            "The authorization has expired or is no longer valid. "
+                            "Please reconnect your NetSuite account and try again."
+                        ),
+                        "code": "NETSUITE_REAUTH_REQUIRED",
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             logger.exception(
                 "NetSuite provider validation failed — document=%s connection=%s user=%s",
                 document_id,
@@ -1238,11 +1308,15 @@ class NetSuiteValidateDocumentView(APIView):
             )
             return Response(
                 {
-                    "detail": str(exc),
+                    "detail": (
+                        "We could not connect to NetSuite right now. "
+                        "Please check your NetSuite connection and try again."
+                    ),
                     "code": "NETSUITE_VALIDATION_UNAVAILABLE",
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+        
         except ValueError as exc:
             return Response(
                 {"detail": str(exc)},
@@ -1258,6 +1332,17 @@ class NetSuiteValidateDocumentView(APIView):
                 {"detail": "Document validation failed."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+    @staticmethod
+    def _find_exception(exc, exception_type):
+        current = exc
+
+        while current is not None:
+            if isinstance(current, exception_type):
+                return current
+            current = current.__cause__ or current.__context__
+
+        return None
 
 
 class NetSuiteCreateCustomFieldView(APIView):
