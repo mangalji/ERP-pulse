@@ -110,7 +110,7 @@ export default function OcrBatchHistoryPage() {
   if (loading) {
     return (
       <ClientLayout title="OCR Batch" breadcrumb="OCR Batch">
-        <div className="mx-auto w-full max-w-5xl">
+        <div className="w-full">
           <Card className="p-6 text-sm text-[var(--color-muted)]">
             Loading batch history...
           </Card>
@@ -122,7 +122,7 @@ export default function OcrBatchHistoryPage() {
   if (error || !batch) {
     return (
       <ClientLayout title="OCR Batch" breadcrumb="OCR Batch">
-        <div className="mx-auto w-full max-w-5xl space-y-4">
+        <div className="w-full space-y-4">
           <Card className="p-6">
             <p className="text-sm text-red-600">
               {error || 'Batch not found.'}
@@ -168,7 +168,7 @@ export default function OcrBatchHistoryPage() {
 
   return (
     <ClientLayout title="OCR Batch" breadcrumb="OCR Batch">
-      <div className="mx-auto w-full max-w-5xl space-y-6">
+      <div className="w-full space-y-6">
         <Card className="p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>

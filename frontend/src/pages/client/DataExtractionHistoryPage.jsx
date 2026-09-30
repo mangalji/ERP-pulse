@@ -433,7 +433,7 @@ export default function DataExtractionHistoryPage() {
       title="Data Extraction History"
       breadcrumb="OCR / Data Extraction / Data Extraction History"
     >
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <div className="flex w-full flex-col gap-6">
         <Card className="p-5 sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">

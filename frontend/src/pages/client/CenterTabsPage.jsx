@@ -119,7 +119,7 @@ export default function CenterTabsPage() {
 
   return (
     <ClientLayout title="Center Tabs" breadcrumb="Settings / Customize / Center Tabs">
-      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="w-full px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h1 className="text-xl font-semibold text-[var(--color-ink)]">Center Tabs</h1><p className="mt-1 text-sm text-[var(--color-muted)]">Click a Center Tab to manage its Center Categories.</p></div>
           <button type="button" onClick={() => { setShowForm((v) => !v); setEditingId(null); setForm(EMPTY_FORM); setError(''); setMessage('') }} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white">New Center Tab</button>

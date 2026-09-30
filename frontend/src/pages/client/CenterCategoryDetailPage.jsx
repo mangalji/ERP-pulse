@@ -206,7 +206,7 @@ export default function CenterCategoryDetailPage() {
       title={category?.name || 'Center Category'}
       breadcrumb="Settings / Customize / Center Categories"
     >
-      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="w-full px-4 py-6 sm:px-6 lg:px-8">
         {loading ? (
           <p className="text-sm text-[var(--color-muted)]">Loading...</p>
         ) : !category ? (

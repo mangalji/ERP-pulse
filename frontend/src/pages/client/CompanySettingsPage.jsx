@@ -92,7 +92,7 @@ export default function CompanySettingsPage() {
 
   return (
     <ClientLayout title="Company Settings" breadcrumb="Company Settings">
-      <div className="max-w-2xl flex flex-col gap-6">
+      <div className="w-full flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
@@ -117,49 +117,97 @@ export default function CompanySettingsPage() {
           </Card>
         ) : (
           <>
-            <Card className="p-6">
+            <Card className="p-5">
               <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
                 Company Profile
               </h2>
-              <form onSubmit={handleSave} className="flex flex-col gap-4">
-                <Input id="csName" label="Company name" value={settings?.name || '—'} readOnly />
-                <Input id="csCode" label="Company code" value={settings?.code || '—'} readOnly />
+
+              <form
+                onSubmit={handleSave}
+                className="grid grid-cols-1 gap-4 sm:grid-cols-2"
+              >
+                <Input
+                  id="csName"
+                  label="Company name"
+                  value={settings?.name || '—'}
+                  readOnly
+                />
+              
+                <Input
+                  id="csCode"
+                  label="Company code"
+                  value={settings?.code || '—'}
+                  readOnly
+                />
+              
                 <Input
                   id="csEmail"
                   label="Contact email"
                   value={form.contact_email}
                   onChange={handleChange('contact_email')}
                 />
+              
                 <Input
                   id="csPhone"
                   label="Contact phone"
                   value={form.contact_phone}
                   onChange={handleChange('contact_phone')}
                 />
+              
                 <Input
                   id="csCountry"
                   label="Country"
                   value={form.country}
                   onChange={handleChange('country')}
                 />
-                {error && <p className="text-sm text-[var(--color-negative)]">{error}</p>}
-                <Button type="submit" isLoading={saving} className="w-fit">
-                  Save changes
-                </Button>
+              
+                <Input
+                  id="csTimezone"
+                  label="Timezone"
+                  value={form.timezone}
+                  onChange={handleChange('timezone')}
+                />
+              
+                <Input
+                  id="csCurrency"
+                  label="Currency"
+                  value={form.currency}
+                  onChange={handleChange('currency')}
+                />
+              
+                <Input
+                  id="csLanguage"
+                  label="Language"
+                  value={form.language}
+                  onChange={handleChange('language')}
+                />
+              
+                <Input
+                  id="csDateFormat"
+                  label="Date format"
+                  value={form.date_format}
+                  onChange={handleChange('date_format')}
+                />
+              
+                <Input
+                  id="csNumFormat"
+                  label="Number format"
+                  value={form.number_format}
+                  onChange={handleChange('number_format')}
+                />
+              
+                {error && (
+                  <p className="sm:col-span-2 text-sm text-[var(--color-negative)]">
+                    {error}
+                  </p>
+                )}
+              
+                <div className="sm:col-span-2">
+                  <Button type="submit" isLoading={saving} className="w-fit">
+                    Save changes
+                  </Button>
+                </div>
               </form>
-            </Card>
-
-            <Card className="p-6">
-              <h2 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-                Preferences
-              </h2>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input id="csTimezone" label="Timezone" value={form.timezone} onChange={handleChange('timezone')} />
-                <Input id="csCurrency" label="Currency" value={form.currency} onChange={handleChange('currency')} />
-                <Input id="csLanguage" label="Language" value={form.language} onChange={handleChange('language')} />
-                <Input id="csDateFormat" label="Date format" value={form.date_format} onChange={handleChange('date_format')} />
-                <Input id="csNumFormat" label="Number format" value={form.number_format} onChange={handleChange('number_format')} />
-              </div>
             </Card>
           </>
         )}

@@ -292,7 +292,7 @@ export default function AIIntegrationPage() {
       title="AI Integration"
       breadcrumb="Settings / AI Integration"
     >
-      <div className="mx-auto max-w-3xl">
+      <div className="w-full">
         <Card className="p-6">
           <div className="flex items-center justify-between gap-4">
             <div>

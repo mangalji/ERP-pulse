@@ -1831,7 +1831,7 @@ const handlePost = async () => {
         title="Field Mapping"
         breadcrumb="OCR / Field Mapping"
       >
-        <div className="mx-auto w-full max-w-7xl">
+        <div className="w-full">
           <Card className="p-6 text-sm text-[var(--color-muted)]">
             Loading field mapping...
           </Card>
@@ -1842,7 +1842,7 @@ const handlePost = async () => {
 
   return (
     <ClientLayout title="Field Mapping" breadcrumb="OCR / Field Mapping">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <div className="flex w-full flex-col gap-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">

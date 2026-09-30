@@ -197,7 +197,7 @@ export default function OcrResultPage() {
 
   return (
     <ClientLayout title="OCR Result" breadcrumb="OCR Result">
-      <div className="mx-auto w-full max-w-7xl space-y-6">
+      <div className="w-full space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">

@@ -682,7 +682,7 @@ export default function OcrPage() {
 
   return (
     <ClientLayout title="OCR" breadcrumb="OCR">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <div className="flex w-full flex-col gap-6">
         {/* Upload / actions */}
         <Card className="p-4 sm:p-5">
           <div className="flex flex-col gap-3">

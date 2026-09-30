@@ -85,7 +85,7 @@ export default function ProfilePage() {
 
   return (
     <ClientLayout title="Profile" breadcrumb="Profile">
-      <div className="flex max-w-xl flex-col gap-6">
+      <div className="flex w-full flex-col gap-6">
         <div>
           <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
             Your Profile
