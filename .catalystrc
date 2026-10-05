@@ -3,7 +3,7 @@
     "project": 1
   },
   "actives": {
-    "project": 1,
+    "project": 2,
     "env": 1
   },
   "projects": [
@@ -22,6 +22,32 @@
           "id": "60086947932",
           "name": "Development",
           "type": 3
+        }
+      ]
+    },
+    {
+      "idx": 2,
+      "id": "55775000000046010",
+      "name": "AGSuiteErp",
+      "domain": {
+        "id": "50046369262",
+        "name": "agsuiteerp-60086947932.development"
+      },
+      "timezone": "Asia/Kolkata",
+      "env": [
+        {
+          "idx": 1,
+          "id": "60086947932",
+          "name": "Development",
+          "type": 3,
+          "env_status": "Active",
+          "project_details": {
+            "project_name": "AGSuiteErp",
+            "id": "55775000000046010",
+            "project_type": "Live"
+          },
+          "is_default": false,
+          "action_required": false
         }
       ]
     }

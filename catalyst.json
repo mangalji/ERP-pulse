@@ -1,7 +1,7 @@
 {
   "appsail": [
     {
-      "name": "agsuite-backend-app",
+      "name": "agsuiteerp",
       "source": "backend"
     }
   ],
