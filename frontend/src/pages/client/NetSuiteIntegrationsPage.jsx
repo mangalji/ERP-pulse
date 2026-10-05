@@ -8,9 +8,13 @@ import ConnectionCard from '../../components/netsuite/ConnectionCard.jsx'
 import AssignEmployeesDialog from '../../components/netsuite/AssignEmployeesDialog.jsx'
 import { netsuiteApi } from '../../services/netsuite.js'
 import { clientApi } from '../../services/client.js'
+import { useAuth } from '../../contexts/AuthContext.jsx'
+import { isCompanyAdminUser } from '../../utils/netsuiteErrors.js'
 
 export default function NetSuiteIntegrationsPage() {
   const { toasts, addToast, removeToast } = useToast()
+  const { user } = useAuth()
+  const canReconnect = isCompanyAdminUser(user)
   const [connections, setConnections] = useState([])
   const [currentConnectionId, setCurrentConnectionId] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -226,6 +230,7 @@ export default function NetSuiteIntegrationsPage() {
                 onUse={handleUse}
                 onTest={handleTest}
                 onReconnect={handleReconnect}
+                canReconnect={canReconnect}
                 onAssign={handleAssign}
                 onRemoveEmployee={handleRemoveEmployee}
                 onDelete={handleDelete}

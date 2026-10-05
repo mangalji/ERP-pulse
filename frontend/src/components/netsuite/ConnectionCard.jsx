@@ -3,7 +3,7 @@ import Card from '../ui/Card.jsx'
 import Button from '../ui/Button.jsx'
 import Badge from '../ui/Badge.jsx'
 
-export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onReconnect, onAssign, onDelete, onEdit, onRemoveEmployee, employees = [] }) {
+export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onReconnect, canReconnect = true, onAssign, onDelete, onEdit, onRemoveEmployee, employees = [] }) {
   const assignedCount = employees.length
   const daysUntilReauth = connection.reauth_required_by
     ? Math.ceil(
@@ -130,7 +130,9 @@ return (
             {isCurrent ? 'Using' : 'Use'}
           </Button>
 
-          {(connection.needs_reauth ||
+
+
+          {canReconnect && (connection.needs_reauth ||
             connection.status === 'error' ||
             (daysUntilReauth !== null && daysUntilReauth <= 5)) && (
             <Button

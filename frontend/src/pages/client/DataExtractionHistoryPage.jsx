@@ -6,6 +6,12 @@ import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
+import NetSuiteReauthBanner from '../../components/netsuite/NetSuiteReauthBanner.jsx'
+import {
+  isCompanyAdminUser,
+  isNetSuiteReauthError,
+  isNetSuiteReauthJob,
+} from '../../utils/netsuiteErrors.js'
 
 const FILTERS = [
   { value: 'ALL', label: 'All Data' },
@@ -41,20 +47,22 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? '--' : date.toLocaleString()
 }
 
-function isCompanyAdminUser(user) {
-  if (user?.is_superadmin || user?.is_staff) return true
 
-  return (Array.isArray(user?.roles) ? user.roles : []).some((role) => {
-    const value =
-      typeof role === 'string'
-        ? role
-        : role?.name ?? role?.code ?? role?.key ?? ''
 
-    return ['company_admin', 'company admin'].includes(
-      String(value).trim().toLowerCase(),
-    )
-  })
-}
+// function isCompanyAdminUser(user) {
+//   if (user?.is_superadmin || user?.is_staff) return true
+
+//   return (Array.isArray(user?.roles) ? user.roles : []).some((role) => {
+//     const value =
+//       typeof role === 'string'
+//         ? role
+//         : role?.name ?? role?.code ?? role?.key ?? ''
+
+//     return ['company_admin', 'company admin'].includes(
+//       String(value).trim().toLowerCase(),
+//     )
+//   })
+// }
 
 export default function DataExtractionHistoryPage() {
   const navigate = useNavigate()
@@ -68,6 +76,7 @@ export default function DataExtractionHistoryPage() {
   const [deletingId, setDeletingId] = useState(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [reauthRequired, setReauthRequired] = useState(false)
   const [connection, setConnection] = useState(null)
 
   const loadHistory = useCallback(async () => {
@@ -288,6 +297,7 @@ export default function DataExtractionHistoryPage() {
   try {
     setWorking(true)
     setError('')
+    setReauthRequired(false)
     setNotice('')
 
     const singleRecords = selectedRecords.filter(
@@ -336,6 +346,9 @@ export default function DataExtractionHistoryPage() {
         const job = await waitForBatchJob(jobId)
 
         if (job.status !== 'SUCCESS' || Number(job?.failed || 0) > 0) {
+          if (isNetSuiteReauthJob(job)) {
+            setReauthRequired(true)
+          }
           throw new Error(
             job?.error ||
               `${Number(job?.failed || 0)} document(s) failed to post.`,
@@ -417,6 +430,10 @@ export default function DataExtractionHistoryPage() {
   } catch (err) {
     console.error('Data Extraction History action failed:', err)
 
+    if (isNetSuiteReauthError(err)) {
+      setReauthRequired(true)
+    }
+
     setError(
       err?.response?.data?.detail ||
         err?.response?.data?.error ||
@@ -479,7 +496,12 @@ export default function DataExtractionHistoryPage() {
             </div>
           </div>
 
-          {error && (
+          {reauthRequired && (
+            <div className="mt-5">
+              <NetSuiteReauthBanner connectionId={connection?.id} />
+            </div>
+          )}
+          {error && !reauthRequired && (
             <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
             </div>

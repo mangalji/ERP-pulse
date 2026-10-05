@@ -1080,23 +1080,25 @@ class NetSuiteFieldCatalogueView(APIView):
             data = dict(serializer.data)
             data['refresh_failed'] = refresh_failed
             return success_response(message=message, data=data)
+        
         except NetSuiteTokenExchangeException:
             return _reauth_required_response()
 
         except NetSuiteConnectionNotFoundException as exc:
             message = str(exc)
             if 'not active' in message.lower():
-                return Response(
-                {
-                        "detail": (
-                            "Your NetSuite connection needs to be reconnected. "
-                            "The authorization has expired or is no longer valid. "
-                            "Please reconnect your NetSuite account and try again."
-                        ),
-                        "code": "NETSUITE_REAUTH_REQUIRED",
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
+                # return Response(
+                # {
+                #         "detail": (
+                #             "Your NetSuite connection needs to be reconnected. "
+                #             "The authorization has expired or is no longer valid. "
+                #             "Please reconnect your NetSuite account and try again."
+                #         ),
+                #         "code": "NETSUITE_REAUTH_REQUIRED",
+                #     },
+                #     status=status.HTTP_409_CONFLICT,
+                # )
+                return _reauth_required_response()
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_404_NOT_FOUND,
@@ -1215,17 +1217,18 @@ class NetSuiteFieldMappingListCreateView(APIView):
             message = str(exc)
 
             if "not active" in message.lower():
-                return Response(
-                    {
-                        "detail": (
-                            "Your NetSuite connection needs to be reconnected. "
-                            "The authorization has expired or is no longer valid. "
-                            "Please reconnect your NetSuite account and try again."
-                        ),
-                        "code": "NETSUITE_REAUTH_REQUIRED",
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
+                # return Response(
+                #     {
+                #         "detail": (
+                #             "Your NetSuite connection needs to be reconnected. "
+                #             "The authorization has expired or is no longer valid. "
+                #             "Please reconnect your NetSuite account and try again."
+                #         ),
+                #         "code": "NETSUITE_REAUTH_REQUIRED",
+                #     },
+                #     status=status.HTTP_401_UNAUTHORIZED,
+                # )
+                return _reauth_required_response()
 
             return Response(
                 {"detail": message},
@@ -1276,17 +1279,18 @@ class NetSuiteFieldMappingListCreateView(APIView):
         except NetSuiteConnectionNotFoundException as exc:
             message = str(exc)
             if "not active" in message.lower():
-                return Response(
-                    {
-                        "detail": (
-                            "Your NetSuite connection needs to be reconnected. "
-                            "The authorization has expired or is no longer valid. "
-                            "Please reconnect your NetSuite account and try again."
-                        ),
-                        "code": "NETSUITE_REAUTH_REQUIRED",
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
+                # return Response(
+                #     {
+                #         "detail": (
+                #             "Your NetSuite connection needs to be reconnected. "
+                #             "The authorization has expired or is no longer valid. "
+                #             "Please reconnect your NetSuite account and try again."
+                #         ),
+                #         "code": "NETSUITE_REAUTH_REQUIRED",
+                #     },
+                #     status=status.HTTP_401_UNAUTHORIZED,
+                # )
+                return _reauth_required_response()
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_404_NOT_FOUND,
@@ -1337,17 +1341,18 @@ class NetSuiteValidateDocumentView(APIView):
                 NetSuiteTokenExchangeException,
             )
             if token_error is not None:
-                return Response(
-                    {
-                        "detail": (
-                            "Your NetSuite connection needs to be reconnected. "
-                            "The authorization has expired or is no longer valid. "
-                            "Please reconnect your NetSuite account and try again."
-                        ),
-                        "code": "NETSUITE_REAUTH_REQUIRED",
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
+                # return Response(
+                #     {
+                #         "detail": (
+                #             "Your NetSuite connection needs to be reconnected. "
+                #             "The authorization has expired or is no longer valid. "
+                #             "Please reconnect your NetSuite account and try again."
+                #         ),
+                #         "code": "NETSUITE_REAUTH_REQUIRED",
+                #     },
+                #     status=status.HTTP_401_UNAUTHORIZED,
+                # )
+                return _reauth_required_response()
             logger.exception(
                 "NetSuite provider validation failed — document=%s connection=%s user=%s",
                 document_id,

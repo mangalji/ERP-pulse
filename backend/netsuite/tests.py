@@ -1,1232 +1,365 @@
-"""
-Comprehensive test suite for the netsuite app.
+"""Tests for the NetSuite re-authorization flow:
 
-Covers:
-- NetSuiteAuthClient (token exchange, refresh, record fetching, SuiteQL)
-- NetSuiteConnectionService (OAuth flow)
-- NetSuiteDataService (token refresh, record fetching)
-- NetSuiteConnectionRepository
-- NetSuite views (connect, callback, CRUD endpoints)
-- NetSuite serializers
-- NetSuite exceptions
-- OAuth URL building and state signing
+- Reconnect endpoint (admin only, reuses existing connection)
+- OAuth callback stores the 30-day re-auth deadline and clears error state
+- Dead connections (invalid_grant -> tokens cleared) surface ONE consistent
+  NETSUITE_REAUTH_REQUIRED error, never 401 (frontend treats 401 as an
+  expired AGSuite login) and never a silent 200
+- Catalogue: a failed forced refresh is flagged (refresh_failed)
+- Serializer exposes needs_reauth / reauth_required_by
 
-All external HTTP calls are mocked. No real NetSuite API calls.
+External HTTP is mocked. Company + Company Admin role are created here
+explicitly so these tests don't depend on migration-seeded data.
 """
-import requests
-import json
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
-from django.core.cache import cache
-from django.test import TestCase, override_settings, RequestFactory
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase, APIClient
+from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import User
-from netsuite.client import NetSuiteAuthClient, NetSuiteTokenSet
-from netsuite.constants import NetSuiteRecordType
-from netsuite.exceptions import (
-    NetSuiteAuthorizationDeniedException,
-    NetSuiteConfigurationException,
-    NetSuiteConnectionNotFoundException,
-    NetSuiteRecordFetchException,
-    NetSuiteRecordNotFoundException,
-    NetSuiteStateMismatchException,
-    NetSuiteTokenExchangeException,
-)
-from netsuite.models import NetSuiteConnection
-from netsuite.oauth import build_authorization_url, netsuite_account_domain, resolve_user_id_from_state
+from netsuite.client import NetSuiteTokenSet
+from netsuite.constants import NETSUITE_MAX_TOKEN_ROTATION_HOURS
+from netsuite.exceptions import NetSuiteTokenExchangeException
+from netsuite.models import NetSuiteConnection, NetSuiteFieldCatalogue
+from netsuite.oauth import resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionRepository
-from netsuite.serializers import NetSuiteCallbackSerializer, NetSuiteConnectionCreateSerializer
-from netsuite.services import NetSuiteConnectionService, NetSuiteDataService
-from netsuite.views import (
-    NetSuiteCallbackView,
-    # NetSuiteConnectView,
-    NetSuiteCustomerDetailView,
-    NetSuiteCustomersView,
-    NetSuiteEmployeeDetailView,
-    NetSuiteEmployeesView,
-    NetSuiteInvoicesView,
-    NetSuiteInvoiceDetailView,
-    NetSuiteItemDetailView,
-    NetSuiteItemsView,
-    NetSuitePurchaseOrderDetailView,
-    NetSuitePurchaseOrderView,
-    NetSuiteSalesOrderDetailView,
-    NetSuiteSalesOrdersView,
-    NetSuiteVendorDetailView,
-    NetSuiteVendorsView,
-    NetSuiteConnectionListCreateView,
-    NetSuiteConnectionDetailView,
-    NetSuiteConnectionSwitchView,
+from netsuite.serializers import NetSuiteConnectionListSerializer
+from netsuite.services import (
+    NetSuiteConnectionService,
+    raise_if_reauth_required,
 )
+from rbac.models import Role
+from superadmin.models import Plan
+from tenancy.models import Company
+
+BASE = "/api/v1/netsuite"
 
 
-def _make_user(**overrides):
-    n = _next_id()
-    defaults = {
-        'email': f'user{n}@example.com',
-        'first_name': 'Test',
-        'last_name': 'User',
-        'mobile_number': f'+1555{n:08d}',
-        'is_active': True,
-        'is_email_verified': True,
-    }
-    defaults.update(overrides)
-    user = User(**defaults)
-    user.set_password('testpass123')
-    user.save()
-    return user
+def _auth(user):
+    token = RefreshToken.for_user(user).access_token
+    return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
 
 
-_counter = 0
-
-def _next_id():
-    global _counter
-    _counter += 1
-    return _counter
-
-
-def _auth_header(user):
-    from rest_framework_simplejwt.tokens import RefreshToken
-    refresh = RefreshToken.for_user(user)
-    return {'HTTP_AUTHORIZATION': f'Bearer {str(refresh.access_token)}'}
-
-def _make_connection(user,**overrides):
-    """
-    Directly create a NetSuiteConnection row for a test, bypassing the
-    repository/service layers when a test only needs a connection to
-    exist rather than exercising how it's created.
-    """
-
-    defaults = {
-        'client_name':'Test Connection',
-        'environment':'sandbox',
-        'client_id':'client-id',
-        'client_secret':'client-secret',
-        'netsuite_account_id': f'ACCT{_next_id()}',
-        'status':'connected',
-        'is_active':True,
-        'access_token':'access-token',
-        'refresh_token':'refresh-token',
-        'access_token_expires_at': timezone.now() + timedelta(hours=1),
-    }
-    defaults.update(overrides)
-    return NetSuiteConnection.objects.create(user=user,**defaults)
-
-# ===================================================================
-# OAuth / Client Tests
-# ===================================================================
-
-class NetSuiteAccountDomainTests(TestCase):
-    def test_sandbox_account(self):
-        self.assertEqual(netsuite_account_domain('1234567_SB1'), '1234567-sb1')
-
-    def test_production_account(self):
-        self.assertEqual(netsuite_account_domain('1234567'), '1234567')
-
-
-class NetSuiteAuthClientTests(TestCase):
-    def setUp(self):
-        self._settings_override = override_settings(
-            NETSUITE_REDIRECT_URI='https://example.com/callback',
+class ReauthFixtureMixin:
+    def build_world(self):
+        plan = Plan.objects.create(name="Test Plan", validity_days=30)
+        today = timezone.now().date()
+        self.company = Company.objects.create(
+            name="Test Co", code="TC", status=Company.Status.ACTIVE,
+            plan=plan,
+            plan_start_date=today - timedelta(days=1),
+            plan_end_date=today + timedelta(days=29),
         )
-        self._settings_override.__enter__()
-
-    def tearDown(self):
-        self._settings_override.__exit__(None, None, None)
-
-    def _client(self,**overrides):
-        kwargs={
-            'account_id':'1234567_SB1',
-            'client_id':'client-id',
-            'client_secret':'client-secret',
-        }
-        kwargs.update(overrides)
-        return NetSuiteAuthClient(**kwargs)
-
-    def test_init_success(self):
-        client = self._client()
-        self.assertEqual(client.account_id, '1234567_SB1')
-        self.assertEqual(client._rest_base_url, 'https://1234567-sb1.suitetalk.api.netsuite.com/services/rest')
-
-    def test_init_missing_config(self):
-        # with override_settings(NETSUITE_ACCOUNT_ID=''):
-        with self.assertRaises(NetSuiteConfigurationException):
-            self._client(account_id='')
-
-    def test_init_missing_redirect_uri(self):
-        with override_settings(NETSUITE_REDIRECT_URI=''):
-            with self.assertRaises(NetSuiteConfigurationException):
-                self._client()
-
-    @patch('netsuite.http.send')
-    def test_exchange_code_for_tokens(self, mock_post):
-        mock_post.return_value = MagicMock(
-            ok=True,
-            status_code=200,
-            json=MagicMock(return_value={
-                'access_token': 'new-access',
-                'refresh_token': 'new-refresh',
-                'expires_in': 3600,
-            }),
+        self.admin_role = Role.objects.create(
+            name="Company Admin", company=self.company
         )
-        client = self._client()
-        token_set = client.exchange_code_for_tokens(code='auth-code')
-        self.assertEqual(token_set.access_token, 'new-access')
-        self.assertEqual(token_set.refresh_token, 'new-refresh')
-
-    @patch('netsuite.http.send')
-    def test_refresh_access_token(self, mock_post):
-        mock_post.return_value = MagicMock(
-            ok=True,
-            status_code=200,
-            json=MagicMock(return_value={
-                'access_token': 'refreshed-access',
-                'refresh_token': 'refreshed-refresh',
-                'expires_in': 3600,
-            }),
-        )
-        client = self._client()
-        token_set = client.refresh_access_token(refresh_token='old-refresh')
-        self.assertEqual(token_set.access_token, 'refreshed-access')
-        self.assertEqual(token_set.refresh_token, 'refreshed-refresh')
-
-    @patch('netsuite.http.send')
-    def test_token_request_rejected(self,mock_post):
-        mock_post.return_value = MagicMock(ok=False,status_code=400)
-        client = self._client()
-        with self.assertRaises(NetSuiteTokenExchangeException):
-            client.exchange_code_for_tokens(code="bad-code")
-
-    @patch('netsuite.http.send')
-    def test_get_records_success(self, mock_send):
-        mock_send.return_value = MagicMock(
-            ok=True,
-            status_code=200,
-            json=MagicMock(return_value={'items':[],'totalResults':0}),
-        )
-        client = self._client(access_token='test-token')
-        result = client.get_records(record_type=NetSuiteRecordType.CUSTOMER)
-        self.assertEqual(result,{'items':[],'totalResults':0})
-
-    def test_get_records_invalid_type(self):
-        client = self._client()
-        with self.assertRaises(ValueError):
-            client.get_records(record_type='invalidType')
-
-    @patch('netsuite.http.send')
-    def test_got_records_network_error(self, mock_send):
-        mock_send.side_effect = requests.RequestException('Network error')
-        client = self._client(access_token='test-token')
-        with self.assertRaises(NetSuiteRecordFetchException):
-            client.get_records(record_type=NetSuiteRecordType.CUSTOMER)
-
-    @patch('netsuite.http.send')
-    def test_get_records_404(self, mock_send):
-        mock_send.return_value = MagicMock(ok=False,status_code=404)
-        client = self._client(access_token='test-token')
-        with self.assertRaises(NetSuiteRecordNotFoundException):
-            client.get_records(record_type=NetSuiteRecordType.CUSTOMER)
-
-    @patch('netsuite.http.send')
-    def test_execute_suiteql(self, mock_post):
-        mock_post.return_value = MagicMock(
-            ok=True,
-            status_code=200,
-            json=MagicMock(return_value={'items': [{'id': 1}]}),
-        )
-        client = self._client(access_token='test-token')
-        result = client.execute_suiteql(query='SELECT id FROM customer')
-        self.assertEqual(result, {'items': [{'id': 1}]})
-
-
-# ===================================================================
-# OAuth URL / State Tests
-# ===================================================================
-
-class OAuthURLTests(TestCase):
-    def test_build_authorization_url(self):
-        with override_settings(
-            NETSUITE_REDIRECT_URI='https://example.com/callback',
-        ):
-            url = build_authorization_url(
-                user_id='user-123',
-                connection_id='conn-456',
-                account_id='1234567_SB1',
-                client_id='client-id',
-            )
-            self.assertIn('https://', url)
-            self.assertIn('client-id', url)
-            self.assertIn('response_type=code', url)
-
-    def test_build_authorization_url_missing_redirect_uri(self):
-        with override_settings(NETSUITE_REDIRECT_URI=''):
-            with self.assertRaises(NetSuiteConfigurationException):
-                build_authorization_url(
-                    user_id='user-123',
-                    connection_id='conn-456',
-                    account_id='1234567_SB1',
-                    client_id='client-id',
-                )
-
-    def test_resolve_user_id_from_state_valid(self):
-        with override_settings(NETSUITE_REDIRECT_URI='https://example.com/callback'):
-            url = build_authorization_url(
-                user_id='user-123',
-                connection_id='conn-456',
-                account_id='1234567_SB1',
-                client_id='client-id',
-            )
-        from urllib.parse import urlparse, parse_qs
-        state = parse_qs(urlparse(url).query)['state'][0]
- 
-        user_id, connection_id = resolve_user_id_from_state(state)
-        self.assertEqual(user_id, 'user-123')
-        self.assertEqual(connection_id, 'conn-456')
-
-    def test_resolve_user_id_from_state_missing(self):
-        with self.assertRaises(NetSuiteStateMismatchException):
-            resolve_user_id_from_state('')
- 
-    def test_resolve_user_id_from_state_invalid(self):
-        with self.assertRaises(NetSuiteStateMismatchException):
-            resolve_user_id_from_state('not-a-real-signed-value')
-    
-    def test_resolve_user_id_from_state_malformed_payload(self):
-        # Signed correctly, but payload doesn't contain "user_id:connection_id"
-        from django.core import signing
-        signer = signing.TimestampSigner(salt='netsuite-oauth-state')
-        state = signer.sign('just-a-user-id-no-colon')
-        with self.assertRaises(NetSuiteStateMismatchException):
-            resolve_user_id_from_state(state)
-
-
-# ===================================================================
-# Repository Tests
-# ===================================================================
-
-class NetSuiteConnectionRepositoryTests(TestCase):
-    def setUp(self):
-        self.user = _make_user()
-        self.repo = NetSuiteConnectionRepository()
-
-    def test_get_by_user_none(self):
-        self.assertIsNone(self.repo.get_by_user(self.user))
-
-    def test_get_by_user_returns_active_only(self):
-        _make_connection(self.user,is_active=False,status='disconnected')
-        active = _make_connection(self.user,is_active=True,status='connected')
-        self.assertEqual(self.repo.get_by_user(self.user),active)
-
-    def test_create_starts_pending_and_inactive(self):
-        connection = self.repo.create(
-            user=self.user,
-            client_name='Acme Corp',
-            environment='sandbox',
-            client_id='client-id',
-            client_secret='client-secret',
-            netsuite_account_id='ACCT1',
-        )
-        self.assertEqual(connection.status, 'pending')
-        self.assertFalse(connection.is_active)
-        self.assertEqual(connection.client_secret, 'client-secret')
-
-    def test_complete_oauth_activates_connection(self):
-        connection = self.repo.create(
-            user=self.user,
-            client_name='Acme Corp',
-            environment='sandbox',
-            client_id='client-id',
-            client_secret='client-secret',
-            netsuite_account_id='ACCT1',
-        )
-        updated = self.repo.complete_OAuth(
-            connection,
-            access_token='access-1',
-            refresh_token='refresh-1',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-        )
-        self.assertEqual(updated.status, 'connected')
-        self.assertTrue(updated.is_active)
-        self.assertEqual(updated.access_token, 'access-1')
-
-    def test_complete_oauth_deactivates_other_connections(self):
-        first = self.repo.create(
-            user=self.user, client_name='First', environment='sandbox',
-            client_id='c1', client_secret='s1', netsuite_account_id='ACCT1',
-        )
-        self.repo.complete_OAuth(
-            first, access_token='a1', refresh_token='r1',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-        )
-        second = self.repo.create(
-            user=self.user, client_name='Second', environment='sandbox',
-            client_id='c2', client_secret='s2', netsuite_account_id='ACCT2',
-        )
-        self.repo.complete_OAuth(
-            second, access_token='a2', refresh_token='r2',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-        )
-        first.refresh_from_db()
-        second.refresh_from_db()
-        self.assertFalse(first.is_active)
-        self.assertTrue(second.is_active)
-
-
-    def test_update_tokens(self):
-        connection = _make_connection(self.user)
-        updated = self.repo.update_tokens(
-            connection,
-            access_token='new-access',
-            refresh_token='new-refresh',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-        )
-        self.assertEqual(updated.access_token, 'new-access')
-
-    def test_switch_active_connection(self):
-        first = _make_connection(self.user, is_active=True)
-        second = _make_connection(self.user, is_active=False)
-        self.repo.switch_active_connection(self.user, second)
-        first.refresh_from_db()
-        second.refresh_from_db()
-        self.assertFalse(first.is_active)
-        self.assertTrue(second.is_active)
- 
-    def test_list_by_user(self):
-        _make_connection(self.user)
-        _make_connection(self.user)
-        other_user = _make_user()
-        _make_connection(other_user)
-        self.assertEqual(self.repo.list_by_user(self.user).count(), 2)
-
-    def test_get_by_id_found(self):
-        connection = _make_connection(self.user)
-        found = self.repo.get_by_id(self.user, connection.id)
-        self.assertEqual(found, connection)
- 
-    def test_get_by_id_wrong_user_returns_none(self):
-        connection = _make_connection(self.user)
-        other_user = _make_user()
-        self.assertIsNone(self.repo.get_by_id(other_user, connection.id))
- 
-    def test_rename(self):
-        connection = _make_connection(self.user, client_name='Old Name')
-        renamed = self.repo.rename(connection, 'New Name')
-        self.assertEqual(renamed.client_name, 'New Name')
-
-    def test_delete_promotes_next_connection_if_active(self):
-        active = _make_connection(self.user, is_active=True, status='connected')
-        other = _make_connection(self.user, is_active=False, status='connected')
-        self.repo.delete(active)
-        other.refresh_from_db()
-        self.assertTrue(other.is_active)
-        self.assertFalse(NetSuiteConnection.objects.filter(id=active.id).exists())
- 
-    def test_delete_inactive_connection_does_not_touch_others(self):
-        active = _make_connection(self.user, is_active=True, status='connected')
-        inactive = _make_connection(self.user, is_active=False, status='connected')
-        self.repo.delete(inactive)
-        active.refresh_from_db()
-        self.assertTrue(active.is_active)
-
-# ===================================================================
-# Service Tests
-# ===================================================================
-
-class NetSuiteConnectionServiceTests(TestCase):
-    def setUp(self):
-        self.user = _make_user()
-        self.service = NetSuiteConnectionService()
- 
-    @patch('netsuite.services.build_authorization_url')
-    def test_get_authorization_url(self, mock_build):
-        mock_build.return_value = 'https://netsuite.com/oauth?client_id=xxx'
-        connection = _make_connection(self.user)
-        url = self.service.get_authorization_url(user=self.user, connection=connection)
-        self.assertEqual(url, 'https://netsuite.com/oauth?client_id=xxx')
-        mock_build.assert_called_once_with(
-            user_id=str(self.user.id),
-            connection_id=str(connection.id),
-            account_id=connection.netsuite_account_id,
-            client_id=connection.client_id,
-        )
- 
-    @patch('netsuite.services.build_authorization_url')
-    def test_create_connection_returns_authorization_url(self, mock_build):
-        mock_build.return_value = 'https://netsuite.com/oauth?client_id=xxx'
-        result = self.service.create_connection(
-            user=self.user,
-            client_name='Acme Corp',
-            environment='sandbox',
-            client_id='client-id',
-            client_secret='client-secret',
-            netsuite_account_id='ACCT1',
-        )
-        self.assertEqual(result['authorization_url'], 'https://netsuite.com/oauth?client_id=xxx')
-        self.assertEqual(result['connection'].status, 'pending')
- 
-    def test_list_connections(self):
-        _make_connection(self.user)
-        _make_connection(self.user)
-        self.assertEqual(len(self.service.list_connections(user=self.user)), 2)
- 
-    def test_rename_connection(self):
-        connection = _make_connection(self.user, client_name='Old')
-        renamed = self.service.rename_connection(
-            user=self.user, connection_id=connection.id, client_name='New',
-        )
-        self.assertEqual(renamed.client_name, 'New')
- 
-    def test_rename_connection_not_found_raises(self):
-        with self.assertRaises(NetSuiteConnectionNotFoundException):
-            self.service.rename_connection(
-                user=self.user, connection_id='00000000-0000-0000-0000-000000000000',
-                client_name='New',
-            )
- 
-    def test_delete_connection(self):
-        connection = _make_connection(self.user)
-        self.service.delete_connection(user=self.user, connection_id=connection.id)
-        self.assertFalse(NetSuiteConnection.objects.filter(id=connection.id).exists())
- 
-    def test_delete_connection_not_found_raises(self):
-        with self.assertRaises(NetSuiteConnectionNotFoundException):
-            self.service.delete_connection(
-                user=self.user, connection_id='00000000-0000-0000-0000-000000000000',
-            )
- 
-    def test_switch_connection(self):
-        _make_connection(self.user, is_active=True)
-        target = _make_connection(self.user, is_active=False)
-        switched = self.service.switch_connection(user=self.user, connection_id=target.id)
-        self.assertTrue(switched.is_active)
- 
-    @patch('netsuite.services.NetSuiteAuthClient')
-    @patch('netsuite.services.resolve_user_id_from_state')
-    def test_handle_callback_success(self, mock_resolve, MockClient):
-        # Build the pending connection directly via the repository so the
-        # test doesn't depend on build_authorization_url succeeding too.
-        connection = NetSuiteConnectionRepository().create(
-            user=self.user, client_name='Acme', environment='sandbox',
-            client_id='client-id', client_secret='client-secret',
-            netsuite_account_id='ACCT1',
-        )
-        mock_resolve.return_value = (str(self.user.id), str(connection.id))
-        mock_client = MockClient.return_value
-        mock_client.exchange_code_for_tokens.return_value = NetSuiteTokenSet(
-            access_token='access-1',
-            refresh_token='refresh-1',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-        )
- 
-        result_user = self.service.handle_callback(code='auth-code', state='valid-state')
-        self.assertEqual(result_user, self.user)
-        connection.refresh_from_db()
-        self.assertEqual(connection.status, 'connected')
-        self.assertTrue(connection.is_active)
- 
-    @patch('netsuite.services.resolve_user_id_from_state')
-    def test_handle_callback_unknown_connection_raises(self, mock_resolve):
-        mock_resolve.return_value = (str(self.user.id), '00000000-0000-0000-0000-000000000000')
-        with self.assertRaises(NetSuiteConnectionNotFoundException):
-            self.service.handle_callback(code='auth-code', state='valid-state')
- 
-    @patch('netsuite.services.resolve_user_id_from_state')
-    def test_handle_callback_unknown_user_raises(self, mock_resolve):
-        mock_resolve.return_value = ('00000000-0000-0000-0000-000000000000', 'conn-1')
-        with self.assertRaises(NetSuiteStateMismatchException):
-            self.service.handle_callback(code='auth-code', state='valid-state')
- 
- 
-class NetSuiteDataServiceTests(TestCase):
-    """
-    NetSuiteDataService no longer takes a `client` constructor arg — it
-    builds a fresh NetSuiteAuthClient per-connection internally (since
-    each connection has its own account_id/client_id/client_secret), so
-    NetSuiteAuthClient itself is patched at the module level instead.
-    """
- 
-    def setUp(self):
-        self.user = _make_user()
-        self.mock_repo = MagicMock()
-        self.service = NetSuiteDataService(repository=self.mock_repo)
- 
-    def _active_connection(self, **overrides):
-        connection = MagicMock(
+        self.admin = User.objects.create_user(
+            email="admin@test.com",
+            password="pass12345",
+            company=self.company,
+            role=self.admin_role,
             is_active=True,
-            access_token='valid-token',
-            refresh_token='refresh-token',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-            netsuite_account_id='ACCT1',
-            client_id='client-id',
-            client_secret='client-secret',
+            is_email_verified=True,
         )
-        for key, value in overrides.items():
-            setattr(connection, key, value)
-        return connection
- 
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_get_records_success(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.get_records.return_value = {'items': [], 'totalResults': 0}
- 
-        result = self.service.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=self.user)
-        self.assertEqual(result, {'items': [], 'totalResults': 0})
- 
-    def test_get_records_no_connection(self):
-        self.mock_repo.get_by_user.return_value = None
-        with self.assertRaises(NetSuiteConnectionNotFoundException):
-            self.service.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=self.user)
- 
-    def test_get_records_inactive_connection(self):
-        self.mock_repo.get_by_user.return_value = self._active_connection(is_active=False)
-        with self.assertRaises(NetSuiteConnectionNotFoundException):
-            self.service.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=self.user)
- 
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_execute_suiteql(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {'items': [{'id': 1}]}
- 
-        result = self.service.execute_suiteql(query='SELECT 1', user=self.user)
-        self.assertEqual(result, {'items': [{'id': 1}]})
- 
-    @patch('netsuite.services.NetSuiteAuthClient')
-    @patch('netsuite.token_manager.NetSuiteAuthClient')
-    def test_expired_token_triggers_refresh(self, MockTokenManagerClient, MockServicesClient):
-        connection = self._active_connection(
-            access_token_expires_at=timezone.now() - timedelta(minutes=1),
+        self.employee = User.objects.create_user(
+            email="emp@test.com",
+            password="pass12345",
+            company=self.company,
+            is_active=True,
+            is_email_verified=True,
         )
-        self.mock_repo.get_by_user.return_value = connection
-        # NetSuiteTokenManager re-fetches the connection under a row lock
-        # before refreshing — for this mocked repository, hand back the
-        # same (still-expired) connection so the refresh path is taken.
-        self.mock_repo.get_locked.return_value = connection
-        refreshed_connection = self._active_connection(access_token='refreshed-token')
-        self.mock_repo.update_tokens.return_value = refreshed_connection
+        self.healthy = self.make_connection(account="1111111")
+        self.dead = self.make_connection(
+            account="2222222",
+            status="error",
+            access_token=None,
+            refresh_token=None,
+            access_token_expires_at=None,
+            last_error="Token refresh failed",
+            consecutive_failures=5,
+        )
 
-        refresh_client = MockTokenManagerClient.return_value
-        refresh_client.refresh_access_token.return_value = NetSuiteTokenSet(
-            access_token='refreshed-token',
-            refresh_token='refreshed-refresh',
+    def make_connection(self, account, **overrides):
+        defaults = dict(
+            user=self.admin,
+            company=self.company,
+            client_name=f"Conn {account}",
+            environment="sandbox",
+            client_id="client-id",
+            client_secret="client-secret",
+            netsuite_account_id=account,
+            status="connected",
+            is_active=True,
+            access_token="access",
+            refresh_token="refresh",
             access_token_expires_at=timezone.now() + timedelta(hours=1),
         )
-
-        data_client = MockServicesClient.return_value
-        data_client.get_records.return_value = {'items': [], 'totalResults': 0}
-
-        self.service.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=self.user)
-        self.mock_repo.update_tokens.assert_called_once()
-
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_list_customers_reshapes_suiteql_rows(self, MockClient):
-        """
-        Bug fix: the plain REST collection endpoint only returns
-        {id, links} per item (no business fields), which is why list
-        pages showed '--' for every column. list_customers() uses
-        SuiteQL instead and must reshape its lowercase raw column names
-        into the camelCase keys the frontend's columns config expects.
-        """
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {
-            'items': [
-                {'id': '1', 'entityid': 'CUST-001', 'companyname': 'Acme Corp',
-                 'email': 'a@acme.com', 'phone': '555-0100', 'isinactive': 'F'},
-                {'id': '2', 'entityid': 'CUST-002', 'companyname': 'Beta LLC',
-                 'email': 'b@beta.com', 'phone': '555-0200', 'isinactive': 'T'},
-            ],
-            'totalResults': 2,
-        }
-
-        result = self.service.list_customers(user=self.user, limit=20, offset=0)
-
-        self.assertEqual(result['totalResults'], 2)
-        self.assertEqual(result['items'][0], {
-            'id': '1', 'entityId': 'CUST-001', 'companyName': 'Acme Corp',
-            'email': 'a@acme.com', 'phone': '555-0100', 'status': 'Active',
-        })
-        self.assertEqual(result['items'][1]['status'], 'Inactive')
-        # limit/offset must reach the client call (pagination actually works)
-        mock_client.execute_suiteql.assert_called_once()
-        self.assertEqual(mock_client.execute_suiteql.call_args.kwargs['limit'], 20)
-        self.assertEqual(mock_client.execute_suiteql.call_args.kwargs['offset'], 0)
-
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_list_vendors_reshapes_suiteql_rows(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {
-            'items': [{'id': '10', 'entityid': 'VEND-001', 'companyname': 'Supplier Co',
-                       'email': 's@supplier.com', 'phone': '555-0300', 'isinactive': 'F'}],
-            'totalResults': 1,
-        }
-
-        result = self.service.list_vendors(user=self.user)
-
-        self.assertEqual(result['items'][0]['companyName'], 'Supplier Co')
-        self.assertEqual(result['items'][0]['status'], 'Active')
-
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_list_employees_reshapes_suiteql_rows(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {
-            'items': [{'id': '5', 'entityid': 'EMP-001', 'firstname': 'Jane',
-                       'lastname': 'Doe', 'email': 'jane@example.com',
-                       'title': 'Accountant', 'department': 'Finance'}],
-            'totalResults': 1,
-        }
-
-        result = self.service.list_employees(user=self.user)
-
-        self.assertEqual(result['items'][0], {
-            'id': '5', 'entityId': 'EMP-001', 'firstName': 'Jane', 'lastName': 'Doe',
-            'email': 'jane@example.com', 'title': 'Accountant', 'department': 'Finance',
-        })
-
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_list_inventory_items_reshapes_suiteql_rows(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {
-            'items': [{'id': '7', 'itemid': 'ITEM-001', 'displayname': 'Widget',
-                       'cost': '12.5', 'vendorname': 'Supplier Co'}],
-            'totalResults': 1,
-        }
-
-        result = self.service.list_inventory_items(user=self.user)
-
-        self.assertEqual(result['items'][0], {
-            'id': '7', 'itemId': 'ITEM-001', 'displayName': 'Widget',
-            'vendorName': 'Supplier Co', 'cost': '12.5', 'type': 'Inventory Item',
-        })
-
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_list_sales_orders_reshapes_suiteql_rows_and_filters_by_type(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {
-            'items': [{'id': '100', 'tranid': 'SO-001', 'entity': '1',
-                       'entityname': 'Acme Corp', 'status': 'Pending Fulfillment',
-                       'foreigntotal': '2500.00', 'trandate': '2026-06-01'}],
-            'totalResults': 1,
-        }
-
-        result = self.service.list_sales_orders(user=self.user)
-
-        self.assertEqual(result['items'][0], {
-            'id': '100', 'tranId': 'SO-001',
-            'entity': {'id': '1', 'name': 'Acme Corp'},
-            'status': 'Pending Fulfillment', 'total': '2500.00', 'createdDate': '2026-06-01',
-        })
-        self.assertIn("type = 'SalesOrd'", mock_client.execute_suiteql.call_args.kwargs['query'])
-
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_list_purchase_orders_filters_by_type(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {'items': [], 'totalResults': 0}
-
-        self.service.list_purchase_orders(user=self.user)
-
-        self.assertIn("type = 'PurchOrd'", mock_client.execute_suiteql.call_args.kwargs['query'])
-
-    @patch('netsuite.services.NetSuiteAuthClient')
-    def test_list_invoices_filters_by_type(self, MockClient):
-        self.mock_repo.get_by_user.return_value = self._active_connection()
-        mock_client = MockClient.return_value
-        mock_client.execute_suiteql.return_value = {'items': [], 'totalResults': 0}
-
-        self.service.list_invoices(user=self.user)
-
-        self.assertIn("type = 'CustInvc'", mock_client.execute_suiteql.call_args.kwargs['query'])
+        defaults.update(overrides)
+        return NetSuiteConnection.objects.create(**defaults)
 
 
-# ===================================================================
-# View Tests
-# ===================================================================
-
-class NetSuiteViewTests(APITestCase):
+class ReconnectViewTests(ReauthFixtureMixin, APITestCase):
     def setUp(self):
-        cache.clear()
-        self.user = _make_user()
-        self.client = APIClient()
- 
-    @patch('netsuite.views.NetSuiteConnectionService')
-    def test_create_connection_view(self, MockService):
-        mock_service = MockService.return_value
-        mock_service.create_connection.return_value = {
-            'connection': _make_connection(self.user, status='pending', is_active=False),
-            'authorization_url': 'https://netsuite.com/oauth?...',
-        }
- 
-        self.client.credentials(**_auth_header(self.user))
-        response = self.client.post('/api/v1/netsuite/connections/', {
-            'client_name': 'Acme Corp',
-            'environment': 'sandbox',
-            'client_id': 'client-id',
-            'client_secret': 'client-secret',
-            'netsuite_account_id': 'ACCT1',
-        })
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('authorization_url', response.data['data'])
- 
-    @patch('netsuite.views.NetSuiteConnectionService')
-    def test_list_connections_view(self, MockService):
-        mock_service = MockService.return_value
-        mock_service.list_connections.return_value = []
- 
-        self.client.credentials(**_auth_header(self.user))
-        response = self.client.get('/api/v1/netsuite/connections/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
- 
-    @patch('netsuite.views.NetSuiteConnectionService')
-    def test_delete_connection_view(self, MockService):
-        self.client.credentials(**_auth_header(self.user))
-        response = self.client.delete('/api/v1/netsuite/connections/00000000-0000-0000-0000-000000000000/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
- 
-    @patch('netsuite.views.NetSuiteConnectionService')
-    def test_switch_connection_view(self, MockService):
-        mock_service = MockService.return_value
-        mock_service.switch_connection.return_value = _make_connection(self.user)
- 
-        self.client.credentials(**_auth_header(self.user))
-        response = self.client.post('/api/v1/netsuite/connections/00000000-0000-0000-0000-000000000000/switch/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
- 
-    @patch('netsuite.views.NetSuiteConnectionService')
-    def test_callback_view_redirect(self, MockService):
-        mock_service = MockService.return_value
-        mock_service.handle_callback.return_value = self.user
- 
-        response = self.client.get('/api/v1/netsuite/callback/', {
-            'code': 'auth-code',
-            'state': 'valid-state',
-        })
-        self.assertEqual(response.status_code, 302)
- 
-    def test_callback_view_missing_code(self):
-        response = self.client.get('/api/v1/netsuite/callback/', {
-            'state': 'valid-state',
-        })
-        self.assertEqual(response.status_code, 400)
- 
-    def test_callback_view_error_param(self):
-        response = self.client.get('/api/v1/netsuite/callback/', {
-            'state': 'valid-state',
-            'error': 'access_denied',
-        })
-        self.assertEqual(response.status_code, 400)
- 
-    @patch('netsuite.views.NetSuiteDataService')
-    def test_customers_view(self, MockDataService):
-        mock_ns = MockDataService.return_value
-        mock_ns.list_customers.return_value = {'items': [], 'totalResults': 0}
- 
-        self.client.credentials(**_auth_header(self.user))
-        response = self.client.get('/api/v1/netsuite/customers/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
- 
-    @patch('netsuite.views.NetSuiteDataService')
-    def test_customer_detail_view(self, MockDataService):
-        mock_ns = MockDataService.return_value
-        mock_ns.get_record.return_value = {'id': '123', 'entityId': 'CUST-001'}
- 
-        self.client.credentials(**_auth_header(self.user))
-        response = self.client.get('/api/v1/netsuite/customers/123/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['data']['id'], '123')
- 
-    @patch('netsuite.views.NetSuiteDataService')
-    def test_invoices_view(self, MockDataService):
-        mock_ns = MockDataService.return_value
-        mock_ns.list_invoices.return_value = {'items': [], 'totalResults': 0}
- 
-        self.client.credentials(**_auth_header(self.user))
-        response = self.client.get('/api/v1/netsuite/invoices/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.build_world()
 
-# ===================================================================
-# Serializer Tests
-# ===================================================================
+    def _url(self, conn):
+        return f"{BASE}/company/connections/{conn.id}/reconnect/"
 
-class NetSuiteCallbackSerializerTests(TestCase):
-    def test_valid_data(self):
-        serializer = NetSuiteCallbackSerializer(data={'state': 'abc', 'code': 'code-123'})
-        self.assertTrue(serializer.is_valid())
- 
-    def test_missing_state(self):
-        serializer = NetSuiteCallbackSerializer(data={'code': 'code-123'})
-        self.assertFalse(serializer.is_valid())
- 
- 
-class NetSuiteConnectionCreateSerializerTests(TestCase):
-    def test_valid_data(self):
-        serializer = NetSuiteConnectionCreateSerializer(data={
-            'client_name': 'Acme Corp',
-            'environment': 'sandbox',
-            'client_id': 'client-id',
-            'client_secret': 'client-secret',
-            'netsuite_account_id': 'ACCT1',
-        })
-        self.assertTrue(serializer.is_valid())
- 
-    def test_invalid_environment_rejected(self):
-        serializer = NetSuiteConnectionCreateSerializer(data={
-            'client_name': 'Acme Corp',
-            'environment': 'staging',  # not a valid choice
-            'client_id': 'client-id',
-            'client_secret': 'client-secret',
-            'netsuite_account_id': 'ACCT1',
-        })
-        self.assertFalse(serializer.is_valid())
- 
-    def test_missing_client_secret_rejected(self):
-        serializer = NetSuiteConnectionCreateSerializer(data={
-            'client_name': 'Acme Corp',
-            'environment': 'sandbox',
-            'client_id': 'client-id',
-            'netsuite_account_id': 'ACCT1',
-        })
-        self.assertFalse(serializer.is_valid())
+    def test_admin_gets_authorize_url_for_dead_connection(self):
+        response = self.client.post(self._url(self.dead), **_auth(self.admin))
 
-# ===================================================================
-# Exception Tests
-# ===================================================================
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        url = response.data["data"]["authorization_url"]
+        self.assertIn("2222222.app.netsuite.com/app/login/oauth2/authorize.nl", url)
 
-class NetSuiteExceptionTests(TestCase):
-    def test_exception_status_codes(self):
-        self.assertEqual(NetSuiteConfigurationException.status_code, 500)
-        self.assertEqual(NetSuiteStateMismatchException.status_code, 400)
-        self.assertEqual(NetSuiteAuthorizationDeniedException.status_code, 400)
-        self.assertEqual(NetSuiteTokenExchangeException.status_code, 502)
-        self.assertEqual(NetSuiteConnectionNotFoundException.status_code, 404)
-        self.assertEqual(NetSuiteRecordFetchException.status_code, 502)
-        self.assertEqual(NetSuiteRecordNotFoundException.status_code, 404)
+        state = url.split("state=")[1].split("&")[0]
+        from urllib.parse import unquote
+
+        user_id, connection_id = resolve_user_id_from_state(unquote(state))
+        self.assertEqual(user_id, str(self.admin.id))
+        self.assertEqual(connection_id, str(self.dead.id))
+
+    def test_employee_cannot_reconnect(self):
+        response = self.client.post(self._url(self.dead), **_auth(self.employee))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_other_company_connection_is_404(self):
+        other = Company.objects.create(
+            name="Other", code="OT", status=Company.Status.ACTIVE
+        )
+        other_user = User.objects.create_user(
+            email="o@test.com", password="pass12345", company=other,
+            is_active=True, is_email_verified=True,
+        )
+        foreign = NetSuiteConnection.objects.create(
+            user=other_user, company=other, client_name="F", environment="sandbox",
+            client_id="c", client_secret="s", netsuite_account_id="9999999",
+            status="error", is_active=True,
+        )
+        response = self.client.post(self._url(foreign), **_auth(self.admin))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
-# ===================================================================
-# OAuth Integration Tests
-#
-# Unlike the unit tests above (which mock the Service or the Client),
-# these drive a real request through URL -> View -> Serializer ->
-# Service -> Repository -> DB, with only the outermost HTTP boundary
-# (requests.post, inside client.py) mocked. This is what actually proves
-# the callback endpoint works end-to-end, not just that each layer's
-# unit behaves correctly in isolation.
-# ===================================================================
-
-@override_settings(NETSUITE_REDIRECT_URI='https://example.com/callback')
-class NetSuiteOAuthIntegrationTests(APITestCase):
+class CallbackDeadlineTests(ReauthFixtureMixin, TestCase):
     def setUp(self):
+        self.build_world()
+
+    @patch("netsuite.services.NetSuiteAuthClient")
+    def test_callback_restores_connection_and_sets_deadline(self, MockClient):
+        MockClient.return_value.exchange_code_for_tokens.return_value = NetSuiteTokenSet(
+            access_token="new-access",
+            refresh_token="new-refresh",
+            access_token_expires_at=timezone.now() + timedelta(hours=1),
+        )
         from netsuite.oauth import _state_signer
 
-        self.user = _make_user()
-        self.connection = NetSuiteConnection.objects.create(
-            user=self.user,
-            client_name='Acme Corp',
-            environment='sandbox',
-            client_id='client-id',
-            client_secret='client-secret',
-            netsuite_account_id='ACCT1',
-            status='pending',
-            is_active=False,
-        )
-        self.state = _state_signer.sign(f'{self.user.id}:{self.connection.id}')
+        state = _state_signer.sign(f"{self.admin.id}:{self.dead.id}")
+        NetSuiteConnectionService().handle_callback(code="abc", state=state)
 
-    def _mock_token_response(self, **overrides):
-        payload = {
-            'access_token': 'exchanged-access-token',
-            'refresh_token': 'exchanged-refresh-token',
-            'expires_in': 3600,
-        }
-        payload.update(overrides)
-        response = MagicMock()
-        response.ok = True
-        response.status_code = 200
-        response.json.return_value = payload
-        return response
+        self.dead.refresh_from_db()
+        self.assertEqual(self.dead.status, "connected")
+        self.assertTrue(self.dead.is_active)
+        self.assertEqual(self.dead.refresh_token, "new-refresh")
+        self.assertIsNone(self.dead.last_error)
+        self.assertEqual(self.dead.consecutive_failures, 0)
 
-    @patch('netsuite.http.send')
-    def test_callback_persists_connection_end_to_end(self, mock_post):
-        mock_post.return_value = self._mock_token_response()
-
-        response = self.client.get(
-            '/api/v1/netsuite/callback/',
-            {'code': 'auth-code-123', 'state': self.state},
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_302_FOUND)
-        self.assertIn('/settings?netsuite=connected', response['Location'])
-
-        self.connection.refresh_from_db()
-        self.assertEqual(self.connection.status, 'connected')
-        self.assertTrue(self.connection.is_active)
-        self.assertEqual(self.connection.access_token, 'exchanged-access-token')
-        self.assertEqual(self.connection.refresh_token, 'exchanged-refresh-token')
-        self.assertIsNotNone(self.connection.access_token_expires_at)
-
-    @patch('netsuite.http.send')
-    def test_callback_deactivates_other_connections_end_to_end(self, mock_post):
-        other_connection = _make_connection(self.user, is_active=True, status='connected')
-        mock_post.return_value = self._mock_token_response()
-
-        self.client.get(
-            '/api/v1/netsuite/callback/',
-            {'code': 'auth-code-123', 'state': self.state},
-        )
-
-        self.connection.refresh_from_db()
-        other_connection.refresh_from_db()
-        self.assertTrue(self.connection.is_active)
-        self.assertFalse(other_connection.is_active)
-
-    def test_callback_invalid_state_does_not_touch_db(self):
-        response = self.client.get(
-            '/api/v1/netsuite/callback/',
-            {'code': 'auth-code-123', 'state': 'tampered-state-value'},
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.connection.refresh_from_db()
-        self.assertEqual(self.connection.status, 'pending')
-
-    def test_callback_denied_authorization_returns_400(self):
-        response = self.client.get(
-            '/api/v1/netsuite/callback/',
-            {'error': 'access_denied', 'state': self.state},
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.connection.refresh_from_db()
-        self.assertEqual(self.connection.status, 'pending')
-
-    @patch('netsuite.http.send')
-    def test_callback_netsuite_rejection_returns_502(self, mock_post):
-        rejected_response = MagicMock()
-        rejected_response.ok = False
-        rejected_response.status_code = 400
-        mock_post.return_value = rejected_response
-
-        response = self.client.get(
-            '/api/v1/netsuite/callback/',
-            {'code': 'auth-code-123', 'state': self.state},
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.connection.refresh_from_db()
-        self.assertEqual(self.connection.status, 'pending')
+        expected = timezone.now() + timedelta(hours=NETSUITE_MAX_TOKEN_ROTATION_HOURS)
+        self.assertLess(abs((self.dead.refresh_token_expires_at - expected).total_seconds()), 60)
 
 
-# ===================================================================
-# NetSuiteTokenManager Tests
-# ===================================================================
-
-class NetSuiteTokenManagerTests(TestCase):
+class ReauthGateTests(ReauthFixtureMixin, TestCase):
     def setUp(self):
-        from netsuite.token_manager import NetSuiteTokenManager
+        self.build_world()
 
-        self.user = _make_user()
-        self.mock_repo = MagicMock()
-        self.manager = NetSuiteTokenManager(repository=self.mock_repo)
+    def test_dead_connection_raises_invalid_grant(self):
+        with self.assertRaises(NetSuiteTokenExchangeException) as ctx:
+            raise_if_reauth_required(self.dead)
+        self.assertTrue(str(ctx.exception).startswith("NETSUITE_INVALID_GRANT:"))
 
-    def _connection(self, **overrides):
-        connection = MagicMock(
-            id=1,
-            user_id=self.user.id,
-            access_token='current-token',
-            refresh_token='current-refresh',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-            netsuite_account_id='ACCT1',
-            client_id='client-id',
-            client_secret='client-secret',
+    def test_healthy_connection_passes(self):
+        raise_if_reauth_required(self.healthy)
+
+    def test_error_status_with_refresh_token_is_not_reauth(self):
+        # transient failures flip status to "error" but tokens are intact
+        self.healthy.status = "error"
+        self.healthy.save()
+        raise_if_reauth_required(self.healthy)
+
+    def test_repository_hides_error_connections_unless_asked(self):
+        repo = NetSuiteConnectionRepository()
+        self.assertIsNone(
+            repo.get_authorized_for_user(user=self.admin, connection_id=self.dead.id)
         )
-        for key, value in overrides.items():
-            setattr(connection, key, value)
-        return connection
-
-    def test_returns_existing_token_without_refresh_when_valid(self):
-        connection = self._connection()
-        token = self.manager.get_valid_access_token(connection)
-
-        self.assertEqual(token, 'current-token')
-        self.mock_repo.get_locked.assert_not_called()
-
-    @patch('netsuite.token_manager.NetSuiteAuthClient')
-    def test_refreshes_when_expired(self, MockClient):
-        connection = self._connection(
-            access_token_expires_at=timezone.now() - timedelta(minutes=1),
+        found = repo.get_authorized_for_user(
+            user=self.admin, connection_id=self.dead.id, include_error=True
         )
-        self.mock_repo.get_locked.return_value = connection
-        self.mock_repo.update_tokens.return_value = self._connection(access_token='new-token')
-
-        mock_client = MockClient.return_value
-        mock_client.refresh_access_token.return_value = NetSuiteTokenSet(
-            access_token='new-token',
-            refresh_token='new-refresh',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-        )
-
-        token = self.manager.get_valid_access_token(connection)
-
-        self.assertEqual(token, 'new-token')
-        mock_client.refresh_access_token.assert_called_once_with(refresh_token='current-refresh')
-        self.mock_repo.update_tokens.assert_called_once()
-
-    @patch('netsuite.token_manager.NetSuiteAuthClient')
-    def test_does_not_refresh_if_already_refreshed_under_lock(self, MockClient):
-        """
-        Simulates the concurrency case the lock exists for: by the time
-        this caller acquires the row lock, another request already
-        refreshed the token — get_locked() returns a connection whose
-        token is valid again, so no second NetSuite call should happen.
-        """
-        connection = self._connection(
-            access_token_expires_at=timezone.now() - timedelta(minutes=1),
-        )
-        already_refreshed = self._connection(
-            access_token='refreshed-by-another-request',
-            access_token_expires_at=timezone.now() + timedelta(hours=1),
-        )
-        self.mock_repo.get_locked.return_value = already_refreshed
-
-        token = self.manager.get_valid_access_token(connection)
-
-        self.assertEqual(token, 'refreshed-by-another-request')
-        MockClient.return_value.refresh_access_token.assert_not_called()
-        self.mock_repo.update_tokens.assert_not_called()
-
-    @patch('netsuite.token_manager.NetSuiteAuthClient')
-    def test_refresh_failure_records_sync_failure_and_reraises(self, MockClient):
-        connection = self._connection(
-            access_token_expires_at=timezone.now() - timedelta(minutes=1),
-        )
-        self.mock_repo.get_locked.return_value = connection
-        MockClient.return_value.refresh_access_token.side_effect = NetSuiteTokenExchangeException(
-            'refresh failed'
-        )
-
-        with self.assertRaises(NetSuiteTokenExchangeException):
-            self.manager.get_valid_access_token(connection)
-
-        self.mock_repo.record_sync_failure.assert_called_once()
+        self.assertEqual(found.id, self.dead.id)
 
 
-# ===================================================================
-# Company / Employee NetSuite Tests
-# ===================================================================
+class DeadConnectionEndpointTests(ReauthFixtureMixin, APITestCase):
+    """Every endpoint must give the SAME code, and never 401 / never 200."""
 
-from tenancy.models import Company
-from netsuite.models import EmployeeConnection
-
-class NetSuiteCompanyConnectionTests(TestCase):
     def setUp(self):
-        self.company = Company.objects.create(
-            name='Test Co',
-            code='TC',
-            status=Company.Status.ACTIVE,
+        self.build_world()
+        self.client.credentials(**_auth(self.admin))
+
+    def assert_reauth(self, response):
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT, response.content)
+        self.assertNotEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.data["code"], "NETSUITE_REAUTH_REQUIRED")
+        # plain-language, tells the reader WHO acts, and leaks no internals
+        detail = response.data["detail"]
+        self.assertIn("Company Admin", detail)
+        for jargon in ("invalid_grant", "INVALID_GRANT", "token", "OAuth", "SuiteQL"):
+            self.assertNotIn(jargon, detail)
+
+    def test_catalogue_dead_connection(self):
+        r = self.client.get(
+            f"{BASE}/ocr/field-catalogue/",
+            {"connection_id": str(self.dead.id), "force_refresh": "true"},
         )
-        self.admin = User.objects.create_user(
-            email='admin@test.com',
-            password='testpass123',
-            company=self.company,
-            is_active=True,
-            is_email_verified=True,
+        self.assert_reauth(r)
+
+    def test_field_mappings_get_is_local_read_and_does_not_need_netsuite(self):
+        # Saved mappings live in the AGSuite DB: 200 here proves nothing about
+        # NetSuite health, which is exactly why the UI must not rely on it.
+        r = self.client.get(
+            f"{BASE}/ocr/field-mappings/",
+            {"connection_id": str(self.dead.id), "record_type": "vendorBill"},
         )
-        self.employee = User.objects.create_user(
-            email='emp@test.com',
-            password='testpass123',
-            company=self.company,
-            is_active=True,
-            is_email_verified=True,
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_suspended_company_reconnect_is_403_not_500(self):
+        self.company.plan = None
+        self.company.save()
+        r = self.client.post(
+            f"{BASE}/company/connections/{self.dead.id}/reconnect/"
         )
-        self.connection = _make_connection(self.admin, company=self.company)
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_get_company_connections(self):
-        service = NetSuiteConnectionService()
-        connections = service.get_company_connections(company_id=self.company.id)
-        self.assertEqual(connections.count(), 1)
-
-    def test_assign_employee(self):
-        service = NetSuiteConnectionService()
-        assignment = service.assign_employee(connection_id=self.connection.id, employee_id=self.employee.id)
-        self.assertEqual(assignment.employee, self.employee)
-        self.assertEqual(assignment.connection, self.connection)
-
-    def test_remove_employee(self):
-        service = NetSuiteConnectionService()
-        service.assign_employee(connection_id=self.connection.id, employee_id=self.employee.id)
-        service.remove_employee(connection_id=self.connection.id, employee_id=self.employee.id)
-        self.assertFalse(EmployeeConnection.objects.filter(employee=self.employee, connection=self.connection).exists())
-
-    def test_get_employee_connection(self):
-        service = NetSuiteConnectionService()
-        service.assign_employee(connection_id=self.connection.id, employee_id=self.employee.id)
-        conn = service.get_employee_connection(employee_id=self.employee.id)
-        self.assertEqual(conn.id, self.connection.id)
-
-    def test_employee_from_different_company_cannot_be_assigned(self):
-        other_company = Company.objects.create(name='Other Co', code='OC', status=Company.Status.ACTIVE)
-        other_emp = User.objects.create_user(
-            email='other@test.com',
-            password='testpass123',
-            company=other_company,
+    @patch("netsuite.views.NetSuiteValidationService")
+    def test_validate_token_error(self, MockSvc):
+        MockSvc.return_value.validate_document.side_effect = NetSuiteTokenExchangeException(
+            "NETSUITE_INVALID_GRANT: dead"
         )
-        service = NetSuiteConnectionService()
-        with self.assertRaises(ValueError):
-            service.assign_employee(connection_id=self.connection.id, employee_id=other_emp.id)
+        r = self.client.post(
+            f"{BASE}/ocr/validate/",
+            {"document_id": "11111111-1111-1111-1111-111111111111",
+             "connection_id": str(self.dead.id)},
+            format="json",
+        )
+        self.assert_reauth(r)
+
+    @patch("netsuite.views.NetSuiteValidationService")
+    def test_check_references_token_error(self, MockSvc):
+        MockSvc.return_value.check_references.side_effect = NetSuiteTokenExchangeException(
+            "NETSUITE_INVALID_GRANT: dead"
+        )
+        r = self.client.post(
+            f"{BASE}/ocr/check-references/",
+            {"document_id": "11111111-1111-1111-1111-111111111111",
+             "connection_id": str(self.dead.id)},
+            format="json",
+        )
+        self.assert_reauth(r)
+
+    @patch("netsuite.views.NetSuiteVendorBillPostingService")
+    def test_post_vendor_bill_token_error(self, MockSvc):
+        MockSvc.return_value.post_vendor_bill.side_effect = NetSuiteTokenExchangeException(
+            "NETSUITE_INVALID_GRANT: dead"
+        )
+        r = self.client.post(
+            f"{BASE}/ocr/post-vendor-bill/",
+            {"document_id": "11111111-1111-1111-1111-111111111111",
+             "connection_id": str(self.dead.id)},
+            format="json",
+        )
+        self.assert_reauth(r)
 
 
-class NetSuiteCompanyConnectionViewTests(APITestCase):
+class CatalogueRefreshSignalTests(ReauthFixtureMixin, APITestCase):
     def setUp(self):
-        self.company = Company.objects.create(
-            name='Test Co',
-            code='TC',
-            status=Company.Status.ACTIVE,
+        self.build_world()
+        self.client.credentials(**_auth(self.admin))
+        NetSuiteFieldCatalogue.objects.create(
+            connection=self.healthy, record_type="vendorBill",
+            body_fields=[], line_fields=[], custom_fields=[],
         )
-        self.admin = User.objects.create_user(
-            email='admin@test.com',
-            password='testpass123',
-            company=self.company,
-            is_active=True,
-            is_email_verified=True,
+
+    def _get(self, **params):
+        params.setdefault("connection_id", str(self.healthy.id))
+        return self.client.get(f"{BASE}/ocr/field-catalogue/", params)
+
+    def test_failed_forced_refresh_is_flagged_not_reported_as_success(self):
+        with patch(
+            "netsuite.services.NetSuiteFieldMappingService._fetch_live_metadata",
+            side_effect=Exception("NetSuite timeout"),
+        ):
+            r = self._get(force_refresh="true")
+
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.data["data"]["refresh_failed"])
+        self.assertNotIn("refreshed successfully", r.data["message"])
+
+    def test_plain_load_from_cache_is_not_a_failure(self):
+        r = self._get()
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertFalse(r.data["data"]["refresh_failed"])
+
+    def test_forced_refresh_token_error_is_reauth(self):
+        with patch(
+            "netsuite.services.NetSuiteFieldMappingService._fetch_live_metadata",
+            side_effect=NetSuiteTokenExchangeException("NETSUITE_INVALID_GRANT: x"),
+        ):
+            r = self._get(force_refresh="true")
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(r.data["code"], "NETSUITE_REAUTH_REQUIRED")
+
+
+class SerializerReauthFieldTests(ReauthFixtureMixin, TestCase):
+    def setUp(self):
+        self.build_world()
+
+    def test_dead_connection_needs_reauth(self):
+        data = NetSuiteConnectionListSerializer(self.dead).data
+        self.assertTrue(data["needs_reauth"])
+
+    def test_healthy_connection_with_future_deadline(self):
+        self.healthy.refresh_token_expires_at = timezone.now() + timedelta(days=20)
+        self.healthy.save()
+        data = NetSuiteConnectionListSerializer(self.healthy).data
+        self.assertFalse(data["needs_reauth"])
+        self.assertIsNotNone(data["reauth_required_by"])
+
+    def test_past_deadline_needs_reauth(self):
+        self.healthy.refresh_token_expires_at = timezone.now() - timedelta(hours=1)
+        self.healthy.save()
+        self.assertTrue(NetSuiteConnectionListSerializer(self.healthy).data["needs_reauth"])
+
+
+class BatchTaskReauthTests(ReauthFixtureMixin, TestCase):
+    def setUp(self):
+        self.build_world()
+
+    @patch("netsuite.services.NetSuiteValidationService")
+    def test_batch_reports_reconnect_message_and_code(self, MockSvc):
+        from netsuite.tasks import _run_netsuite_batch
+
+        MockSvc.return_value.validate_document.side_effect = NetSuiteTokenExchangeException(
+            "NETSUITE_INVALID_GRANT: dead"
         )
-        self.employee = User.objects.create_user(
-            email='emp@test.com',
-            password='testpass123',
-            company=self.company,
-            is_active=True,
-            is_email_verified=True,
+        task = MagicMock()
+        out = _run_netsuite_batch(
+            task=task,
+            action="validate",
+            document_ids=["11111111-1111-1111-1111-111111111111"],
+            user_id=str(self.admin.id),
+            connection_id=str(self.dead.id),
         )
-        self.connection = _make_connection(self.admin, company=self.company)
-
-    def test_company_connections_list(self):
-        self.client.credentials(**_auth_header(self.admin))
-        response = self.client.get('/api/v1/netsuite/company/connections/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
-
-    def test_assign_employee_view(self):
-        self.client.credentials(**_auth_header(self.admin))
-        response = self.client.post(f'/api/v1/netsuite/company/connections/{self.connection.id}/assign-employee/', {
-            'employee_id': str(self.employee.id),
-        })
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
-
-    def test_my_connection_employee_view(self):
-        EmployeeConnection.objects.create(employee=self.employee, connection=self.connection)
-        self.client.credentials(**_auth_header(self.employee))
-        response = self.client.get('/api/v1/netsuite/my/connection/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
-        self.assertEqual(response.data['data']['id'], str(self.connection.id))
+        item = out["results"][0]
+        self.assertEqual(item["code"], "NETSUITE_REAUTH_REQUIRED")
+        self.assertIn("reconnect", item["error"].lower())

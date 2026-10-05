@@ -7,6 +7,11 @@ import OcrValidationInlineEditor from '../../components/ocr/OcrValidationInlineE
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 import { aiIntegrationApi } from '../../services/aiIntegration.js'
+import NetSuiteReauthBanner from '../../components/netsuite/NetSuiteReauthBanner.jsx'
+import {
+  isNetSuiteReauthError,
+  isNetSuiteReauthJob,
+} from '../../utils/netsuiteErrors.js'
 
 const CONTEXT_KEY = 'ocr_field_mapping_context'
 
@@ -641,6 +646,7 @@ export default function OcrFieldMappingPage() {
   const [catalogueLoading, setCatalogueLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [refreshWarning, setRefreshWarning] = useState('')
   const [reauthRequired, setReauthRequired] = useState(false)
   const [notice, setNotice] = useState('')
   const [validating, setValidating] = useState(false)
@@ -826,6 +832,7 @@ export default function OcrFieldMappingPage() {
     setCatalogueLoading(true)
     setError('')
     setReauthRequired(false)
+    setRefreshWarning('')
     setNotice('')
 
     try {
@@ -866,6 +873,12 @@ export default function OcrFieldMappingPage() {
           )
 
       setCatalogue(actualFields)
+
+      if (catalogueResponse?.refresh_failed) {
+        setRefreshWarning(
+          'Could not refresh the field list from NetSuite, so the last saved fields are shown. They may be out of date. Please try again in a moment.',
+        )
+      }
 
       const savedBySource = new Map(
         saved
@@ -1385,6 +1398,7 @@ const runValidation = async () => {
   try {
     setValidating(true)
     setError('')
+    setReauthRequired(false)
     setNotice('')
     setAiDiagnostics([])
     setDiagnosticError('')
@@ -1561,6 +1575,10 @@ const runValidation = async () => {
       err,
     )
 
+    if (isNetSuiteReauthError(err)) {
+      setReauthRequired(true)
+    }
+
     setError(
       err?.response?.data?.detail ||
         err?.response?.data?.error ||
@@ -1658,6 +1676,7 @@ const handlePost = async () => {
     try{
       setPosting(true)
       setError('')
+      setReauthRequired(false)
       setNotice('')
       setPostingResult(null)
 
@@ -1668,6 +1687,9 @@ const handlePost = async () => {
     }
     catch(err){
       console.error('NetSuite Vendor Bill posting failed:',err)
+      if (isNetSuiteReauthError(err)) {
+        setReauthRequired(true)
+      }
       
       setError(err?.response?.data?.detail || err?.response?.data?.error || err?.message || 'Unable to create the Vendor Bill in NetSuite.')
     }
@@ -1715,6 +1737,7 @@ const handlePost = async () => {
     try {
       setPosting(true)
       setError('')
+      setReauthRequired(false)
       setNotice('')
       setPostingResult(null)
 
@@ -1787,9 +1810,14 @@ const handlePost = async () => {
                 'NetSuite batch posting failed.',
             )
           }
+          if (isNetSuiteReauthJob(statusData)) {
+            setReauthRequired(true)
+          }
 
           return
         }
+
+
 
         await new Promise((resolve) =>
           setTimeout(
@@ -1807,6 +1835,9 @@ const handlePost = async () => {
         'NetSuite batch Vendor Bill posting failed:',
         err,
       )
+      if (isNetSuiteReauthError(err)) {
+        setReauthRequired(true)
+      }
 
       setError(
         err?.response?.data?.detail ||
@@ -1863,7 +1894,13 @@ const handlePost = async () => {
           </Button>
         </div>
         {reauthRequired && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <NetSuiteReauthBanner connectionId={context?.connection_id} />)}
+          {refreshWarning && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {refreshWarning}
+          </div>
+        )}
+          {/* <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <span>
               NetSuite connection needs reconnecting. A Company Admin must
               reconnect it before fields can be refreshed or documents validated.
@@ -1876,7 +1913,7 @@ const handlePost = async () => {
               Go to NetSuite connections
             </Button>
           </div>
-        )}
+        )} */}
         {error && !reauthRequired && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}

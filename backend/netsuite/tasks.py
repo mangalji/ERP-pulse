@@ -9,6 +9,7 @@ from django.conf import settings
 from netsuite.services import NetSuiteReferenceSyncService
 from netsuite.models import NetSuiteConnection
 from tenancy.services import company_lifecycle_service
+from netsuite.exceptions import NetSuiteTokenExchangeException
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +227,19 @@ def _run_netsuite_batch(
                         ),
                     }
                 )
+
+        except NetSuiteTokenExchangeException:
+            logger.warning(
+                "NetSuite batch item needs reconnect — action=%s document=%s user=%s",
+                action,
+                document_id,
+                user_id,
+            )
+            result["error"] = (
+                "NetSuite connection needs reconnecting. "
+                "Ask a Company Admin to reconnect it, then retry."
+            )
+            result["code"] = "NETSUITE_REAUTH_REQUIRED"
 
         except Exception as exc:
             logger.exception(
