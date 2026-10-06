@@ -509,7 +509,7 @@ class CenterTabsView(APIView):
     POST:
         Creates a top-level tab using:
         - name
-        - route/path (required)
+        - route/path (optional)
         - sort_order (optional; auto-incremented when omitted)
     """
 
@@ -577,7 +577,7 @@ class CenterTabsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Center Tab path is required.
+        # Center Tab path is optional.
         try:
             route = _normalize_route(
                 request.data.get("route"),
@@ -1145,17 +1145,11 @@ class NavigationMasterCreateView(APIView):
             request.data.get("query_param") or ""
         ).strip()
 
-        if parent_level == "root" and query_param:
-            return Response(
-                {"detail": "Center Tab cannot have a Query Param."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         try:
             query_params = _build_query_params(
                 name,
                 query_param,
-                allow_query_param=parent_level != "root",
+                allow_query_param=True,
             )
         except ValueError as exc:
             return Response(
@@ -1293,41 +1287,22 @@ class NavigationMasterUpdateView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        system_tab = (
-            (level == "top" and tab.key in {"employees", "settings"})
-            or (
-                level == "level2"
-                and tab.key in {
-                    "settings-company-info",
-                    "settings-customize",
-                    "settings-personal-info",
-                    "settings-ai-integration",
-                }
-            )
-            or (
-                level == "level3"
-                and tab.key in {
-                    "center-tabs",
-                    "center-categories",
-                }
-            )
-        )
-
-        if system_tab:
-            return Response(
-                {"detail": "System navigation tabs cannot be customized."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Pre-created/system tabs can be edited, but their existing Path/Route
+        # is immutable. Name, Query Param and Sort Order remain editable.
+        system_tab = tab.key in SYSTEM_KEYS
 
         allowed_fields = {"name", "route", "query_param", "sort_order"}
+        if system_tab:
+            allowed_fields = {"name", "query_param", "sort_order"}
+
         unknown_fields = set(request.data.keys()) - allowed_fields
 
         if unknown_fields:
             return Response(
                 {
                     "detail": (
-                        "Unsupported fields: "
-                        + ", ".join(sorted(unknown_fields))
+                        "Pre-created tabs allow changes only to name, Query Param, "
+                        "and Sort Order. Path cannot be changed."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1373,17 +1348,11 @@ class NavigationMasterUpdateView(APIView):
                 request.data.get("query_param") or ""
             ).strip()
 
-            if level == "top" and query_param:
-                return Response(
-                    {"detail": "Center Tab cannot have a Query Param."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
             try:
                 tab.query_params = _build_query_params(
                     new_name,
                     query_param,
-                    allow_query_param=level != "top",
+                    allow_query_param=True,
                 )
             except ValueError as exc:
                 return Response(
@@ -1840,7 +1809,7 @@ class CenterCategoryChildrenView(APIView):
             )
 
         try:
-            # Level-3 inherits the parent route; users only provide a query-param key.
+            # Level-3 uses its own path when provided; otherwise the effective parent path is inherited.
             route = _normalize_route(
                 request.data.get("route"),
                 required=False,

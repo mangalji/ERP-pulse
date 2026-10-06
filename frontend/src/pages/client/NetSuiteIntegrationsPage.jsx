@@ -10,6 +10,7 @@ import { netsuiteApi } from '../../services/netsuite.js'
 import { clientApi } from '../../services/client.js'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { isCompanyAdminUser } from '../../utils/netsuiteErrors.js'
+import { API_BASE, NETSUITE_ENDPOINTS } from '../../utils/constants.js'
 
 export default function NetSuiteIntegrationsPage() {
   const { toasts, addToast, removeToast } = useToast()
@@ -23,6 +24,7 @@ export default function NetSuiteIntegrationsPage() {
   const [editingId, setEditingId] = useState(null)
   const [assigningId, setAssigningId] = useState(null)
   const [companyEmployees, setCompanyEmployees] = useState([])
+  const netsuiteRedirectUri = `${API_BASE}${NETSUITE_ENDPOINTS.callback}`
 
   useEffect(() => {
     loadData()
@@ -192,8 +194,7 @@ export default function NetSuiteIntegrationsPage() {
               intent="secondary"
               size="sm"
               onClick={() => {
-                const uri = `${window.location.origin}/api/v1/netsuite/callback/`
-                navigator.clipboard.writeText(uri)
+                navigator.clipboard.writeText(netsuiteRedirectUri)
                   .then(() => addToast('Redirect URI copied', 'success'))
                   .catch(() => addToast('Unable to copy Redirect URI', 'error'))
               }}
@@ -202,7 +203,7 @@ export default function NetSuiteIntegrationsPage() {
             </Button>
           </div>
           <p className="mt-2 break-all text-sm text-[var(--color-ink)]">
-            {window.location.origin}/api/v1/netsuite/callback/
+            {netsuiteRedirectUri}
           </p>
         </Card>
 

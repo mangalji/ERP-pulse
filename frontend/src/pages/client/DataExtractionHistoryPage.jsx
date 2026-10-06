@@ -47,9 +47,6 @@ function formatDate(value) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '--' : formatDateTime(date)
 }
-
-
-
 // function isCompanyAdminUser(user) {
 //   if (user?.is_superadmin || user?.is_staff) return true
 
@@ -137,11 +134,10 @@ export default function DataExtractionHistoryPage() {
     }
   }, [])
 
-  const visibleSelectableRecords = records
-  // const visibleSelectableRecords = useMemo(
-  //   () => records.filter((item) => item?.document_ids?.length),
-  //   [records],
-  // )
+  const visibleSelectableRecords = useMemo(
+    () => records.filter((item) => item?.validation_status != 'POSTED'),
+    [records],
+  )
 
   const selectedRecords = useMemo(
     () => records.filter((item) => selectedIds.has(item?.batch_id)),

@@ -107,10 +107,18 @@ export default function CenterCategoryDetailPage() {
     setMessage('')
 
     try {
+      const editingChild = editingId
+        ? children.find((child) => String(child.id) === String(editingId))
+        : null
+      const isSystemChild = Boolean(editingChild?.system)
+
       const payload = {
         name,
-        route: form.route.trim(),
         query_param: queryParam,
+      }
+
+      if (!isSystemChild) {
+        payload.route = form.route.trim()
       }
 
       if (form.sort_order.trim() !== '') {
@@ -206,7 +214,7 @@ export default function CenterCategoryDetailPage() {
       title={category?.name || 'Center Category'}
       breadcrumb="Settings / Customize / Center Categories"
     >
-      <div className="w-full px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         {loading ? (
           <p className="text-sm text-[var(--color-muted)]">Loading...</p>
         ) : !category ? (
@@ -290,7 +298,9 @@ export default function CenterCategoryDetailPage() {
                         }))
                       }
                       placeholder="e.g. /app/orders"
-                      className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm"
+                      disabled={Boolean(editingId && children.find((child) => String(child.id) === String(editingId))?.system)}
+                      title={editingId && children.find((child) => String(child.id) === String(editingId))?.system ? 'The Path of a pre-created tab cannot be changed.' : undefined}
+                      className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:bg-[var(--color-canvas)] disabled:text-[var(--color-muted)]"
                     />
                   </div>
 
@@ -332,9 +342,15 @@ export default function CenterCategoryDetailPage() {
                   </div>
                 </div>
 
-                <p className="mt-3 text-xs text-[var(--color-muted)]">
-                  Path and Query Param are optional. When a Query Param is supplied, its value is automatically the subtab name.
-                </p>
+                {editingId && children.find((child) => String(child.id) === String(editingId))?.system ? (
+                  <p className="mt-3 text-xs text-[var(--color-muted)]">
+                    Pre-created tab: Name, Query Param and Sort Order can be changed, but its Path is fixed.
+                  </p>
+                ) : (
+                  <p className="mt-3 text-xs text-[var(--color-muted)]">
+                    Path and Query Param are optional. When a Query Param is supplied, its value is automatically the subtab name.
+                  </p>
+                )}
 
                 <div className="mt-4 flex justify-end gap-2">
                   <button

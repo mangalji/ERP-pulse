@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
 
-const EMPTY_FORM = { name: '', route: '', sort_order: '' }
+const EMPTY_FORM = { name: '', route: '', query_param: '', sort_order: '' }
 
 export default function CenterTabsPage() {
   const navigate = useNavigate()
@@ -43,30 +43,71 @@ export default function CenterTabsPage() {
     setShowForm(false)
   }
 
-  const submit = async () => {
-    const name = form.name.trim()
-    const route = form.route.trim()
-    if (!name) return setError('Center Tab name is required.')
-    // if (!route) return setError('Path is required.')
-    if (route.includes('?') || route.includes('#')) return setError('Do not enter query parameters in Path.')
+   const submit = async () => {
+  const name = form.name.trim()
+  const route = form.route.trim()
+  const queryParam = form.query_param.trim()
 
-    setSaving(true); setError(''); setMessage('')
-    try {
-      const payload = { name, route }
-      if (form.sort_order !== '') payload.sort_order = Number(form.sort_order)
-      if (editingId) {
-        await clientApi.updateNavigationTab('top', editingId, payload)
-        setMessage('Center Tab updated successfully.')
-      } else {
-        await clientApi.createNavigationTab({ ...payload, parent_level: 'root' })
-        setMessage('Center Tab created successfully.')
-      }
-      resetForm()
-      await loadTabs(page)
-    } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to save Center Tab.')
-    } finally { setSaving(false) }
+  const editingTab = editingId
+    ? tabs.find((tab) => String(tab.id) === String(editingId))
+    : null
+
+  const isSystemTab = Boolean(editingTab?.system)
+
+  if (!name) return setError('Center Tab name is required.')
+
+  if (!isSystemTab && (route.includes('?') || route.includes('#'))) {
+    return setError('Do not enter query parameters in Path.')
   }
+
+  setSaving(true)
+  setError('')
+  setMessage('')
+
+  try {
+    const payload = {
+      name,
+      query_param: queryParam,
+    }
+
+    // Pre-created/system tab ka Path update nahi hoga.
+    if (!isSystemTab) {
+      payload.route = route
+    }
+
+    if (form.sort_order !== '') {
+      payload.sort_order = Number(form.sort_order)
+    }
+
+    if (editingId) {
+      await clientApi.updateNavigationTab('top', editingId, payload)
+      setMessage('Center Tab updated successfully.')
+    } else {
+      await clientApi.createNavigationTab({
+        ...payload,
+        parent_level: 'root',
+      })
+      setMessage('Center Tab created successfully.')
+    }
+
+    resetForm()
+    await loadTabs(page)
+  } catch (err) {
+    const backendMessage =
+      err?.payload?.detail ||
+      err?.payload?.message ||
+      err?.response?.data?.detail ||
+      err?.response?.data?.message
+
+    setError(
+      backendMessage ||
+      err?.message ||
+      'Unable to save Center Tab.'
+    )
+  } finally {
+    setSaving(false)
+  }
+}
 
   const openTab = async (tab) => {
     setError(''); setMessage('')
@@ -83,11 +124,24 @@ export default function CenterTabsPage() {
   }
 
   const editTab = (tab) => {
-    setEditingId(tab.id)
-    setForm({ name: tab.name || '', route: tab.route || '', sort_order: tab.sort_order ?? '' })
-    setShowForm(true); setError(''); setMessage('')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
+  setEditingId(tab.id)
+
+  setForm({
+    name: tab.name || '',
+    route: tab.route || '',
+    query_param: Object.keys(tab.query_params || {})[0] || '',
+    sort_order: tab.sort_order ?? '',
+  })
+
+  setShowForm(true)
+  setError('')
+  setMessage('')
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'smooth',
+  })
+}
 
   const toggleSelected = (id) => {
     setSelectedIds((current) =>
@@ -115,11 +169,9 @@ export default function CenterTabsPage() {
     } finally { setDeleting(false) }
   }
 
-
-
   return (
     <ClientLayout title="Center Tabs" breadcrumb="Settings / Customize / Center Tabs">
-      <div className="w-full px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h1 className="text-xl font-semibold text-[var(--color-ink)]">Center Tabs</h1><p className="mt-1 text-sm text-[var(--color-muted)]">Click a Center Tab to manage its Center Categories.</p></div>
           <button type="button" onClick={() => { setShowForm((v) => !v); setEditingId(null); setForm(EMPTY_FORM); setError(''); setMessage('') }} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white">New Center Tab</button>
@@ -128,11 +180,53 @@ export default function CenterTabsPage() {
         {showForm && (
           <div className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h2 className="text-sm font-semibold text-[var(--color-ink)]">{editingId ? 'Edit Center Tab' : 'Create Center Tab'}</h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
-              <input aria-label="Center Tab Name" value={form.name} onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))} placeholder="Center Tab Name" className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm" />
-              <input aria-label="Path" value={form.route} onChange={(e) => setForm((v) => ({ ...v, route: e.target.value }))} placeholder="Path e.g. /app/sales" className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm" />
-              <input aria-label="Sort Order" type="number" min="0" value={form.sort_order} onChange={(e) => setForm((v) => ({ ...v, sort_order: e.target.value }))} placeholder="Sort Order" className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm" />
-            </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-4">
+  <input
+    aria-label="Center Tab Name"
+    value={form.name}
+    onChange={(e) =>
+      setForm((v) => ({ ...v, name: e.target.value }))
+    }
+    placeholder="Center Tab Name"
+    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm"
+  />
+
+  <input
+    aria-label="Path"
+    value={form.route}
+    onChange={(e) =>
+      setForm((v) => ({ ...v, route: e.target.value }))
+    }
+    placeholder="Path e.g. /app/sales"
+    disabled={Boolean(
+      editingId &&
+      tabs.find((tab) => String(tab.id) === String(editingId))?.system
+    )}
+    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+  />
+
+  <input
+    aria-label="Query Param"
+    value={form.query_param}
+    onChange={(e) =>
+      setForm((v) => ({ ...v, query_param: e.target.value }))
+    }
+    placeholder="Query Param"
+    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm"
+  />
+
+  <input
+    aria-label="Sort Order"
+    type="number"
+    min="0"
+    value={form.sort_order}
+    onChange={(e) =>
+      setForm((v) => ({ ...v, sort_order: e.target.value }))
+    }
+    placeholder="Sort Order"
+    className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm"
+  />
+</div>
             <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={resetForm} className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-semibold">Cancel</button><button type="button" disabled={saving} onClick={submit} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving...' : editingId ? 'Update Center Tab' : 'Create Center Tab'}</button></div>
           </div>
         )}
@@ -155,7 +249,11 @@ export default function CenterTabsPage() {
                   <td className="px-4 py-3 font-medium"><button type="button" onClick={() => openTab(tab)} className="text-[var(--color-primary)] hover:underline">{tab.name}</button></td>
                   <td className="px-4 py-3 text-[var(--color-ink-soft)]">{tab.route || '—'}</td>
                   <td className="px-4 py-3">{tab.sort_order ?? '—'}</td>
-                  <td className="px-4 py-3 text-right"><button type="button" onClick={() => editTab(tab)} className="rounded-md border px-3 py-1.5 text-xs font-semibold">Edit</button></td>
+                  <td className="px-4 py-3 text-right">
+                      <button type="button" onClick={() => editTab(tab)} className="rounded-md border px-3 py-1.5 text-xs font-semibold">
+                        Edit
+                      </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

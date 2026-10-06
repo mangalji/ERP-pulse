@@ -6,7 +6,7 @@ using google-genai because the existing OCR pipeline already depends on it.
 """
 
 from __future__ import annotations
-
+import time
 import base64
 import json
 import logging
@@ -404,33 +404,61 @@ class GoogleProvider(AIProvider):
             if seed is not None:
                 config_kwargs["seed"] = seed
 
+            request_started_at = time.perf_counter()
+
+            logger.info(
+                "Google Gemini request started — model=%s file=%s",
+                self.model,
+                Path(file_path).name,
+            )
+            
             response = client.models.generate_content(
                 model=self.model,
                 contents=[part, prompt],
-                config=genai.types.GenerateContentConfig(
-                    **config_kwargs
-                ),
+                config=genai.types.GenerateContentConfig(**config_kwargs),
             )
-
+            elapsed_seconds = time.perf_counter() - request_started_at
+            logger.info(
+                "Google Gemini request completed — model=%s file=%s duration_seconds=%.2f",
+                self.model,
+                Path(file_path).name,
+                elapsed_seconds,
+            )
             return _parse_json_text(
                 getattr(response, "text", "") or ""
             )
 
-        except AIProviderError:
-            raise
 
         except errors.APIError as exc:
+            elapsed_seconds = time.perf_counter() - request_started_at
+            logger.warning(
+                "Google Gemini request failed — model=%s file=%s "
+                "duration_seconds=%.2f status_code=%s error=%s",
+                self.model,
+                Path(file_path).name,
+                elapsed_seconds,
+                getattr(exc, "code", None),
+                exc,
+            )
             self._raise_status_error(
                 message="Google Gemini request failed.",
                 status_code=getattr(exc, "code", None),
                 error_text=str(exc),
             )
 
+        except AIProviderError:
+            raise
+
         except Exception:
+            elapsed_seconds = time.perf_counter() - request_started_at
             logger.exception(
-                "Google Gemini OCR request failed — model=%s",
+                "Google Gemini OCR request failed — "
+                "model=%s file=%s duration_seconds=%.2f",
                 self.model,
+                Path(file_path).name,
+                elapsed_seconds,
             )
+
             raise AIProviderError(
                 "Google Gemini request failed."
             )

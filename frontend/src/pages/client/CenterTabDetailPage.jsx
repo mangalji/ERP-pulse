@@ -50,11 +50,22 @@ export default function CenterTabDetailPage() {
     setError('')
     setMessage('')
     try {
+
+      const editingCategory = editingId
+        ? categories.find(
+            (category) =>
+              String(category.id) === String(editingId),
+          )
+        : null
+        
+      const isPreCreatedCategory = Boolean(editingCategory?.system)
+
       const payload = {
         name: form.name.trim(),
-        route: form.route.trim(),
         query_param: form.query_param.trim(),
       }
+      if (!isPreCreatedCategory) { payload.route = form.route.trim()}      
+      
       if (form.sort_order !== '') payload.sort_order = Number(form.sort_order)
 
       if (editingId) {
@@ -180,7 +191,7 @@ export default function CenterTabDetailPage() {
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-4">
                   <input value={form.name} onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))} placeholder="Name" className="rounded-md border px-3 py-2 text-sm" />
-                  <input value={form.route} onChange={(e) => setForm((v) => ({ ...v, route: e.target.value }))} placeholder="Path (optional)" className="rounded-md border px-3 py-2 text-sm" />
+                  <input value={form.route} onChange={(e) => setForm((v) => ({ ...v, route: e.target.value }))} placeholder="Path (optional)" disabled={Boolean(editingId && categories.find((category) => String(category.id) === String(editingId),)?.system)} title={ editingId && categories.find((category) => String(category.id) === String(editingId),)?.system ? 'Path of a pre-created tab cannot be changed.' : undefined } className="rounded-md border px-3 py-2 text-sm" />
                   <input value={form.query_param} onChange={(e) => setForm((v) => ({ ...v, query_param: e.target.value }))} placeholder="Query Param key (optional)" className="rounded-md border px-3 py-2 text-sm" />
                   <input type="number" min="0" value={form.sort_order} onChange={(e) => setForm((v) => ({ ...v, sort_order: e.target.value }))} placeholder="Sort Order" className="rounded-md border px-3 py-2 text-sm" />
                 </div>
