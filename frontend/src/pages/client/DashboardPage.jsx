@@ -7,6 +7,7 @@ import ErrorState from '../../components/ui/ErrorState.jsx'
 import EmptyState from '../../components/ui/EmptyState.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
+import { formatDate, formatDateTime } from '../../utils/formatDate.js'
 
 export default function DashboardPage() {
   const { user } = useAuth()
@@ -75,7 +76,7 @@ const kpis = useMemo(() => {
       id: 'plan_expiry',
       label: 'Plan Expiry',
       value: summary.plan_expiry
-        ? new Date(summary.plan_expiry).toLocaleDateString()
+        ? formatDate(summary.plan_expiry)
         : '--',
     },
   ]
@@ -141,7 +142,7 @@ const kpis = useMemo(() => {
                         <span className="text-sm text-[var(--color-ink)]">{item.text}</span>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-[var(--color-muted)]">
-                        <span>{item.time ? new Date(item.time).toLocaleString() : '--'}</span>
+                        <span>{item.time ? formatDateTime(item.time) : '--'}</span>
                       </div>
                     </div>
                   ))}

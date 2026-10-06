@@ -5,6 +5,7 @@ import Badge from '../../components/ui/Badge.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { netsuiteApi } from '../../services/netsuite.js'
+import { formatDate } from '../../utils/formatDate.js'
 
 export default function EmployeeNetSuitePage() {
   const { toasts, addToast, removeToast } = useToast()
@@ -173,9 +174,7 @@ return (
                       Connected At:
                     </span>{' '}
                     {connection.connected_at
-                      ? new Date(
-                          connection.connected_at,
-                        ).toLocaleDateString()
+                      ? formatDate(connection.connected_at)
                       : '—'}
                   </div>
 
@@ -184,9 +183,7 @@ return (
                       Last Synced:
                     </span>{' '}
                     {connection.last_synced_at
-                      ? new Date(
-                          connection.last_synced_at,
-                        ).toLocaleDateString()
+                      ? formatDate(connection.last_synced_at)
                       : '—'}
                   </div>
                 </div>

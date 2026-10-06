@@ -1,4 +1,5 @@
 import Card from '../ui/Card.jsx'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 export default function InvitationCard({ companyName, email, expiresAt, onResend }) {
   return (
@@ -17,7 +18,7 @@ export default function InvitationCard({ companyName, email, expiresAt, onResend
 
       <div className="mb-4 flex flex-col gap-2 text-sm text-[var(--color-ink-soft)]">
         <p><span className="font-medium">Email:</span> {email}</p>
-        <p><span className="font-medium">Expires:</span> {new Date(expiresAt).toLocaleString()}</p>
+        <p><span className="font-medium">Expires:</span> {formatDateTime(expiresAt)}</p>
       </div>
 
       {onResend && (

@@ -21,6 +21,7 @@ import {
   validatePhone,
   PHONE_MAX_DIGITS,
 } from '../../utils/formValidation.js'
+import { formatDate } from '../../utils/formatDate.js'
 
 const PAGE_SIZE = 10
 const COMPANY_NAME_MAX_LENGTH = 100
@@ -551,7 +552,7 @@ export default function CompaniesPage() {
       render: (row) => (
         <span className="text-[var(--color-muted)]">
           {row.created_at
-            ? new Date(row.created_at).toLocaleDateString()
+            ? formatDate(row.created_at)
             : '—'}
         </span>
       ),
@@ -648,7 +649,7 @@ export default function CompaniesPage() {
       render: (row) => (
         <span className="text-[var(--color-muted)]">
           {row.deleted_at
-            ? new Date(row.deleted_at).toLocaleDateString()
+            ? formatDate(row.deleted_at)
             : '—'}
         </span>
       ),
@@ -707,9 +708,7 @@ export default function CompaniesPage() {
       render: (row) => (
         <span className="text-[var(--color-muted)]">
           {row.soft_deleted_at
-            ? new Date(
-                row.soft_deleted_at
-              ).toLocaleDateString()
+            ? formatDate(row.soft_deleted_at)
             : '—'}
         </span>
       ),
@@ -720,9 +719,7 @@ export default function CompaniesPage() {
       render: (row) => (
         <span className="text-[var(--color-muted)]">
           {row.permanently_deleted_at
-            ? new Date(
-                row.permanently_deleted_at
-              ).toLocaleDateString()
+            ? formatDate(row.permanently_deleted_at)
             : '—'}
         </span>
       ),

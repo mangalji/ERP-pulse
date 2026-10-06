@@ -4,6 +4,7 @@ import apiClient from '../../services/apiClient.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 export default function OcrBatchHistoryPage() {
   const navigate = useNavigate()
@@ -95,7 +96,7 @@ export default function OcrBatchHistoryPage() {
     const date = new Date(value)
     return Number.isNaN(date.getTime())
       ? '--'
-      : date.toLocaleString()
+      : formatDateTime(date)
   }
 
   const statusClass = (status) => {

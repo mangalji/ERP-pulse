@@ -1,4 +1,5 @@
 import Card from '../ui/Card.jsx'
+import { formatDate } from '../../utils/formatDate.js'
 
 export default function SubscriptionCard({ planName, status, startDate, endDate, isAutoRenew,
                                           originalPrice, discountDisplay, finalPrice, billingCycle,
@@ -9,8 +10,8 @@ export default function SubscriptionCard({ planName, status, startDate, endDate,
         <div>
           <h3 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">{planName || 'No Active Plan'}</h3>
           <p className="mt-1 text-sm text-[var(--color-muted)]">Status: {status}</p>
-          {startDate && <p className="mt-0.5 text-xs text-[var(--color-muted)]">Started: {new Date(startDate).toLocaleDateString()}</p>}
-          {endDate && <p className="mt-0.5 text-xs text-[var(--color-muted)]">Expires: {new Date(endDate).toLocaleDateString()}</p>}
+          {startDate && <p className="mt-0.5 text-xs text-[var(--color-muted)]">Started: {formatDate(startDate)}</p>}
+          {endDate && <p className="mt-0.5 text-xs text-[var(--color-muted)]">Expires: {formatDate(endDate)}</p>}
           {isAutoRenew && <p className="mt-0.5 text-xs text-[var(--color-positive)]">Auto-renew enabled</p>}
           {originalPrice !== undefined && (
             <div className="mt-2 flex gap-4 text-xs">

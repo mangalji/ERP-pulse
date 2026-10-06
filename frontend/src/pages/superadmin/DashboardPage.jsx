@@ -7,6 +7,7 @@ import SectionCard from '../../components/superadmin/SectionCard.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
 import Button from '../../components/ui/Button.jsx'
 import { superadminApi } from '../../services/superadmin.js'
+import { formatDate } from '../../utils/formatDate.js'
 
 const statIcons = {
   companies: (
@@ -163,7 +164,7 @@ export default function DashboardPage() {
                           <td className="px-4 py-3 text-[var(--color-ink-soft)]">{company.code}</td>
                           <td className="px-4 py-3"><StatusBadge status={company.status} /></td>
                           <td className="px-4 py-3 text-[var(--color-muted)]">
-                            {company.created_at ? new Date(company.created_at).toLocaleDateString() : '—'}
+                            {company.created_at ? formatDate(company.created_at) : '—'}
                           </td>
                         </tr>
                       ))}

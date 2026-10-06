@@ -8,8 +8,8 @@ import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Select from '../../components/ui/Select.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
-
 import { superadminApi } from '../../services/superadmin.js'
+import { formatDate } from '../../utils/formatDate.js'
 
 const TABS = [
   { key: 'subscription', label: 'Subscription' },
@@ -74,11 +74,25 @@ export default function CompanySubscriptionPage() {
     (tx) => tx.payment_status === 'PENDING'
   )
 
-  const flowState = currentPlan
-    ? 'active'
-    : pendingTransaction
-      ? 'pending'
-      : 'assign'
+  // Expiry is decided by the backend (same date logic as get_active_subscription)
+  const isPlanExpired = currentPlan?.subscription_status === 'EXPIRED'
+
+  // Plan catalog status (INACTIVE / ARCHIVED). Same rule the backend uses
+  // when it checks whether a new plan can be assigned.
+  const isPlanInactive =
+    Boolean(currentPlan?.status) && 
+    String(currentPlan?.status).toUpperCase() !== 'ACTIVE'
+
+  // If the plan is expired or inactive, treat it like a company with
+  // no plan so the Assign Plan form is shown again.
+  const canReassignPlan = isPlanExpired || isPlanInactive
+
+  const flowState =
+    currentPlan && !canReassignPlan
+      ? 'active'
+      : pendingTransaction
+        ? 'pending'
+        : 'assign'
 
   const selectedPlanData = plans.find(
     (plan) => String(plan.id) === String(selectedPlan)
@@ -533,7 +547,7 @@ export default function CompanySubscriptionPage() {
                       Plan
                     </label>
                     <p className="text-sm font-medium text-[var(--color-ink)]">
-                      {currentPlan.plan_name || '—'}
+                      {currentPlan.name || '—'}
                     </p>
                   </div>
 
@@ -554,7 +568,7 @@ export default function CompanySubscriptionPage() {
                       Subscription Status
                     </label>
                     <p className="text-sm text-[var(--color-ink-soft)]">
-                      {currentPlan.status || '—'}
+                      {currentPlan.subscription_status || '—'}
                     </p>
                   </div>
 
@@ -573,9 +587,7 @@ export default function CompanySubscriptionPage() {
                     </label>
                     <p className="text-sm text-[var(--color-ink-soft)]">
                       {currentPlan.start_date
-                        ? new Date(
-                            currentPlan.start_date
-                          ).toLocaleDateString()
+                        ? formatDate(currentPlan.start_date)
                         : '—'}
                     </p>
                   </div>
@@ -586,9 +598,7 @@ export default function CompanySubscriptionPage() {
                     </label>
                     <p className="text-sm text-[var(--color-ink-soft)]">
                       {currentPlan.end_date
-                        ? new Date(
-                            currentPlan.end_date
-                          ).toLocaleDateString()
+                        ? formatDate(currentPlan.end_date)
                         : '—'}
                     </p>
                   </div>
@@ -686,9 +696,7 @@ export default function CompanySubscriptionPage() {
 
                         <td className="py-3 pr-4 text-[var(--color-muted)]">
                           {tx.created_at
-                            ? new Date(
-                                tx.created_at
-                              ).toLocaleDateString()
+                            ? formatDate(tx.created_at)
                             : '—'}
                         </td>
                       </tr>

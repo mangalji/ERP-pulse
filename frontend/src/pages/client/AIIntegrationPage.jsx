@@ -4,6 +4,7 @@ import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Badge from '../../components/ui/Badge.jsx'
 import { aiIntegrationApi } from '../../services/aiIntegration.js'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 const EMPTY_FORM = {
   provider: '',
@@ -406,7 +407,7 @@ export default function AIIntegrationPage() {
 
               {lastTestedAt && (
                 <p className="text-xs text-[var(--color-muted)]">
-                  Last tested: {new Date(lastTestedAt).toLocaleString()}
+                  Last tested: {formatDateTime(lastTestedAt)}
                 </p>
               )}
 

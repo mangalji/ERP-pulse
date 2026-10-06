@@ -8,6 +8,7 @@ import SubscriptionCard from '../../components/subscriptions/SubscriptionCard.js
 import UsageCard from '../../components/subscriptions/UsageCard.jsx'
 import LimitProgress from '../../components/subscriptions/LimitProgress.jsx'
 import { subscriptionApi } from '../../services/subscriptions.js'
+import { formatDate } from '../../utils/formatDate.js'
 
 export default function ClientSubscriptionPage() {
   const { toasts, addToast, removeToast } = useToast()
@@ -128,7 +129,7 @@ export default function ClientSubscriptionPage() {
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{tx.billing_cycle || '—'}</td>
                       <td className="py-3 pr-4 capitalize">{tx.payment_status}</td>
                       <td className="py-3 pr-4 text-[var(--color-muted)]">
-                        {tx.created_at ? new Date(tx.created_at).toLocaleDateString() : '—'}
+                        {tx.created_at ? formatDate(tx.created_at) : '—'}
                       </td>
                     </tr>
                   ))}

@@ -407,7 +407,7 @@ class InvitationService:
             f"You have been invited to join {invitation.company.name} on AGSuite.\n\n"
             f"Click the link below to accept your invitation and set up your account:\n"
             f"{invitation_link}\n\n"
-            f"This invitation will expire on {invitation.expires_at.strftime('%B %d, %Y at %I:%M %p')}.\n\n"
+            f"This invitation will expire on {invitation.expires_at.strftime('%d %B %Y at %I:%M %p')}.\n\n"
             f"If you did not expect this invitation, please ignore this email.\n\n"
             f"Best regards,\n"
             f"AGSuite Team"

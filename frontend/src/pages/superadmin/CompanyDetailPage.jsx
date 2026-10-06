@@ -10,6 +10,7 @@ import Button from '../../components/ui/Button.jsx'
 import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
+import { formatDate, formatDateTime } from '../../utils/formatDate.js'
 
 const COUNTRY_OPTIONS = [
   { value: 'IN', label: 'India', dialCode: '+91' },
@@ -373,9 +374,7 @@ export default function CompanyDetailPage() {
 
               <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
                 {company.created_at
-                  ? new Date(
-                      company.created_at,
-                    ).toLocaleString()
+                  ? formatDateTime(company.created_at)
                   : '—'}
               </p>
             </div>
@@ -387,9 +386,7 @@ export default function CompanyDetailPage() {
 
               <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
                 {company.updated_at
-                  ? new Date(
-                      company.updated_at,
-                    ).toLocaleString()
+                  ? formatDateTime(company.updated_at)
                   : '—'}
               </p>
             </div>
@@ -405,9 +402,7 @@ export default function CompanyDetailPage() {
                 Company operations are disabled during
                 the recovery period.
                 {company.deleted_at
-                  ? ` Deleted on ${new Date(
-                      company.deleted_at,
-                    ).toLocaleString()}.`
+                  ? ` Deleted on ${formatDateTime(company.deleted_at)}.`
                   : ''}
               </p>
             </div>
@@ -519,7 +514,7 @@ export default function CompanyDetailPage() {
                   </p>
 
                   <p className="mt-1 font-semibold text-[var(--color-ink)]">
-                    {plan.status || '—'}
+                    {plan.subscription_status || '—'}
                   </p>
                 </div>
 
@@ -530,9 +525,7 @@ export default function CompanyDetailPage() {
 
                   <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
                     {plan.start_date
-                      ? new Date(
-                          plan.start_date,
-                        ).toLocaleDateString()
+                      ? formatDate(plan.start_date)
                       : '—'}
                   </p>
                 </div>
@@ -544,9 +537,7 @@ export default function CompanyDetailPage() {
 
                   <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
                     {plan.end_date
-                      ? new Date(
-                          plan.end_date,
-                        ).toLocaleDateString()
+                      ? formatDate(plan.end_date)
                       : '—'}
                   </p>
                 </div>
@@ -687,9 +678,7 @@ export default function CompanyDetailPage() {
                   
                   <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
                     {company.netsuite_last_sync
-                      ? new Date(
-                          company.netsuite_last_sync,
-                        ).toLocaleString()
+                      ? formatDateTime(company.netsuite_last_sync)
                       : '—'}
                   </p>
                 </div>
@@ -969,7 +958,7 @@ export default function CompanyDetailPage() {
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Subscription Status</p>
-                          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{activePlan.status || '—'}</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{activePlan.subscription_status || '—'}</p>
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Original Price</p>
@@ -995,11 +984,11 @@ export default function CompanyDetailPage() {
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Start Date</p>
-                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.start_date ? new Date(activePlan.start_date).toLocaleDateString() : '—'}</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.start_date ? formatDate(activePlan.start_date) : '—'}</p>
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">End Date</p>
-                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.end_date ? new Date(activePlan.end_date).toLocaleDateString() : '—'}</p>
+                          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{activePlan.end_date ? formatDate(activePlan.end_date) : '—'}</p>
                         </div>
                       </div>
                     )}

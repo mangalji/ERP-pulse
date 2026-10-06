@@ -12,6 +12,7 @@ import {
   isNetSuiteReauthError,
   isNetSuiteReauthJob,
 } from '../../utils/netsuiteErrors.js'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 const FILTERS = [
   { value: 'ALL', label: 'All Data' },
@@ -44,7 +45,7 @@ function statusClass(status) {
 function formatDate(value) {
   if (!value) return '--'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '--' : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? '--' : formatDateTime(date)
 }
 
 

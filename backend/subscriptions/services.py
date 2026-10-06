@@ -71,12 +71,21 @@ class SubscriptionService:
             raise ValueError('This plan is not available for assignment.')
 
         # A company with an active subscription cannot start another
-        # initial assignment transaction.
+        # initial assignment transaction, unless its current plan has been
+        # withdrawn from the catalog (inactive, archived or deleted).
+        # get_active_subscription itself is left unchanged because it also
+        # drives access control, so the company keeps working until a new
+        # plan is actually assigned.
         active_subscription = self.get_active_subscription(company.id)
         if active_subscription is not None:
-            raise ValueError(
-                'This company already has an active subscription.'
+            current_plan = company.plan
+            current_plan_withdrawn = current_plan is not None and (
+                current_plan.is_deleted or current_plan.status != 'ACTIVE'
             )
+            if not current_plan_withdrawn:
+                raise ValueError(
+                    'This company already has an active subscription.'
+                )
 
         # Only one pending assignment transaction at a time.
         existing_pending = Transaction.objects.filter(

@@ -11,6 +11,7 @@ import Card from '../../components/ui/Card.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
+import { formatDate } from '../../utils/formatDate.js'
 
 const PAGE_SIZE = 10
 
@@ -142,7 +143,7 @@ export default function PlansPage() {
     {
       key: 'created_at',
       header: 'Created',
-      render: (row) => <span className="text-[var(--color-muted)]">{row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}</span>,
+      render: (row) => <span className="text-[var(--color-muted)]">{row.created_at ? formatDate(row.created_at) : '—'}</span>,
     },
     {
       key: 'actions',

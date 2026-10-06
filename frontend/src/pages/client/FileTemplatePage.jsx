@@ -3,6 +3,7 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import apiClient from '../../services/apiClient.js'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 const DATA_TYPE_OPTIONS = [
   { value: 'text', label: 'Text' },
@@ -735,7 +736,7 @@ export default function FileTemplatePage() {
                         </td>
                         <td className="px-4 py-4 text-[var(--color-ink)]">{getCreatedBy(template)}</td>
                         <td className="px-4 py-4 whitespace-nowrap text-[var(--color-muted)]">
-                          {template.created_at ? new Date(template.created_at).toLocaleString() : '—'}
+                          {template.created_at ? formatDateTime(template.created_at) : '—'}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-3 sm:gap-4">

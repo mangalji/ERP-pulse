@@ -8,6 +8,7 @@ import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
 import { superadminApi } from '../../services/superadmin.js'
+import { formatDate } from '../../utils/formatDate.js'
 
 export default function PlanDetailPage() {
   const { id } = useParams()
@@ -111,8 +112,8 @@ export default function PlanDetailPage() {
             { label: 'Plan Name', value: plan.name },
             { label: 'Description', value: plan.description || '—' },
             { label: 'Status', value: <StatusBadge status={plan.status} /> },
-            { label: 'Created Date', value: plan.created_at ? new Date(plan.created_at).toLocaleDateString() : '—' },
-            { label: 'Updated Date', value: plan.updated_at ? new Date(plan.updated_at).toLocaleDateString() : '—' },
+            { label: 'Created Date', value: plan.created_at ? formatDate(plan.created_at) : '—'},
+            { label: 'Updated Date', value: plan.updated_at ? formatDate(plan.updated_at) : '—'},
           ]}
         />
 

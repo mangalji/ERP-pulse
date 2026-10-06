@@ -7,6 +7,7 @@ from .models import (
 )
 from tenancy.models import Company
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from invitations.models import Invitation, InvitationStatus
 
 User = get_user_model()
@@ -355,6 +356,16 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
     def get_current_plan(self, obj):
         if not obj.plan_id:
             return None
+        # Subscription status is derived from the assigned dates.
+        # "status" below is the Plan catalog status, not the subscription's.
+        today = timezone.now().date()
+        if obj.plan_start_date and obj.plan_start_date > today:
+            subscription_status = "UPCOMING"
+        elif obj.plan_end_date and obj.plan_end_date < today:
+            subscription_status = "EXPIRED"
+        else:
+            subscription_status = "ACTIVE"
+
         return {
             "id": str(obj.plan.id),
             "name": obj.plan.name,
@@ -362,6 +373,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             "price": str(obj.plan.price),
             "validity_days": obj.plan.validity_days,
             "status": obj.plan.status,
+            "subscription_status": subscription_status,
             "start_date": obj.plan_start_date,
             "end_date": obj.plan_end_date,
         }
