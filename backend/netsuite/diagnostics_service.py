@@ -13,12 +13,12 @@ from ocr.models import OCRValidationResult
 
 logger = logging.getLogger(__name__)
 
-DIAGNOSTICS_TIMEOUT = 18.0
+DIAGNOSTICS_TIMEOUT = 30
 MAX_VALIDATION_RESULTS = 50
 MAX_ERRORS_PER_RESULT = 20
 MAX_STRING_LENGTH = 3000
-MAX_SOLUTIONS = 8
-MAX_STEPS_PER_SOLUTION = 10
+MAX_SOLUTIONS = 6
+MAX_STEPS_PER_SOLUTION = 8
 
 SENSITIVE_KEYS = frozenset(
     {
@@ -43,8 +43,6 @@ DIAGNOSTIC_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "error_reference": {"type": "string"},
-                    "title": {"type": "string"},
-                    "what_happened": {"type": "string"},
                     "likely_reasons": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -68,71 +66,65 @@ DIAGNOSTIC_SCHEMA: dict[str, Any] = {
                                 "recommended",
                                 "reason",
                             ],
-                            # "additionalProperties": False,
                         },
-                    },
-                    "additional_checks": {
-                        "type": "array",
-                        "items": {"type": "string"},
                     },
                 },
                 "required": [
                     "error_reference",
-                    "title",
-                    "what_happened",
                     "likely_reasons",
                     "possible_solutions",
-                    "additional_checks",
                 ],
-                # "additionalProperties": False,
             },
         }
     },
     "required": ["diagnostics"],
-    # "additionalProperties": False,
 }
 
 
 NETSUITE_DIAGNOSTIC_PROMPT = """
-You are a senior NetSuite Solution Architect and technical consultant.
+You are a senior NetSuite Solution Architect with deep practical experience
+in NetSuite transaction validation, vendors, items, subsidiaries,
+accounting structures, field mappings, and NetSuite business rules.
 
-You are helping a non-technical business user understand why a Vendor Bill
-failed validation before it could be posted to NetSuite.
+The document has already been validated against NetSuite. The supplied
+information contains the actual validation errors and supporting context.
 
-The validation engine has ALREADY determined that the supplied validation
-errors are real. Your job is only to explain those errors and provide
-practical resolution guidance.
+For every supplied error, provide ONLY these two things:
 
-For every supplied validation error:
+1. likely_reasons
+   - Give the most likely causes of the error.
+   - Base them only on the supplied validation information and established
+     NetSuite behavior.
+   - Do not invent account-specific facts.
+   - Give up to 3 concise likely reasons.
 
-1. Explain what the error means in simple business language.
-2. Explain the confirmed problem using the supplied data.
-3. Identify likely reasons only when supported by the supplied context or
-   well-established NetSuite behavior.
-4. Provide all materially relevant ways to resolve the issue.
-5. Give practical steps the user can follow.
-6. Clearly distinguish confirmed facts from likely reasons.
-7. Do not invent account-specific configuration, permissions, relationships,
-   records, subsidiaries, field IDs, or other facts.
-8. Do not claim that any change has already been made.
-9. Do not suggest changing valid business data merely to bypass validation.
-10. Do not tell the user that validation should have passed.
-11. The response will be shown directly to a business user.
-12. Do not expose internal error codes, internal IDs, field IDs, API names,
-    HTTP status codes, programming terms, database/server details, or
-    raw provider errors.
-13. Do not repeat the raw validation message verbatim. Translate it into
-    understandable language.
-14. If the supplied information is insufficient to determine the exact cause,
-    say what should be checked instead of guessing.
-15. If an administrator is required, explicitly say that an administrator
-    should perform the action.
-16. Preserve error_reference exactly. It is internal metadata and must not
-    be mentioned to the user.
+2. possible_solutions
+   - Give the practical ways the user can resolve the error.
+   - Give only materially relevant solutions, up to 3.
+   - Each solution must contain:
+       - a short title
+       - clear practical steps
+       - recommended=true only when one solution is clearly preferable
+       - a short reason when a solution is marked recommended
+   - Keep solution steps concise and actionable.
+   - Do not suggest changing correct business data merely to bypass the error.
 
-Return one diagnostic object for every supplied validation error.
+Important rules:
 
-Validation information:
+- Preserve every supplied error_reference exactly.
+- Return exactly one diagnostic object for every supplied error.
+- Do not return title, what_happened, or additional_checks fields.
+- Do not repeat the raw validation error verbatim.
+- Use simple language suitable for a non-technical business user.
+- Do not expose internal error codes, internal IDs, field IDs, API names,
+  HTTP status codes, secrets, tokens, or implementation details.
+- Do not guess when the supplied context is insufficient.
+- Do not claim that any change has already been made.
+- When an administrator is required, clearly say so in the solution steps.
+- The validation information is authoritative; AI guidance is only a
+  recommendation for resolving the reported validation issue.
+
+Actual NetSuite validation information:
 {{validation_information}}
 """
 
@@ -328,26 +320,11 @@ def _normalize_diagnostics(
 
         diagnostic = {
             "error_reference": reference,
-            "title": _safe_string(
-                item.get("title")
-                or "Something needs your attention"
-            ),
-            "what_happened": _safe_string(
-                item.get("what_happened") or ""
-            ),
             "likely_reasons": [
                 _safe_string(reason)
-                for reason in (
-                    item.get("likely_reasons") or []
-                )[:10]
+                for reason in (item.get("likely_reasons") or [])[:3]
             ],
-            "possible_solutions": solutions,
-            "additional_checks": [
-                _safe_string(check)
-                for check in (
-                    item.get("additional_checks") or []
-                )[:10]
-            ],
+            "possible_solutions": solutions[:3],
         }
 
         recommended_seen = False

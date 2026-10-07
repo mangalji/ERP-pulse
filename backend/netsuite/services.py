@@ -169,22 +169,6 @@ class NetSuiteConnectionService:
             # Reference/master-data synchronization is intentionally not triggered
             # from the OAuth callback. Connecting a NetSuite account must not depend
             # on Celery or Redis availability.
-            # try:
-            #     from netsuite.tasks import sync_netsuite_reference_data
-
-            #     if hasattr(sync_netsuite_reference_data, "delay"):
-            #         sync_netsuite_reference_data.delay(str(connection.id))
-            #     else:
-            #         logger.warning(
-            #             "Celery task dispatch unavailable; reference sync not queued — connection=%s",
-            #             connection.id,
-            #         )
-            # except Exception:
-            #     logger.exception(
-            #         "Failed to queue NetSuite reference sync — connection=%s",
-            #         connection.id,
-            #     )
-
         except Exception as exc:
 
             logger.exception(
@@ -1386,43 +1370,71 @@ class NetSuiteVendorBillPostingService:
         return matches[0]
 
     @staticmethod
-    def _apply_custom_fields(*, company, connection, record_type, data):
+    def _apply_custom_fields(*, company, connection, record_type, data,document=None):
         """
         Apply saved custom field mappings to the NetSuite payload.
 
         Returns a list of custom field dicts suitable for NetSuite's
         customFieldList, or None if no custom fields are mapped.
         """
-        mappings = OCRNetSuiteFieldMapping.objects.filter(
-            company=company,
-            connection=connection,
-            record_type=record_type,
-            is_custom=True,
-            mapping_status='MAPPED',
+        if document is None:
+            return None
+
+        upload = getattr(document, "upload", None)
+        batch = getattr(upload, "batch", None) if upload else None
+
+        requested_fields = (
+            getattr(batch, "requested_fields_json", None)
+                if batch
+                else None
+            )
+        if not isinstance(requested_fields, dict):
+           return None
+
+        custom_fields_config = (
+            requested_fields.get("custom_fields") or []
         )
 
+        if not isinstance(custom_fields_config, list):
+            return None
+    
         custom_fields = {}
-        for mapping in mappings:
-            source_key = mapping.source_field_key
-            value = data.get(source_key)
-            if value is None or value == '':
+
+        for field in custom_fields_config:
+            if not isinstance(field, dict):
                 continue
 
-            target_field_id = str(mapping.target_field_id or '').strip()
-            if not target_field_id:
+            source_key = str(
+                field.get("key")
+                or field.get("label")
+                or ""
+            ).strip()
+
+            target_field_id = str(
+                field.get("netsuite_field_id") or ""
+            ).strip()
+
+            scope = field.get("scope") or "header"
+
+            # Only body custom fields belong in customFieldList.
+            if scope != "header":
                 continue
 
-            # Vendor Bill body custom fields must be addressed by a body
-            # custom-field script ID. Do not send line-column IDs here; they
-            # belong in the item sublist and a malformed customFieldList can
-            # make NetSuite return only the generic INVALID_CONTENT error.
-            if not target_field_id.lower().startswith('custbody_'):
+            if not source_key or not target_field_id:
+                continue
+
+            if not target_field_id.lower().startswith("custbody_"):
                 logger.warning(
                     "Skipping non-body custom field during Vendor Bill posting "
                     "— script_id=%s connection=%s",
                     target_field_id,
                     connection.id,
                 )
+                continue
+
+            value = data.get(source_key)
+
+            if value is None or value == "":
                 continue
 
             if isinstance(value, (dict, list, tuple, set)):
@@ -1432,13 +1444,8 @@ class NetSuiteVendorBillPostingService:
                     target_field_id,
                     connection.id,
                 )
-                continue
+                continue        
             custom_fields[target_field_id] = value
-            # custom_fields.append({
-            #     'scriptId': target_field_id,
-            #     'value': value,
-            # })
-
         return custom_fields or None
 
     def post_vendor_bill(self, *, document_id, user: User, connection_id=None) -> dict:
@@ -1607,7 +1614,6 @@ class NetSuiteVendorBillPostingService:
                 connection=connection,
                 record_type="vendorBill",
                 mapping_status="MAPPED",
-                # target_field_id__in=["item","items"],
             )
             .filter(
                 Q(target_field_id__iexact="item") 
@@ -2026,6 +2032,7 @@ class NetSuiteVendorBillPostingService:
             connection=connection,
             record_type="vendorBill",
             data=data,
+            document=document,
         )
         if custom_fields:
             logger.warning(
@@ -4022,23 +4029,126 @@ class NetSuiteValidationService:
             raise ValueError(
                 "NetSuite connection is not active."
             )
+        
+        # ---------------------------------------------------------
+        # Template-based NetSuite mapping
+        # ---------------------------------------------------------
+        upload = getattr(document, "upload", None)
+        batch = getattr(upload, "batch", None) if upload else None
 
-        mappings = list(
-            OCRNetSuiteFieldMapping.objects.filter(
-                company=company,
-                connection=connection,
-                record_type="vendorBill",
-                mapping_status="MAPPED",
-            )
+        requested_fields = (
+            getattr(batch, "requested_fields_json", None)
+            if batch
+            else None
         )
+        if not isinstance(requested_fields, dict):
+            requested_fields = {}
+
+        standard_fields = requested_fields.get("standard_fields") or []
+        standard_overrides = (
+            requested_fields.get("standard_field_overrides") or {}
+        )
+        custom_fields = requested_fields.get("custom_fields") or []
+
+        if not isinstance(standard_fields, list):
+            standard_fields = []
+
+        if not isinstance(standard_overrides, dict):
+            standard_overrides = {}
+
+        if not isinstance(custom_fields, list):
+            custom_fields = []
+
+        template_mappings = []
+
+        # Standard fields
+        for source_key in standard_fields:
+            source_key = str(source_key).strip()
+
+            if not source_key:
+                continue
+
+            override = standard_overrides.get(source_key) or {}
+
+            if not isinstance(override, dict):
+                continue
+
+            target_field_id = str(
+                override.get("netsuite_field_id") or ""
+            ).strip()
+
+            if not target_field_id:
+                continue
+
+            template_mappings.append(
+                {
+                    "source_field_key": source_key,
+                    "source_field_label": (
+                        override.get("label")
+                        or source_key
+                    ),
+                    "source_scope": (
+                        "line"
+                        if override.get("scope") == "line"
+                        else "header"
+                    ),
+                    "target_field_id": target_field_id,
+                    "target_field_label": (
+                        override.get("label")
+                        or target_field_id
+                    ),
+                    "is_custom": False,
+                }
+            )
+
+             # Custom fields
+            for custom in custom_fields:
+                if not isinstance(custom, dict):
+                    continue
+
+                source_key = str(
+                    custom.get("key")
+                    or custom.get("label")
+                    or ""
+                ).strip()
+
+                target_field_id = str(
+                    custom.get("netsuite_field_id") or ""
+                ).strip()
+
+                if not source_key or not target_field_id:
+                    continue
+
+                template_mappings.append(
+                    {
+                        "source_field_key": source_key,
+                        "source_field_label": (
+                            custom.get("label")
+                            or source_key
+                        ),
+                        "source_scope": (
+                            "line"
+                            if custom.get("scope") == "line"
+                            else "header"
+                        ),
+                        "target_field_id": target_field_id,
+                        "target_field_label": target_field_id,
+                        "is_custom": True,
+                    }
+                )
+            if not template_mappings:
+                raise ValueError(
+                    "No NetSuite field mappings are configured" 
+                    "in the selected OCR template."
+                )
 
         vendor_mapping = next(
             (
                 mapping
-                for mapping in mappings
-                if str(mapping.target_field_id).lower()
+                for mapping in template_mappings
+                if str(mapping.get("target_field_id") or "").strip().lower()
                 in {"entity", "vendor"}
-                and str(mapping.source_scope).lower()
+                and str(mapping.get("source_scope") or "").strip().lower()
                 in {"header", "body"}
             ),
             None,
@@ -4048,10 +4158,11 @@ class NetSuiteValidationService:
         item_mapping = next(
             (
                 mapping
-                for mapping in mappings
-                if str(mapping.target_field_id).strip().lower() 
+                for mapping in template_mappings
+                if str(mapping.get("target_field_id") or "").strip().lower()
                 in ITEM_MAPPING_FIELD_IDS
-                and str(mapping.source_scope).strip().lower() == "line"
+                and str(mapping.get("source_scope") or "").strip().lower()
+                == "line"
             ),
             None,
         )
@@ -4068,9 +4179,10 @@ class NetSuiteValidationService:
         subsidiary_mapping = next(
             (
                 mapping
-                for mapping in mappings
-                if str(mapping.target_field_id).strip().lower() == "subsidiary"
-                and str(mapping.source_scope).strip().lower()
+                for mapping in template_mappings
+                if str(mapping.get("target_field_id") or "").strip().lower()
+                == "subsidiary"
+                and str(mapping.get("source_scope") or "").strip().lower()
                 in {"header", "body"}
             ),
             None,
@@ -4083,7 +4195,7 @@ class NetSuiteValidationService:
 
         if subsidiary_mapping is not None:
             raw_subsidiary_value = data.get(
-                subsidiary_mapping.source_field_key
+                subsidiary_mapping["source_field_key"]
             )
 
             if isinstance(raw_subsidiary_value, str):
@@ -4137,7 +4249,7 @@ class NetSuiteValidationService:
                         "extracted_name": transaction_subsidiary_name,
                     }
 
-        vendor_name = data.get(vendor_mapping.source_field_key)
+        vendor_name = data.get(vendor_mapping["source_field_key"])
 
         if isinstance(vendor_name,str):
             vendor_name = vendor_name.strip()
@@ -4189,7 +4301,7 @@ class NetSuiteValidationService:
             raw_item_results = self._validate_items_live(
                 connection=connection,
                 line_items=real_item_lines,
-                source_field_key=item_mapping.source_field_key,
+                source_field_key=item_mapping["source_field_key"],
                 subsidiary_id=transaction_subsidiary_id,
                 subsidiary_name=transaction_subsidiary_name,
             )
@@ -4346,7 +4458,6 @@ class NetSuiteValidationService:
             connection=connection,
             status=status,
             vendor_extracted_name=
-            # vendor_name or "",
             (
                 str(vendor_name).strip()
                 if vendor_name is not None else ""

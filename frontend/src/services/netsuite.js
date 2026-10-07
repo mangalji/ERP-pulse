@@ -60,19 +60,6 @@ export const netsuiteApi = {
   
   getInvoice: (id) => apiClient.get(`${NETSUITE_ENDPOINTS.invoices}${id}/`).then(unwrap),
   
-  // Phase 3: OCR Field Mapping
-  getFieldCatalogue: (connectionId, recordType = 'vendorBill', forceRefresh = false,) =>
-    apiClient.get('/netsuite/ocr/field-catalogue/', { params: { connection_id: connectionId, record_type: recordType, ...(forceRefresh ? {force_refresh: 'true'} : {}) } }).then(unwrap),
-
-  suggestFieldMappings: (connectionId, recordType='vendorBill', sourceFields =[]) =>
-    apiClient.post('/netsuite/ocr/suggest-mapping/', { connection_id: connectionId, record_type: recordType, source_fields: sourceFields }).then(unwrap),
-  
-  listFieldMappings: (connectionId, recordType = 'vendorBill') =>
-    apiClient.get('/netsuite/ocr/field-mappings/', { params: { connection_id: connectionId, record_type: recordType } }).then(unwrap),
-  
-  saveFieldMappings: (connectionId, recordType, mappings = []) =>
-    apiClient.post('/netsuite/ocr/field-mappings/', { connection_id: connectionId, record_type: recordType, mappings }).then(unwrap),
-  
   validateDocument: (documentId, connectionId) => 
     apiClient.post('/netsuite/ocr/validate/',{document_id:documentId,connection_id: connectionId}).then(unwrap),
 

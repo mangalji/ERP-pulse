@@ -116,6 +116,41 @@ class AIProvider(ABC):
             and _is_quota_exhausted(error_text)
         )
 
+        error_lower = (error_text or "").lower()
+        if status_code == 503 and any(
+            phrase in error_lower
+            for phrase in (
+                "high demand",
+                "experiencing high demand",
+                "spikes in demand",
+            )
+        ):
+            message = (
+                "Your AI integration service is currently experiencing high demand, "
+                "so the AI model could not process your request this time. "
+                "Please try again in a little while."
+            )
+        elif status_code == 429 and quota_exhausted:
+            message = (
+                "Your AI integration service quota or daily usage limit has been "
+                "exhausted. AI cannot process this request until the quota resets. "
+                "Please try again after the reset, or upgrade your AI plan for a "
+                "higher limit."
+            )
+        elif status_code == 429:
+            message = (
+                "Your AI integration service is currently rate limited, so the AI "
+                "model cannot process this request at the moment. "
+                "Please try again in a little while."
+            )
+        
+        elif status_code in {504}:
+            message = (
+                "Your AI integration service took too long to process the request, "
+                "so the AI model could not complete it this time. "
+                "Please try again in a little while."
+            )
+        
         raise AIProviderError(
             message,
             status_code=status_code,

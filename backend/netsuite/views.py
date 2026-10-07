@@ -1452,7 +1452,17 @@ class NetSuiteValidationDiagnosticsView(APIView):
                 validation_ids=validation_ids,
             )
 
-        except (ValueError, AIProviderError) as exc:
+        except AIProviderError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=(
+                    status.HTTP_429_TOO_MANY_REQUESTS
+                    if exc.status_code == 429
+                    else status.HTTP_503_SERVICE_UNAVAILABLE
+                ),
+            )
+        
+        except ValueError as exc:
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1469,9 +1479,7 @@ class NetSuiteValidationDiagnosticsView(APIView):
             return Response(
                 {
                     "detail": (
-                        "We could not prepare the resolution "
-                        "guidance right now. The validation result "
-                        "is still available."
+                        "We could not prepare AI resolution guidance right now."
                     )
                 },
                 status=status.HTTP_502_BAD_GATEWAY,

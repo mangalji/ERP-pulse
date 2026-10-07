@@ -1,4 +1,6 @@
+import time
 import re
+from django.db import connection
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Prefetch
@@ -134,13 +136,25 @@ class DynamicNavigationMenuView(APIView):
         return data
 
     def get(self, request):
-        _ensure_system_tabs()
+        connection.force_debug_cursor = True
+        total_start = time.perf_counter()
+        query_start = len(connection.queries)
 
+        step_start = time.perf_counter()
+        _ensure_system_tabs()
+        seed_time = time.perf_counter() - step_start
+
+        step_start = time.perf_counter()
         top_visibility, level2_visibility, level3_visibility = (
             self._visible_ids(request.user)
         )
+        visibility_time = time.perf_counter() - step_start
 
+        step_start = time.perf_counter()
         is_admin = _is_company_admin(request.user)
+        admin_check_time = time.perf_counter() - step_start
+
+        step_start = time.perf_counter()
 
         top_level_tabs = (
             DynamicTopLevelTab.objects
@@ -202,6 +216,27 @@ class DynamicNavigationMenuView(APIView):
 
             data.append(top_node)
 
+        menu_build_time = time.perf_counter() - step_start
+
+        total_time = time.perf_counter() - total_start
+        query_count = len(connection.queries) - query_start
+        queries = connection.queries[query_start:]
+
+        print(
+            "\n[NAVIGATION PROFILE]"
+            f"\n  seed_time       = {seed_time:.4f}s"
+            f"\n  visibility_time = {visibility_time:.4f}s"
+            f"\n  admin_check     = {admin_check_time:.4f}s"
+            f"\n  menu_build_time = {menu_build_time:.4f}s"
+            f"\n  total_time      = {total_time:.4f}s"
+            f"\n  query_count     = {query_count}"
+        )
+        for index, query in enumerate(queries, 1):
+            print(
+                f"[NAV QUERY {index}] "
+                f"{query['time']}s "
+                f"{query['sql'][:500]}"
+            )
         return success_response(
             message="Navigation menu fetched successfully.",
             data=data,

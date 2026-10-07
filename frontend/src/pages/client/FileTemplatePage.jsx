@@ -35,6 +35,13 @@ function normalizeCatalogField(field) {
       '',
     data_type: field?.data_type || 'text',
     scope: field?.scope === 'line' ? 'line' : 'header',
+    
+    // NetSuite mapping
+    netsuite_field_id:
+      field?.netsuite_field_id ||
+      field?.field_id ||
+      '',
+
     standard: true,
     enabled: field?.enabled !== false,
   }
@@ -53,6 +60,13 @@ function normalizeCustomField(field, index = 0) {
       '',
     data_type: field?.data_type || 'text',
     scope: field?.scope === 'line' ? 'line' : 'header',
+
+    // NetSuite mapping
+    netsuite_field_id:
+      field?.netsuite_field_id ||
+      field?.field_id ||
+      '',
+    
     standard: false,
     enabled: field?.enabled !== false,
   }
@@ -342,6 +356,10 @@ export default function FileTemplatePage() {
               : override?.scope === 'header'
                 ? 'header'
                 : normalized.scope,
+          netsuite_field_id:
+          override?.netsuite_field_id ||
+          normalized.netsuite_field_id ||
+          '',
           enabled: !disabledStandardKeys.has(normalized.original_key) &&
             override?.enabled !== false,
         }
@@ -367,6 +385,7 @@ export default function FileTemplatePage() {
 
   const addCustomField = () => {
     const id = createFieldId('custom')
+
     setFields((current) => [
       {
         id,
@@ -376,11 +395,16 @@ export default function FileTemplatePage() {
         description: '',
         data_type: 'text',
         scope: 'header',
+
+        // NetSuite mapping
+        netsuite_field_id: '',
+  
         standard: false,
         enabled: true,
       },
       ...current,
     ])
+    setMode('edit')
     setHighlightedFieldId(id)
     setMessage('')
     setError('')
@@ -438,6 +462,7 @@ export default function FileTemplatePage() {
 
         standardFieldOverrides[key] = {
           label: field.label?.trim(),
+          netsuite_field_id: field.netsuite_field_id?.trim() || '',
           description: field.description?.trim(),
           questionaire: field.description?.trim(),
           data_type: field.data_type,
@@ -448,6 +473,7 @@ export default function FileTemplatePage() {
 
     const serializeCustomField = (field) => ({
       key: field.key?.trim() || field.label?.trim(),
+      netsuite_field_id: field.netsuite_field_id?.trim() || '',
       label: field.label?.trim(),
       description: field.description?.trim(),
       questionaire: field.description?.trim(),
@@ -488,10 +514,15 @@ export default function FileTemplatePage() {
         return 'Every field must have a Field Name.'
       }
 
+      
       if (!field.description?.trim()) {
         return `Questionaire is required for "${label}".`
       }
-
+      
+      if (!field.netsuite_field_id?.trim()) {
+        return `NetSuite Field ID is required for "${label}".`
+      }
+      
       const key =
         field.original_key ||
         field.key?.trim() ||
@@ -909,10 +940,11 @@ export default function FileTemplatePage() {
                 </div>
 
                 <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-                  <table className="min-w-[980px] w-full border-collapse text-sm">
+                  <table className="min-w-[1200px] w-full border-collapse text-sm">
                     <thead>
                       <tr className="border-b border-[var(--color-border)] bg-[var(--color-canvas)] text-left">
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Field Name</th>
+                        <th className="min-w-[220px] px-4 py-3 font-semibold text-[var(--color-ink)]">NetSuite Field ID</th>
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Questionaire</th>
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Datatype</th>
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Scope</th>
@@ -957,6 +989,32 @@ export default function FileTemplatePage() {
                                 <p className={`mt-1 px-1 text-xs ${disabledField ? 'text-gray-400' : 'text-[var(--color-muted)]'}`}>
                                   Key: {field.original_key}
                                 </p>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              {mode === 'view' || disabledField ? (
+                                <div
+                                  className={`px-3 py-2 ${
+                                    disabledField
+                                      ? 'text-gray-400'
+                                      : 'text-[var(--color-ink)]'
+                                  }`}
+                                >
+                                  {field.netsuite_field_id || '—'}
+                                </div>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={field.netsuite_field_id || ''}
+                                  onChange={(event) =>
+                                    updateField(field.id, {
+                                      netsuite_field_id: event.target.value,
+                                    })
+                                  }
+                                  placeholder="e.g. entity / custbody_xxx"
+                                  disabled={mode === 'view'}
+                                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
+                                />
                               )}
                             </td>
                             <td className="px-4 py-3">
@@ -1030,7 +1088,7 @@ export default function FileTemplatePage() {
                       })}
                       {fields.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
+                          <td colSpan={6} className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
                             No fields configured. Click Add Field to create one.
                           </td>
                         </tr>

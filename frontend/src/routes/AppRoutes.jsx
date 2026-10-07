@@ -37,7 +37,6 @@ const NetSuiteIntegrationsPage = lazy(() => import('../pages/client/NetSuiteInte
 const EmployeeNetSuitePage = lazy(() => import('../pages/client/EmployeeNetSuitePage.jsx'))
 const TransactionsPage = lazy(() => import('../pages/client/TransactionsPage.jsx'))
 const OcrPage = lazy(() => import('../pages/client/OcrPage.jsx'))
-const OcrFieldMappingPage = lazy(() => import('../pages/client/OcrFieldMappingPage.jsx'))
 const OcrResultPage = lazy(() => import('../pages/client/OcrResultPage.jsx'))
 const OcrBatchHistoryPage = lazy(() => import('../pages/client/OcrBatchHistoryPage.jsx'))
 const DataExtractionHistoryPage = lazy(() => import('../pages/client/DataExtractionHistoryPage.jsx'))
@@ -62,7 +61,6 @@ function RouteLoading() {
   )
 }
 const OCR_SESSION_KEYS = [
-  'ocr_field_mapping_context',
   'ocr_test_result',
 ]
 
@@ -71,7 +69,6 @@ function clearOcrWorkflowSession() {
     sessionStorage.removeItem(key)
   })
 }
-const OCR_FIELD_MAPPING_ROUTE = '/app/ocr/field-mapping'
 const OCR_DATA_EXTRACTION_ROUTE = '/app/ocr'
 
 export default function AppRoutes() {
@@ -80,17 +77,7 @@ export default function AppRoutes() {
   useEffect(() => {
    const previousPath = previousPathRef.current
    const currentPath = location.pathname
-   
-   /*
-   * Leaving Field Mapping:
-   * discard the temporary OCR mapping/validation workflow.
-   */
-    if (
-      previousPath === OCR_FIELD_MAPPING_ROUTE &&
-      currentPath !== OCR_FIELD_MAPPING_ROUTE
-    ) {
-      clearOcrWorkflowSession()
-    }
+    
     /*
      * Entering Data Extraction from another page:
      * always start with a fresh OCR workflow.
@@ -108,22 +95,9 @@ export default function AppRoutes() {
     previousPathRef.current = currentPath
   }, [location.pathname]) 
    /*
-   * Field Mapping is only valid while its temporary workflow context exists.
    * If the user reaches this route through browser Back/Forward or an old
    * history entry after the workflow has already been cleared, never render
-   * Field Mapping again.
    */
-    if (
-      location.pathname === OCR_FIELD_MAPPING_ROUTE &&
-      !sessionStorage.getItem('ocr_field_mapping_context')
-    ) {
-      return (
-        <Navigate
-          to={OCR_DATA_EXTRACTION_ROUTE}
-          replace
-        />
-      )
-    }
   return (
     <Suspense fallback={<RouteLoading />}>
       <Routes 
@@ -238,14 +212,6 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute requiredRole="client">
             <DataExtractionHistoryPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/ocr/field-mapping"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <OcrFieldMappingPage />
           </ProtectedRoute>
         }
       />
