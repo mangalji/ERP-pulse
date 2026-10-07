@@ -42,10 +42,6 @@ export default function OcrBatchHistoryPage() {
   }, [batchId])
 
   useEffect(() => {
-    loadBatch()
-  }, [loadBatch])
-
-  useEffect(() => {
     let cancelled = false
     const startedAt = Date.now()
     const maxPollingMs = 30 * 60 * 1000

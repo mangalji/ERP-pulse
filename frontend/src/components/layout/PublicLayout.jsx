@@ -62,7 +62,7 @@ export default function TemplatesPagePublicLayout({ children }) {
               </span>
             </div>
             <p className="text-center text-xs text-[var(--color-muted)] md:text-left">
-              &copy; {new Date().getFullYear()} AGSuite ERP. All rights reserved. Developed by Raj Mangal.
+              &copy; {new Date().getFullYear()} AGSuite ERP. All rights reserved.
             </p>
             <div className="flex items-center gap-4 text-xs text-[var(--color-muted)]">
               <Link to="/about" className="hover:text-[var(--color-ink)]">About</Link>

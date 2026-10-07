@@ -63,6 +63,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
 
     objects = CustomUserManager()
+    preferred_ocr_template = models.ForeignKey(
+        'ocr.OCRExtractionTemplate',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='preferred_by_users',
+    )
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']

@@ -111,25 +111,40 @@ export default function OcrPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [connection, setConnection] = useState(null)
   const [validationResult, setValidationResult] = useState(null)
-  const [ocrMode, setOcrMode] = useState('')
+  const [ocrMode, setOcrMode] = useState('single')
   const [ocrModes, setOcrModes] = useState({
     single: true,
     multiple: false,
   })
 
-  useEffect(() => {
-    let cancelled = false
-    netsuiteApi.getMyConnection()
-      .then((payload) => {
-        const connectionData = payload?.data ?? payload ?? null
-        if (!cancelled) setConnection(connectionData)
-      })
-      .catch((err) => {
-        console.warn('No NetSuite connection available:', err)
-        if (!cancelled) setConnection(null)
-      })
-    return () => { cancelled = true }
-  }, [])
+  // useEffect(() => {
+  //   let cancelled = false
+  //   netsuiteApi.getMyConnection()
+  //     .then((payload) => {
+  //       const connectionData = payload?.data ?? payload ?? null
+  //       if (!cancelled) setConnection(connectionData)
+  //     })
+  //     .catch((err) => {
+  //       console.warn('No NetSuite connection available:', err)
+  //       if (!cancelled) setConnection(null)
+  //     })
+  //   return () => { cancelled = true }
+  // }, [])
+
+  const loadNetSuiteConnection = useCallback(async () => {
+  if (connection) return connection
+
+  try {
+    const payload = await netsuiteApi.getMyConnection()
+    const connectionData = payload?.data ?? payload ?? null
+    setConnection(connectionData)
+    return connectionData
+  } catch (err) {
+    console.warn('No NetSuite connection available:', err)
+    setConnection(null)
+    return null
+  }
+}, [connection])
 
   const selectedFilesRef = useRef([])
 
@@ -162,6 +177,14 @@ export default function OcrPage() {
 
         if (!cancelled) {
           setExtractionTemplates(templates)
+          const preferredTemplate = templates.find(
+              (template) => template.is_preferred === true
+          )
+          if (preferredTemplate) {
+              setSelectedTemplateId(
+                  String(preferredTemplate.id)
+              )
+          }
         }
       } catch (err) {
         console.error('Failed to load OCR extraction templates:', err)
@@ -1027,7 +1050,8 @@ export default function OcrPage() {
                     connectionId={connection?.id || null}
                     validationResult={validationResult}
                     onValidate={async (documentId) => {
-                      const connectionId = connection?.id
+                      const connectionData = await loadNetSuiteConnection()
+                      const connectionId = connectionData?.id
                       if(!documentId || !connectionId){
                         throw new Error(
                           'The OCR document or NetSuite connection is missing.',
@@ -1037,7 +1061,8 @@ export default function OcrPage() {
                       setValidationResult(result)
                     }}
                     onPost={async (documentId, connId) => {
-                      const connectionId = connId || connection?.id
+                      const connectionData = connId ? {id:connId}: await loadNetSuiteConnection()
+                      const connectionId = connectionData?.id
                       if (!documentId || !connectionId) {
                         throw new Error(
                           'The OCR document or NetSuite connection is missing.',

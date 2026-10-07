@@ -67,15 +67,33 @@ export default function AdminLayout({ title, breadcrumb, children }) {
           ${collapsed ? 'lg:w-20' : 'lg:w-64'}
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className={`mb-8 flex items-center gap-2 px-2 ${collapsed ? 'lg:justify-center' : ''}`}>
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">
-            A
-          </span>
+        <NavLink to="/admin" onClick={(event) => {
+            if (location.pathname === '/admin') {
+              event.preventDefault()
+              window.location.reload()
+            }
+          }} className={`mb-8 flex items-center gap-2 px-2 ${
+            collapsed ? 'lg:justify-center' : ''
+          }`}
+          aria-label="Go to Dashboard">
           {!collapsed && (
-            <span className="font-[var(--font-display)] text-lg font-semibold text-white">AGSuite</span>
+            <span className="font-[var(--font-display)] text-lg font-semibold text-white">
+              AGSuite
+            </span>
           )}
+        </NavLink>
+        
+        <div className={`mb-4 flex ${collapsed ? 'justify-center' : 'justify-end'}`}>
+          <button
+            type="button"
+            onClick={() => setCollapsed((prev) => !prev)}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-2xl leading-none text-[var(--color-sidebar-ink)] transition-colors hover:bg-[var(--color-sidebar-soft)] hover:text-white"
+          >
+            {collapsed ? '›' : '‹'}
+          </button>
         </div>
-
         <nav className="flex flex-1 flex-col gap-1">
           {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
             <NavLink
@@ -100,7 +118,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
         </nav>
 
         <div className="mt-4 flex flex-col gap-1">
-          <button
+          {/* <button
             onClick={() => setCollapsed((prev) => !prev)}
             className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white"
           >
@@ -108,7 +126,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
               <path d="M12 3v18M3 12h18" />
             </svg>
             {!collapsed && <span>Collapse</span>}
-          </button>
+          </button> */}
           <button
             onClick={handleLogout}
             className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-negative)] hover:bg-[var(--color-sidebar-soft)]"
@@ -141,16 +159,6 @@ export default function AdminLayout({ title, breadcrumb, children }) {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Theme toggle (prepare only) */}
-            <button
-              aria-label="Theme toggle"
-              className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-                <path d="M12 3a9 9 0 1 0 9 9c0-.5-.5-1-1-.5a4 4 0 0 1-5.5-5.5c.5-.5 0-1-.5-1A9 9 0 0 0 12 3Z" />
-              </svg>
-            </button>
-
             {/* User menu */}
             <div className="relative" ref={userMenuRef}>
               <button

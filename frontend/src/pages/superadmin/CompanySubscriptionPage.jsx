@@ -42,13 +42,15 @@ export default function CompanySubscriptionPage() {
     setLoading(true)
 
     try {
-      const [companyData, plansData] = await Promise.all([
+      const [companyData, plansData, txData] = await Promise.all([
         superadminApi.getCompany(id),
         superadminApi.listPlans(),
+        superadminApi.fetchCompanyTransactions(id).catch(() => []),
       ])
 
       setCompany(companyData)
       setPlans(plansData.results || plansData || [])
+      setTransactions(txData?.results || txData || [])
 
       try {
         const txData = await superadminApi.fetchCompanyTransactions(id)

@@ -1,46 +1,47 @@
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
 import PublicLayout from '../components/layout/PublicLayout.jsx'
-
-import LoginPage from '../pages/auth/LoginPage.jsx'
-import OtpVerificationPage from '../pages/auth/OtpVerificationPage.jsx'
-import ForgotPasswordPage from '../pages/auth/ForgotPasswordPage.jsx'
-import ResetPasswordPage from '../pages/auth/ResetPasswordPage.jsx'
-
-import SuperAdminDashboardPage from '../pages/superadmin/DashboardPage.jsx'
-import SuperAdminCompaniesPage from '../pages/superadmin/CompaniesPage.jsx'
-import SuperAdminPlansPage from '../pages/superadmin/PlansPage.jsx'
-import SuperAdminPlanDetailPage from '../pages/superadmin/PlanDetailPage.jsx'
-import SuperAdminEmployeesPage from '../pages/superadmin/EmployeesPage.jsx'
-import SuperAdminSettingsPage from '../pages/superadmin/SettingsPage.jsx'
-import SuperAdminCompanyDetailPage from '../pages/superadmin/CompanyDetailPage.jsx'
-import SuperAdminCompanySubscriptionPage from '../pages/superadmin/CompanySubscriptionPage.jsx'
-import InvitationAcceptPage from '../pages/invitations/InvitationAcceptPage.jsx'
-import AIIntegrationPage from '../pages/client/AIIntegrationPage.jsx'
-
-// Public Website
 import PublicHomePage from '../pages/public/HomePage.jsx'
 
+// Route-level lazy loading keeps page-specific JavaScript out of the initial bundle.
+const LoginPage = lazy(() => import('../pages/auth/LoginPage.jsx'))
+const OtpVerificationPage = lazy(() => import('../pages/auth/OtpVerificationPage.jsx'))
+const ForgotPasswordPage = lazy(() => import('../pages/auth/ForgotPasswordPage.jsx'))
+const ResetPasswordPage = lazy(() => import('../pages/auth/ResetPasswordPage.jsx'))
+
+const SuperAdminDashboardPage = lazy(() => import('../pages/superadmin/DashboardPage.jsx'))
+const SuperAdminCompaniesPage = lazy(() => import('../pages/superadmin/CompaniesPage.jsx'))
+const SuperAdminPlansPage = lazy(() => import('../pages/superadmin/PlansPage.jsx'))
+const SuperAdminPlanDetailPage = lazy(() => import('../pages/superadmin/PlanDetailPage.jsx'))
+const SuperAdminEmployeesPage = lazy(() => import('../pages/superadmin/EmployeesPage.jsx'))
+const SuperAdminSettingsPage = lazy(() => import('../pages/superadmin/SettingsPage.jsx'))
+const SuperAdminCompanyDetailPage = lazy(() => import('../pages/superadmin/CompanyDetailPage.jsx'))
+const SuperAdminCompanySubscriptionPage = lazy(() => import('../pages/superadmin/CompanySubscriptionPage.jsx'))
+const InvitationAcceptPage = lazy(() => import('../pages/invitations/InvitationAcceptPage.jsx'))
+const AIIntegrationPage = lazy(() => import('../pages/client/AIIntegrationPage.jsx'))
+
+
 // Client Company Portal
-import ClientDashboardPage from '../pages/client/DashboardPage.jsx'
-import ClientEmployeesPage from '../pages/client/EmployeesPage.jsx'
-import ClientCompanySettingsPage from '../pages/client/CompanySettingsPage.jsx'
-import CenterTabsPage from '../pages/client/CenterTabsPage.jsx'
-import CenterCategoriesPage from '../pages/client/CenterCategoriesPage.jsx'
-import CenterTabDetailPage from '../pages/client/CenterTabDetailPage.jsx'
-import CenterCategoryDetailPage from '../pages/client/CenterCategoryDetailPage.jsx'
-import ClientProfilePage from '../pages/client/ProfilePage.jsx'
-import ClientSubscriptionPage from '../pages/client/SubscriptionPage.jsx'
-import NetSuiteIntegrationsPage from '../pages/client/NetSuiteIntegrationsPage.jsx'
-import EmployeeNetSuitePage from '../pages/client/EmployeeNetSuitePage.jsx'
-import TransactionsPage from '../pages/client/TransactionsPage.jsx'
-import OcrPage from '../pages/client/OcrPage.jsx'
-import OcrFieldMappingPage from '../pages/client/OcrFieldMappingPage.jsx'
-import OcrResultPage from '../pages/client/OcrResultPage.jsx'
-import OcrBatchHistoryPage from '../pages/client/OcrBatchHistoryPage.jsx'
-import DataExtractionHistoryPage from '../pages/client/DataExtractionHistoryPage.jsx'
-import FileTemplatePage from '../pages/client/FileTemplatePage.jsx'
+const ClientDashboardPage = lazy(() => import('../pages/client/DashboardPage.jsx'))
+const ClientEmployeesPage = lazy(() => import('../pages/client/EmployeesPage.jsx'))
+const ClientCompanySettingsPage = lazy(() => import('../pages/client/CompanySettingsPage.jsx'))
+const CenterTabsPage = lazy(() => import('../pages/client/CenterTabsPage.jsx'))
+const CenterCategoriesPage = lazy(() => import('../pages/client/CenterCategoriesPage.jsx'))
+const CenterTabDetailPage = lazy(() => import('../pages/client/CenterTabDetailPage.jsx'))
+const CenterCategoryDetailPage = lazy(() => import('../pages/client/CenterCategoryDetailPage.jsx'))
+const ClientProfilePage = lazy(() => import('../pages/client/ProfilePage.jsx'))
+const ClientSubscriptionPage = lazy(() => import('../pages/client/SubscriptionPage.jsx'))
+const NetSuiteIntegrationsPage = lazy(() => import('../pages/client/NetSuiteIntegrationsPage.jsx'))
+const EmployeeNetSuitePage = lazy(() => import('../pages/client/EmployeeNetSuitePage.jsx'))
+const TransactionsPage = lazy(() => import('../pages/client/TransactionsPage.jsx'))
+const OcrPage = lazy(() => import('../pages/client/OcrPage.jsx'))
+const OcrFieldMappingPage = lazy(() => import('../pages/client/OcrFieldMappingPage.jsx'))
+const OcrResultPage = lazy(() => import('../pages/client/OcrResultPage.jsx'))
+const OcrBatchHistoryPage = lazy(() => import('../pages/client/OcrBatchHistoryPage.jsx'))
+const DataExtractionHistoryPage = lazy(() => import('../pages/client/DataExtractionHistoryPage.jsx'))
+const FileTemplatePage = lazy(() => import('../pages/client/FileTemplatePage.jsx'))
 
 function PublicRoute({ children }) {
   return <PublicLayout>{children}</PublicLayout>
@@ -53,10 +54,79 @@ function CatchAllRoute() {
   return <Navigate to={isSuperAdmin ? '/admin' : '/app'} replace />
 }
 
+function RouteLoading() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center" aria-label="Loading page">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
+    </div>
+  )
+}
+const OCR_SESSION_KEYS = [
+  'ocr_field_mapping_context',
+  'ocr_test_result',
+]
+
+function clearOcrWorkflowSession() {
+  OCR_SESSION_KEYS.forEach((key) => {
+    sessionStorage.removeItem(key)
+  })
+}
+const OCR_FIELD_MAPPING_ROUTE = '/app/ocr/field-mapping'
+const OCR_DATA_EXTRACTION_ROUTE = '/app/ocr'
+
 export default function AppRoutes() {
   const location = useLocation()
+  const previousPathRef = useRef(location.pathname)
+  useEffect(() => {
+   const previousPath = previousPathRef.current
+   const currentPath = location.pathname
+   
+   /*
+   * Leaving Field Mapping:
+   * discard the temporary OCR mapping/validation workflow.
+   */
+    if (
+      previousPath === OCR_FIELD_MAPPING_ROUTE &&
+      currentPath !== OCR_FIELD_MAPPING_ROUTE
+    ) {
+      clearOcrWorkflowSession()
+    }
+    /*
+     * Entering Data Extraction from another page:
+     * always start with a fresh OCR workflow.
+     *
+     * Refreshing Data Extraction itself does NOT clear anything because
+     * previousPath === currentPath in that case.
+     */
+    if (
+      currentPath === OCR_DATA_EXTRACTION_ROUTE &&
+      previousPath !== OCR_DATA_EXTRACTION_ROUTE
+    ) {
+      clearOcrWorkflowSession()
+    }
+
+    previousPathRef.current = currentPath
+  }, [location.pathname]) 
+   /*
+   * Field Mapping is only valid while its temporary workflow context exists.
+   * If the user reaches this route through browser Back/Forward or an old
+   * history entry after the workflow has already been cleared, never render
+   * Field Mapping again.
+   */
+    if (
+      location.pathname === OCR_FIELD_MAPPING_ROUTE &&
+      !sessionStorage.getItem('ocr_field_mapping_context')
+    ) {
+      return (
+        <Navigate
+          to={OCR_DATA_EXTRACTION_ROUTE}
+          replace
+        />
+      )
+    }
   return (
-    <Routes 
+    <Suspense fallback={<RouteLoading />}>
+      <Routes 
       location={location}
       key={location.state?.__refreshKey ?? 'app-routes'}
       >
@@ -225,7 +295,9 @@ export default function AppRoutes() {
       <Route
         path="/app/employees"
         element={
+          <ProtectedRoute requiredRole="client">
             <ClientEmployeesPage />
+          </ProtectedRoute>
         }
       />
       <Route
@@ -310,6 +382,7 @@ export default function AppRoutes() {
       />
       {/* Catch-all: route to portal if authenticated, login if not */}
       <Route path="*" element={<CatchAllRoute />} />
-    </Routes>
+      </Routes>
+    </Suspense>
   )
 }

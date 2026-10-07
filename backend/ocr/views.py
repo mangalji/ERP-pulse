@@ -948,9 +948,9 @@ class OCRExtractionTemplateListView(APIView):
     def get(self, request):
         queryset = OCRExtractionTemplate.objects.filter(
             company=request.user.company
-        # ).order_by("name")
+        
         ).order_by("created_at","id")
-        serializer = OCRExtractionTemplateSerializer(queryset, many=True)
+        serializer = OCRExtractionTemplateSerializer(queryset, many=True, context={"request":request},)
         return success_response(
             message="Extraction templates fetched successfully.",
             data=serializer.data,
@@ -975,39 +975,9 @@ class OCRExtractionTemplateListView(APIView):
                 if created
                 else "Extraction template updated successfully."
             ),
-            data=OCRExtractionTemplateSerializer(template).data,
+            data=OCRExtractionTemplateSerializer(template,context={"request":request}).data,
             status_code=status.HTTP_201_CREATED,
         )
-
-
-# class OCRExtractionTemplateDetailView(APIView):
-#     """Retrieve/delete a company-scoped extraction template."""
-
-#     permission_classes = [IsAuthenticated]
-
-#     def _get_template(self, request, template_id):
-#         try:
-#             return OCRExtractionTemplate.objects.get(
-#                 pk=template_id,
-#                 company=request.user.company,
-#             )
-#         except (OCRExtractionTemplate.DoesNotExist, ValueError, TypeError):
-#             raise NotFound("Extraction template not found.")
-
-#     def get(self, request, template_id):
-#         template = self._get_template(request, template_id)
-#         return success_response(
-#             message="Extraction template fetched successfully.",
-#             data=OCRExtractionTemplateSerializer(template).data,
-#         )
-
-#     def delete(self, request, template_id):
-#         template = self._get_template(request, template_id)
-#         template.delete()
-#         return success_response(
-#             message="Extraction template deleted successfully.",
-#             data=None,
-#         )
 
 class OCRExtractionTemplateDetailView(APIView):
     """Retrieve, partially update, or delete a company-scoped extraction template."""
@@ -1032,7 +1002,7 @@ class OCRExtractionTemplateDetailView(APIView):
 
         return success_response(
             message="Extraction template fetched successfully.",
-            data=OCRExtractionTemplateSerializer(template).data,
+            data=OCRExtractionTemplateSerializer(template,context={"request": request}).data,
         )
 
     def patch(self, request, template_id):
@@ -1044,6 +1014,11 @@ class OCRExtractionTemplateDetailView(APIView):
         serializer.is_valid(raise_exception=True)
 
         validated_data = serializer.validated_data
+
+        is_preferred = validated_data.pop(
+            "is_preferred",
+            None,
+        )
 
         if "name" in validated_data:
             new_name = validated_data["name"]
@@ -1082,10 +1057,22 @@ class OCRExtractionTemplateDetailView(APIView):
             ]
             + ["updated_at"]
         )
+        if is_preferred is True:
+            request.user.preferred_ocr_template = template
+            request.user.save(
+                update_fields=["preferred_ocr_template"]
+            )
+        
+        elif is_preferred is False:
+            if request.user.preferred_ocr_template_id == template.id:
+                request.user.preferred_ocr_template = None
+                request.user.save(
+                    update_fields=["preferred_ocr_template"]
+                )
 
         return success_response(
             message="Extraction template updated successfully.",
-            data=OCRExtractionTemplateSerializer(template).data,
+            data=OCRExtractionTemplateSerializer(template,context={"request": request}).data,
         )
 
     def delete(self, request, template_id):

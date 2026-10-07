@@ -607,6 +607,37 @@ export default function FileTemplatePage() {
     }
   }
 
+  const handleSetPreferred = async (template) => {
+    if (!template?.id || template.is_preferred) {
+      return
+    }
+
+    setError('')
+    setMessage('')
+
+    try {
+      await apiClient.patch(
+        `/ocr/extraction-templates/${template.id}/`,
+        {
+          is_preferred: true,
+        },
+      )
+    
+      await loadTemplates()
+    
+      setMessage(
+        `"${template.name}" is now your preferred template.`,
+      )
+    } catch (err) {
+      setError(
+        getErrorMessage(
+          err,
+          'Unable to set preferred template.',
+        ),
+      )
+    }
+  }
+
   const handleDeleteTemplate = async (template) => {
     if (!template?.id) return
     const confirmed = window.confirm(
@@ -748,6 +779,26 @@ export default function FileTemplatePage() {
                               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[var(--color-ink)] transition hover:bg-[var(--color-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                             >
                               <ActionIcon name="view" />
+                            </button>
+                            <button
+                              type="button"
+                              title={
+                                template.is_preferred
+                                  ? 'Preferred template'
+                                  : 'Set as preferred'
+                              }
+                              aria-label={
+                                template.is_preferred
+                                  ? `${template.name} is your preferred template`
+                                  : `Set ${template.name} as preferred`
+                              }
+                              disabled={template.is_preferred}
+                              onClick={() => handleSetPreferred(template)}
+                              className="inline-flex h-9 items-center justify-center rounded-md px-2 text-sm font-medium text-[var(--color-primary)] transition hover:bg-[var(--color-canvas)] disabled:cursor-default disabled:opacity-100"
+                            >
+                              {template.is_preferred
+                                ? '★ Preferred'
+                                : '☆ Preferred'}
                             </button>
                             <button
                               type="button"

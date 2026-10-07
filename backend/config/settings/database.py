@@ -44,5 +44,13 @@ TEST_DATABASE = {
 # ------------------------------------------------------------
 
 PRODUCTION_DATABASE = dj_database_url.config(
-    default=config("DATABASE_URL",default="")
+    default=config("DATABASE_URL",default=""),
+    # Keep each worker's DB connection open between requests. With the
+    # default (0) every request opens a brand-new TCP+TLS+auth connection
+    # to the remote database, which is slow on a cross-network hop.
+    conn_max_age=600,
+    # Verify a reused connection is still alive before using it.
+    conn_health_checks=True,
+    # Safe with Supabase's PgBouncer pooler; only affects .iterator().
+    disable_server_side_cursors=True,
 )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Card from '../ui/Card.jsx'
 import Input from '../ui/Input.jsx'
@@ -142,7 +142,7 @@ function normalizeEditedData(data, customFieldTypes = {}) {
   return next
 }
 
-function FieldInput({ field, value, editable, onChange }) {
+const FieldInput =  memo(function FieldInput({ field, value, editable, onChange }) {
 
   const displayValue = toInputValue(value)
   if (!editable) {
@@ -169,7 +169,7 @@ function FieldInput({ field, value, editable, onChange }) {
       onChange={(event) => onChange(field.key, event.target.value)}
     />
   )
-}
+})
 
 export default function OcrReviewWorkspace({
   result,
@@ -229,14 +229,14 @@ export default function OcrReviewWorkspace({
     return Array.from(keys)
   }, [data?.line_items])
 
-  const setField = (key, value) => {
+  const setField = useCallback((key, value) => {
     setData((current) => ({
       ...current,
       [key]: value,
     }))
-  }
+  },[])
 
-  const setLineItemField = (index, key, value) => {
+  const setLineItemField = useCallback((index, key, value) => {
     setData((current) => {
       const nextItems = Array.isArray(current.line_items)
         ? [...current.line_items]
@@ -253,9 +253,9 @@ export default function OcrReviewWorkspace({
         line_items: nextItems,
       }
     })
-  }
+  },[])
 
-  const addLineItem = () => {
+  const addLineItem = useCallback(() => {
     setData((current) => ({
       ...current,
       line_items: [
@@ -263,9 +263,9 @@ export default function OcrReviewWorkspace({
         emptyLineItem(),
       ],
     }))
-  }
+  },[])
 
-  const removeLineItem = (index) => {
+  const removeLineItem = useCallback((index) => {
     setData((current) => ({
       ...current,
       line_items: (Array.isArray(current.line_items)
@@ -273,7 +273,7 @@ export default function OcrReviewWorkspace({
         : []
       ).filter((_, itemIndex) => itemIndex !== index),
     }))
-  }
+  },[])
 
   const handleSave = async () => {
     if (!result?.upload_id && !result?.document_id) {

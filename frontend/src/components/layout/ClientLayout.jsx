@@ -48,38 +48,33 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   }
   const [openMenuKey, setOpenMenuKey] = useState(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [companyName, setCompanyName] = useState('')
   const [databaseNavItems, setDatabaseNavItems] = useState([])
   const userMenuRef = useRef(null)
-  useEffect(() => {
-    const loadClientProfile = async () => {
-      try {
-        const res = await clientApi.getMe()
-        setCompanyName(
-          res?.company_name ||
-          res?.company?.name ||
-          '',
-        )
-      } catch {
-        setCompanyName('')
-      }
-    }
-    loadClientProfile()
-  }, [])
+  const companyName = user?.company_name || user?.company?.name || ''
 
   useEffect(() => {
+    if (!user?.id) {
+      setDatabaseNavItems([])
+      return undefined
+    }
+    let cancelled = false
     const loadNavigationMenu = async () => {
       try {
-        const res = await clientApi.getNavigationMenu()
-        setDatabaseNavItems(Array.isArray(res) ? res: [])
+        const res = await clientApi.getNavigationMenu(user?.id)
+        if (!cancelled) {
+          setDatabaseNavItems(Array.isArray(res) ? res : [])
+        }
       } catch (error) {
-        console.error('Failed to load navigation menu:', error)
-        setDatabaseNavItems([])
+        if (!cancelled) {console.error('Failed to load navigation menu:', error)
+        setDatabaseNavItems([])}
       }
     }
 
-    loadNavigationMenu()
-  }, [])
+    void loadNavigationMenu()
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id])
 
   useEffect(() => {
     function handleClickOutside(event) {

@@ -665,21 +665,64 @@ export default function OcrFieldMappingPage() {
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(CONTEXT_KEY)
+      /*
+       * Field Mapping cannot exist without an active OCR workflow.
+       * This can happen if the user reaches this page through browser
+       * Back/Forward after the workflow has already been cleared.
+       */
       if (!raw) {
-        setError(
-          'No OCR result is available for Field Mapping. Return to OCR and select a completed result.',
-        )
+        navigate('/app/ocr',{replace: true})
+        // setError(
+        //   'No OCR result is available for Field Mapping. Return to OCR and select a completed result.',
+        // )
         return
       }
+      const storedContext = JSON.parse(raw)
+      
+      setContext(storedContext)
+      // Restore validation state after browser refresh.
+      if (storedContext?.validation_result) {
+        setValidationResult(
+          storedContext.validation_result,
+        )
+      }
+      // Restore AI resolution guidance after browser refresh.
+      if (
+        Array.isArray(
+          storedContext?.ai_diagnostics,
+        )
+      ) {
+        setAiDiagnostics(
+          storedContext.ai_diagnostics,
+        )
+      }
+      // Restore diagnostic error, if the AI request
+      // had failed before the refresh.
+      if (
+        typeof storedContext?.diagnostic_error ===
+        'string'
+      ) {
+        setDiagnosticError(
+          storedContext.diagnostic_error,
+        )
+      }
 
-      setContext(JSON.parse(raw))
+      // Restore posting result as well, if available.
+      if (storedContext?.posting_result) {
+        setPostingResult(
+          storedContext.posting_result,
+        )
+      }
     } catch (err) {
       console.error('Failed to load OCR mapping context:', err)
-      setError('The OCR mapping context is invalid or expired.')
+      sessionStorage.removeItem(CONTEXT_KEY)
+      sessionStorage.removeItem('ocr_test_result')
+      // setError('The OCR mapping context is invalid or expired.')
+      navigate('/app/ocr', { replace: true })
     } finally {
       setLoadingContext(false)
     }
-  }, [])
+  }, [navigate])
 
   const applicationFields = useMemo(
     () => getApplicationFields(context),
@@ -1343,23 +1386,67 @@ const requestNetSuiteDiagnostics = useCallback(
               context.connection_id,
           },
         )
-
-      setAiDiagnostics(
-        Array.isArray(result?.diagnostics)
+        const diagnostics =
+          Array.isArray(result?.diagnostics)
           ? result.diagnostics
-          : [],
-      )
-    } catch (err) {
-      console.error(
-        'NetSuite resolution guidance failed:',
-        err,
-      )
+          : []
+        setAiDiagnostics(diagnostics)
 
-      setDiagnosticError(
+        try {
+          const raw =
+            sessionStorage.getItem(CONTEXT_KEY)
+
+          const currentContext = raw
+            ? JSON.parse(raw)
+            : context
+
+            sessionStorage.setItem(
+            CONTEXT_KEY,
+            JSON.stringify({
+              ...currentContext,
+              ai_diagnostics: diagnostics,
+              diagnostic_error: '',
+            }),
+          )
+        } catch (storageError) {
+          console.error(
+            'Failed to persist AI diagnostics:',
+            storageError,
+          )
+        }
+      } catch (err) {
+        console.error(
+          'NetSuite resolution guidance failed:',
+          err,
+        )
+        const message = 
         'We couldn’t prepare the resolution guidance right now. '
         + 'The validation result above is still available. '
-        + 'Please try again.',
-      )
+        + 'Please try again.'
+        setDiagnosticError(message)
+        try {
+          const raw =
+            sessionStorage.getItem(CONTEXT_KEY)
+
+          const currentContext = raw
+            ? JSON.parse(raw)
+            : context
+
+          sessionStorage.setItem(
+            CONTEXT_KEY,
+            JSON.stringify({
+              ...currentContext,
+              ai_diagnostics: [],
+              diagnostic_error: message,
+            }),
+          )
+        } catch (storageError) {
+          console.error(
+            'Failed to persist diagnostic error:',
+            storageError,
+          )
+        }
+      
     } finally {
       setDiagnosing(false)
     }
@@ -1420,6 +1507,9 @@ const runValidation = async () => {
           mappings,
           mapping_completed: true,
           validation_result: result,
+          ai_diagnostics: [],
+          diagnostic_error:'',
+          posting_result:null,
         }),
       )
 
@@ -1509,6 +1599,9 @@ const runValidation = async () => {
               mappings,
               mapping_completed: true,
               validation_result: finalResult,
+              ai_diagnostics: [],
+              diagnostic_error: '',
+              posting_result: null,
             }),
           )
 
@@ -1683,6 +1776,27 @@ const handlePost = async () => {
       const result = await netsuiteApi.postOCRVendorBill(documentId,context.connection_id)
 
       setPostingResult(result)
+        try {
+          const raw =
+            sessionStorage.getItem(CONTEXT_KEY)
+              
+          const currentContext = raw
+            ? JSON.parse(raw)
+            : context
+              
+          sessionStorage.setItem(
+            CONTEXT_KEY,
+            JSON.stringify({
+              ...currentContext,
+              posting_result: result,
+            }),
+          )
+        } catch (storageError) {
+          console.error(
+            'Failed to persist posting result:',
+            storageError,
+          )
+        }
       setNotice(`✓ Vendor Bill posted successfully to NetSuite. Record ID: ${result?.netsuite_record_id || 'created'}`)
     }
     catch(err){
@@ -1889,7 +2003,7 @@ const handlePost = async () => {
             )}
           </div>
 
-          <Button type="button" intent="secondary" onClick={() => navigate('/app/ocr')}>
+          <Button type="button" intent="secondary" onClick={() => navigate('/app/ocr',{replace:true})}>
             ← Back to OCR
           </Button>
         </div>
@@ -1900,20 +2014,6 @@ const handlePost = async () => {
             {refreshWarning}
           </div>
         )}
-          {/* <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            <span>
-              NetSuite connection needs reconnecting. A Company Admin must
-              reconnect it before fields can be refreshed or documents validated.
-            </span>
-            <Button
-              type="button"
-              intent="primary"
-              onClick={() => navigate('/app/integrations/netsuite')}
-            >
-              Go to NetSuite connections
-            </Button>
-          </div>
-        )} */}
         {error && !reauthRequired && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
@@ -1924,6 +2024,155 @@ const handlePost = async () => {
             {notice}
           </div>
         )}
+
+        <Card className="p-5 sm:p-6">
+          <div>
+            <h2 className="text-base font-semibold text-[var(--color-ink)]">
+              NetSuite Field Mapping
+            </h2>
+            <p className="mt-1 text-sm text-[var(--color-muted)]">
+              Fields are automatically matched by normalized field names. Unmatched or custom fields can be mapped manually below.
+            </p>
+          </div>
+
+          {!context?.connection_id && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              No NetSuite connection is available for this OCR result.
+            </div>
+          )}
+
+          {catalogueLoading && (
+            <div className="mt-5 rounded-lg border border-[var(--color-border)] p-5 text-sm text-[var(--color-muted)]">
+              Fetching Vendor Bill fields from the connected NetSuite account...
+            </div>
+          )}
+
+          {!catalogueLoading && catalogue.length === 0 && context?.connection_id && (
+            <div className="mt-5 rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
+              <p className="text-sm font-medium text-[var(--color-ink)]">
+                No NetSuite Vendor Bill fields were returned.
+              </p>
+              <p className="mt-1 text-sm text-[var(--color-muted)]">
+                Check the NetSuite connection and try again.
+              </p>
+            </div>
+          )}
+
+          {!catalogueLoading && mappings.length > 0 && (
+            <div className="mt-6 overflow-hidden rounded-xl border border-[var(--color-border)]">
+              <div className="grid grid-cols-[1fr_1fr] border-b border-[var(--color-border)] bg-[var(--color-canvas)]">
+                <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+                  Application Field
+                </div>
+                <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+                  NetSuite Vendor Bill Field
+                </div>
+              </div>
+
+              <div className="divide-y divide-[var(--color-border)]">
+                {mappings.map((item) => {
+                  const options =
+                    item.source_scope === 'line'
+                      ? catalogueOptionsByScope.line
+                      : catalogueOptionsByScope.body
+
+                  return (
+                    <div
+                      key={item.source_field_key}
+                      className="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-[1fr_1fr] md:items-center"
+                    >
+                      <div className="min-w-0">
+                        <p className="break-all text-sm font-semibold text-[var(--color-ink)]">
+                          {item.source_field_label || item.source_label || item.source_field_key}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                          {item.source_field_key} ·{' '}
+                          {item.source_scope === 'line'
+                            ? 'Line Item'
+                            : 'Body'}
+                        </p>
+                      </div>
+
+                      <div>
+                        <select
+                          value={item.target_field_id || ''}
+                          onChange={(event) =>
+                            updateMapping(
+                              item.source_field_key,
+                              event.target.value,
+                            )
+                          }
+                          className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                        >
+                          <option value="">
+                            Select NetSuite field
+                          </option>
+
+                          {options.map((field) => (
+                            <option key={field.id} value={field.id}>
+                              {field.label} ({field.id})
+                            </option>
+                          ))}
+                        </select>
+
+                        <div className="mt-1 flex items-center justify-between gap-3">
+                          <span
+                            className={`text-xs font-medium ${
+                              item.status === 'MAPPED'
+                                ? 'text-emerald-600'
+                                : 'text-amber-700'
+                            }`}
+                          >
+                            {item.status === 'MAPPED'
+                              ? item.metadata?.match_method === 'name'
+                                ? 'Auto-matched by name'
+                                : 'Mapped'
+                              : 'Unresolved — select manually'}
+                          </span>
+
+                          {item.metadata?.match_method === 'name' && (
+                            <span className="text-[11px] text-[var(--color-muted)]">
+                              Exact normalized name match
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {mappings.length > 0 && (
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border)] pt-5">
+              <Button
+                type="button"
+                intent="secondary"
+                onClick={handleSaveMapping}
+                disabled={saving || validating || posting}
+                isLoading={saving}
+              >
+                Save Mapping
+              </Button>
+
+              <Button
+                type="button"
+                onClick={handleContinue}
+                disabled={
+                  saving ||
+                  validating ||
+                  posting ||
+                  !mappings.length
+                }
+                isLoading={saving || validating}
+              >
+                Continue →
+              </Button>
+            </div>
+          )}
+        </Card>
+
         {validationResult && (
   <Card className="p-5 sm:p-6">
     {diagnosticError && (
@@ -2053,7 +2302,7 @@ const handlePost = async () => {
                         </span>
                       </div>
 
-{item?.summary && (
+                        {item?.summary && (
                          <p className="mt-3 text-xs text-[var(--color-muted)]">
                            {Number(item.summary.source_rows || 0)} source rows ·{' '}
                            {Number(item.summary.unique_netsuite_items || 0)} unique NetSuite items ·{' '}
@@ -2061,30 +2310,71 @@ const handlePost = async () => {
                          </p>
                        )}
 
-                       {(item?.error || errors.length > 0) && (
-                         <div className="mt-3 space-y-3">
-                           {item?.error && (
-                             <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                               <p className="text-sm text-red-700">
-                                 {item.error}
-                               </p>
-                             </div>
-                           )}
-
-                           {errors.map((errorItem, errorIndex) => (
-                             <ValidationErrorDisplay
-                               key={`${errorItem?.type || 'error'}-${errorIndex}`}
-                               errorItem={errorItem}
-                               diagnostic={
-                                aiDiagnosticsByReference.get(
-                                  `${item?.validation_id}:${errorIndex}`,
-                                )
-                               }
-                               diagnosing={diagnosing}
-                             />
-                           ))}
-                         </div>
-                       )}
+                        {(item?.error || errors.length > 0) && (
+                          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-semibold text-red-900">
+                                Validation Errors
+                              </p>
+                        
+                              <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-800">
+                                {(errors.length || 0) + (item?.error ? 1 : 0)}
+                              </span>
+                            </div>
+                        
+                            <div className="mt-2 divide-y divide-red-200 rounded-md border border-red-200 bg-white">
+                              {item?.error && (
+                                <div className="flex items-start gap-3 px-3 py-2.5">
+                                  <span className="mt-0.5 shrink-0 text-red-600">
+                                    ✕
+                                  </span>
+                              
+                                  <p className="text-sm text-red-800">
+                                    {item.error}
+                                  </p>
+                                </div>
+                              )}
+                        
+                              {errors.map((errorItem, errorIndex) => (
+                                <div
+                                  key={`${errorItem?.type || 'error'}-${errorIndex}`}
+                                  className="flex items-start gap-3 px-3 py-2.5"
+                                >
+                                  <span className="mt-0.5 shrink-0 text-red-600">
+                                    ✕
+                                  </span>
+                              
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="text-sm font-medium text-red-900">
+                                        {errorItem?.message || 'Validation error'}
+                                      </p>
+                              
+                                      {errorItem?.type && (
+                                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800">
+                                          {String(errorItem.type)}
+                                        </span>
+                                      )}
+                                    </div>
+                                    
+                                    {errorItem?.extracted_name && (
+                                      <p className="mt-1 text-xs text-[var(--color-muted)]">
+                                        Affected value: {errorItem.extracted_name}
+                                      </p>
+                                    )}
+                        
+                                    <AIDiagnosticGuidance
+                                      diagnostic={aiDiagnosticsByReference.get(
+                                        `${item?.validation_id}:${errorIndex}`,
+                                      )}
+                                      diagnosing={diagnosing}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                     </div>
                   )
                 })}
@@ -2291,36 +2581,79 @@ const handlePost = async () => {
           </p>
         )}
         {(validationResult.errors || []).length > 0 && (
-          <div className="mt-5 space-y-3">
-            {validationResult.errors.map((item, index) => {
-              // const firstMismatchIndex =
-              //   validationResult.errors.findIndex(
-              //     (candidate) =>
-              //       String(candidate?.type || '').toUpperCase() ===
-              //       'ITEM_SUBSIDIARY_MISMATCH',
-              //   )
+          <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-red-900">
+                  Validation Errors
+                </p>
+                <p className="mt-1 text-xs text-red-700">
+                  {validationResult.errors.length}{' '}
+                  {validationResult.errors.length === 1 ? 'issue' : 'issues'} found
+                </p>
+              </div>
 
-              return (
-                <ValidationErrorDisplay
+              <span className="rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-semibold text-red-800">
+                {validationResult.errors.length}
+              </span>
+            </div>
+
+            <div className="mt-3 divide-y divide-red-200 rounded-md border border-red-200 bg-white">
+              {validationResult.errors.map((item, index) => (
+                <div
                   key={`${item?.type || 'error'}-${index}`}
-                  errorItem={item}
-                  diagnostic={
-                    aiDiagnosticsByReference.get(
-                      `${validationResult.validation_id}:${index}`,
-                    )}
-                  diagnosing={diagnosing}
-                  onEdit={
-                    ENABLE_INLINE_OCR_EDITOR &&
-                    // hasItemSubsidiaryMismatch &&
-                    index === 0 &&
-                    inlineEditorResult &&
-                    !inlineEditorOpen
-                      ? () => setInlineEditorOpen(true)
-                      : undefined
-                  }
-                />
-              )
-            })}
+                  className="px-3 py-3"
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 shrink-0 text-red-600">
+                      ✕
+                    </span>
+              
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-red-900">
+                          {item?.message || 'Validation error'}
+                        </p>
+              
+                        {item?.type && (
+                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800">
+                            {String(item.type)}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {item?.extracted_name && (
+                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                          Affected value: {item.extracted_name}
+                        </p>
+                      )}
+
+                      <AIDiagnosticGuidance
+                        diagnostic={aiDiagnosticsByReference.get(
+                          `${validationResult.validation_id}:${index}`,
+                        )}
+                        diagnosing={diagnosing}
+                      />
+
+                      {ENABLE_INLINE_OCR_EDITOR &&
+                        index === 0 &&
+                        inlineEditorResult &&
+                        !inlineEditorOpen && (
+                          <div className="mt-3">
+                            <Button
+                              type="button"
+                              intent="secondary"
+                              onClick={() => setInlineEditorOpen(true)}
+                            >
+                              Edit OCR Data
+                            </Button>
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -2393,153 +2726,6 @@ const handlePost = async () => {
   </Card>
 )}        
 
-        <Card className="p-5 sm:p-6">
-          <div>
-            <h2 className="text-base font-semibold text-[var(--color-ink)]">
-              NetSuite Field Mapping
-            </h2>
-            <p className="mt-1 text-sm text-[var(--color-muted)]">
-              Fields are automatically matched by normalized field names. Unmatched or custom fields can be mapped manually below.
-            </p>
-          </div>
-
-          {!context?.connection_id && (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              No NetSuite connection is available for this OCR result.
-            </div>
-          )}
-
-          {catalogueLoading && (
-            <div className="mt-5 rounded-lg border border-[var(--color-border)] p-5 text-sm text-[var(--color-muted)]">
-              Fetching Vendor Bill fields from the connected NetSuite account...
-            </div>
-          )}
-
-          {!catalogueLoading && catalogue.length === 0 && context?.connection_id && (
-            <div className="mt-5 rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
-              <p className="text-sm font-medium text-[var(--color-ink)]">
-                No NetSuite Vendor Bill fields were returned.
-              </p>
-              <p className="mt-1 text-sm text-[var(--color-muted)]">
-                Check the NetSuite connection and try again.
-              </p>
-            </div>
-          )}
-
-          {!catalogueLoading && mappings.length > 0 && (
-            <div className="mt-6 overflow-hidden rounded-xl border border-[var(--color-border)]">
-              <div className="grid grid-cols-[1fr_1fr] border-b border-[var(--color-border)] bg-[var(--color-canvas)]">
-                <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-                  Application Field
-                </div>
-                <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-                  NetSuite Vendor Bill Field
-                </div>
-              </div>
-
-              <div className="divide-y divide-[var(--color-border)]">
-                {mappings.map((item) => {
-                  const options =
-                    item.source_scope === 'line'
-                      ? catalogueOptionsByScope.line
-                      : catalogueOptionsByScope.body
-
-                  return (
-                    <div
-                      key={item.source_field_key}
-                      className="grid grid-cols-1 gap-3 px-4 py-4 md:grid-cols-[1fr_1fr] md:items-center"
-                    >
-                      <div className="min-w-0">
-                        <p className="break-all text-sm font-semibold text-[var(--color-ink)]">
-                          {item.source_field_label || item.source_label || item.source_field_key}
-                        </p>
-                        <p className="mt-1 text-xs text-[var(--color-muted)]">
-                          {item.source_field_key} ·{' '}
-                          {item.source_scope === 'line'
-                            ? 'Line Item'
-                            : 'Body'}
-                        </p>
-                      </div>
-
-                      <div>
-                        <select
-                          value={item.target_field_id || ''}
-                          onChange={(event) =>
-                            updateMapping(
-                              item.source_field_key,
-                              event.target.value,
-                            )
-                          }
-                          className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                        >
-                          <option value="">
-                            Select NetSuite field
-                          </option>
-
-                          {options.map((field) => (
-                            <option key={field.id} value={field.id}>
-                              {field.label} ({field.id})
-                            </option>
-                          ))}
-                        </select>
-
-                        <div className="mt-1 flex items-center justify-between gap-3">
-                          <span
-                            className={`text-xs font-medium ${
-                              item.status === 'MAPPED'
-                                ? 'text-emerald-600'
-                                : 'text-amber-700'
-                            }`}
-                          >
-                            {item.status === 'MAPPED'
-                              ? item.metadata?.match_method === 'name'
-                                ? 'Auto-matched by name'
-                                : 'Mapped'
-                              : 'Unresolved — select manually'}
-                          </span>
-
-                          {item.metadata?.match_method === 'name' && (
-                            <span className="text-[11px] text-[var(--color-muted)]">
-                              Exact normalized name match
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {mappings.length > 0 && (
-            <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border)] pt-5">
-              <Button
-                type="button"
-                intent="secondary"
-                onClick={handleSaveMapping}
-                disabled={saving || validating || posting}
-                isLoading={saving}
-              >
-                Save Mapping
-              </Button>
-
-              <Button
-                type="button"
-                onClick={handleContinue}
-                disabled={
-                  saving ||
-                  validating ||
-                  posting ||
-                  !mappings.length
-                }
-                isLoading={saving || validating}
-              >
-                Continue →
-              </Button>
-            </div>
-          )}
-        </Card>
       </div>
     </ClientLayout>
   )

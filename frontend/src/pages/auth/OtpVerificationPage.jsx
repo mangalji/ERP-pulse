@@ -17,8 +17,6 @@ export default function OtpVerificationPage() {
   const [localError, setLocalError] = useState('')
   const [resendLoading, setResendLoading] = useState(false)
   const [resendSuccess, setResendSuccess] = useState('')
-  const [editEmail, setEditEmail] = useState(false)
-  const [tempEmail, setTempEmail] = useState(email)
   const [secondsRemaining, setSecondsRemaining] = useState(300)
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(60)
 
@@ -93,18 +91,6 @@ export default function OtpVerificationPage() {
     }
   }, [purpose, email, resendLoginOtp])
 
-  const handleEditEmail = () => {
-    setTempEmail(email)
-    setEditEmail(true)
-  }
-
-  const handleSaveEmail = () => {
-    const trimmed = tempEmail.trim()
-    if (!trimmed) return
-    setEmail(trimmed)
-    setEditEmail(false)
-  }
-
   const minutes = Math.floor(secondsRemaining / 60)
   const seconds = secondsRemaining % 60
 
@@ -117,44 +103,9 @@ export default function OtpVerificationPage() {
       }.`}
     >
       <div className="flex items-center justify-between rounded-lg bg-[var(--color-surface-soft)] px-4 py-3">
-        {editEmail ? (
-          <>
-            <input
-              type="email"
-              value={tempEmail}
-              onChange={(e) => setTempEmail(e.target.value)}
-              className="flex-1 rounded border border-[var(--color-border)] bg-transparent px-2 py-1 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]"
-              autoFocus
-            />
-            <button
-              type="button"
-              onClick={handleSaveEmail}
-              className="ml-2 text-sm font-medium text-[var(--color-primary)] hover:underline"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditEmail(false)}
-              className="ml-2 text-sm font-medium text-[var(--color-muted)] hover:underline"
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="text-sm font-medium text-[var(--color-ink)]">
-              {email}
-            </span>
-            <button
-              type="button"
-              onClick={handleEditEmail}
-              className="text-sm font-medium text-[var(--color-primary)] hover:underline"
-            >
-              Edit
-            </button>
-          </>
-        )}
+        <span className="text-sm font-medium text-[var(--color-ink)]">
+          {email}
+        </span>
       </div>
 
       <div className="mt-3 flex items-center justify-between text-sm">

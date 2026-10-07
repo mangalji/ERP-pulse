@@ -24,21 +24,14 @@ export default function ClientSubscriptionPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [subData, usageData] = await Promise.all([
+      const [subData, usageData, txData] = await Promise.all([
         subscriptionApi.getMySubscription(),
         subscriptionApi.getMyUsage().catch(() => []),
+        subscriptionApi.getMyTransactions().catch(() => []),
       ])
       setSubscription(subData)
       setUsage(usageData || [])
-      try {
-        setTxLoading(true)
-        const txData = await subscriptionApi.getMyTransactions()
-        setTransactions(txData?.results || txData || [])
-      } catch {
-        setTransactions([])
-      } finally {
-        setTxLoading(false)
-      }
+      setTransactions(txData?.results || txData || [])
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to load subscription', 'error')
     } finally {

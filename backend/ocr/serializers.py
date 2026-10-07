@@ -185,6 +185,7 @@ class OCRExtractionTemplateSerializer(serializers.ModelSerializer):
     """Read/write representation of a saved dynamic extraction template."""
 
     created_by_name = serializers.SerializerMethodField()
+    is_preferred = serializers.SerializerMethodField()
 
     class Meta:
         model = __import__(
@@ -198,6 +199,7 @@ class OCRExtractionTemplateSerializer(serializers.ModelSerializer):
             'fields_config',
             'created_by',
             'created_by_name',
+            'is_preferred',
             'created_at',
             'updated_at',
         ]
@@ -209,6 +211,15 @@ class OCRExtractionTemplateSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+    def get_is_preferred(self,obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+
+        if not user or not user.is_authenticated:
+            return False
+
+        return user.preferred_ocr_template_id == obj.id
 
     def get_created_by_name(self, obj):
         """Return the creator's name with sensible fallbacks."""
@@ -280,6 +291,9 @@ class OCRExtractionTemplateUpdateSerializer(serializers.Serializer):
         required=False,
     )
     fields_config = serializers.JSONField(
+        required=False,
+    )
+    is_preferred = serializers.BooleanField(
         required=False,
     )
 

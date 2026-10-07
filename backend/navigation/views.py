@@ -1,6 +1,7 @@
 import re
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Prefetch
 from django.utils.text import slugify
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -79,12 +80,7 @@ class DynamicNavigationMenuView(APIView):
         level3_visibility,
     ):
         data = []
-
-        for level3_tab in (
-            level2_tab.level3_tabs
-            .filter(is_active=True)
-            .order_by("sort_order", "internal_id", "name")
-        ):
+        for level3_tab in level2_tab.active_level3_tabs:
             if level3_visibility.get(level3_tab.id, True) is False:
                 continue
 
@@ -108,12 +104,7 @@ class DynamicNavigationMenuView(APIView):
         is_admin,
     ):
         data = []
-
-        for level2_tab in (
-            top_tab.level2_tabs
-            .filter(is_active=True)
-            .order_by("sort_order", "internal_id", "name")
-        ):
+        for level2_tab in top_tab.active_level2_tabs:
             if (
                 level2_tab.key == "settings-customize"
                 and not is_admin
@@ -154,7 +145,28 @@ class DynamicNavigationMenuView(APIView):
         top_level_tabs = (
             DynamicTopLevelTab.objects
             .filter(is_active=True)
-            .prefetch_related("level2_tabs__level3_tabs")
+            .prefetch_related(
+                Prefetch(
+                    "level2_tabs",
+                    queryset=(
+                        DynamicLevel2Tab.objects
+                        .filter(is_active=True)
+                        .order_by("sort_order","internal_id","name")
+                        .prefetch_related(
+                            Prefetch(
+                                "level3_tabs",
+                                queryset=(
+                                    DynamicLevel3Tab.objects
+                                    .filter(is_active=True)
+                                    .order_by("sort_order","internal_id","name")
+                                ),
+                                to_attr="active_level3_tabs",
+                            )
+                        )
+                    ),
+                    to_attr="active_level2_tabs",
+                )
+            )
             .order_by("sort_order", "internal_id", "name")
         )
 
@@ -327,8 +339,22 @@ def _is_company_admin(user):
 
     return role is not None and role.name.lower() == "company admin"
 
+_SYSTEM_TABS_READY = False
+
 
 def _ensure_system_tabs():
+    # Seeding is idempotent and only needs to run once per worker process.
+    # Doing ~10 get_or_create round-trips on EVERY menu request made each
+    # navigation pay for ten extra DB queries.
+    global _SYSTEM_TABS_READY
+
+    if _SYSTEM_TABS_READY:
+        return
+    
+    _seed_system_tabs()
+    _SYSTEM_TABS_READY = True
+
+def _seed_system_tabs():
     system_tabs = [
         {
             "key": "employees",
@@ -814,7 +840,6 @@ class NavigationCustomizationDataView(APIView):
         company_users = (
             User.objects
             .filter(company=request.user.company)
-            # .exclude(pk=request.user.pk)
             .distinct()
             .order_by("first_name", "last_name", "email")
         )
@@ -883,8 +908,6 @@ class NavigationCustomizationDataView(APIView):
                 "route": top.route,
                 "query_params": top.query_params or {},
                 "query_param": next(iter(top.query_params or {}), ""),
-                # "feature_code": top.feature_code,
-                # "icon": top.icon,
                 "level": "top",
                 "visible": top_visible,
                 "system": top.key in {"employees", "settings"},
@@ -901,12 +924,8 @@ class NavigationCustomizationDataView(APIView):
                 "name": l2.name,
                 "key": l2.key,
                 "route": l2.route,
-                # "query_params": l2.query_params or {},
-                # "feature_code": l2.feature_code,
-                # "icon": l2.icon,
                 "level": "level2",
                 "visible": access_by_l2.get(l2.id, True),
-                # "system": False,
                 "system": (
                     top.key == "settings"
                     and l2.key in {
@@ -931,8 +950,6 @@ class NavigationCustomizationDataView(APIView):
                         "route": l3.route,
                         "query_params": l3.query_params or {},
                         "query_param": next(iter(l3.query_params or {}), ""),
-                        # "feature_code": l3.feature_code,
-                        # "icon": l3.icon,
                         "level": "level3",
                         "visible": access_by_l3.get(l3.id, True),
                         "system": False,
@@ -1334,12 +1351,6 @@ class NavigationMasterUpdateView(APIView):
                     {"detail": str(exc)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
-        # if level == "top" and not tab.route:
-        #     return Response(
-        #         {"detail": "Path is required for Center Tabs."},
-        #         status=status.HTTP_400_BAD_REQUEST,
-        #     )
 
         current_query_keys = list((tab.query_params or {}).keys())
 

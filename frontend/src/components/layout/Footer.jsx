@@ -1,4 +1,4 @@
-const PORTFOLIO_URL = 'https://mangalji.github.io/Portfolio/'
+// const PORTFOLIO_URL = 'https://mangalji.github.io/Portfolio/'
 
 /** Persistent footer shown on every page. Links out to the developer's portfolio. */
 export default function Footer() {
@@ -7,12 +7,12 @@ export default function Footer() {
       <div className="flex flex-col items-center justify-center gap-1 text-center text-xs text-[var(--color-muted)] sm:flex-row sm:gap-1.5">
         <span>&copy; {new Date().getFullYear()} AGSuite ERP.</span>
         <a
-          href={PORTFOLIO_URL}
+          // href={PORTFOLIO_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="font-medium text-[var(--color-primary)] transition-colors hover:text-[var(--color-primary-dark)]"
         >
-          Developed by Raj Mangal
+          Developed by AGSuite Technologies
         </a>
       </div>
     </footer>
