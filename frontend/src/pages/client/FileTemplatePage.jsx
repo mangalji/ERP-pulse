@@ -4,6 +4,7 @@ import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import apiClient from '../../services/apiClient.js'
 import { formatDateTime } from '../../utils/formatDate.js'
+import { netsuiteApi } from '../../services/netsuite.js'
 
 const DATA_TYPE_OPTIONS = [
   { value: 'text', label: 'Text' },
@@ -108,6 +109,97 @@ function normalizeTemplateConfig(config) {
   }
 }
 
+function normalizeNetSuiteFieldCatalogue(payload) {
+  const raw = payload?.data ?? payload ?? {}
+  const fieldContainer = raw?.fields
+
+  const nestedFields =
+    fieldContainer && !Array.isArray(fieldContainer)
+      ? [
+          ...(Array.isArray(fieldContainer.body)
+            ? fieldContainer.body
+            : []),
+          ...(Array.isArray(fieldContainer.column)
+            ? fieldContainer.column
+            : []),
+        ]
+      : []
+
+  const candidates =
+    nestedFields.length > 0
+      ? nestedFields
+      : Array.isArray(fieldContainer)
+        ? fieldContainer
+        : raw?.results ||
+          raw?.items ||
+          raw?.body_fields ||
+          []
+
+  const customFields = Array.isArray(raw?.custom_fields)
+    ? raw.custom_fields
+    : []
+
+  const deduped = new Map()
+
+  ;[...candidates, ...customFields].forEach((field) => {
+    if (!field) return
+
+    const id = String(
+      field.id ||
+      field.field_id ||
+      field.internal_id ||
+      field.script_id ||
+      field.scriptId ||
+      '',
+    ).trim()
+
+    if (!id) return
+
+    const rawScope = String(
+      field.scope ||
+      field.level ||
+      (
+        field.sublist_id ||
+        field.sublist
+          ? 'line'
+          : 'body'
+      ),
+    )
+      .trim()
+      .toLowerCase()
+
+    const scope =
+      ['line', 'column', 'sublist'].includes(rawScope)
+        ? 'line'
+        : 'body'
+
+    deduped.set(`${id}:${scope}`, {
+      id,
+      label:
+        field.label ||
+        field.display_label ||
+        field.name ||
+        id,
+      scope,
+      type:
+        field.datatype ||
+        field.type ||
+        field.field_type ||
+        'text',
+      is_required: Boolean(field.is_required),
+      is_custom: Boolean(
+        field.is_custom ??
+        field.custom,
+      ),
+      reference_type:
+        field.reference_type ||
+        field.referenceRecordType ||
+        null,
+    })
+  })
+
+  return [...deduped.values()]
+}
 
 function getCreatedBy(template) {
   const creator =
@@ -221,7 +313,9 @@ function ActionIcon({ name, className = 'h-5 w-5' }) {
 export default function FileTemplatePage() {
   const [catalog, setCatalog] = useState(null)
   const [templates, setTemplates] = useState([])
-
+  const [connection, setConnection] = useState(null)
+  const [netSuiteFields, setNetSuiteFields] = useState([])
+  const [netSuiteFieldsLoading, setNetSuiteFieldsLoading] = useState(false)
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
   const [templateName, setTemplateName] = useState('')
   const [mode, setMode] = useState('empty') // empty | view | edit | new
@@ -251,6 +345,54 @@ export default function FileTemplatePage() {
     ]
   }, [catalog])
 
+  const getConnectionId = (value) => (
+  value?.id ||
+  value?.connection_id ||
+  value?.connection?.id ||
+  null
+)
+
+const loadNetSuiteFields = async (connectionValue) => {
+  const connectionId = getConnectionId(connectionValue)
+
+  if (!connectionId) {
+    setNetSuiteFields([])
+    return
+  }
+
+  setNetSuiteFieldsLoading(true)
+
+  try {
+    const response = await apiClient.get(
+      '/netsuite/ocr/field-catalogue/',
+      {
+        params: {
+          connection_id: connectionId,
+          record_type: 'vendorBill',
+          force_refresh: 'true',
+        },
+      },
+    )
+
+    const payload =
+      response?.data?.data ??
+      response?.data ??
+      {}
+
+    setNetSuiteFields(
+      normalizeNetSuiteFieldCatalogue(payload),
+    )
+  } catch (err) {
+    console.error(
+      'Failed to load NetSuite field catalogue:',
+      err,
+    )
+    setNetSuiteFields([])
+  } finally {
+    setNetSuiteFieldsLoading(false)
+  }
+}
+
   const loadCatalog = async () => {
     const response = await apiClient.get('/ocr/extraction-fields/')
     const data = response?.data?.data ?? response?.data ?? {}
@@ -275,12 +417,26 @@ export default function FileTemplatePage() {
     setError('')
 
     try {
-      await Promise.all([loadCatalog(), loadTemplates()])
+  const connectionPayload =
+    await netsuiteApi.getMyConnection().catch(() => null)
 
-      // Keep the editor empty until the user opens a template or starts a new one.
-      setFields([])
-      setMode('empty')
-    } catch (err) {
+  const connectionData =
+    connectionPayload?.data ??
+    connectionPayload ??
+    null
+
+  setConnection(connectionData)
+
+  await Promise.all([
+    loadCatalog(),
+    loadTemplates(),
+    loadNetSuiteFields(connectionData),
+  ])
+
+  // Keep the editor empty until the user opens a template or starts a new one.
+  setFields([])
+  setMode('empty')
+} catch (err) {
       setError(
         getErrorMessage(
           err,
@@ -297,7 +453,8 @@ export default function FileTemplatePage() {
   }, [])
 
   const createDefaultFields = () =>
-    catalogFields.map(normalizeCatalogField)
+    catalogFields.filter((catalogFields)=> String(catalogFields?.key || '').trim().toLowerCase() !== 'customer_name')
+    .map(normalizeCatalogField)
 
   const resetEditor = () => {
     setSelectedTemplateId(null)
@@ -985,11 +1142,7 @@ export default function FileTemplatePage() {
                                   className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
                                 />
                               )}
-                              {field.standard && (
-                                <p className={`mt-1 px-1 text-xs ${disabledField ? 'text-gray-400' : 'text-[var(--color-muted)]'}`}>
-                                  Key: {field.original_key}
-                                </p>
-                              )}
+                              {/* Key intentionally hidden from UI */}
                             </td>
                             <td className="px-4 py-3">
                               {mode === 'view' || disabledField ? (
@@ -1003,18 +1156,37 @@ export default function FileTemplatePage() {
                                   {field.netsuite_field_id || '—'}
                                 </div>
                               ) : (
-                                <input
-                                  type="text"
+                                <select
                                   value={field.netsuite_field_id || ''}
                                   onChange={(event) =>
                                     updateField(field.id, {
                                       netsuite_field_id: event.target.value,
                                     })
                                   }
-                                  placeholder="e.g. entity / custbody_xxx"
-                                  disabled={mode === 'view'}
-                                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
-                                />
+                                  disabled={netSuiteFieldsLoading}
+                                  className="w-full min-w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs outline-none focus:border-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  <option value="">
+                                    {netSuiteFieldsLoading
+                                      ? 'Loading NetSuite fields...'
+                                      : 'Select NetSuite field'}
+                                  </option>
+                                    
+                                  {netSuiteFields
+                                    .filter((target) =>
+                                      field.scope === 'line'
+                                        ? target.scope === 'line'
+                                        : target.scope === 'body',
+                                    )
+                                    .map((target) => (
+                                      <option
+                                        key={`${target.id}:${target.scope}`}
+                                        value={target.id}
+                                      >
+                                        {target.label} ({target.id})
+                                      </option>
+                                    ))}
+                                </select>
                               )}
                             </td>
                             <td className="px-4 py-3">
@@ -1057,7 +1229,7 @@ export default function FileTemplatePage() {
                               ) : (
                                 <select
                                   value={field.scope}
-                                  onChange={(event) => updateField(field.id, { scope: event.target.value })}
+                                  onChange={(event) => updateField(field.id, { scope: event.target.value,netsuite_field_id: '' })}
                                   className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
                                 >
                                   {SCOPE_OPTIONS.map((option) => (
@@ -1141,5 +1313,4 @@ export default function FileTemplatePage() {
       </div>
     </ClientLayout>
   )
-
 }
