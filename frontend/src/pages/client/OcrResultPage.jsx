@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import apiClient from '../../services/apiClient.js'
 import { useToast, default as Toast } from '../../components/ui/Toast.jsx'
@@ -351,7 +351,10 @@ export default function OcrResultPage() {
   const [validationResult, setValidationResult] = useState(null)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [validating, setValidating] = useState(false)
   const [posting, setPosting] = useState(false)
+  const validationAbortControllerRef = useRef(null)
+  const postingAbortControllerRef = useRef(null)
   const [viewMode, setViewMode] = useState('fields')
   const [data, setData] = useState({})
   const [aiDiagnostics, setAiDiagnostics] = useState([])
@@ -413,6 +416,23 @@ export default function OcrResultPage() {
 
     return Array.from(keys)
   }, [lineItems])
+
+  useEffect(() => {
+  const cancelActiveRequests = () => {
+    validationAbortControllerRef.current?.abort()
+    postingAbortControllerRef.current?.abort()
+
+    validationAbortControllerRef.current = null
+    postingAbortControllerRef.current = null
+  }
+
+  window.addEventListener('pagehide', cancelActiveRequests)
+
+  return () => {
+    cancelActiveRequests()
+    window.removeEventListener('pagehide', cancelActiveRequests)
+  }
+}, [])
 
   const loadNetSuiteConnection = useCallback(async () => {
     if (connection) return connection
@@ -739,66 +759,140 @@ export default function OcrResultPage() {
   }
 
   const handleSaveAndValidate = async () => {
-    if (!result?.document_id) {
+  if (!result?.document_id) {
+    addToast(
+      'The OCR document is missing.',
+      'error',
+    )
+    return
+  }
+
+  const controller = new AbortController()
+
+  validationAbortControllerRef.current = controller
+  setValidating(true)
+
+  try {
+    const connectionData = await loadNetSuiteConnection()
+
+    if (controller.signal.aborted) {
+      return
+    }
+
+    const activeConnectionId = connectionData?.id
+
+    if (!activeConnectionId) {
       addToast(
-        'The OCR document is missing.',
+        'A NetSuite connection is required before validation.',
         'error',
       )
       return
     }
 
-    try {
-      const connectionData = await loadNetSuiteConnection()
-      const activeConnectionId = connectionData?.id
+    const savedResult = await handleSave()
 
-      if (!activeConnectionId) {
-        addToast(
-          'A NetSuite connection is required before validation.',
-          'error',
-        )
+    if (controller.signal.aborted) {
+      return
+    }
+
+    const activeDocumentId =
+      savedResult?.document_id ||
+      result.document_id
+
+    const validation =
+      await netsuiteApi.validateDocument(
+        activeDocumentId,
+        activeConnectionId,
+        {
+          signal: controller.signal,
+        },
+      )
+
+    if (controller.signal.aborted) {
+      return
+    }
+
+    setValidationResult(validation)
+
+    if (
+      validation?.validation_id &&
+      validation?.errors?.length
+    ) {
+      if (controller.signal.aborted) {
         return
       }
 
-      const savedResult = await handleSave()
+      await requestNetSuiteDiagnostics(
+        validation.validation_id,
+        validation.errors,
+        activeConnectionId,
+      )
 
-      const activeDocumentId =
-        savedResult?.document_id ||
-        result.document_id
-
-      const validation =
-        await netsuiteApi.validateDocument(
-          activeDocumentId,
-          activeConnectionId,
-        )
-
-      setValidationResult(validation)
-
-      if (
-        validation?.validation_id &&
-        validation?.errors?.length
-      ) {
-        await requestNetSuiteDiagnostics(
-          validation.validation_id,
-          validation.errors,
-          activeConnectionId,
-        )
+      if (controller.signal.aborted) {
+        return
       }
+    }
 
+    addToast(
+      validation?.status === 'VALIDATED'
+        ? 'OCR data validated successfully.'
+        : 'OCR data saved. Validation found issues.',
+      validation?.status === 'VALIDATED'
+        ? 'success'
+        : 'error',
+    )
+  } catch (err) {
+    const cancelled =
+      err?.code === 'ERR_CANCELED' ||
+      err?.name === 'CanceledError' ||
+      controller.signal.aborted
+
+    if (cancelled) {
+      return
+    }
+
+    console.error(
+      'Save & Validate failed:',
+      err,
+    )
+
+    const detail = String(
+      err?.response?.data?.detail || '',
+    )
+      .trim()
+      .toLowerCase()
+
+    const isLegacyFormat =
+      err?.response?.status === 400 &&
+      detail.includes(
+        'no netsuite field mappings are configured',
+      )
+
+    if (isLegacyFormat) {
       addToast(
-        validation?.status === 'VALIDATED'
-          ? 'OCR data validated successfully.'
-          : 'OCR data saved. Validation found issues.',
-        validation?.status === 'VALIDATED'
-          ? 'success'
-          : 'error',
+        'This file’s extracted data cannot be validated against NetSuite because it was processed using an older format. Please process the file again using a suitable template.',
+        'error',
       )
-    } catch (err) {
-      console.error(
-        'Save & Validate failed:',
-        err,
-      )
+      return
+    }
+
+    addToast(
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to validate the OCR data against NetSuite.',
+      'error',
+    )
+  } finally {
+    setValidating(false)
+
+    if (
+      validationAbortControllerRef.current === controller
+    ) {
+      validationAbortControllerRef.current = null
     }
   }
+}
 
   const handleValidateAgain = async () => {
     setAiDiagnostics([])
@@ -807,65 +901,99 @@ export default function OcrResultPage() {
   }
 
   const handlePost = async () => {
-    if (!result?.document_id) {
+  if (!result?.document_id) {
+    addToast(
+      'Please save the OCR data before posting it to NetSuite.',
+      'error',
+    )
+    return
+  }
+
+  if (
+    String(validationResult?.status || '').toUpperCase() !==
+    'VALIDATED'
+  ) {
+    addToast(
+      'Please validate the OCR data successfully before posting to NetSuite.',
+      'error',
+    )
+    return
+  }
+
+  const controller = new AbortController()
+
+  postingAbortControllerRef.current = controller
+  setPosting(true)
+
+  try {
+    const connectionData = await loadNetSuiteConnection()
+
+    if (controller.signal.aborted) {
+      return
+    }
+
+    const activeConnectionId = connectionData?.id
+
+    if (!activeConnectionId) {
       addToast(
-        'Please save the OCR data before posting it to NetSuite.',
+        'A NetSuite connection is required before posting.',
         'error',
       )
       return
     }
+
+    if (controller.signal.aborted) {
+      return
+    }
+
+    await netsuiteApi.postOCRVendorBill(
+      result.document_id,
+      activeConnectionId,
+      {
+        signal: controller.signal,
+      },
+    )
+
+    if (controller.signal.aborted) {
+      return
+    }
+
+    addToast(
+      'Vendor Bill posted to NetSuite.',
+      'success',
+    )
+  } catch (err) {
+    const cancelled =
+      err?.code === 'ERR_CANCELED' ||
+      err?.name === 'CanceledError' ||
+      controller.signal.aborted
+
+    if (cancelled) {
+      return
+    }
+
+    console.error(
+      'Failed to post Vendor Bill to NetSuite:',
+      err,
+    )
+
+    addToast(
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to post Vendor Bill to NetSuite.',
+      'error',
+    )
+  } finally {
+    setPosting(false)
 
     if (
-      String(validationResult?.status || '').toUpperCase() !==
-      'VALIDATED'
+      postingAbortControllerRef.current === controller
     ) {
-      addToast(
-        'Please validate the OCR data successfully before posting to NetSuite.',
-        'error',
-      )
-      return
-    }
-
-    try {
-      setPosting(true)
-
-      const connectionData = await loadNetSuiteConnection()
-      const activeConnectionId = connectionData?.id
-
-      if (!activeConnectionId) {
-        addToast(
-          'A NetSuite connection is required before posting.',
-          'error',
-        )
-        return
-      }
-
-      await netsuiteApi.postOCRVendorBill(
-        result.document_id,
-        activeConnectionId,
-      )
-
-      addToast(
-        'Vendor Bill posted to NetSuite.',
-        'success',
-      )
-    } catch (err) {
-      console.error(
-        'Failed to post Vendor Bill to NetSuite:',
-        err,
-      )
-
-      addToast(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'Failed to post Vendor Bill to NetSuite.',
-        'error',
-      )
-    } finally {
-      setPosting(false)
+      postingAbortControllerRef.current = null
     }
   }
+}
 
   const previewIsPdf = isPdf(result)
   const previewIsImage = isImage(result)
@@ -1264,7 +1392,7 @@ export default function OcrResultPage() {
                         setViewMode('fields')
                         setEditing(true)
                       }}
-                      disabled={editing || saving || posting}
+                      disabled={editing || saving || validating || posting}
                     >
                       Edit
                     </Button>
@@ -1273,7 +1401,7 @@ export default function OcrResultPage() {
                       <select
                         className="h-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm font-medium text-[var(--color-ink)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
                         value=""
-                        disabled={saving || posting || diagnosing}
+                        disabled={saving || validating || posting || diagnosing}
                         onChange={async (event) => {
                           const action = event.target.value
 
@@ -1288,10 +1416,21 @@ export default function OcrResultPage() {
                           event.target.value = ''
                         }}
                       >
-                        <option value="">Actions</option>
+                        <option value="">
+                          {validating
+                            ? 'Validating...'
+                            : posting
+                              ? 'Posting...'
+                              : saving
+                                ? 'Saving...'
+                                : 'Actions'}
+                        </option>
+
+
                         <option value="save_validate">
                           Save &amp; Validate
                         </option>
+
                         <option
                           value="post"
                           disabled={
@@ -1492,9 +1631,9 @@ export default function OcrResultPage() {
                       type="button"
                       intent="secondary"
                       onClick={handleValidateAgain}
-                      disabled={saving || posting || diagnosing}
+                      disabled={saving || validating || posting || diagnosing}
                     >
-                      Validate Again
+                      {validating ? 'Validating...' : 'Validate Again'}
                     </Button>
                   </div>
                 </div>

@@ -23,6 +23,124 @@ function createFieldId(prefix = 'field') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
+  invoice_number: {
+    id: 'tranid',
+    scope: 'body',
+  },
+  invoice_date: {
+    id: 'trandate',
+    scope: 'body',
+  },
+  due_date: {
+    id: 'duedate',
+    scope: 'body',
+  },
+  vendor_name: {
+    id: 'entity',
+    scope: 'body',
+  },
+  subsidiary: {
+    id: 'subsidiary',
+    scope: 'body',
+  },
+  currency: {
+    id: 'currency',
+    scope: 'body',
+  },
+  subtotal: {
+    id: 'total',
+    scope: 'body',
+  },
+  tax_amount: {
+    id: 'taxtotal',
+    scope: 'body',
+  },
+  tax_rate: {
+    id: 'taxRate1',
+    scope: 'line',
+    preferredSublistId: 'item',
+  },
+  total_amount: {
+    id: 'grossAmt',
+    scope: 'line',
+    preferredSublistId: 'item'
+  },
+  payment_terms: {
+    id: 'paymentmethod',
+    scope: 'body',
+  },
+  description: {
+    id: 'item',
+    scope: 'line',
+    preferredSublistId: 'item',
+  },
+  quantity: {
+    id: 'quantity',
+    scope: 'line',
+    preferredSublistId: 'item',
+  },
+  unit_price: {
+    id: 'rate',
+    scope: 'line',
+    preferredSublistId: 'item',
+  },
+  amount: {
+    id: 'userTotal',
+    scope: 'body',
+    preferredSublistId: 'item',
+  },
+}
+
+function resolveDefaultNetSuiteMapping(field, options) {
+  const mapping = DEFAULT_NETSUITE_FIELD_MAPPINGS[field?.key]
+
+  if (!mapping || !Array.isArray(options)) {
+    return null
+  }
+
+  const targetId = String(mapping.id || '')
+    .trim()
+    .toLowerCase()
+
+  const targetScope = String(mapping.scope || '')
+    .trim()
+    .toLowerCase()
+
+  if (!targetId || !targetScope) {
+    return null
+  }
+
+  const candidates = options.filter(
+    (option) =>
+      String(option?.id || '').trim().toLowerCase() === targetId &&
+      String(option?.scope || '').trim().toLowerCase() === targetScope,
+  )
+
+  if (!candidates.length) {
+    return null
+  }
+
+  const preferredSublistId = String(
+    mapping.preferredSublistId || '',
+  )
+    .trim()
+    .toLowerCase()
+
+  const selected =
+    candidates.find(
+      (option) =>
+        String(option?.sublist_id || '').trim().toLowerCase() ===
+        preferredSublistId,
+    ) || candidates[0]
+
+  return {
+    netsuite_field_id: selected.id,
+    netsuite_field_scope: selected.scope,
+    netsuite_field_sublist_id: selected.sublist_id || '',
+  }
+}
+
 function normalizeCatalogField(field) {
   return {
     id: `standard-${field?.scope || 'header'}-${field?.key || createFieldId('standard')}`,
@@ -41,6 +159,16 @@ function normalizeCatalogField(field) {
     netsuite_field_id:
       field?.netsuite_field_id ||
       field?.field_id ||
+      '',
+    
+    netsuite_field_scope:
+      field?.netsuite_field_scope ||
+      field?.target_scope ||
+      '',
+
+    netsuite_field_sublist_id:
+      field?.netsuite_field_sublist_id ||
+      field?.sublist_id ||
       '',
 
     standard: true,
@@ -66,6 +194,16 @@ function normalizeCustomField(field, index = 0) {
     netsuite_field_id:
       field?.netsuite_field_id ||
       field?.field_id ||
+      '',
+
+    netsuite_field_scope:
+      field?.netsuite_field_scope ||
+      field?.target_scope ||
+      '',
+
+    netsuite_field_sublist_id:
+      field?.netsuite_field_sublist_id ||
+      field?.sublist_id ||
       '',
     
     standard: false,
@@ -173,7 +311,32 @@ function normalizeNetSuiteFieldCatalogue(payload) {
         ? 'line'
         : 'body'
 
-    deduped.set(`${id}:${scope}`, {
+    const sublistId = String(
+      field.sublist_id ||
+      field.sublistId ||
+      field.sublist ||
+      '',
+    )
+      .trim()
+      .toLowerCase()
+
+    /*
+     * Keep item and expense as separate options.
+     *
+     * Example:
+     * taxrate1:line:item
+     * taxrate1:line:expense
+     * taxrate1:line:
+     *
+     * These are three different catalogue entries initially.
+     */
+    const key = `${id}:${scope}:${sublistId}`
+
+    if (deduped.has(key)) {
+      return
+    }
+
+    deduped.set(key, {
       id,
       label:
         field.label ||
@@ -181,8 +344,12 @@ function normalizeNetSuiteFieldCatalogue(payload) {
         field.name ||
         id,
       scope,
+      sublist_id: sublistId,
+      sublist_contexts: sublistId
+        ? [sublistId]
+        : [],
       type:
-        field.datatype ||
+        field.data_type ||
         field.type ||
         field.field_type ||
         'text',
@@ -198,7 +365,241 @@ function normalizeNetSuiteFieldCatalogue(payload) {
     })
   })
 
-  return [...deduped.values()]
+  const entries = [...deduped.values()]
+
+  /*
+   * If a field has one or more real sublist contexts
+   * (item / expense), remove only its generic line entry.
+   *
+   * Example:
+   *
+   * taxrate1 | line | expense
+   * taxrate1 | line | item
+   * taxrate1 | line |
+   *
+   * becomes:
+   *
+   * taxrate1 | line | expense
+   * taxrate1 | line | item
+   *
+   * But if only:
+   *
+   * taxrate1 | line |
+   *
+   * exists, keep it.
+   */
+  const contextualKeys = new Set()
+
+  entries.forEach((entry) => {
+    if (entry.sublist_id) {
+      contextualKeys.add(
+        // `${entry.id}:${entry.scope}`,
+        `${String(entry.id || '').trim().toLowerCase()}:${String(
+        entry.scope || '',
+      )
+        .trim()
+        .toLowerCase()}`,
+      )
+    }
+  })
+
+  return entries.filter((entry) => {
+    if (!entry.sublist_id) {
+      // const key = `${entry.id}:${entry.scope}`
+      const key = `${String(entry.id || '').trim().toLowerCase()}:${String(
+      entry.scope || '',
+    )
+      .trim()
+      .toLowerCase()}`
+
+      if (contextualKeys.has(key)) {
+        return false
+      }
+    }
+
+    return true
+  })
+}
+
+function NetSuiteFieldCombobox({
+  field,
+  options,
+  loading,
+  value,
+  onChange,
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+
+  // const selectedOption = options.find(
+  //   (option) => 
+  //     `${option.id}:${option.scope}:${option.sublist_id || ''}` === value,
+  // )
+  const selectedOption = options.find(
+  (option) => {
+    const [
+      selectedId = '',
+      selectedScope = '',
+      selectedSublistId = '',
+    ] = String(value || '').split(':')
+
+    return (
+      option.id === selectedId &&
+      option.scope === selectedScope &&
+      (option.sublist_id || '') === selectedSublistId
+    )
+  },
+)
+
+  const getNetSuiteFieldContext = (option) => {
+    const contexts = Array.isArray(option?.sublist_contexts)
+      ? option.sublist_contexts
+          .map((context) =>
+            String(context || '').trim().toLowerCase(),
+          )
+          .filter(Boolean)
+      : []
+        
+    if (contexts.length > 0) {
+      return contexts.join('/')
+    }
+  
+    return String(
+      option?.scope || '',
+    ).trim().toLowerCase()
+  }
+
+  // const getNetSuiteFieldDisplay = (option) => {
+  //   const context = getNetSuiteFieldContext(option)
+
+  //   return context
+  //     ? `${option.label} (${option.id}) (${context})`
+  //     : `${option.label} (${option.id})`
+  // }
+
+  const getNetSuiteFieldDisplay = (option) => {
+  const scope = String(
+    option?.scope || '',
+  )
+    .trim()
+    .toLowerCase()
+
+  const sublistId = String(
+    option?.sublist_id || '',
+  )
+    .trim()
+    .toLowerCase()
+
+  if (scope && sublistId) {
+    return `${option.label} (${option.id}) (${scope}) (${sublistId})`
+  }
+
+  if (scope) {
+    return `${option.label} (${option.id}) (${scope})`
+  }
+
+  if (sublistId) {
+    return `${option.label} (${option.id}) (${sublistId})`
+  }
+
+  return `${option.label} (${option.id})`
+}
+
+  const filteredOptions = useMemo(() => {
+    const query = search.trim().toLowerCase()
+
+    if (!query) return options
+
+    return options.filter((option) => {
+      const label = String(
+        option.label || '',
+      ).toLowerCase()
+
+      const id = String(
+        option.id || '',
+      ).toLowerCase()
+
+      const context = getNetSuiteFieldContext(option)
+      // String(
+      //   option.sublist_id ||
+      //   option.scope ||
+      //   '',
+      // ).toLowerCase()
+
+      return (
+        label.includes(query) ||
+        id.includes(query) ||
+        context.includes(query)
+      )
+    })
+  }, [options, search])
+
+  return (
+    <div className="relative w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        disabled={loading}
+        className="flex w-full items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left text-xs outline-none focus:border-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span className={selectedOption ? 'text-[var(--color-ink)]' : 'text-[var(--color-muted)]'}>
+          {loading
+            ? 'Loading NetSuite fields...'
+            : selectedOption
+              ? getNetSuiteFieldDisplay(selectedOption)
+              : 'Select NetSuite field'}
+        </span>
+
+        <span className="ml-2 text-xs">
+          {open ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {open && !loading && (
+        <div className="absolute left-0 right-0 z-50 mt-1 rounded-md border border-[var(--color-border)] bg-white shadow-lg">
+          <div className="border-b border-[var(--color-border)] p-2">
+            <input
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search NetSuite field..."
+              autoFocus
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs outline-none focus:border-[var(--color-primary)]"
+            />
+          </div>
+
+          <div className="max-h-72 overflow-y-auto">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((target) => (
+                <button
+                  key={`${target.id}:${target.scope}:${target.sublist_id || ''}`}
+                  type="button"
+                  onClick={() => {
+                    onChange({
+                      fieldId: target.id,
+                      scope: target.scope,
+                      sublistId: target.sublist_id || '',
+                    })
+                    setOpen(false)
+                    setSearch('')
+                  }}
+                  className={`block w-full px-3 py-2 text-left text-xs hover:bg-[var(--color-canvas)] ${
+                    `${target.id}:${target.scope}:${target.sublist_id || ''}` === value? 'bg-[var(--color-canvas)] font-medium': ''
+                  }`}
+                >
+                  {getNetSuiteFieldDisplay(target)}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-4 text-center text-xs text-[var(--color-muted)]">
+                No NetSuite fields found.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function getCreatedBy(template) {
@@ -316,6 +717,31 @@ export default function FileTemplatePage() {
   const [connection, setConnection] = useState(null)
   const [netSuiteFields, setNetSuiteFields] = useState([])
   const [netSuiteFieldsLoading, setNetSuiteFieldsLoading] = useState(false)
+  const sortedNetSuiteFields = useMemo(
+    () =>
+      [...netSuiteFields].sort((a, b) => {
+        const idCompare = String(a.id || '').localeCompare(
+          String(b.id || ''),
+          undefined,
+          { sensitivity: 'base' },
+        )
+
+        if (idCompare !== 0) {
+          return idCompare
+        }
+
+        return String(
+          a.sublist_id || a.scope || '',
+        ).localeCompare(
+          String(
+            b.sublist_id || b.scope || '',
+          ),
+          undefined,
+          { sensitivity: 'base' },
+        )
+      }),
+    [netSuiteFields],
+  )
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
   const [templateName, setTemplateName] = useState('')
   const [mode, setMode] = useState('empty') // empty | view | edit | new
@@ -453,8 +879,27 @@ const loadNetSuiteFields = async (connectionValue) => {
   }, [])
 
   const createDefaultFields = () =>
-    catalogFields.filter((catalogFields)=> String(catalogFields?.key || '').trim().toLowerCase() !== 'customer_name')
-    .map(normalizeCatalogField)
+  catalogFields
+    .filter(
+      (catalogField) =>
+        String(catalogField?.key || '').trim().toLowerCase() !==
+        'customer_name',
+    )
+    .map((catalogField) => {
+      const field = normalizeCatalogField(catalogField)
+
+      const defaultMapping = resolveDefaultNetSuiteMapping(
+        field,
+        sortedNetSuiteFields,
+      )
+
+      return defaultMapping
+        ? {
+            ...field,
+            ...defaultMapping,
+          }
+        : field
+    })
 
   const resetEditor = () => {
     setSelectedTemplateId(null)
@@ -514,9 +959,19 @@ const loadNetSuiteFields = async (connectionValue) => {
                 ? 'header'
                 : normalized.scope,
           netsuite_field_id:
-          override?.netsuite_field_id ||
-          normalized.netsuite_field_id ||
-          '',
+            override?.netsuite_field_id ||
+            normalized.netsuite_field_id ||
+            '',
+
+          netsuite_field_scope:
+            override?.netsuite_field_scope ||
+            normalized.netsuite_field_scope ||
+            '',
+
+          netsuite_field_sublist_id:
+            override?.netsuite_field_sublist_id ||
+            normalized.netsuite_field_sublist_id ||
+            '',
           enabled: !disabledStandardKeys.has(normalized.original_key) &&
             override?.enabled !== false,
         }
@@ -555,6 +1010,8 @@ const loadNetSuiteFields = async (connectionValue) => {
 
         // NetSuite mapping
         netsuite_field_id: '',
+        netsuite_field_scope: '',
+        netsuite_field_sublist_id: '',
   
         standard: false,
         enabled: true,
@@ -619,7 +1076,16 @@ const loadNetSuiteFields = async (connectionValue) => {
 
         standardFieldOverrides[key] = {
           label: field.label?.trim(),
-          netsuite_field_id: field.netsuite_field_id?.trim() || '',
+
+          netsuite_field_id:
+            field.netsuite_field_id?.trim() || '',
+
+          netsuite_field_scope:
+            field.netsuite_field_scope || '',
+
+          netsuite_field_sublist_id:
+            field.netsuite_field_sublist_id || '',
+
           description: field.description?.trim(),
           questionaire: field.description?.trim(),
           data_type: field.data_type,
@@ -630,7 +1096,16 @@ const loadNetSuiteFields = async (connectionValue) => {
 
     const serializeCustomField = (field) => ({
       key: field.key?.trim() || field.label?.trim(),
-      netsuite_field_id: field.netsuite_field_id?.trim() || '',
+
+      netsuite_field_id:
+        field.netsuite_field_id?.trim() || '',
+
+      netsuite_field_scope:
+        field.netsuite_field_scope || '',
+
+      netsuite_field_sublist_id:
+        field.netsuite_field_sublist_id || '',
+
       label: field.label?.trim(),
       description: field.description?.trim(),
       questionaire: field.description?.trim(),
@@ -1156,37 +1631,22 @@ const loadNetSuiteFields = async (connectionValue) => {
                                   {field.netsuite_field_id || '—'}
                                 </div>
                               ) : (
-                                <select
-                                  value={field.netsuite_field_id || ''}
-                                  onChange={(event) =>
+                                <NetSuiteFieldCombobox
+                                  loading={netSuiteFieldsLoading}
+                                  value={
+                                    field.netsuite_field_id
+                                      ? `${field.netsuite_field_id}:${field.netsuite_field_scope || ''}:${field.netsuite_field_sublist_id || ''}`
+                                      : ''
+                                  }
+                                  options={sortedNetSuiteFields}
+                                  onChange={({ fieldId, scope, sublistId }) =>
                                     updateField(field.id, {
-                                      netsuite_field_id: event.target.value,
+                                      netsuite_field_id: fieldId,
+                                      netsuite_field_scope: scope,
+                                      netsuite_field_sublist_id: sublistId,
                                     })
                                   }
-                                  disabled={netSuiteFieldsLoading}
-                                  className="w-full min-w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs outline-none focus:border-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  <option value="">
-                                    {netSuiteFieldsLoading
-                                      ? 'Loading NetSuite fields...'
-                                      : 'Select NetSuite field'}
-                                  </option>
-                                    
-                                  {netSuiteFields
-                                    .filter((target) =>
-                                      field.scope === 'line'
-                                        ? target.scope === 'line'
-                                        : target.scope === 'body',
-                                    )
-                                    .map((target) => (
-                                      <option
-                                        key={`${target.id}:${target.scope}`}
-                                        value={target.id}
-                                      >
-                                        {target.label} ({target.id})
-                                      </option>
-                                    ))}
-                                </select>
+                                />
                               )}
                             </td>
                             <td className="px-4 py-3">

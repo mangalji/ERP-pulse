@@ -459,7 +459,7 @@ export default function ClientLayout({ title, breadcrumb, children }) {
         <div className="flex min-h-16 min-w-0 items-center justify-between gap-2 px-3 sm:gap-4 sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
             <NavLink to="/app" onClick={(event) => handleNavClick(event, '/app')} className="flex shrink-0 items-center gap-2" aria-label="Go to Dashboard">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">E</span>
+              {/* <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-primary)] text-sm font-bold text-white">E</span> */}
               <span className="hidden font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)] sm:inline">AGSuite ERP</span>
             </NavLink>
 

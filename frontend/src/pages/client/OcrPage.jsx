@@ -400,7 +400,10 @@ export default function OcrPage() {
   const { toasts, addToast, removeToast } = useToast()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [validating, setValidating] = useState(false)
   const [posting, setPosting] = useState(false)
+  const validationAbortControllerRef = useRef(null)
+  const postingAbortControllerRef = useRef(null)
   const [viewMode, setViewMode] = useState('fields')
   const [data, setData] = useState({})
   const [aiDiagnostics, setAiDiagnostics] = useState([])
@@ -755,6 +758,26 @@ useEffect(() => {
     }
   }, [])
 
+  useEffect(() => {
+  const cancelActiveRequests = () => {
+    validationAbortControllerRef.current?.abort()
+    postingAbortControllerRef.current?.abort()
+
+    validationAbortControllerRef.current = null
+    postingAbortControllerRef.current = null
+
+    setValidating(false)
+    setPosting(false)
+  }
+
+  window.addEventListener('pagehide', cancelActiveRequests)
+
+  return () => {
+    cancelActiveRequests()
+    window.removeEventListener('pagehide', cancelActiveRequests)
+  }
+}, [])
+
 
   const lineItems = useMemo(
     () => (Array.isArray(data.line_items) ? data.line_items : []),
@@ -892,13 +915,16 @@ useEffect(() => {
   }
 
   const handleSaveAndValidate = async () => {
-  if (!activeResult?.upload_id && !activeResult?.document_id) {
+  if (
+    !activeResult?.upload_id &&
+    !activeResult?.document_id
+  ) {
     addToast(
       'The OCR document is missing.',
       'error',
     )
     return
-    }
+  }
 
   if (!connectionId) {
     addToast(
@@ -908,21 +934,52 @@ useEffect(() => {
     return
   }
 
+  const controller = new AbortController()
+  validationAbortControllerRef.current = controller
+  setValidating(true)
+
   try {
     const savedResult = await handleSave()
+
+    if (controller.signal.aborted) {
+      return
+    }
 
     const documentId =
       savedResult?.document_id ||
       activeResult.document_id
-    const validation = await netsuiteApi.validateDocument(documentId, connectionId)
+
+
+    const validation =
+      await netsuiteApi.validateDocument(
+        documentId,
+        connectionId,
+        {
+          signal: controller.signal,
+        },
+      )
+      if (controller.signal.aborted){
+        return
+      }
+
     setValidationResult(validation)
 
-    if(validation?.validation_id && validation?.errors?.length){
+    if (
+      validation?.validation_id &&
+      validation?.errors?.length
+    ) {
+      if (controller.signal.aborted){
+        return
+      }
       await requestNetSuiteDiagnostics(
         validation.validation_id,
         validation.errors,
       )
+      if (controller.signal.aborted){
+        return
+      }
     }
+
     addToast(
       validation?.status === 'VALIDATED'
         ? 'OCR data validated successfully.'
@@ -931,11 +988,28 @@ useEffect(() => {
         ? 'success'
         : 'error',
     )
-  } catch (error) {
+  } catch (err) {
+    const cancelled =
+      err?.code === 'ERR_CANCELED' ||
+      err?.name === 'CanceledError' ||
+      controller?.signal?.aborted
+
+    if (cancelled) {
+      return
+    }
+
     console.error(
       'Save & Validate failed:',
-      error,
+      err,
     )
+  } finally {
+    setValidating(false)
+
+    if (
+      validationAbortControllerRef.current === controller
+    ) {
+      validationAbortControllerRef.current = null
+    }
   }
 }
 
@@ -947,44 +1021,97 @@ useEffect(() => {
   }
 
   const handlePost = async () => {
-    if (!activeResult?.document_id) {
+  if (!activeResult?.document_id) {
+    addToast(
+      'Please save the OCR data before posting it to NetSuite.',
+      'error',
+    )
+    return
+  }
+
+  if (
+    String(validationResult?.status || '').toUpperCase() !==
+    'VALIDATED'
+  ) {
+    addToast(
+      'Please validate the OCR data successfully before posting to NetSuite.',
+      'error',
+    )
+    return
+  }
+
+  const controller = new AbortController()
+
+  postingAbortControllerRef.current = controller
+  setPosting(true)
+  
+  try {
+    const connectionData = await loadNetSuiteConnection()
+    if (controller.signal.aborted){
+      return
+    }
+    const activeConnectionId =
+      connectionData?.id || connectionId
+
+    if (!activeConnectionId) {
       addToast(
-        'Please save the OCR data before posting it to NetSuite.',
+        'A NetSuite connection is required before posting.',
         'error',
       )
       return
     }
+    if (controller.signal.aborted) {
+      return
+    }
+
+    await netsuiteApi.postOCRVendorBill(
+      activeResult.document_id,
+      activeConnectionId,
+      {
+        signal: controller.signal,
+      },
+    )
+
+    if (controller.signal.aborted) {
+      return
+    }
+
+    addToast(
+      'Vendor Bill posted to NetSuite.',
+      'success',
+    )
+  } catch (err) {
+    const cancelled =
+      err?.code === 'ERR_CANCELED' ||
+      err?.name === 'CanceledError' ||
+      controller?.signal?.aborted
+
+    if (cancelled) {
+      return
+    }
+
+    console.error(
+      'Failed to post Vendor Bill to NetSuite:',
+      err,
+    )
+
+    addToast(
+      err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to post Vendor Bill to NetSuite.',
+      'error',
+    )
+  } finally {
+    setPosting(false)
+
     if (
-      String(validationResult?.status || '').toUpperCase() !==
-      'VALIDATED'
+      postingAbortControllerRef.current === controller
     ) {
-      addToast(
-        'Please validate the OCR data successfully before posting to NetSuite.',
-        'error',
-      )
-      return
-    }
-
-
-    try {
-      setPosting(true)
-
-      await netsuiteApi.postOCRVendorBill(activeResult.document_id, connectionId)
-      addToast('Vendor Bill posted to NetSuite.', 'success')
-    } catch (err) {
-      console.error('Failed to post Vendor Bill to NetSuite:', err)
-
-      addToast(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          err?.message ||
-          'Failed to post Vendor Bill to NetSuite.',
-        'error',
-      )
-    } finally {
-      setPosting(false)
+      postingAbortControllerRef.current = null
     }
   }
+}
   
   const loadNetSuiteConnection = useCallback(async () => {
   if (connection) return connection
@@ -2070,7 +2197,7 @@ useEffect(() => {
             setViewMode('fields')
             setEditing(true)
           }}
-          disabled={editing || saving || posting}
+          disabled={editing || saving || validating || posting}
         >
           Edit
         </Button>
@@ -2079,7 +2206,7 @@ useEffect(() => {
           <select
             className="h-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm font-medium text-[var(--color-ink)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
             value=""
-            disabled={saving || posting}
+            disabled={saving || validating || posting || diagnosing}
             onChange={async (event) => {
               const action = event.target.value
             
@@ -2104,7 +2231,15 @@ useEffect(() => {
               event.target.value = ''
             }}
           >
-            <option value="">Actions</option>
+            <option value="">
+              {validating
+                ? 'Validating...'
+                : posting
+                  ? 'Posting...'
+                  : saving
+                    ? 'Saving...'
+                    : 'Actions'}
+            </option>
             <option
               value="save_validate"
               disabled={

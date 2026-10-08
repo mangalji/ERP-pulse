@@ -2273,18 +2273,22 @@ class NetSuiteFieldMappingService:
     def _merge_baseline_fields(normalized):
         """
         Merge the static AGSuite Vendor Bill baseline with live NetSuite
-        metadata.
+        metadata while preserving the actual NetSuite sublist context.
 
-        Rules:
-        - Baseline fields are always available as dropdown targets.
-        - Live metadata wins for duplicate field_id + scope.
-        - Live metadata supplies account-specific required/custom/reference info.
-        - Baseline fields remain optional unless live metadata says required.
+        A field ID can legitimately exist in multiple sublists, for example:
+
+            taxrate1 -> item
+            taxrate1 -> expense
+
+        Therefore field identity is:
+
+        field_id + scope + sublist_id
         """
         live_body = list(normalized.get("body_fields") or [])
         live_column = list(normalized.get("line_fields") or [])
 
         live_fields = {}
+        live_by_base = {}
 
         for field in [*live_body, *live_column]:
             field_id = str(field.get("field_id") or "").strip()
@@ -2296,12 +2300,39 @@ class NetSuiteFieldMappingService:
                 if str(field.get("scope") or "").lower() in {"line", "column", "sublist"}
                 else "body"
             )
+            sublist_id = (
+                str(
+                field.get("sublist_id") 
+                or field.get("sublist") 
+                or field.get("sublistId") 
+                or "" 
+                ).strip().lower() if scope == "column" else ""
+            )
 
-            live_fields[(field_id, scope)] = {
+            normalized_field = {
                 **field,
                 "field_id": field_id,
                 "scope": scope,
             }
+
+            if sublist_id:
+                normalized_field["sublist_id"] = sublist_id
+            else:
+                normalized_field.pop("sublist_id", None)
+            
+            key = (field_id, scope, sublist_id)
+            live_fields[key] = normalized_field
+            live_by_base.setdefault(
+                (field_id, scope),
+                [],
+            ).append(key)
+
+            # live_fields[(field_id, scope, sublist_id)] = {
+            #     **field,
+            #     "field_id": field_id,
+            #     "scope": scope,
+            #     "sublist_id":sublist_id or None,
+            # }
 
         merged = {}
 
@@ -2318,24 +2349,68 @@ class NetSuiteFieldMappingService:
                 **field,
                 "field_id": field_id,
                 "scope": scope,
+                # "sublist_id":(
+                #      str(field.get("sublist_id") or "")
+                #     .strip()
+                #     .lower()
+                #     or None
+                # ),
                 "is_required": False,
                 "baseline": True,
             }
-
-            live_field = live_fields.pop(
+            exact_key = (field_id, scope, "")
+            contextual_keys = live_by_base.get(
                 (field_id, scope),
-                None,
+                [],
             )
 
-            merged[(field_id, scope)] = (
-                {
+            if exact_key in live_fields:
+                live_field = live_fields.pop(exact_key)
+                merged[exact_key] = {
                     **baseline_field,
                     **live_field,
                     "baseline": True,
                 }
-                if live_field
-                else baseline_field
-            )
+                continue
+
+            # If NetSuite exposes contextual variants such as
+            # item / expense, don't create an ambiguous generic
+            # baseline entry.
+
+            if contextual_keys:
+                for key in contextual_keys:
+                    live_field = live_fields.pop(key)
+
+                    merged[key] = {
+                        **baseline_field,
+                        **live_field,
+                        "baseline": True,
+                    }
+
+                continue
+            merged[exact_key] = baseline_field
+            # baseline_sublist_id = (
+            #     str(
+            #         baseline_field.get("sublist_id") or ""
+            #     )
+            #     .strip()
+            #     .lower()
+            # )
+
+            # live_field = live_fields.pop(
+            #     (field_id, scope,baseline_sublist_id),
+            #     None,
+            # )
+
+            # merged[(field_id, scope,baseline_sublist_id)] = (
+            #     {
+            #         **baseline_field,
+            #         **live_field,
+            #         "baseline": True,
+            #     }
+            #     if live_field
+            #     else baseline_field
+            # )
 
         # Preserve every account-specific/live field that was not in baseline.
         for key, field in live_fields.items():
@@ -2343,13 +2418,13 @@ class NetSuiteFieldMappingService:
 
         body_fields = [
             field
-            for (field_id, scope), field in merged.items()
+            for (field_id, scope, sublist_id), field in merged.items()
             if scope == "body"
         ]
 
         column_fields = [
             field
-            for (field_id, scope), field in merged.items()
+            for (field_id, scope, sublist_id), field in merged.items()
             if scope == "column"
         ]
 
@@ -2522,7 +2597,12 @@ class NetSuiteFieldMappingService:
     @classmethod
     def _normalise_metadata(cls, raw, record_type):
         schema = cls._schema_for_record(raw, record_type)
-        properties = schema.get("properties") if isinstance(schema, dict) else None
+        properties = (
+            schema.get("properties")
+            if isinstance(schema, dict)
+            else None
+        )
+
         if not isinstance(properties, dict):
             return {
                 "body_fields": [],
@@ -2531,76 +2611,242 @@ class NetSuiteFieldMappingService:
                 "raw_metadata": raw,
             }
 
-        required = set(schema.get("required", [])) if isinstance(schema.get("required"), list) else set()
+        required = (
+            set(schema.get("required", []))
+            if isinstance(schema.get("required"), list)
+            else set()
+        )
+
         body_fields = []
         line_fields = []
         custom_fields = []
 
-        def append_field(field_id, field_schema, scope, required_set):
+        def add_field(
+            field_id,
+            field_schema,
+            scope,
+            required_set,
+            sublist_id=None,
+        ):
             if not isinstance(field_schema, dict):
                 field_schema = {}
 
-            # Vendor Bill item sublist: skip the sublist wrapper itself and
-            # expose its item properties as line-level fields.
-            nested = field_schema.get("properties")
-            items_schema = field_schema.get("items")
-            if scope == "body" and isinstance(items_schema, dict):
-                item_props = items_schema.get("properties")
-                if isinstance(item_props, dict):
-                    for nested_id, nested_schema in item_props.items():
-                        append_field(nested_id, nested_schema, "column", set(items_schema.get("required", []) or []))
-                    return
-            if isinstance(nested, dict) and scope == "body" and field_id in {"item", "items", "expense"}:
-                for nested_id, nested_schema in nested.items():
-                    append_field(nested_id, nested_schema, "column", set(field_schema.get("required", []) or []))
-                return
-
             item = {
                 "field_id": str(field_id),
-                "label": cls._title_for(str(field_id), field_schema),
-                "datatype": cls._normalise_datatype(field_schema),
+                "label": cls._title_for(
+                    str(field_id),
+                    field_schema,
+                ),
+                "datatype": cls._normalise_datatype(
+                    field_schema
+                ),
                 "scope": scope,
                 "is_required": str(field_id) in required_set,
-                "is_custom": cls._is_custom_field(str(field_id), field_schema),
-                "reference_type": cls._reference_type(field_schema),
+                "is_custom": cls._is_custom_field(
+                    str(field_id),
+                    field_schema,
+                ),
+                "reference_type": cls._reference_type(
+                    field_schema
+                ),
             }
-            target = line_fields if scope == "column" else body_fields
+
+            if scope == "column" and sublist_id:
+                item["sublist_id"] = str(
+                    sublist_id
+                ).lower()
+
+            target = (
+                line_fields
+                if scope == "column"
+                else body_fields
+            )
+
             target.append(item)
+
             if item["is_custom"]:
                 custom_fields.append(item)
 
-        for field_id, field_schema in properties.items():
-            # Sublist containers become line-level field collections.
-            lower_id = str(field_id).lower()
-            if lower_id in {"item", "expense", "items"}:
-                append_field(field_id, field_schema, "body", required)
-            else:
-                append_field(field_id, field_schema, "body", required)
+        def walk_sublist_schema(
+            node,
+            sublist_id,
+            required_set=None,
+        ):
+            """
+            Walk a NetSuite sublist schema while preserving
+            the originating sublist context.
 
+            Handles structures such as:
+
+                item
+                  -> properties
+                    -> items
+                      -> items
+                        -> properties
+                          -> taxRate1
+
+            and the equivalent expense structure.
+            """
+            if not isinstance(node, dict):
+                return
+
+            current_required = (
+                set(node.get("required", []) or [])
+                if isinstance(node.get("required"), list)
+                else set(required_set or [])
+            )
+
+            properties_node = node.get("properties")
+
+            if isinstance(properties_node, dict):
+                for nested_id, nested_schema in properties_node.items():
+                    if not isinstance(nested_schema, dict):
+                        nested_schema = {}
+
+                    lower_nested_id = str(
+                        nested_id
+                    ).lower()
+
+                    # "items" is the collection wrapper used by
+                    # NetSuite's Vendor Bill sublist schema.
+                    #
+                    # Do not expose "items" itself as a field.
+                    # Continue walking underneath it while keeping
+                    # the original item/expense context.
+                    if lower_nested_id == "items":
+                        walk_sublist_schema(
+                            nested_schema,
+                            sublist_id,
+                            current_required,
+                        )
+                        continue
+
+                    nested_properties = nested_schema.get(
+                        "properties"
+                    )
+                    nested_items = nested_schema.get(
+                        "items"
+                    )
+
+                    # If this is another schema container,
+                    # continue walking it without losing the
+                    # original sublist context.
+                    if (
+                        isinstance(nested_properties, dict)
+                        or isinstance(nested_items, dict)
+                    ):
+                        walk_sublist_schema(
+                            nested_schema,
+                            sublist_id,
+                            set(
+                                nested_schema.get(
+                                    "required",
+                                    []
+                                )
+                                or []
+                            ),
+                        )
+                        continue
+
+                    # Actual line-level field.
+                    add_field(
+                        nested_id,
+                        nested_schema,
+                        "column",
+                        current_required,
+                        sublist_id=sublist_id,
+                    )
+
+            # Also support schemas where the array is represented
+            # directly through the JSON Schema "items" keyword.
+            items_node = node.get("items")
+
+            if isinstance(items_node, dict):
+                walk_sublist_schema(
+                    items_node,
+                    sublist_id,
+                    current_required,
+                )
+
+        # ---------------------------------------------------------
+        # Root Vendor Bill fields
+        # ---------------------------------------------------------
+        for field_id, field_schema in properties.items():
+            lower_id = str(field_id).lower()
+
+            # Vendor Bill Item / Expense sublists.
+            if lower_id in {
+                "item",
+                "items",
+                "expense",
+            }:
+                sublist_id = (
+                    "item"
+                    if lower_id == "items"
+                    else lower_id
+                )
+
+                walk_sublist_schema(
+                    field_schema,
+                    sublist_id,
+                    required,
+                )
+
+                continue
+
+            # Normal body/header field.
+            add_field(
+                field_id,
+                field_schema,
+                "body",
+                required,
+            )
+
+        # ---------------------------------------------------------
+        # Deduplicate
+        #
+        # Same field ID is allowed in both:
+        #   column + item
+        #   column + expense
+        #
+        # Therefore sublist_id MUST be part of the key.
+        # ---------------------------------------------------------
         def dedupe(fields):
             seen = set()
-            out = []
+            output = []
+
             for field in fields:
-                key = (field.get("scope"), field.get("field_id"))
+                key = (
+                    field.get("scope"),
+                    field.get("sublist_id") or "",
+                    field.get("field_id"),
+                )
+
                 if key in seen:
                     continue
+
                 seen.add(key)
-                out.append(field)
-            return out
+                output.append(field)
+
+            return output
 
         body_fields = dedupe(body_fields)
         line_fields = dedupe(line_fields)
+
         custom_fields = [
-            field for field in dedupe(body_fields + line_fields)
+            field
+            for field in dedupe(
+                body_fields + line_fields
+            )
             if field.get("is_custom")
         ]
+
         return {
             "body_fields": body_fields,
             "line_fields": line_fields,
             "custom_fields": custom_fields,
             "raw_metadata": raw,
         }
-
     def _catalogue_payload(self, catalogue, *, source="database", stale=False, available=True, error=None):
 
         merged = self._merge_baseline_fields(
@@ -2653,6 +2899,36 @@ class NetSuiteFieldMappingService:
                 connection=connection,
                 record_type=record_type,
             )
+            # raw_text = json.dumps(raw, indent=2, default=str)
+
+            # logger.warning(
+            #     "VENDOR BILL METADATA TAXRATE1 MATCHES:\n%s",
+            #     "\n".join(
+            #         line
+            #         for line in raw_text.splitlines()
+            #         if "taxrate1" in line.lower()
+            #     ),
+            # )
+            def find_taxrate1(obj, path="root"):
+                if isinstance(obj, dict):
+                    for key, value in obj.items():
+                        current_path = f"{path}.{key}"
+
+                        if str(key).lower() == "taxrate1":
+                            logger.warning(
+                                "TAXRATE1 FOUND AT: %s\nVALUE:\n%s",
+                                current_path,
+                                json.dumps(value, indent=2, default=str),
+                            )
+
+                        find_taxrate1(value, current_path)
+
+                elif isinstance(obj, list):
+                    for index, value in enumerate(obj):
+                        find_taxrate1(value, f"{path}[{index}]")
+
+
+            find_taxrate1(raw)
             normalized = self._merge_baseline_fields(
                 self._normalise_metadata(
                     raw,record_type,
@@ -4101,46 +4377,44 @@ class NetSuiteValidationService:
                 }
             )
 
-             # Custom fields
-            for custom in custom_fields:
-                if not isinstance(custom, dict):
-                    continue
-
-                source_key = str(
-                    custom.get("key")
-                    or custom.get("label")
-                    or ""
-                ).strip()
-
-                target_field_id = str(
-                    custom.get("netsuite_field_id") or ""
-                ).strip()
-
-                if not source_key or not target_field_id:
-                    continue
-
-                template_mappings.append(
-                    {
-                        "source_field_key": source_key,
-                        "source_field_label": (
-                            custom.get("label")
-                            or source_key
-                        ),
-                        "source_scope": (
-                            "line"
-                            if custom.get("scope") == "line"
-                            else "header"
-                        ),
-                        "target_field_id": target_field_id,
-                        "target_field_label": target_field_id,
-                        "is_custom": True,
-                    }
-                )
-            if not template_mappings:
-                raise ValueError(
-                    "No NetSuite field mappings are configured" 
-                    "in the selected OCR template."
-                )
+        # Custom fields
+        for custom in custom_fields:
+            if not isinstance(custom, dict):
+                continue
+            source_key = str(
+                custom.get("key")
+                or custom.get("label")
+                or ""
+            ).strip()
+            target_field_id = str(
+                custom.get("netsuite_field_id") or ""
+            ).strip()
+            if not source_key or not target_field_id:
+                continue
+            template_mappings.append(
+                {
+                    "source_field_key": source_key,
+                    "source_field_label": (
+                        custom.get("label")
+                        or source_key
+                    ),
+                    "source_scope": (
+                        "line"
+                        if custom.get("scope") == "line"
+                        else "header"
+                    ),
+                    "target_field_id": target_field_id,
+                    "target_field_label": target_field_id,
+                    "is_custom": True,
+                }
+            )
+        # Old-format OCR result: the selected template contained
+        # no NetSuite mappings at all.
+        if not template_mappings:
+            raise ValueError(
+                "No NetSuite field mappings are configured" 
+                "in the selected OCR template."
+            )
 
         vendor_mapping = next(
             (

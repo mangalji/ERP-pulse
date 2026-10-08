@@ -60,8 +60,8 @@ export const netsuiteApi = {
   
   getInvoice: (id) => apiClient.get(`${NETSUITE_ENDPOINTS.invoices}${id}/`).then(unwrap),
   
-  validateDocument: (documentId, connectionId) => 
-    apiClient.post('/netsuite/ocr/validate/',{document_id:documentId,connection_id: connectionId}).then(unwrap),
+  validateDocument: (documentId, connectionId, config={}) => 
+    apiClient.post('/netsuite/ocr/validate/',{document_id:documentId,connection_id: connectionId},config).then(unwrap),
 
   validateBatchDocuments: (documentIds, connectionId) =>
     apiClient.post('/netsuite/ocr/batch/validate/',{document_ids: documentIds, connection_id: connectionId,}).then(unwrap),
@@ -69,8 +69,8 @@ export const netsuiteApi = {
   getBatchJobStatus: (jobId) =>
   apiClient.get(`/netsuite/ocr/batch/jobs/${jobId}/`).then(unwrap),
 
-  postOCRVendorBill: (documentId, connectionId) => 
-    apiClient.post('/netsuite/ocr/post-vendor-bill/',{document_id:documentId, connection_id:connectionId}).then(unwrap),
+  postOCRVendorBill: (documentId, connectionId, config={}) => 
+    apiClient.post('/netsuite/ocr/post-vendor-bill/',{document_id:documentId, connection_id:connectionId},config).then(unwrap),
   batchPostDocuments: (documentIds, connectionId) =>
     apiClient.post('/netsuite/ocr/batch/post/', {
       document_ids: documentIds,
