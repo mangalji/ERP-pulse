@@ -21,21 +21,7 @@ logger = logging.getLogger(__name__)
 
 class AuthenticationService:
     """
-    Business logic for registration and the two-step, OTP-gated login flow
-    (AUTHENTICATION_DESIGN.md, Sections 5-6).
-
-    Registration is a three-step flow: Register (email+password) -> Verify
-    Registration OTP -> Complete Profile (first/last name, mobile). No
-    User row is created until Complete Profile succeeds — the email,
-    hashed password, and OTP state in between live in a cache-backed
-    store (accounts/registration_cache.py), never a database model,
-    per product decision. verify_registration_otp() returns a short-lived
-    signed token (common/utils/signed_token.py) that Complete Profile must
-    present, proving the email really did pass OTP verification.
-
-    Login is unchanged from prior sessions: still OTP-gated in two steps,
-    still issues no JWT itself (that remains the View layer's job).
-    """
+    Service for user authentication and profile management."""
 
     def __init__(self, user_repository: UserRepository | None = None, otp_service=None):
         self.user_repository = user_repository or UserRepository()

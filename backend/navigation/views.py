@@ -1,5 +1,4 @@
 import re
-from django.db import connection
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Prefetch
@@ -135,7 +134,6 @@ class DynamicNavigationMenuView(APIView):
         return data
 
     def get(self, request):
-        connection.force_debug_cursor = True
         _ensure_system_tabs()
         top_visibility, level2_visibility, level3_visibility = (
             self._visible_ids(request.user)

@@ -84,8 +84,11 @@ class RequestMonitoringMiddleware:
                     "db_time_ms=%.2f other_ms=%.2f",
                     request.method,path,response.status_code,total_ms,stats["db_queries"],stats["db_time_ms"],other_ms
                     )
-                self._log(request,response,total_ms)
-            return response
+            self._log(request,response,total_ms)
+        # Always hand the response back. Returning only inside `if monitored`
+        # made every unmonitored path (/, /admin/, /api/v1/monitoring/health/)
+        # return None, which Django turns into an HTTP 500.
+        return response
 
     def _log(self, request, response, duration_ms):
         if os.getenv("REQUEST_LOG_TO_DATABASE", "true").lower() not in {"1","true","yes"}:

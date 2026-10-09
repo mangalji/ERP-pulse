@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 from accounts.serializers import UserSerializer
 from common.pagination import paginated_response
 from common.common_utils import success_response
+from invitations.models import Invitation
 from tenancy.serializers import (
     ClientRoleSerializer,
     CompanyEmployeeSerializer,
@@ -91,10 +92,21 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
 
         queryset = client_portal_service.list_employees(company=company, search=search)
         count = queryset.count()
-        page = queryset[offset:offset + limit]
+        
+        page = list(queryset[offset:offset + limit])
+        # Newest invitation per email for this page, in a single query.
+        latest_invitation_by_email = {}
+        if page:
+            for invitation in (
+                Invitation.objects
+                .filter(company=company, email__in=[u.email for u in page])
+                .order_by('-created_at')
+            ):
+                latest_invitation_by_email.setdefault(invitation.email, invitation)
+
         return paginated_response(
             message='Employees fetched successfully.',
-            results=CompanyEmployeeSerializer(page, many=True).data,
+            results=CompanyEmployeeSerializer(page, many=True,context={'latest_invitation_by_email': latest_invitation_by_email}).data,
             count=count,
             request=request,
             offset=offset,

@@ -122,11 +122,19 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
             }
         ]
     def get_invitation_status(self, obj):
-        invitation = Invitation.objects.filter(
-            email=obj.email,
-            company=obj.company,
-        ).order_by('-created_at').first()
         
+        # List views pass the latest invitation per email in the serializer
+        # context (one query for the whole page instead of one per employee).
+        
+        latest = self.context.get('latest_invitation_by_email')
+        if latest is not None:
+            invitation = latest.get(obj.email)
+        else:
+            invitation = Invitation.objects.filter(
+                email=obj.email,
+                company=obj.company,
+            ).order_by('-created_at').first()
+
         if not invitation:
             return 'NONE'
         if invitation.status == InvitationStatus.ACCEPTED:
