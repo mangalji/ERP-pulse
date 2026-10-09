@@ -393,7 +393,6 @@ function normalizeNetSuiteFieldCatalogue(payload) {
   entries.forEach((entry) => {
     if (entry.sublist_id) {
       contextualKeys.add(
-        // `${entry.id}:${entry.scope}`,
         `${String(entry.id || '').trim().toLowerCase()}:${String(
         entry.scope || '',
       )
@@ -405,7 +404,7 @@ function normalizeNetSuiteFieldCatalogue(payload) {
 
   return entries.filter((entry) => {
     if (!entry.sublist_id) {
-      // const key = `${entry.id}:${entry.scope}`
+
       const key = `${String(entry.id || '').trim().toLowerCase()}:${String(
       entry.scope || '',
     )
@@ -430,11 +429,6 @@ function NetSuiteFieldCombobox({
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-
-  // const selectedOption = options.find(
-  //   (option) => 
-  //     `${option.id}:${option.scope}:${option.sublist_id || ''}` === value,
-  // )
   const selectedOption = options.find(
   (option) => {
     const [
@@ -468,14 +462,6 @@ function NetSuiteFieldCombobox({
       option?.scope || '',
     ).trim().toLowerCase()
   }
-
-  // const getNetSuiteFieldDisplay = (option) => {
-  //   const context = getNetSuiteFieldContext(option)
-
-  //   return context
-  //     ? `${option.label} (${option.id}) (${context})`
-  //     : `${option.label} (${option.id})`
-  // }
 
   const getNetSuiteFieldDisplay = (option) => {
   const scope = String(
@@ -520,11 +506,6 @@ function NetSuiteFieldCombobox({
       ).toLowerCase()
 
       const context = getNetSuiteFieldContext(option)
-      // String(
-      //   option.sublist_id ||
-      //   option.scope ||
-      //   '',
-      // ).toLowerCase()
 
       return (
         label.includes(query) ||
@@ -715,8 +696,11 @@ export default function FileTemplatePage() {
   const [catalog, setCatalog] = useState(null)
   const [templates, setTemplates] = useState([])
   const [connection, setConnection] = useState(null)
+  const [isCompanyAdmin, setIsCompanyAdmin] = useState(false)
   const [netSuiteFields, setNetSuiteFields] = useState([])
   const [netSuiteFieldsLoading, setNetSuiteFieldsLoading] = useState(false)
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false)
+  const [refreshingCatalogue, setRefreshingCatalogue] = useState(false)
   const sortedNetSuiteFields = useMemo(
     () =>
       [...netSuiteFields].sort((a, b) => {
@@ -779,11 +763,16 @@ export default function FileTemplatePage() {
 )
 
 const loadNetSuiteFields = async (connectionValue) => {
+  if (catalogueLoaded){
+    return netSuiteFields
+  }
+
   const connectionId = getConnectionId(connectionValue)
 
   if (!connectionId) {
     setNetSuiteFields([])
-    return
+    setCatalogueLoaded(true)
+    return []
   }
 
   setNetSuiteFieldsLoading(true)
@@ -795,7 +784,7 @@ const loadNetSuiteFields = async (connectionValue) => {
         params: {
           connection_id: connectionId,
           record_type: 'vendorBill',
-          force_refresh: 'true',
+
         },
       },
     )
@@ -805,17 +794,86 @@ const loadNetSuiteFields = async (connectionValue) => {
       response?.data ??
       {}
 
-    setNetSuiteFields(
-      normalizeNetSuiteFieldCatalogue(payload),
-    )
+      const fields = normalizeNetSuiteFieldCatalogue(payload)
+
+      setNetSuiteFields(fields)
+      setCatalogueLoaded(true)
+      return fields
+
+    
   } catch (err) {
     console.error(
       'Failed to load NetSuite field catalogue:',
       err,
     )
     setNetSuiteFields([])
+    setCatalogueLoaded(false)
+    return []
+
   } finally {
     setNetSuiteFieldsLoading(false)
+  }
+}
+
+const handleRefreshNetSuiteFields = async () => {
+  if (!isCompanyAdmin || refreshingCatalogue) {
+    return
+  }
+
+  const connectionId = getConnectionId(connection)
+
+  if (!connectionId) {
+    setError('No active NetSuite connection is available.')
+    return
+  }
+
+  setRefreshingCatalogue(true)
+  setError('')
+  setMessage('')
+
+  try {
+    const response = await apiClient.post(
+      '/netsuite/ocr/field-catalogue/',
+      {
+        connection_id: connectionId,
+        record_type: 'vendorBill',
+      },
+    )
+
+    const payload =
+      response?.data?.data ??
+      response?.data ??
+      {}
+
+    const fields = normalizeNetSuiteFieldCatalogue(payload)
+
+    setNetSuiteFields(fields)
+    setCatalogueLoaded(true)
+
+    if (payload?.refresh_failed || payload?.source !== 'netsuite') {
+      setError(
+        payload?.error ||
+        response?.data?.message ||
+        'Refresh failed. The saved catalogue has been preserved.',
+      )
+    } else {
+      const added = Number(payload?.added_fields_count ?? 0)
+
+      setMessage(
+        added > 0
+          ? `Refresh successful. ${added} new field(s) added.`
+          : 'Refresh successful. No new fields found; existing fields were preserved.',
+      )
+    }
+  } catch (err) {
+    setError(
+      getErrorMessage(
+        err,
+        'Unable to refresh NetSuite fields.',
+      ),
+    )
+  } finally {
+    setRefreshingCatalogue(false)
   }
 }
 
@@ -843,8 +901,11 @@ const loadNetSuiteFields = async (connectionValue) => {
     setError('')
 
     try {
-  const connectionPayload =
-    await netsuiteApi.getMyConnection().catch(() => null)
+
+      const [connectionPayload,profilePayload] = await Promise.all([
+        netsuiteApi.getMyConnection().catch(()=>null),
+        apiClient.get('/client/me/').catch(()=>null),
+    ])
 
   const connectionData =
     connectionPayload?.data ??
@@ -852,6 +913,45 @@ const loadNetSuiteFields = async (connectionValue) => {
     null
 
   setConnection(connectionData)
+
+  const profile =
+    profilePayload?.data?.data ??
+    profilePayload?.data ??
+    {}
+
+    const roleValues = profile?.roles ?? profile?.user?.roles ?? []
+
+    const normalizedRoles = (
+      Array.isArray(roleValues) ? roleValues : []
+    ).map((role) => {
+        if (typeof role === 'string') return role
+        return (
+          role?.slug ||
+          role?.code ||
+          role?.name ||
+          role?.role_name ||
+          ''
+        )
+      }).map((role) =>
+        String(role)
+          .trim()
+          .toLowerCase()
+          .replace(/[-_]/g, ' ')
+      )
+
+      const primaryRole = String(
+        profile?.user?.role?.name ||
+        profile?.role?.name ||
+        profile?.user?.role_name ||
+        '',
+      ).trim()
+        .toLowerCase()
+        .replace(/[-_]/g, ' ')
+
+        setIsCompanyAdmin(
+          normalizedRoles.includes('company admin') ||
+          primaryRole === 'company admin',
+        )
 
   await Promise.all([
     loadCatalog(),
@@ -878,7 +978,7 @@ const loadNetSuiteFields = async (connectionValue) => {
     loadPage()
   }, [])
 
-  const createDefaultFields = () =>
+  const createDefaultFields = (availableFields=sortedNetSuiteFields) =>
   catalogFields
     .filter(
       (catalogField) =>
@@ -890,7 +990,7 @@ const loadNetSuiteFields = async (connectionValue) => {
 
       const defaultMapping = resolveDefaultNetSuiteMapping(
         field,
-        sortedNetSuiteFields,
+        availableFields,
       )
 
       return defaultMapping
@@ -901,23 +1001,44 @@ const loadNetSuiteFields = async (connectionValue) => {
         : field
     })
 
-  const resetEditor = () => {
+  const resetEditor = (availableFields = sortedNetSuiteFields) => {
     setSelectedTemplateId(null)
     setTemplateName('')
-    setFields(createDefaultFields())
+    setFields(createDefaultFields(availableFields))
     setMode('new')
     setHighlightedFieldId(null)
     setMessage('')
     setError('')
   }
 
-  const openTemplate = (template, nextMode = 'view') => {
+  const openTemplate = async (template, nextMode = 'view') => {
     if (!template?.id) return
+
+    if (nextMode === 'edit'){
+      await loadNetSuiteFields(connection)
+    }
+
     selectTemplate(template, nextMode)
   }
 
-  const startNewTemplate = () => {
-    resetEditor()
+  const startNewTemplate = async () => {
+    const loadedFields = await loadNetSuiteFields(connection)
+
+    const sortedFields = [...loadedFields].sort((a,b)=>{
+      const idCompare = String(a.id || '').localeCompare(
+        String(b.id ||'',
+          undefined,
+          {sensitivity:'base'},
+        )
+      )
+        if (idCompare !==0 ) return idCompare
+
+        return String(a.sublist_id || a.scope || '').localeCompare(
+          String(b.sublist_id || b.scope || ""),undefined,{sensitivity:'base'},
+        )
+    })
+
+    resetEditor(sortedFields)
   }
 
   const handleBackToTemplates = () => {
@@ -1369,9 +1490,29 @@ const loadNetSuiteFields = async (connectionValue) => {
             )}
           </div>
           {!isDetailPage && (
-            <Button type="button" onClick={startNewTemplate}>
-              + New Template
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {isCompanyAdmin && (
+                <Button
+                  type="button"
+                  onClick={handleRefreshNetSuiteFields}
+                  disabled={
+                    refreshingCatalogue ||
+                    !getConnectionId(connection)
+                  }
+                >
+                  {refreshingCatalogue
+                    ? 'Refreshing NetSuite Fields...'
+                    : 'Refresh NetSuite Fields'}
+                </Button>
+              )}
+
+              <Button
+                type="button"
+                onClick={startNewTemplate}
+              >
+                + New Template
+              </Button>
+            </div>
           )}
         </div>
 
