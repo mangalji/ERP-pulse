@@ -14,7 +14,7 @@ import redis
 from django.conf import settings
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Q,Count
+from django.db.models import Q,Count, Prefetch
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -473,11 +473,37 @@ class OCRHistoryListView(APIView):
                 {"detail": "offset and limit must be valid integers."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Everything the loops below need is loaded here in a fixed number of
+        # queries. Calling .order_by()/.first() on a related manager later would
+        # bypass the prefetch and run one extra query per batch / document.
+        
+
 
         batches = list(
             _visible_batch_queryset(request.user)
             .select_related("user")
-            .prefetch_related("uploads__document__versions")
+            .prefetch_related(              # .prefetch_related("uploads__document__versions")
+                Prefetch(
+                    "uploads",
+                    queryset=(
+                        OCRUpload.objects
+                        .select_related("document")
+                        .order_by("created_at")
+                        ),
+                        to_attr="ordered_uploads",
+                    ),
+                    # Only the latest version's id is needed here, so skip the
+                    # large JSON columns (raw_ocr, normalized_json, ...).
+                    Prefetch(
+                        "ordered_uploads__document__versions",
+                        queryset=(
+                            OCRDocumentVersion.objects
+                            .only("id","document_id","version_number")
+                            .order_by("-version_number")
+                        ),
+                        to_attr="ordered_versions",
+                    ),
+                )
             .order_by("-created_at")
         )
 
@@ -487,7 +513,8 @@ class OCRHistoryListView(APIView):
         all_version_ids = []
 
         for batch in batches:
-            for upload in batch.uploads.all().order_by("created_at"):
+            # for upload in batch.uploads.all().order_by("created_at"):
+            for upload in batch.ordered_uploads:
                 document = getattr(upload, "document", None)
                 document_by_upload[upload.id] = document
 
@@ -495,9 +522,7 @@ class OCRHistoryListView(APIView):
                     continue
 
                 version = (
-                    document.versions
-                    .order_by("-version_number")
-                    .first()
+                    document.ordered_versions[0] if document.ordered_versions else None
                 )
                 version_by_document[document.id] = version
                 all_document_ids.append(document.id)
@@ -542,7 +567,7 @@ class OCRHistoryListView(APIView):
         results = []
 
         for batch in batches:
-            uploads = list(batch.uploads.all().order_by("created_at"))
+            uploads = batch.ordered_uploads
             if not uploads:
                 continue
 

@@ -13,10 +13,12 @@ import hashlib
 import json
 import re
 import requests
+import uuid
 from accounts.models import User
 from django.db import transaction
 from django.db.models import Q
 from datetime import timedelta
+from django.core.cache import cache
 from django.conf import settings
 from django.utils import timezone
 from netsuite.client import NetSuiteAuthClient
@@ -28,7 +30,7 @@ from netsuite.exceptions import (
     NetSuiteRecordFetchException,
     NetSuiteTokenExchangeException,
 )
-from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting, NetSuiteReferenceRecord, NetSuiteFieldCatalogue
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteReferenceRecord, NetSuiteFieldCatalogue
 from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
 from netsuite.repositories import NetSuiteConnectionRepository
 from audit.models import AuditAction, AuditModule
@@ -36,7 +38,7 @@ from audit.services import audit_service
 from netsuite.token_manager import NetSuiteTokenManager
 from netsuite.vendor_bill_baseline import VENDOR_BILL_BASELINE_FIELDS
 from tenancy.services import company_lifecycle_service
-from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, MappingStatus, ValidationStatus
+from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, ValidationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -2327,13 +2329,6 @@ class NetSuiteFieldMappingService:
                 [],
             ).append(key)
 
-            # live_fields[(field_id, scope, sublist_id)] = {
-            #     **field,
-            #     "field_id": field_id,
-            #     "scope": scope,
-            #     "sublist_id":sublist_id or None,
-            # }
-
         merged = {}
 
         for field in VENDOR_BILL_BASELINE_FIELDS:
@@ -2349,12 +2344,6 @@ class NetSuiteFieldMappingService:
                 **field,
                 "field_id": field_id,
                 "scope": scope,
-                # "sublist_id":(
-                #      str(field.get("sublist_id") or "")
-                #     .strip()
-                #     .lower()
-                #     or None
-                # ),
                 "is_required": False,
                 "baseline": True,
             }
@@ -2389,28 +2378,6 @@ class NetSuiteFieldMappingService:
 
                 continue
             merged[exact_key] = baseline_field
-            # baseline_sublist_id = (
-            #     str(
-            #         baseline_field.get("sublist_id") or ""
-            #     )
-            #     .strip()
-            #     .lower()
-            # )
-
-            # live_field = live_fields.pop(
-            #     (field_id, scope,baseline_sublist_id),
-            #     None,
-            # )
-
-            # merged[(field_id, scope,baseline_sublist_id)] = (
-            #     {
-            #         **baseline_field,
-            #         **live_field,
-            #         "baseline": True,
-            #     }
-            #     if live_field
-            #     else baseline_field
-            # )
 
         # Preserve every account-specific/live field that was not in baseline.
         for key, field in live_fields.items():
@@ -2871,6 +2838,190 @@ class NetSuiteFieldMappingService:
             "error": error,
         }
 
+    @staticmethod
+    def _catalogue_field_key(field, fallback_scope=None):
+        if not isinstance(field, dict):
+            return None
+
+        field_id = str(
+            field.get('field_id') or field.get('id') or ''
+        ).strip()
+
+        if not field_id:
+            return None
+
+        raw_scope = str(
+            field.get('scope') or fallback_scope or 'body'
+        ).strip().lower()
+
+        scope = (
+            'column'
+            if raw_scope in {'line', 'column', 'sublist'}
+            else 'body'
+        )
+
+        sublist_id = ''
+
+        if scope == 'column':
+            sublist_id = str(
+                field.get('sublist_id')
+                or field.get('sublist')
+                or field.get('sublistId')
+                or ''
+            ).strip().lower()
+
+        return field_id.casefold(), scope, sublist_id
+
+
+    @classmethod
+    def _merge_catalogue_field_lists(
+        cls,
+        existing_fields,
+        incoming_fields,
+        fallback_scope=None,
+    ):
+        merged = []
+        seen = set()
+
+        for field in [
+            *(existing_fields or []),
+            *(incoming_fields or []),
+        ]:
+            if not isinstance(field, dict):
+                merged.append(field)
+                continue
+
+            key = cls._catalogue_field_key(
+                field,
+                fallback_scope=fallback_scope,
+            )
+
+            if key is None:
+                merged.append(dict(field))
+                continue
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            merged.append(dict(field))
+
+        return merged
+
+
+    def _append_local_custom_fields(
+        self,
+        normalized,
+        *,
+        connection,
+        record_type,
+    ):
+        local_custom = list(
+            NetSuiteCustomField.objects.filter(
+                company=connection.company,
+                connection=connection,
+                record_type=record_type,
+                status__in=['created', 'pending'],
+            ).values(
+                'field_id',
+                'field_label',
+                'datatype',
+                'scope',
+            )
+        )
+
+        for field in local_custom:
+            scope = (
+                'column'
+                if str(field.get('scope') or '').strip().lower()
+                in {'column', 'line', 'sublist'}
+                else 'body'
+            )
+
+            mapped = {
+                'field_id': str(field.get('field_id') or '').strip(),
+                'label': field.get('field_label') or field.get('field_id') or '',
+                'datatype': field.get('datatype') or 'text',
+                'scope': scope,
+                'is_required': False,
+                'is_custom': True,
+                'reference_type': None,
+            }
+
+            if not mapped['field_id']:
+                continue
+
+            current = (
+                normalized.setdefault('line_fields', [])
+                if scope == 'column'
+                else normalized.setdefault('body_fields', [])
+            )
+
+            key = self._catalogue_field_key(
+                mapped,
+                fallback_scope=scope,
+            )
+
+            existing_keys = {
+                self._catalogue_field_key(item, fallback_scope=scope)
+                for item in current
+            }
+
+            if key not in existing_keys:
+                current.append(mapped)
+
+        normalized['custom_fields'] = self._merge_catalogue_field_lists(
+            normalized.get('custom_fields', []),
+            [
+                field
+                for field in (
+                    normalized.get('body_fields', [])
+                    + normalized.get('line_fields', [])
+                )
+                if isinstance(field, dict) and field.get('is_custom')
+            ],
+        )
+
+        return normalized
+
+
+    def _catalogue_cache_miss_payload(
+        self,
+        *,
+        connection,
+        record_type,
+        error=None,
+    ):
+        normalized = self._merge_baseline_fields({
+            'body_fields': [],
+            'line_fields': [],
+            'custom_fields': [],
+        })
+
+        normalized = self._append_local_custom_fields(
+            normalized,
+            connection=connection,
+            record_type=record_type,
+        )
+
+        return {
+            'record_type': record_type,
+            'fields': {
+                'body': normalized.get('body_fields', []),
+                'column': normalized.get('line_fields', []),
+            },
+            'custom_fields': normalized.get('custom_fields', []),
+            'source': 'fallback',
+            'stale': False,
+            'available': False,
+            'error': (
+                error
+                or 'No saved catalogue exists. A Company Admin can refresh it.'
+            ),
+            'fetched_at': None,
+            'added_fields_count': 0,
+        }
+
     def get_field_catalogue(
         self,
         *,
@@ -2889,46 +3040,59 @@ class NetSuiteFieldMappingService:
             record_type=record_type,
         ).first()
 
-        if existing and not force_refresh:
-            # Keep AGSuite-created custom fields visible even if a stale/live
-            # metadata snapshot predates their creation.
-            return self._catalogue_payload(existing, source="database")
+        # Normal reads never call NetSuite.
+        if not force_refresh:
+            if existing:
+                return self._catalogue_payload(
+                    existing,source='database',
+                )
+            return self._catalogue_cache_miss_payload(
+                connection=connection,
+                record_type=record_type,
+            )
+        lock_key = f"netsuite:field-catalogue-refresh:{connection.pk}:{record_type}"
+        lock_token = uuid.uuid4().hex
+        cache_lock_owned = False
+        try:
+            lock_acquired = cache.add(  
+                lock_key,
+                lock_token,
+                timeout=self.METADATA_TIMEOUT_SECONDS + 30,
+            )
+            cache_lock_owned = lock_acquired
+        except Exception:
+            # A cache outage should not make an explicitly requested refresh
+            # impossible; the database row lock below still protects writes.
+            logger.exception("Unable to acquire NetSuite catalogue refresh cache lock")
+            lock_acquired = True
+            cache_lock_owned = False
+
+        if not lock_acquired:
+            current = NetSuiteFieldCatalogue.objects.filter(
+                connection=connection,
+                record_type=record_type,
+            ).first()
+            if current:
+                payload = self._catalogue_payload(
+                    current,
+                    source="database",
+                    stale=True,
+                    available=True,
+                    error="A NetSuite field refresh is already in progress.",
+                )
+                payload.update({"added_fields_count": 0, "refresh_failed": True})
+                return payload
+            return self._catalogue_cache_miss_payload(
+                connection=connection,
+                record_type=record_type,
+                error="A NetSuite field refresh is already in progress.",
+            )
 
         try:
             raw = self._fetch_live_metadata(
                 connection=connection,
                 record_type=record_type,
             )
-            # raw_text = json.dumps(raw, indent=2, default=str)
-
-            # logger.warning(
-            #     "VENDOR BILL METADATA TAXRATE1 MATCHES:\n%s",
-            #     "\n".join(
-            #         line
-            #         for line in raw_text.splitlines()
-            #         if "taxrate1" in line.lower()
-            #     ),
-            # )
-            def find_taxrate1(obj, path="root"):
-                if isinstance(obj, dict):
-                    for key, value in obj.items():
-                        current_path = f"{path}.{key}"
-
-                        if str(key).lower() == "taxrate1":
-                            logger.warning(
-                                "TAXRATE1 FOUND AT: %s\nVALUE:\n%s",
-                                current_path,
-                                json.dumps(value, indent=2, default=str),
-                            )
-
-                        find_taxrate1(value, current_path)
-
-                elif isinstance(obj, list):
-                    for index, value in enumerate(obj):
-                        find_taxrate1(value, f"{path}[{index}]")
-
-
-            find_taxrate1(raw)
             normalized = self._merge_baseline_fields(
                 self._normalise_metadata(
                     raw,record_type,
@@ -2978,18 +3142,79 @@ class NetSuiteFieldMappingService:
                 json.dumps(raw, sort_keys=True, default=str).encode("utf-8")
             ).hexdigest()
 
-            catalogue, _ = NetSuiteFieldCatalogue.objects.update_or_create(
-                connection=connection,
-                record_type=record_type,
-                defaults={
-                    "body_fields": normalized["body_fields"],
-                    "line_fields": normalized["line_fields"],
-                    "custom_fields": normalized["custom_fields"],
-                    "raw_metadata": raw,
-                    "metadata_hash": metadata_hash,
-                },
-            )
-            return self._catalogue_payload(catalogue, source="netsuite", stale=False)
+            with transaction.atomic():
+                NetSuiteConnection.objects.select_for_update().get(
+                    pk=connection.pk
+                )
+                current = (
+                    NetSuiteFieldCatalogue.objects.select_for_update()
+                    .filter(
+                        connection=connection,
+                        record_type=record_type,
+                    ).first()
+                )
+
+                old_body = list(current.body_fields or []) if current else []
+                old_line = list(current.line_fields or []) if current else []
+                old_custom = list(current.custom_fields or []) if current else []
+
+                merged_body = self._merge_catalogue_field_lists(
+                    old_body,
+                    normalized["body_fields"],
+                    fallback_scope="body",
+                )
+
+                merged_line = self._merge_catalogue_field_lists(
+                    old_line,
+                    normalized["line_fields"],
+                    fallback_scope="column",
+                )
+
+                def get_field_keys(body_fields, line_fields):
+                    keys = set()
+
+                    for field in body_fields:
+                        key = self._catalogue_field_key(field,fallback_scope="body")
+                        if key:
+                            keys.add(key)
+
+                    for field in line_fields:
+                        key = self._catalogue_field_key(
+                            field,
+                            fallback_scope="column",
+                        )
+                        if key:
+                            keys.add(key)
+                    return keys
+
+                old_keys = get_field_keys(old_body,old_line)
+
+                incoming_keys = get_field_keys(
+                    normalized["body_fields"],
+                    normalized["line_fields"],
+                )
+
+                added_fields_count = len(incoming_keys - old_keys)
+
+                merged_custom = self._merge_catalogue_field_lists(
+                    old_custom,
+                    normalized["custom_fields"],
+                )
+
+                catalogue, _ = NetSuiteFieldCatalogue.objects.update_or_create(
+                    connection=connection,
+                    record_type=record_type,
+                    defaults={
+                        "body_fields": merged_body,
+                        "line_fields": merged_line,
+                        "custom_fields": merged_custom,
+                        "raw_metadata": raw,
+                        "metadata_hash": metadata_hash,
+                    },
+                )
+            payload = self._catalogue_payload(catalogue, source="netsuite", stale=False)
+            payload["added_fields_count"] = added_fields_count
+            return payload
 
         except NetSuiteTokenExchangeException:
             raise
@@ -3012,13 +3237,19 @@ class NetSuiteFieldMappingService:
             # Development-safe fallback: retain the current hardcoded baseline
             # so the mapping screen still works while the live API is repaired.
             # fields = self._build_standard_catalogue(record_type)
-            fields = self._merge_baseline_fields(
+
+            normalized_fallback = self._merge_baseline_fields(
                 {
                     "body_fields": [],
                     "line_fields": [],
                     "custom_fields": [],
                 }
             )
+            fields = {
+                "body": normalized_fallback["body_fields"],
+                "column": normalized_fallback["line_fields"],
+            }
+            
             custom_fields = list(
                 NetSuiteCustomField.objects.filter(
                     company=connection.company,
@@ -3038,7 +3269,17 @@ class NetSuiteFieldMappingService:
                 "available": False,
                 "error": str(exc),
                 "fetched_at": None,
+                "added_fields_count":0,
             }
+        finally:
+            if cache_lock_owned:
+                try:
+                    if cache.get(lock_key) == lock_token:
+                        cache.delete(lock_key)
+                except Exception:
+                    logger.exception(
+                        "Unable to release NetSuite catalogue refresh cache lock"
+                    )
 
     def _build_standard_catalogue(self, record_type):
         """Development fallback catalogue only; live metadata is preferred."""

@@ -62,6 +62,8 @@ MIDDLEWARE = [
     "whitenoise.middleware.WhiteNoiseMiddleware",
 
     "corsheaders.middleware.CorsMiddleware",
+    
+    "monitoring.middlewares.RequestMonitoringMiddleware",
 
     "django.contrib.sessions.middleware.SessionMiddleware",
 
@@ -77,7 +79,6 @@ MIDDLEWARE = [
 
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 
-    "monitoring.middlewares.RequestMonitoringMiddleware",
 ]
 
 

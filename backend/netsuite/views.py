@@ -496,57 +496,6 @@ class NetSuiteInvoicesView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [NetSuiteSyncThrottle]
 
-    # def get(self,request):
-    #     try:
-    #         offset = int(request.query_params.get("offset", 0))
-    #     except (ValueError, TypeError):
-    #         offset = 0
-    #     try:
-    #         limit = int(request.query_params.get("limit", 20))
-    #     except (ValueError, TypeError):
-    #         limit = 20
-    #     offset = max(0, offset)
-    #     limit = max(1, min(limit, 100))
-
-    #     source_record_type = request.query_params.get("source_record_type")
-    #     service = NetSuiteDataService()
-
-    #     if source_record_type == "salesOrder":
-    #         invoices = service.list_sales_order_invoices(
-    #             user=request.user,
-    #             offset=offset,
-    #             limit=limit,
-    #         )
-    #         message = "NetSuite Sales Order invoices fetched successfully."
-
-    #     elif source_record_type == "purchaseOrder":
-    #         invoices = service.list_purchase_order_vendor_bills(
-    #             user=request.user,
-    #             offset=offset,
-    #             limit=limit,
-    #         )
-    #         message = "NetSuite Purchase Order vendor bills fetched successfully."
-
-    #     else:
-    #         invoices = service.list_invoices(
-    #             user=request.user,
-    #             offset=offset,
-    #             limit=limit,
-    #         )
-    #         message = "NetSuite Invoices fetched successfully."
-
-    #     items = invoices.get("items", [])
-    #     total = invoices.get("totalResults", len(items))
-
-    #     return paginated_response(
-    #         message=message,
-    #         results=items,
-    #         count=total,
-    #         request=request,
-    #         offset=offset,
-    #         limit=limit,
-    #     )
-
     def get(self, request):
         try:
             offset = int(request.query_params.get("offset", 0))
@@ -885,7 +834,6 @@ class NetSuiteMyConnectionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # connection = NetSuiteConnectionService().get_employee_connection(employee_id=request.user.id)
         connection = NetSuiteConnectionRepository().get_for_user(request.user)
         if not connection:
             return Response({'detail': 'No NetSuite connection assigned.'}, status=status.HTTP_404_NOT_FOUND)
@@ -1035,79 +983,149 @@ class NetSuiteReconnectView(APIView):
 
 
 class NetSuiteFieldCatalogueView(APIView):
-    """Return available NetSuite fields for a record type."""
+    """Read saved catalogue; refresh only through an admin action."""
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        connection_id = request.query_params.get('connection_id')
-        record_type = request.query_params.get('record_type', 'vendorBill')
-        force_refresh = str(
-            request.query_params.get('force_refresh', 'false')
-        ).strip().lower() in {'1', 'true', 'yes', 'on'}
+        # GET is strictly read-only, even if a legacy client sends
+        # ?force_refresh=true.
+        return self._serve_catalogue(
+            request,
+            connection_id=request.query_params.get('connection_id'),
+            record_type=request.query_params.get(
+                'record_type',
+                'vendorBill',
+            ),
+            force_refresh=False,
+        )
+
+    def post(self, request):
+        # Enforce Company Admin permission server-side.
+        if not _is_company_admin(request.user):
+            return Response(
+                {'detail': 'Only Company Admin can refresh NetSuite fields.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return self._serve_catalogue(
+            request,
+            connection_id=request.data.get('connection_id'),
+            record_type=request.data.get('record_type', 'vendorBill'),
+            force_refresh=True,
+        )
+
+    def _serve_catalogue(
+        self,
+        request,
+        *,
+        connection_id,
+        record_type,
+        force_refresh,
+    ):
+        if force_refresh and not _is_company_admin(request.user):
+            return Response(
+                {'detail': 'Only Company Admin can refresh NetSuite fields.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if not connection_id:
             return Response(
-                {"detail": "connection_id is required."},
+                {'detail': 'connection_id is required.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if not isinstance(record_type, str) or not record_type.strip():
+            return Response(
+                {'detail': 'record_type must be a non-empty string.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        record_type = record_type.strip()
+
         try:
-            company = getattr(request.user, "company", None)
+            company = getattr(request.user, 'company', None)
+
             if company is None:
                 return Response(
-                    {"detail": "User is not associated with a company."},
+                    {'detail': 'User is not associated with a company.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            service = NetSuiteFieldMappingService()
-            catalogue = service.get_field_catalogue(
+
+            catalogue = NetSuiteFieldMappingService().get_field_catalogue(
                 company=company,
                 connection_id=connection_id,
                 record_type=record_type,
                 force_refresh=force_refresh,
             )
-            serializer = NetSuiteFieldCatalogueSerializer(catalogue)
-            live = catalogue.get('source') == 'netsuite'
-            refresh_failed = bool(force_refresh and not live)
-            if refresh_failed:
-                message = (
-                    'Could not refresh from NetSuite; showing saved '
-                    'field data instead.'
-                )
+
+            serialized = dict(
+                catalogue
+            )
+
+            for key in (
+                'record_type',
+                'fields',
+                'custom_fields',
+                'fetched_at',
+                'source',
+                'stale',
+                'available',
+                'error',
+            ):
+                if key in catalogue:
+                    serialized[key] = catalogue[key]
+
+            live_refresh_succeeded = (
+                force_refresh
+                and catalogue.get('source') == 'netsuite'
+            )
+
+            serialized['refresh_failed'] = bool(
+                force_refresh and not live_refresh_succeeded
+            )
+            serialized['added_fields_count'] = int(
+                catalogue.get('added_fields_count') or 0
+            )
+
+            if live_refresh_succeeded:
+                message = 'NetSuite field catalogue refreshed successfully.'
             elif force_refresh:
-                message = 'NetSuite Vendor Bill field catalogue refreshed successfully.'
+                message = (
+                    'NetSuite refresh failed; the saved catalogue was preserved.'
+                )
+            elif catalogue.get('source') == 'fallback':
+                message = (
+                    'No saved NetSuite catalogue exists yet; '
+                    'showing standard fields.'
+                )
             else:
                 message = 'NetSuite field catalogue loaded successfully.'
-            data = dict(serializer.data)
-            data['refresh_failed'] = refresh_failed
-            return success_response(message=message, data=data)
-        
+
+            return success_response(
+                message=message,
+                data=serialized,
+            )
+
         except NetSuiteTokenExchangeException:
             return _reauth_required_response()
 
         except NetSuiteConnectionNotFoundException as exc:
-            message = str(exc)
-            if 'not active' in message.lower():
-                # return Response(
-                # {
-                #         "detail": (
-                #             "Your NetSuite connection needs to be reconnected. "
-                #             "The authorization has expired or is no longer valid. "
-                #             "Please reconnect your NetSuite account and try again."
-                #         ),
-                #         "code": "NETSUITE_REAUTH_REQUIRED",
-                #     },
-                #     status=status.HTTP_409_CONFLICT,
-                # )
+            if 'not active' in str(exc).lower():
                 return _reauth_required_response()
+
             return Response(
-                {"detail": str(exc)},
+                {'detail': str(exc)},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        except Exception as exc:
+
+        except Exception:
             logger.exception(
-                "Failed to load NetSuite field catalogue — user=%s",
-                getattr(request.user, "id", None),
+                'Failed to %s NetSuite field catalogue — user=%s',
+                'refresh' if force_refresh else 'load',
+                getattr(request.user, 'id', None),
             )
+
             return success_response(
                 message='NetSuite field catalogue is temporarily unavailable.',
                 data={
@@ -1118,7 +1136,9 @@ class NetSuiteFieldCatalogueView(APIView):
                     'source': 'error',
                     'stale': False,
                     'available': False,
-                    'error': str(exc)[:500],
+                    'refresh_failed': bool(force_refresh),
+                    'added_fields_count': 0,
+                    'error': 'The field catalogue could not be loaded.',
                 },
             )
 
@@ -1217,17 +1237,6 @@ class NetSuiteFieldMappingListCreateView(APIView):
             message = str(exc)
 
             if "not active" in message.lower():
-                # return Response(
-                #     {
-                #         "detail": (
-                #             "Your NetSuite connection needs to be reconnected. "
-                #             "The authorization has expired or is no longer valid. "
-                #             "Please reconnect your NetSuite account and try again."
-                #         ),
-                #         "code": "NETSUITE_REAUTH_REQUIRED",
-                #     },
-                #     status=status.HTTP_401_UNAUTHORIZED,
-                # )
                 return _reauth_required_response()
 
             return Response(
@@ -1279,17 +1288,6 @@ class NetSuiteFieldMappingListCreateView(APIView):
         except NetSuiteConnectionNotFoundException as exc:
             message = str(exc)
             if "not active" in message.lower():
-                # return Response(
-                #     {
-                #         "detail": (
-                #             "Your NetSuite connection needs to be reconnected. "
-                #             "The authorization has expired or is no longer valid. "
-                #             "Please reconnect your NetSuite account and try again."
-                #         ),
-                #         "code": "NETSUITE_REAUTH_REQUIRED",
-                #     },
-                #     status=status.HTTP_401_UNAUTHORIZED,
-                # )
                 return _reauth_required_response()
             return Response(
                 {"detail": str(exc)},
@@ -1341,17 +1339,6 @@ class NetSuiteValidateDocumentView(APIView):
                 NetSuiteTokenExchangeException,
             )
             if token_error is not None:
-                # return Response(
-                #     {
-                #         "detail": (
-                #             "Your NetSuite connection needs to be reconnected. "
-                #             "The authorization has expired or is no longer valid. "
-                #             "Please reconnect your NetSuite account and try again."
-                #         ),
-                #         "code": "NETSUITE_REAUTH_REQUIRED",
-                #     },
-                #     status=status.HTTP_401_UNAUTHORIZED,
-                # )
                 return _reauth_required_response()
             logger.exception(
                 "NetSuite provider validation failed — document=%s connection=%s user=%s",
