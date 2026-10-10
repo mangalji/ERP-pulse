@@ -224,20 +224,6 @@ export default function DataExtractionHistoryPage() {
       return
     }
 
-    const label =
-      item?.filename ||
-      (item?.type === 'batch'
-        ? `Batch (${item?.file_count || 0} files)`
-        : 'OCR record')
-
-    if (
-      !window.confirm(
-        `Delete "${label}" from Data Extraction History? This cannot be undone.`,
-      )
-    ) {
-      return
-    }
-
     try {
       setDeletingId(item.batch_id)
       setError('')
