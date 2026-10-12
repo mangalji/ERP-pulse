@@ -38,6 +38,19 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   const isCompactNav = useCompactBreakpoint()
 
   const handleNavClick = (event, to) => {
+    // Preserve native browser behavior for opening links in another tab/window.
+    // React Router's NavLink renders a real anchor, so Ctrl/Cmd-click, Shift-click,
+    // and middle-click should be left entirely to the browser.
+    if (
+      event.defaultPrevented ||
+      event.button != 0 ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.altKey
+    ){
+      return
+    }
     const target = new URL(to, window.location.origin)
 
     if (

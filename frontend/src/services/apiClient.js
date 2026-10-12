@@ -70,7 +70,7 @@ apiClient.interceptors.response.use(
     try {
       // Try cookie-based refresh first (same-origin), fall back to
       // sending the refresh token in the request body (cross-domain).
-      const { default: authApi } = await import('../services/auth.js')
+      const { authApi } = await import('../services/auth.js')
       const res = await authApi.refreshToken()
       const newAccess = res.access
       if (newAccess) {

@@ -4,10 +4,11 @@
  * Access token is stored in a JavaScript variable (not localStorage), so it's
  * safe from XSS — no JS-injected script can read a module-closure variable.
  *
- * On page refresh the variable resets to null -> user sees login page ->
- * logs in again. This is intentional: short-lived access tokens (15 min)
- * with no persistent storage is more secure than a long-lived refresh
- * token in localStorage.
+ * The variable resets to null when a page reloads or a new browser tab opens.
+ * The backend's httpOnly access-token cookie can authenticate the initial
+ * request; if that token is missing or expired, apiClient refreshes the session
+ * using the httpOnly refresh-token cookie. The refresh cookie remains invisible
+ * to JavaScript, avoiding token storage in localStorage.
  *
  * The refresh_token httpOnly cookie (set by the backend on login) is the
  * persistent credential. It's used by the token refresh flow and is
