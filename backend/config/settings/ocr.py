@@ -170,3 +170,14 @@ OCR_S3_REGION: str = config('OCR_S3_REGION', default='')
 OCR_S3_ENDPOINT_URL: str = config('OCR_S3_ENDPOINT_URL', default='')
 OCR_S3_ACCESS_KEY_ID: str = config('OCR_S3_ACCESS_KEY_ID', default='')
 OCR_S3_SECRET_ACCESS_KEY: str = config('OCR_S3_SECRET_ACCESS_KEY', default='')
+
+# Zoho Catalyst Cloud Scale Stratus
+# OCR_STRATUS_BUCKET: str = config(
+#     'OCR_STRATUS_BUCKET',
+#     default='',
+# )
+
+# OCR_STRATUS_PREFIX: str = config(
+#     'OCR_STRATUS_PREFIX',
+#     default='ocr',
+# )

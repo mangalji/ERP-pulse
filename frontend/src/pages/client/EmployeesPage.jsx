@@ -87,6 +87,13 @@ const isFormValid = () => {
 
   return !Object.values(errors).some(Boolean)
 }
+function hasEmployeePassword(employee) {
+  if (typeof employee?.has_password === 'boolean') {
+    return employee.has_password
+  }
+
+  return String(employee?.invitation_status || '').trim().toLowerCase() === 'accepted'
+}
 
   const loadEmployees = useCallback(async () => {
     setLoading(true)

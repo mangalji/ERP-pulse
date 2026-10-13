@@ -1,5 +1,3 @@
-import { Link } from 'react-router-dom'
-import Button from '../../components/ui/Button.jsx'
 import Card from '../../components/ui/Card.jsx'
 
 const FEATURES = [
@@ -17,16 +15,6 @@ const FEATURES = [
     title: 'AI Assistant',
     description: 'Get intelligent insights and answers from your business data. AI-powered analysis of invoices, reports, and trends.',
     icon: 'ai',
-  },
-  {
-    title: 'Reports',
-    description: 'Generate comprehensive business reports on demand. Sales, purchase, inventory, and financial analytics.',
-    icon: 'reports',
-  },
-  {
-    title: 'BI Dashboard',
-    description: 'Executive dashboard with real-time KPIs, charts, and activity feeds. Make data-driven decisions instantly.',
-    icon: 'dashboard',
   },
   {
     title: 'Multi Tenant',
@@ -57,19 +45,6 @@ const ICONS = {
       <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a2 2 0 0 1 0 4h-1a7 7 0 0 1-7 7h-1a2 2 0 0 1-2-2v-1.27A2 2 0 0 1 6 16a2 2 0 0 1-2-2 2 2 0 0 1 2-2c.74 0 1.39.4 1.73 1H7v-1a7 7 0 0 1 7-7h1V5.27A2 2 0 0 1 16 4a2 2 0 0 1 2 2v1.27A2 2 0 0 1 20 8a2 2 0 0 1-2 2c-.74 0-1.39-.4-1.73-1H11v1a7 7 0 0 1-7 7H3a2 2 0 0 1 0-4h1a7 7 0 0 1 7-7h1V5.27c.34-.61 1-1.27 1.73-1.27z" />
     </svg>
   ),
-  reports: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6">
-      <path d="M18 20V10M12 20V4M6 20v-6" />
-    </svg>
-  ),
-  dashboard: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6">
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
-    </svg>
-  ),
   tenant: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-6 w-6">
       <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -93,20 +68,11 @@ export default function HomePage() {
           <div className="mx-auto max-w-3xl text-center">
             <h1 className="font-[var(--font-display)] text-4xl font-bold tracking-tight text-[var(--color-ink)] sm:text-5xl lg:text-6xl">
               AGSuite ERP
-              <span className="block text-[var(--color-primary)]">AI Powered Business Intelligence</span>
             </h1>
             <p className="mt-6 text-lg leading-8 text-[var(--color-muted)]">
               Transform your business operations with AI-driven invoice processing, NetSuite integration,
               and powerful analytics. The all-in-one platform for modern enterprises.
             </p>
-            <div className="mt-10 flex items-center justify-center gap-4">
-              <Link to="/request-demo">
-                <Button intent="primary" size="lg">Request Demo</Button>
-              </Link>
-              <Link to="/features">
-                <Button intent="secondary" size="lg">Explore Features</Button>
-              </Link>
-            </div>
           </div>
         </div>
       </section>
@@ -135,11 +101,6 @@ export default function HomePage() {
               </Card>
             ))}
           </div>
-          <div className="mt-12 text-center">
-            <Link to="/features">
-              <Button intent="secondary" size="lg">View All Features</Button>
-            </Link>
-          </div>
         </div>
       </section>
 
@@ -153,12 +114,7 @@ export default function HomePage() {
             <p className="mt-4 text-lg text-[var(--color-muted)]">
               See AGSuite ERP in action. Book a demo with our team today.
             </p>
-            <div className="mt-8">
-              <Link to="/request-demo">
-                <Button intent="primary" size="lg">Book Demo</Button>
-              </Link>
             </div>
-          </div>
         </div>
       </section>
     </div>

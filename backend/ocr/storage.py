@@ -157,6 +157,114 @@ def _build_s3():
         raise ValueError("OCR_S3_BUCKET is not set")
     return S3Storage(**{k: v for k, v in options.items() if v is not None})
 
+# @deconstructible
+# class StratusStorage(Storage):
+#     """Private OCR object storage backed by Zoho Catalyst Stratus."""
+
+#     def __init__(self, bucket_name="", prefix="ocr"):
+#         self.bucket_name = (bucket_name or "").strip()
+#         self.prefix = (prefix or "").strip("/ ")
+#         self._bucket = None
+
+#         if not self.bucket_name:
+#             raise ValueError("OCR_STRATUS_BUCKET is not configured")
+
+#     @staticmethod
+#     def _normalise(name):
+#         name = str(name).replace("\\", "/").lstrip("/")
+#         parts = [part for part in name.split("/") if part not in ("", ".")]
+
+#         if any(part == ".." for part in parts):
+#             raise ValueError("Invalid Stratus object key")
+
+#         return "/".join(parts)
+
+#     def _key(self, name):
+#         name = self._normalise(name)
+#         return f"{self.prefix}/{name}" if self.prefix else name
+
+#     def _get_bucket(self):
+#         if self._bucket is None:
+#             try:
+#                 import zcatalyst_sdk
+#             except ImportError as exc:
+#                 raise RuntimeError(
+#                     "Install zcatalyst-sdk in the AppSail environment"
+#                 ) from exc
+
+#             app = zcatalyst_sdk.initialize()
+#             self._bucket = app.stratus().bucket(self.bucket_name)
+
+#         return self._bucket
+
+#     def _open(self, name, mode="rb"):
+#         if any(flag in mode for flag in ("w", "a", "+")):
+#             raise NotImplementedError(
+#                 "Stratus files are opened read-only"
+#             )
+
+#         data = self._get_bucket().get_object(self._key(name))
+
+#         if hasattr(data, "read"):
+#             data = data.read()
+
+#         if not isinstance(data, (bytes, bytearray)):
+#             raise OSError("Unexpected Stratus object response")
+
+#         return ContentFile(bytes(data), name=self._normalise(name))
+
+#     def _save(self, name, content):
+#         import io
+
+#         if hasattr(content, "seek"):
+#             content.seek(0)
+
+#         data = (
+#             b"".join(content.chunks())
+#             if hasattr(content, "chunks")
+#             else content.read()
+#         )
+
+#         self._get_bucket().put_object(
+#             self._key(name),
+#             io.BytesIO(data),
+#         )
+#         return self._normalise(name)
+
+#     def exists(self, name):
+#         try:
+#             return bool(
+#                 self._get_bucket().head_object(
+#                     self._key(name),
+#                     throw_err=False,
+#                 )
+#             )
+#         except Exception as exc:
+#             message = str(exc).lower()
+#             if "404" in message or "not found" in message:
+#                 return False
+#             raise
+
+#     def delete(self, name):
+#         self._get_bucket().delete_object(self._key(name))
+
+#     def size(self, name):
+#         with self.open(name, "rb") as file:
+#             file.seek(0, 2)
+#             return file.tell()
+
+#     def url(self, name):
+#         raise NotImplementedError(
+#             "Private Stratus files do not have public URLs"
+#         )
+
+#     def path(self, name):
+#         raise NotImplementedError(
+#             "Stratus objects do not have local filesystem paths"
+#         )
+
+#     def listdir(self, path):
+#         return [], []
 
 def _build_local() -> FileSystemStorage:
     return FileSystemStorage(
@@ -182,6 +290,16 @@ def _build_storage() -> Storage:
 
     if backend == "db":
         return DatabaseStorage()
+
+    # if backend == 'stratus':
+    #     return StratusStorage(
+    #         bucket_name=getattr(
+    #         settings, "OCR_STRATUS_BUCKET", ""
+    #         ),
+    #         prefix=getattr(
+    #             settings, "OCR_STRATUS_PREFIX", "ocr"
+    #         ),
+    #     )
 
     if backend not in ("auto", "local"):
         logger.warning("Unknown OCR_STORAGE_BACKEND=%r; using 'auto'", backend)
