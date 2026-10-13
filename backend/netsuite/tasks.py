@@ -173,9 +173,6 @@ def _run_netsuite_batch(
     for document_id in document_ids:
         if str(document_id) in done_ids:
             continue
-
-
-    for document_id in document_ids:
         result = {
             "document_id": str(document_id),
             "status": "FAILED",

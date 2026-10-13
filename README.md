@@ -8,40 +8,49 @@
 ![Status](https://img.shields.io/badge/Status-Active%20Development-yellow)
 ![License](https://img.shields.io/badge/License-Private-lightgrey)
 
-**AGSuite ERP** is a multi-tenant SaaS ERP aggregation platform built with **Django REST Framework** and **React (Vite)**. It provides a unified dashboard for businesses to manage ERP integrations (NetSuite, and more in the future), AI-powered analytics, OCR-based invoice processing, subscription/licensing, and enterprise reporting — all under a single subscription.
+**AGSuite ERP** is a multi-tenant SaaS platform built with **Django REST Framework** and
+**React (Vite)**. A company signs up, connects its **Oracle NetSuite** account, and uses
+AI-assisted **OCR / data extraction** to turn invoices and other documents into validated
+NetSuite records (for example Vendor Bills), under a subscription managed by a platform
+operator (Super Admin).
 
 ---
 
-## Live Deployment
+## Live Deployment (Zoho Catalyst)
 
 | Layer | URL | Host |
 |-------|-----|------|
-| Frontend | https://agsuiteerp-60086947932.development.catalystserverless.in | Catalyst |
-| Backend API | https://agsuiteerp-50046369262.development.catalystappsail.in | Catayst |
-| Database | Supabase PostgreSQL | Supabase |
-| Redis | upstash Key Value | upstash |
+| Frontend | https://agsuiteerp-60086947932.catalystserverless.in | Catalyst Web Client Hosting |
+| Backend API | https://agsuiteerp-50046369262.catalystappsail.in | Catalyst AppSail |
+| Database | PostgreSQL | Supabase |
+| Redis | Optional | The app runs without it |
+
+> **Keep these in sync.** When the production URLs change, update the backend environment
+> variables `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL`
+> and `NETSUITE_REDIRECT_URI`, and the frontend variable `VITE_API_BASE_URL`
+> (see [Production configuration](#production-configuration-catalyst)).
 
 ---
 
 ## Table of Contents
 
 - [Platform Architecture](#platform-architecture)
-- [Core Modules](#core-modules)
+- [Backend Modules](#backend-modules)
 - [Key Features](#key-features)
 - [Tech Stack](#tech-stack)
+- [Background Processing & Resilience](#background-processing--resilience)
 - [Project Structure](#project-structure)
-- [Architecture & Design Principles](#architecture--design-principles)
 - [Authentication & Security](#authentication--security)
 - [Multi-Tenancy Model](#multi-tenancy-model)
 - [Local Development](#local-development)
 - [Docker](#docker)
 - [Environment Variables](#environment-variables)
 - [Deployment](#deployment)
+- [Operations](#operations)
+- [Troubleshooting](#troubleshooting)
 - [Testing](#testing)
 - [Documentation](#documentation)
-- [Roadmap & Long-Term Vision](#roadmap--long-term-vision)
 - [Development Status](#development-status)
-- [Design Principles (recap)](#design-principles-recap)
 - [License](#license)
 
 ---
@@ -52,757 +61,365 @@
 AGSuite Platform
     │
     ▼
-Super Admin (Platform operator)
+Super Admin (platform operator)
     │
     ▼
-Company (Tenant)
+Company (tenant)
     │
     ├── Company Admin
-    │     ├── Subscriptions / Plans / Modules
+    │     ├── Subscription / plan
     │     ├── Employees
-    │     └── ERP Connections (e.g. NetSuite)
+    │     ├── NetSuite connections
+    │     └── AI configuration + OCR extraction templates
     │
-    └── Company Employees
-          └── Assigned ERP Connections (no credentials exposure)
+    └── Employees
+          └── Use only the NetSuite connections assigned to them
+              (credentials are never exposed)
 ```
 
-**Key concepts**
-
-- **Platform** → top-level operator (Super Admin) manages companies, plans, modules, and global settings.
-- **Company (Tenant)** → a subscribed organization. All data is company-scoped via `TenantMiddleware`.
-- **Company Admin** → manages their own company: plans, modules, employees, ERP connections.
-- **Employee** → can only use ERP connections explicitly assigned to them (credentials stay hidden).
+- **Super Admin** manages companies, plans, employees and platform settings.
+- **Company (tenant)** owns all of its data; every tenant-scoped query is filtered by company.
+- **Employee** works with the connections an admin assigned; secrets stay server-side.
 
 ---
 
-## Core Modules
+## Backend Modules
 
-| # | Module | Description |
-|---|--------|-------------|
-| 1 | **accounts** | Custom User model, JWT auth (access + refresh), email OTP for registration/login, password reset, profile updates, login history |
-| 2 | **tenancy** | Company model, tenant middleware, per-request company resolution, company lifecycle (suspend/activate/soft-delete/purge) |
-| 3 | **rbac** | Role-based access control, role assignment per user/company |
-| 4 | **audit** | Append-only audit log for critical lifecycle events |
-| 5 | **notifications** | In-app notification system with unread counts, per-user channels |
-| 6 | **common** | Shared utilities, email sending (SMTP + Brevo HTTP fallback), throttles |
-| 7 | **demo** | Public demo request submission, superadmin approval/rejection, conversion to company |
-| 8 | **invitations** | UUID-based invitation tokens, expiry (1–30 days), resend/expire flows |
-| 9 | **subscriptions** | Plans, company-plan assignment, upgrade/downgrade/renew/cancel, automated trial expiry, history |
-| 10 | **superadmin** | Companies, plans, modules, employees, demo requests, support sessions, platform notifications |
-| 11 | **netsuite** | OAuth 2.0 Authorization Code Grant, connection management, employee assignment, REST Record API + SuiteQL, token lifecycle, connection health, OCR integration |
-| 12 | **ai** | Pluggable AI providers (OpenAI, Gemini), business context, prompt versioning, per-call audit, short-TTL caching |
-| 13 | **ocr** | Invoice/document extraction, preprocessing, field mapping to NetSuite, validation, posting |
-| 14 | **invoice** | Invoice management |
-| 15 | **dashboard** | Aggregated company dashboard (summary, recent activity, executive charts) |
-| 16 | **reports** | Ad-hoc reports (sales trend, etc.) |
-| 17 | **reports_engine** | Scheduled report generation, templates, schedules, history, email delivery |
-| 18 | **monitoring** | Request monitoring, API usage tracking, error logs, health endpoint |
-| 19 | **sync** | Sync orchestration (Celery tasks for NetSuite reference data, etc.) |
-| 20 | **analytics** | Centralized analytics service shared by Dashboard / Reports / AI |
-| 21 | **bi** | Business Intelligence dashboards (sales, purchase, customer, inventory, finance, alerts, insights) |
+| App | Responsibility |
+|-----|----------------|
+| `accounts` | Custom user, JWT auth, email OTP (login / profile / password reset), login history |
+| `tenancy` | `Company` model, `TenantMiddleware`, company lifecycle (suspend / reactivate / soft-delete / purge) |
+| `rbac` | Roles |
+| `audit` | Append-only audit log for lifecycle events |
+| `invitations` | Single-use invitation tokens with expiry, public accept flow |
+| `subscriptions` | Plan assignment and subscription lifecycle for companies |
+| `superadmin` | Platform portal API: companies, plans, employees, settings |
+| `netsuite` | OAuth 2.0 connections, token manager, REST Record API + SuiteQL, field catalogue, custom fields, OCR validation / posting, **batch validate / post jobs** |
+| `ocr` | AI extraction engine, extraction templates, batches / uploads / documents with version history, per-company AI configuration, file storage, background execution |
+| `navigation` | Admin-configurable dynamic navigation tabs |
+| `transactions` | Company transaction records |
+| `dashboard` | Company dashboard data |
+| `monitoring` | Request log, error log, API usage, health and readiness endpoints |
+| `common` | Shared utilities: email (SMTP + Brevo), field encryption, throttles, optional-Redis helpers, scheduled tasks |
+| `core` | Shared base model |
 
 ---
 
 ## Key Features
 
-### 🔐 Authentication
-- **JWT** with dual-mode auth:
-  - In-memory access token + `Authorization: Bearer` header (primary for cross-origin frontend → backend)
-  - httpOnly `access_token` / `refresh_token` cookies (fallback for same-origin)
-- **Email OTP** for registration, login, and sensitive profile changes
-- **Password reset** via OTP (no link in email — OTP-only)
-- **Login history** per user
-- Automatic access-token refresh with request queuing on 401 (no request thrashing under concurrent expiry)
+### Authentication
+- JWT access / refresh tokens, accepted from the `Authorization: Bearer` header **or** httpOnly cookies
+- Email OTP for login, profile changes and password reset
+- Login history per user
+- Automatic access-token refresh in the frontend with queued retry of concurrent 401s
 
-### 🏢 Multi-Tenancy
-- `TenantMiddleware` injects the active company into every authenticated request
-- All tenant-scoped queries filter by `company_id`
-- Company lifecycle: operational, suspended, soft-deleted, purged (with periodic Celery cleanup)
-- Failed requests blocked on suspended/deleted companies with a clean 403
+### Multi-tenancy
+- `TenantMiddleware` resolves the active company for each authenticated request
+- Company lifecycle: active, suspended, soft-deleted, purged after a retention period
+- Requests for suspended or deleted companies are rejected
 
-### 📝 Demo Request & Onboarding
-- Public demo submission with validation
-- Superadmin approval / rejection workflow
-- 5-step conversion wizard → company:
-  1. Company details
-  2. Plan selection
-  3. Module selection
-  4. Usage limits
-  5. Company Admin creation
-- Automated invitation email for the first Company Admin
+### Invitations and subscriptions
+- UUID invitation tokens with expiry, resend and a public acceptance page
+- Plans and company subscriptions managed from the Super Admin portal; client-side subscription page
 
-### 📨 Invitation System
-- UUID-based, single-use tokens
-- Configurable expiry (1–30 days)
-- Public acceptance page with password setup
-- Resend / expire / cancel flows
-- Duplicate-active-invitation prevention
+### NetSuite integration
+- OAuth 2.0 Authorization Code flow; several connections per company; employee assignment
+- Encrypted credentials and tokens at rest (Fernet)
+- Concurrency-safe token refresh, connection health tracking and test connection
+- REST Record API and SuiteQL; field catalogue and custom fields
+- Validation of extracted documents against NetSuite reference data and **Vendor Bill posting**
+- **Batch validate / post** runs as a background job with live progress; it resumes after a crash and
+  never re-posts documents that already finished
 
-### 💳 Subscription & Licensing
-- Plan assignment, upgrade, downgrade, renew, cancel
-- Per-module usage tracking (OCR pages, AI requests, employee count, storage, etc.)
-- License enforcement middleware on every request
-- Client-facing subscription page with usage progress
-- Superadmin subscription management with tabs: Subscription / Modules / Usage / History
+### OCR and data extraction
+- Upload a single file, several files, or a ZIP; PDFs and images are normalised into page images
+- **Dynamic extraction templates** per company: choose standard fields, add custom fields with their
+  own AI instruction and header / line scope
+- AI providers: **Google Gemini**, **OpenAI** and **Anthropic**, configured per company
+  (API key stored encrypted); Gemini calls are rate-limited (concurrency + requests per minute)
+- Review screen: extracted data is a draft until a user reviews and saves it
+- History of batches, documents and document versions
+- Failures carry a stable `failure_code` and a user-safe message; technical detail goes to the logs
 
-### 🔗 NetSuite Integration
-- **OAuth 2.0 Authorization Code Grant** (no client credentials ever stored in browser)
-- Multiple connections per company (multi-account)
-- One active connection per user (with switch endpoint)
-- Employee assignment to connections (credentials stay server-side)
-- **Token manager** with row-level locking for safe concurrent refresh
-- **REST Record API + SuiteQL** support
-- **Connection health**: test connection, consecutive failure tracking, unhealthy-threshold auto-flagging
-- **OCR integration**: field catalogue, mapping suggestions, document validation, vendor bill posting
-- Full **audit trail** for every connection lifecycle event
-- Encrypted credentials at rest (Fernet `FIELD_ENCRYPTION_KEY`)
-
-### 🤖 AI Assistant
-- Pluggable providers: **OpenAI** and **Google Gemini** (configurable via `AI_PROVIDER`)
-- Typed business-context objects (no free-form prompt injection)
-- Per-call audit logging
-- Short-TTL context caching
-- Centralized `AnalyticsService` shared by Dashboard / Reports / AI
-- Graceful degradation when API key is missing
-
-### 📄 OCR & Invoice Posting
-- Document upload + preprocessing
-- Field extraction
-- Field mapping to NetSuite (with auto-suggest)
-- Document validation against NetSuite reference data
-- Vendor Bill posting back to NetSuite
-
-### 📊 Reporting & BI
-- Ad-hoc reports (sales trend, etc.)
-- Scheduled reports (templates + cron-style schedules)
-- Email delivery of generated reports
-- BI dashboards across sales / purchase / customer / inventory / finance
-- Insights + alerts
-
-### 🛡️ Security
-- JWT in httpOnly cookies (XSS-resistant)
-- Encrypted NetSuite credentials at rest (Fernet)
-- Company-scoped data isolation enforced at the query layer
-- License enforcement middleware
-- Append-only audit trail
-- CORS allowlist (no wildcard in production)
-- CSRF + HSTS + Secure cookies in production
-- Email-based throttling on registration / login / password reset
+### Platform
+- Admin-configurable navigation tabs and categories
+- Request monitoring, error log, API usage, system-health page
+- Super Admin portal and client portal in the same React app
 
 ---
 
 ## Tech Stack
 
-### Backend
-- **Python** 3.12
-- **Django** 6.x
-- **Django REST Framework**
-- **PostgreSQL** (Supabase in production, Docker PostgreSQL container for local Docker development, SQLite for non-Docker local development)
-- **SimpleJWT** (JWT auth)
-- **OAuth 2.0** (NetSuite Authorization Code Grant)
-- **Celery + Redis** (background tasks — NetSuite reference sync, subscription sync, company purge)
-- **WhiteNoise** (static files)
-- **django-cors-headers** (CORS)
-- **python-decouple** (env management)
-- **dj-database-url** (database URL parsing)
-- **cryptography** (Fernet field-level encryption)
+**Backend**: Python 3.12, Django 6.x, Django REST Framework, SimpleJWT, PostgreSQL
+(`psycopg2`), WhiteNoise, django-cors-headers, python-decouple, dj-database-url,
+`cryptography` (Fernet), Gunicorn. OCR: PyMuPDF, OpenCV (headless), Pillow, `google-genai`.
+Optional: Celery + Redis.
 
-### Frontend
-- **React 19**
-- **Vite 8**
-- **React Router 7**
-- **Axios** (with interceptors for token refresh)
-- **Tailwind CSS 4** (`@tailwindcss/vite` + `@tailwindcss/postcss`)
-- **Recharts** (BI dashboards)
-- **oxlint** (linting)
+**Frontend**: React 19, Vite 8, React Router 7, Axios, Tailwind CSS 4, oxlint.
 
-### AI Providers
-- **OpenAI** (`gpt-4o-mini` by default)
-- **Google Gemini** (`gemini-2.5-flash` by default)
+**Hosting (production)**: Zoho Catalyst (AppSail for the API, Web Client Hosting for the UI),
+Supabase PostgreSQL. Also runs on Docker, AWS, GCP, Render or a VPS - see
+[DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md).
 
-### Hosting
-| Layer | Host |
-|-------|------|
-| Backend | [Render](https://render.com) |
-| Frontend | [Vercel](https://vercel.com) |
-| Database | [Supabase](https://supabase.com) (PostgreSQL) |
-| Redis | Render Key Value |
+---
+
+## Background Processing & Resilience
+
+The backend is designed to run with **only PostgreSQL**. Redis, Celery and a persistent local disk
+are optional accelerators; when one is missing, a throttled one-line warning is logged and the app
+continues on a PostgreSQL fallback.
+
+| Concern | With Redis / Celery | Without |
+|---------|---------------------|---------|
+| OCR result cache, extraction lock, Gemini rate limiter | Redis | PostgreSQL (`OCRGeminiLease`, DB cache) |
+| OCR and NetSuite batch jobs | Celery worker | In-process background threads, or a dedicated `run_ocr_worker` process |
+| Daily housekeeping (purge deleted companies, sync subscription status) | Celery beat | `manage.py run_scheduled_tasks`, or `run_ocr_worker` (runs it daily) |
+| Uploaded files | local disk | `OCR_STORAGE_BACKEND=db` (PostgreSQL) or `s3` |
+
+**How a job runs** (`OCR_EXECUTION_MODE`, default `auto`):
+
+1. Celery is used only if a broker **and** a live worker answer a ping; otherwise
+2. background threads in the web process run the job; `external` mode leaves jobs for
+   `manage.py run_ocr_worker`.
+
+**Job state lives in PostgreSQL** (status + lease). A running job keeps renewing its lease; if its
+process dies, the job is re-queued automatically. Recovery is triggered by the frontend's status
+polling, so no scheduler is needed. Duplicate dispatch is harmless because each job is claimed
+atomically.
+
+**Single-file OCR** is answered synchronously when it finishes within
+`OCR_SINGLE_TIME_BUDGET_SECONDS` (180 s, or 20 s on Catalyst, which ends requests after 30 s).
+Otherwise the request returns `202`, the file continues in the background and the UI polls the batch.
+
+**Cache isolation**: cache and lock keys include the company and the company's AI provider/model,
+so cached extractions are never shared between tenants.
 
 ---
 
 ## Project Structure
 
-### Backend (`backend/`)
-
 ```
-backend/
-├── manage.py
-├── requirements.txt
-├── .env.example                 # Local env template
-├── .env.render                  # Render-specific env documentation
-│
-├── config/                      # Django project config
-│   ├── settings/                # Split settings: base / local / production / testing
-│   │   ├── base.py
-│   │   ├── local.py
-│   │   ├── production.py
-│   │   ├── testing.py
-│   │   ├── database.py
-│   │   ├── email.py
-│   │   ├── jwt.py
-│   │   ├── rest_framework.py
-│   │   ├── security.py
-│   │   ├── logging.py
-│   │   ├── cache.py
-│   │   └── ocr.py
-│   ├── urls.py
-│   ├── wsgi.py                  # Production entry point
-│   ├── asgi.py
-│   └── celery.py
-│
-├── accounts/                    # Users, JWT, OTP
-├── tenancy/                     # Company, tenant middleware, lifecycle
-├── rbac/                        # Roles, permissions
-├── audit/                       # Audit log
-├── notifications/               # In-app notifications
-├── common/                      # Shared utils, email, throttles
-├── demo/                        # Demo request workflow
-├── invitations/                 # Invitation tokens
-├── subscriptions/               # Plans, licensing
-├── superadmin/                  # Platform operator portal
-├── netsuite/                    # OAuth, token manager, REST + SuiteQL, OCR
-│   ├── client.py                # The only file that talks HTTP to NetSuite
-│   ├── http.py                  # Centralized timeout / retry / correlation ID
-│   ├── errors.py                # Response → typed exception mapping
-│   ├── token_manager.py         # Concurrent-safe token refresh
-│   ├── oauth.py                 # Authorization URL + signed state
-│   ├── services.py              # Orchestration (Views ↔ Repos ↔ Client)
-│   └── repositories.py          # Persistence-only
-├── ai/                          # Pluggable AI providers
-├── ocr/                         # Extraction + mapping + validation
-├── invoice/                     # Invoice management
-├── dashboard/                   # Dashboard
-├── reports/                     # Ad-hoc reports
-├── reports_engine/              # Scheduled reports
-├── monitoring/                  # Request monitoring, health, errors
-├── sync/                        # Sync orchestration (Celery)
-├── analytics/                   # Centralized analytics
-└── bi/                          # BI dashboards
+.
+├── backend/
+│   ├── manage.py, main.py (Catalyst entry), gunicorn.conf.py, app-config.json
+│   ├── config/            # settings split by concern (base, database, ocr, security, ...), urls, celery
+│   ├── accounts/  tenancy/  rbac/  audit/  invitations/  subscriptions/  superadmin/
+│   ├── netsuite/          # client, oauth, token manager, services, batch jobs (jobs.py)
+│   ├── ocr/               # views, tasks (engine), execution, leases, storage, error_taxonomy, ai/
+│   ├── navigation/  transactions/  dashboard/  monitoring/  common/  core/
+│   └── requirements.txt
+├── frontend/
+│   └── src/ { pages/{auth,client,superadmin,public,invitations}, components, services, contexts,
+│              hooks, layouts, routes, utils }
+├── catalyst.json          # AppSail (backend) + client (frontend/dist) deployment
+├── Dockerfile.backend, Dockerfile.frontend, docker-compose.yml, nginx.conf
+├── DEPLOY.md, DEPLOY_ANYWHERE.md
+└── env.docker.example, env.postgres.example
 ```
-
-### Frontend (`frontend/`)
-
-```
-frontend/
-├── index.html
-├── package.json
-├── vite.config.js
-├── postcss.config.js
-├── vercel.json                  # Vercel deployment config
-├── .env.example                 # Local env template
-├── .env.render                  # Render static-site env documentation
-└── src/
-    ├── assets/                  # Static assets
-    ├── components/              # Reusable UI components
-    │   ├── auth/                # Auth-related components
-    │   ├── bi/                  # BI widgets (charts, etc.)
-    │   ├── client/              # Client portal components
-    │   ├── common/              # Shared (Layout, etc.)
-    │   ├── layouts/             # Layout shells (Admin, Client, Public, Auth)
-    │   ├── netsuite/            # NetSuite UI components
-    │   └── superadmin/          # Super admin components
-    ├── constants/               # App-wide constants
-    ├── contexts/                # React contexts (auth, etc.)
-    ├── hooks/                   # Custom React hooks
-    ├── pages/                   # Page-level components
-    │   ├── admin/               # Super admin pages
-    │   ├── client/              # Client portal pages
-    │   ├── invitations/         # Invitation acceptance
-    │   └── public/              # Public marketing / demo pages
-    ├── routes/                  # Centralized route definitions
-    ├── services/                # API service layers
-    │   ├── apiClient.js         # Axios instance + token-refresh interceptor
-    │   └── *.js                 # Per-module service modules
-    └── utils/                   # Helpers, constants, token storage
-```
-
----
-
-## Architecture & Design Principles
-
-### Backend — Three-Layer Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  View Layer (views.py)                                  │
-│  • Authentication, request validation                   │
-│  • Response formatting                                  │
-│  • Delegates to services                                │
-└─────────────────────────────────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────────┐
-│  Service Layer (services.py)                            │
-│  • Business logic, orchestration                       │
-│  • Coordinates repos + external clients                 │
-│  • Transaction boundaries                              │
-└─────────────────────────────────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────────┐
-│  Repository Layer (repositories.py)                     │
-│  • DB queries only — no business logic                  │
-│  • One repo per aggregate root                         │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Strict rules**
-- ❌ No business logic in views
-- ❌ No direct ORM calls in services (go through repos)
-- ❌ No ORM calls in serializers except read-only convenience
-- ✅ Repos own transactions for multi-row writes
-- ✅ Services own transactions for cross-aggregate orchestration
-
-### Frontend — Service-Layer Pattern
-
-```
-┌────────────────────────────────────────────┐
-│  Pages (page-level components)             │
-│  • Render UI, handle local state           │
-│  • Call service methods                    │
-└────────────────────────────────────────────┘
-                  ↓
-┌────────────────────────────────────────────┐
-│  Services (services/*.js)                  │
-│  • All API calls                            │
-│  • Use unwrap() for consistent response    │
-│  • Centralized in one axios instance       │
-└────────────────────────────────────────────┘
-                  ↓
-┌────────────────────────────────────────────┐
-│  apiClient.js                              │
-│  • Axios instance                          │
-│  • Injects Bearer token                    │
-│  • Auto-refresh on 401                     │
-│  • withCredentials for httpOnly cookies    │
-└────────────────────────────────────────────┘
-```
-
-**Key abstractions**
-- `unwrap(response)` — consistent response handler (`{ success, data, message }` envelope)
-- `apiClient` — single axios instance with request + response interceptors
-- `ProtectedRoute` — guards authenticated routes
-- `AdminRoute` / `RoleRoute` — guards role-restricted routes
-
-### General Principles
-- **Thin Views, Thick Services**
-- **Service-Oriented Architecture**
-- **Repository Pattern**
-- **Separation of Concerns**
-- **Multi-Tenancy by Design**
-- **Encrypted Credentials at Rest** (Fernet)
-- **Auditable Lifecycle Events** (append-only)
-- **Single Source of Truth** for business calculations
-- **Reusable UI Components**
-- **No secrets in the frontend**
 
 ---
 
 ## Authentication & Security
 
-### JWT — Dual-Mode Design
-
-AGSuite uses **both** an `Authorization: Bearer` header **and** httpOnly cookies:
-
-| Mode | When | Why |
-|------|------|-----|
-| **In-memory access token + Authorization header** (primary) | Cross-origin: Vercel frontend → Render backend | Avoids CORS quirks with cookies across subdomains; in-memory storage means XSS can't persist-steal the token |
-| **httpOnly cookies** (fallback) | Same-origin or when in-memory refresh isn't available | Browser attaches automatically, immune to JS-access |
-
-**Refresh strategy** (`apiClient.js`):
-- On 401, the first failing request triggers a single refresh
-- All other in-flight 401s are queued behind that refresh
-- After refresh, queued requests are retried with the new access token
-- On refresh failure, all queued requests are rejected and the user is bounced to `/login`
-
-### Security Headers & Cookies
-
-Production (`config/settings/production.py`) enables:
-- `SECURE_SSL_REDIRECT = True`
-- `SECURE_HSTS_SECONDS = 31536000` (1 year, with subdomains + preload)
-- `SESSION_COOKIE_SECURE = True`
-- `CSRF_COOKIE_SECURE = True`
-- `JWT_AUTH_COOKIE_SAMESITE = "None"` (required for cross-origin cookie auth)
-- `JWT_AUTH_COOKIE_SECURE = True`
-- `SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"`
-
-### Field-Level Encryption
-
-NetSuite `client_secret`, `access_token`, and `refresh_token` are encrypted at rest using Fernet (`FIELD_ENCRYPTION_KEY`). The key is generated with:
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-> **Important:** Rotating this key makes existing encrypted rows unreadable. Treat it as a long-lived secret.
-
-### Throttling
-
-Per-endpoint DRF throttle rates are env-driven:
-- `THROTTLE_ANON` (default `100/min`)
-- `THROTTLE_USER` (default `1000/min`)
-- `THROTTLE_LOGIN_OTP` / `THROTTLE_REGISTER_OTP` (default `5/min`)
-- `THROTTLE_AI_CHAT` (default `20/min`)
-- `THROTTLE_DASHBOARD` (default `120/min`)
-- `THROTTLE_NETSUITE_SYNC` (default `30/min`)
-- `THROTTLE_HEALTH_CHECK` (default `60/min`)
+- **Tokens**: the frontend keeps the access token in memory and sends it as a Bearer header; the
+  backend also accepts httpOnly `access_token` / `refresh_token` cookies. Lifetimes come from
+  `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` / `JWT_REFRESH_TOKEN_LIFETIME_DAYS`.
+- **Production settings** enable HSTS (1 year, subdomains, preload), secure session / CSRF cookies,
+  a strict referrer policy and `SECURE_SSL_REDIRECT` (overridable by env).
+- **Field-level encryption**: NetSuite secrets and AI API keys are encrypted with Fernet using
+  `FIELD_ENCRYPTION_KEY`. Rotating the key makes existing encrypted rows unreadable.
+  ```bash
+  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  ```
+- **Throttling** is env-driven (`THROTTLE_ANON`, `THROTTLE_USER`, `THROTTLE_LOGIN_OTP`,
+  `THROTTLE_REGISTER_OTP`, `THROTTLE_DASHBOARD`, `THROTTLE_NETSUITE_SYNC`, `THROTTLE_HEALTH_CHECK`).
+- **Error hygiene**: API responses and the public health endpoint do not expose database or
+  internal exception details; those go to the logs only.
 
 ---
 
 ## Multi-Tenancy Model
 
-Every tenant-scoped model carries a `company_id` FK. The `TenantMiddleware`:
-
-1. Resolves the active company from the authenticated user's session/profile
-2. Blocks requests for suspended or soft-deleted companies with a 403
-3. Provides the resolved company to downstream views/services via the request
-
-**Rules enforced at the query layer:**
-- Repositories always filter by `company_id`
-- No service accepts a `company_id` from the user — it derives it from the request user
-- Cross-company reads are impossible by construction (admin-only diagnostics go through superadmin endpoints)
+Every tenant-scoped model carries a company reference. `TenantMiddleware` resolves the company from
+the authenticated user and blocks requests for suspended or deleted companies. Services derive the
+company from the request user and never trust a company id sent by the client.
 
 ---
 
 ## Local Development
 
-### Prerequisites
-- **Python 3.12**
-- **Node.js 20+**
-- **Redis** (for Celery background tasks)
-- **Git**
+**Prerequisites**: Python 3.12, Node.js 20+, Git. PostgreSQL is recommended (some migrations expect it).
+Redis is **not** required.
 
-### 1. Clone & install
+### Backend (Windows PowerShell)
 
-```bash
-git clone <your-repo-url> agsuite-erp
-cd agsuite-erp
-```
-
-### 2. Backend
-
-```bash
+```powershell
 cd backend
 python -m venv .venv
-
-# Activate the venv:
-# Windows (PowerShell)
 .venv\Scripts\Activate.ps1
-# macOS / Linux
-source .venv/bin/activate
-
 pip install -r requirements.txt
-
-# Copy and edit env
-cp .env.example .env
-# Edit .env — at minimum set SECRET_KEY, DATABASE_URL (or leave SQLite), and
-# FIELD_ENCRYPTION_KEY. For AI features, set OPENAI_API_KEY or GEMINI_API_KEY.
-
+copy .env.example .env      # set SECRET_KEY, DATABASE_URL (or LOCAL_DB_NAME), FIELD_ENCRYPTION_KEY
 python manage.py migrate
 python manage.py runserver
 ```
 
-Backend will run at `http://localhost:8000`.
+macOS / Linux: `python -m venv .venv && source .venv/bin/activate`, then the same commands (`cp` instead of `copy`).
+The API runs at `http://localhost:8000`.
 
-### 3. Frontend
+OCR jobs run in background threads of the dev server. To run them in a separate process instead,
+set `OCR_EXECUTION_MODE=external` and start `python manage.py run_ocr_worker` in a second terminal.
 
-```bash
+### Frontend
+
+```powershell
 cd frontend
 npm install
-
-# Copy and edit env
-cp .env.example .env
-# Default points to http://localhost:8000/api/v1 — fine for local dev.
-
+copy .env.example .env      # VITE_API_BASE_URL, e.g. http://localhost:8000/api/v1
 npm run dev
 ```
 
-Frontend will run at `http://localhost:5173`.
+The UI runs at `http://localhost:5173`. `npm run build` produces `frontend/dist`.
 
 ---
 
 ## Docker
 
-AGSuite ERP is containerized for local development and deployment preparation using **Docker** and **Docker Compose**.
-
-The Docker environment includes separate services for:
-
-- Django backend
-- React/Vite frontend
-- PostgreSQL
-- Redis
-- Celery Worker
-- Celery Beat
-
-### Prerequisites
-
-Only **Docker Desktop** is required on the host machine.
-
-You do **not** need to install Python, Node.js, Django, PostgreSQL, Redis, or Celery separately. These dependencies run inside the Docker containers.
-
-### 1. Clone the repository
-
 ```bash
-git clone <your-repo-url> agsuite-erp
-cd agsuite-erp
+cp env.docker.example .env.docker        # then fill in the values
+docker compose up -d --build              # PostgreSQL + backend + frontend (minimal)
 ```
 
-You can also download the repository as a ZIP and extract it locally.
+| Command | What it adds |
+|---------|--------------|
+| `docker compose --profile full up -d` | Redis, Celery worker and beat (uncomment the Redis lines in `.env.docker` first) |
+| `docker compose --profile worker up -d` | PostgreSQL-queue worker (`run_ocr_worker`); set `OCR_EXECUTION_MODE=external` |
 
-### 2. Create Docker environment files
-
-The actual Docker environment files are intentionally excluded from Git because they may contain secrets.
-
-Copy the provided example files:
-
-```text
-.env.docker.example   →   .env.docker
-.env.postgres.example →   .env.postgres
-```
-
-Fill in the required values in the new files.
-
-For `SECRET_KEY`, generate a Django secret:
-
-```bash
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-```
-
-For `FIELD_ENCRYPTION_KEY`, generate a Fernet key:
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Do not reuse production secrets for another local installation.
-
-### 3. Start the complete Docker environment
-
-From the project root:
-
-```bash
-docker compose up -d --build
-```
-
-Docker Compose will build the application images and start the complete local environment, including PostgreSQL and Redis.
-
-On the first startup, Django migrations, RBAC seeding, and static-file collection are performed automatically by the backend container.
-
-### 4. Check running containers
-
-```bash
-docker compose ps
-```
-
-All required services should be running.
-
-### 5. Open the application
-
-The application is available at:
-
-```text
-http://localhost
-```
-
-Health check:
-
-```text
-http://localhost/api/v1/monitoring/health/
-```
-
-### 6. Stop the Docker environment
-
-```bash
-docker compose down
-```
-
-This stops and removes the containers while preserving Docker volumes such as the local PostgreSQL database.
-
-### 7. Start again without rebuilding
-
-When no code, dependency, or Docker configuration changes were made:
-
-```bash
-docker compose up -d
-```
-
-### 8. Rebuild after code or Docker changes
-
-After changing application code, dependencies, Dockerfiles, or Docker Compose configuration:
-
-```bash
-docker compose up -d --build
-```
-
-> **Important:** Do not use `docker compose down -v` unless you intentionally want to remove Docker volumes and reset the local PostgreSQL/Redis data.
-
-The Docker setup provides an isolated and reproducible local environment that can be run on another machine with Docker Desktop, without installing the application's runtime dependencies directly on the host.
+Stop with `docker compose down`; rebuild with `docker compose up -d --build`.
 
 ---
 
 ## Environment Variables
 
-### Backend (`backend/.env`)
+Full templates: `backend/.env.example`, `frontend/.env.example`, `env.docker.example`,
+`env.postgres.example`.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SECRET_KEY` | ✅ | Django secret key |
-| `DEBUG` | ✅ | `True` for local, `False` for production |
-| `ALLOWED_HOSTS` | ✅ | Comma-separated host list |
-| `DATABASE_URL` | ✅ | `postgresql://...` (Supabase) for prod, leave blank for local SQLite |
-| `FIELD_ENCRYPTION_KEY` | ✅ for NetSuite | Fernet key for NetSuite credential encryption |
-| `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` | ❌ | Default `15` |
-| `JWT_REFRESH_TOKEN_LIFETIME_DAYS` | ❌ | Default `7` |
-| `CORS_ALLOWED_ORIGINS` | ✅ | Comma-separated frontend origins |
-| `CSRF_TRUSTED_ORIGINS` | ✅ | Comma-separated trusted origins |
-| `FRONTEND_URL` | ✅ | Used to build OAuth callback redirects |
-| `NETSUITE_REDIRECT_URI` | ✅ for NetSuite | Must exactly match the Integration record |
-| `OPENAI_API_KEY` | ❌ | If absent, AI gracefully returns "not configured" |
-| `OPENAI_MODEL` | ❌ | Default `gpt-4o-mini` |
-| `GEMINI_API_KEY` | ❌ | For Gemini provider |
-| `GEMINI_MODEL` | ❌ | Default `gemini-2.5-flash` |
-| `AI_PROVIDER` | ❌ | `openai` or `gemini` (default `gemini`) |
-| `BREVO_API_KEY` | ❌ | Required on Render (SMTP ports are blocked there) |
-| `EMAIL_HOST` / `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` / `EMAIL_PORT` / `EMAIL_USE_TLS` | ❌ | SMTP fallback (Gmail etc.) |
-| `DEFAULT_FROM_EMAIL` / `DEFAULT_FROM_NAME` | ❌ | Outgoing mail identity |
-| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | ❌ | Default `redis://127.0.0.1:6379/0` |
-| `THROTTLE_*` | ❌ | Per-endpoint rate limits |
+**Required (backend)**
 
-> For Render, all of the above are configured via the dashboard (not via `.env` files). `backend/.env.render` is a documentation-only file describing the production values.
+| Variable | Purpose |
+|----------|---------|
+| `SECRET_KEY` | Django secret |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `FIELD_ENCRYPTION_KEY` | Fernet key for encrypted fields |
+| `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` | Host and origin configuration |
+| `NETSUITE_REDIRECT_URI` | OAuth redirect; the backend route `/api/v1/netsuite/callback/` |
+| `EMAIL_*` / `BREVO_API_KEY` | Email delivery (OTP, invitations) |
 
-### Frontend (`frontend/.env`)
+**Optional (all have safe defaults)**: `REDIS_URL` / `REDIS_ENABLED`, `CELERY_BROKER_URL`,
+`OCR_EXECUTION_MODE`, `OCR_BACKGROUND_WORKERS`, `OCR_STORAGE_BACKEND`, `OCR_S3_*`,
+`OCR_SINGLE_TIME_BUDGET_SECONDS`, `OCR_SINGLE_ASYNC`, `OCR_MULTIPLE_ENABLED`, `OCR_JOB_*`,
+`GUNICORN_WORKERS` / `GUNICORN_THREADS` / `GUNICORN_TIMEOUT`. The complete table is in
+[DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md).
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `VITE_API_BASE_URL` | ✅ | e.g. `https://agsuite-erp-backend.onrender.com/api/v1` for production, `http://localhost:8000/api/v1` for local |
+**Frontend**: `VITE_API_BASE_URL` (the production build falls back to the Catalyst backend URL).
 
 ---
 
 ## Deployment
 
-### Backend — Render
+### Production configuration (Catalyst)
 
-The backend runs as a **Web Service** on Render using `gunicorn`:
+Backend (AppSail `agsuiteerp`, source `backend`, command `python3 main.py`, Python 3.12, 2048 MB):
 
-- **Build command:** `pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate`
-- **Start command:** `gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`
-- **Settings module:** `config.settings.production` (set via `DJANGO_SETTINGS_MODULE` env var)
+```env
+ALLOWED_HOSTS=agsuiteerp-50046369262.catalystappsail.in
+CORS_ALLOWED_ORIGINS=https://agsuiteerp-60086947932.catalystserverless.in
+CSRF_TRUSTED_ORIGINS=https://agsuiteerp-60086947932.catalystserverless.in,https://agsuiteerp-50046369262.catalystappsail.in
+FRONTEND_URL=https://agsuiteerp-60086947932.catalystserverless.in
+NETSUITE_REDIRECT_URI=https://agsuiteerp-50046369262.catalystappsail.in/api/v1/netsuite/callback/
 
-> SMTP ports are blocked on Render's free tier. Use the **Brevo HTTP API** (`BREVO_API_KEY`) for outbound mail.
+# Catalyst has no persistent disk and no worker process:
+OCR_STORAGE_BACKEND=db          # or s3
+OCR_EXECUTION_MODE=thread
+```
 
-### Frontend — Vercel
+Frontend build: set `VITE_API_BASE_URL=https://agsuiteerp-50046369262.catalystappsail.in/api/v1`,
+then run `npm run build` and deploy `frontend/dist`.
 
-The frontend is deployed as a static site:
+Catalyst ends every request after **30 seconds**. Long OCR continues in the background and the UI polls
+for the result. A background thread only runs while the AppSail instance is alive; if it is stopped, the
+next status poll resumes the job.
 
-- **Build command:** `npm run build`
-- **Output directory:** `dist`
-- **Env var:** `VITE_API_BASE_URL=https://agsuite-erp-backend.onrender.com/api/v1`
+Register the same `NETSUITE_REDIRECT_URI` in the NetSuite integration record.
 
-### Database — Supabase
+### Other hosts
 
-- Provision a PostgreSQL instance on [supabase.com](https://supabase.com)
-- Copy the connection string into `DATABASE_URL`
-- Append `?sslmode=require` if not present
+Docker, AWS, GCP Cloud Run, Render and VPS setups, with the processes and environment each needs, are in
+[DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md). Database and general deployment notes are in [DEPLOY.md](DEPLOY.md).
 
-### Periodic Tasks
+After every deploy run `python manage.py migrate`.
 
-- `purge_expired_deleted_companies` — runs daily
-- `sync_company_subscription_statuses` — runs daily
-- `sync_netsuite_reference_data` — runs on each new NetSuite OAuth callback
+---
 
-Celery Beat requires a separate long-running Background Worker service on Render when background job processing is enabled in production.
+## Operations
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /` and `GET /health/` | Liveness |
+| `GET /api/v1/monitoring/health/` | Database, email, encryption, **storage**, **redis** and **ocr_execution** checks. Redis / Celery are reported but never degrade the status |
+| `GET /api/v1/monitoring/readiness/` | Readiness |
+
+| Command | Purpose |
+|---------|---------|
+| `python manage.py run_ocr_worker [--once] [--interval N]` | PostgreSQL-queue worker for OCR and NetSuite batch jobs; also runs the daily housekeeping |
+| `python manage.py run_scheduled_tasks` | Daily housekeeping without Celery beat; safe to run from any scheduler |
+
+**Logging policy**: expected conditions (Redis down, quota exhausted, a document NetSuite rejected) produce
+a one-line warning with the reason. A traceback is written only for genuinely unexpected errors.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---------|--------------|
+| `400 DisallowedHost` / bad request on the API | `ALLOWED_HOSTS` does not include the deployed API host |
+| Browser CORS or CSRF errors | `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` missing the frontend origin |
+| Frontend loads but calls the wrong API | `VITE_API_BASE_URL` not set for the build |
+| `Redis unavailable ... continuing without Redis` | Informational: PostgreSQL fallbacks are in use |
+| `Celery is not available (...)` | Informational: jobs run in background threads |
+| `Unknown command: run_ocr_worker` | The command file must be at `backend/ocr/management/commands/run_ocr_worker.py` |
+| OCR file "no longer available on the server" | Local disk is not persistent; use `OCR_STORAGE_BACKEND=db` or `s3` |
+| Job stays "processing" on Catalyst | Instance was stopped; open the batch again, polling resumes it |
 
 ---
 
 ## Testing
 
-### Backend
-
-```bash
-cd backend
-python manage.py test
-```
-
-> Tests use an in-memory SQLite database (see `config/settings/testing.py`).
-
-### Frontend
-
-```bash
-cd frontend
-npm run build       # Production build (catches type/import errors)
-npm run lint        # oxlint
-```
-
-### Manual smoke tests
-
-- **Auth flow:** register → OTP verify → login → `/auth/me/`
-- **Multi-tenancy:** log in as two different companies, verify zero data overlap
-- **NetSuite:** create connection → OAuth → test connection → fetch a record
-- **OCR:** upload invoice → field mapping → validate → post vendor bill
+The previous backend tests were removed while a new suite is being written, so there is currently no
+automated backend test suite in the repository. Planned coverage: OCR engine and failure handling,
+Redis-optional fallbacks, background execution and recovery, storage backends, and NetSuite batch jobs.
+Frontend linting: `npm run lint`. Smoke test after a deploy: check `/api/v1/monitoring/health/`, upload one
+file, upload several files, and run a NetSuite batch validate.
 
 ---
 
 ## Documentation
 
-| File | Description |
-|------|-------------|
-| `backend/docs/` | Per-sprint implementation notes (Sprint 0 Phase 02/03, Async Processing) |
-| `frontend/ROUTING_AUDIT_REPORT.md` | Full route tree + layout audit |
-| `backend/.env.example` | All backend env variables with inline comments |
-| `backend/.env.render` | Render-specific env documentation |
-| `frontend/.env.example` | Frontend env template |
-| `frontend/.env.render` | Render static-site env documentation |
+- [DEPLOY.md](DEPLOY.md) - general deployment notes
+- [DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md) - host-by-host guide and the full list of optional variables
 
 ---
 
 ## Development Status
 
-### Implemented
-- ✅ Custom User + JWT + Email OTP authentication
-- ✅ Multi-tenancy with company lifecycle
-- ✅ Demo request → company conversion flow
-- ✅ Invitation system with UUID tokens
-- ✅ Subscription plans, licensing, per-module usage
-- ✅ NetSuite OAuth + connection management + employee assignment
-- ✅ NetSuite REST Record API + SuiteQL
-- ✅ NetSuite token manager with concurrent-safe refresh
-- ✅ Connection health tracking + test connection
-- ✅ OCR ingestion + field mapping + NetSuite validation
-- ✅ Vendor Bill posting to NetSuite
-- ✅ AI assistant (OpenAI + Gemini providers)
-- ✅ Dashboard, BI dashboards, ad-hoc reports
-- ✅ Scheduled reports engine
-- ✅ Audit logging across critical actions
-- ✅ Super admin portal
-- ✅ Client portal
-- ✅ Monitoring + health endpoint
+**Implemented**: custom user + JWT + email OTP; multi-tenancy with company lifecycle; invitations;
+subscriptions and plans; Super Admin and client portals; NetSuite OAuth, connections, REST + SuiteQL,
+field catalogue, custom fields; OCR extraction with templates, history and versions; per-company AI
+providers; Vendor Bill posting; NetSuite batch jobs; optional Redis / Celery with PostgreSQL fallbacks;
+storage backends (local / PostgreSQL / S3); monitoring and health.
 
-### Active Work
-- 🔄 Production deployment hardening
-- 🔄 Production background job processing on Render (worker deployment deferred until required)
-- 🔄 Connection reconnect flow when refresh tokens expire
-
----
-
-## Design Principles (recap)
-
-- Thin Views, Thick Services
-- Service-Oriented Architecture
-- Repository Pattern
-- Separation of Concerns
-- Multi-Tenancy by Design
-- Encrypted Credentials at Rest
-- Auditable Lifecycle Events
-- Single Source of Truth for Business Calculations
-- Reusable UI Components
+**Active work**: production hardening on Catalyst, a new automated test suite, connection reconnect flow
+when refresh tokens expire.
 
 ---
 

@@ -864,7 +864,7 @@ def acquire_extraction_lock(
 
     except redis.RedisError as exc:
         report_redis_failure(exc)
-        logger.exception(
+        logger.debug(
             "Redis unavailable for OCR extraction lock; using PostgreSQL  " 
             "fallback file_hash=%s reason=%s",
             file_hash,
@@ -919,7 +919,7 @@ def renew_extraction_lock(
         return bool(result)
 
     except redis.RedisError as exc: 
-        logger.exception(
+        logger.warning(
             "OCR extraction lock renewal failed — file_hash=%s reason=%s",
             file_hash,
             exc,
@@ -960,6 +960,7 @@ class ExtractionLockHeartbeat:
                 self.file_hash,
                 self.requested_fields,
                 self.token,
+                self.scope,
             )
 
             if not renewed:
@@ -1723,6 +1724,7 @@ def execute_upload_job(
                         retry_status, retry_token = acquire_extraction_lock(
                             upload.file_hash,
                             requested_fields,
+                            scope=scope,
                         )
 
                         if retry_status == ExtractionLockStatus.ACQUIRED:
