@@ -229,52 +229,6 @@ class NetSuiteCustomFieldSerializer(serializers.ModelSerializer):
             'updated_at',
         )
 
-class MappingSourceFieldSerializer(serializers.Serializer):
-    key = serializers.CharField(required=False, allow_blank=False, max_length=150)
-    field_key = serializers.CharField(required=False, allow_blank=False, max_length=150)
-    label = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    field_label = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    scope = serializers.ChoiceField(choices=('header', 'line'), default='header')
-    datatype = serializers.ChoiceField(
-        choices=('text', 'number', 'date', 'boolean', 'currency'),
-        default='text',
-    )
-
-    def validate(self, attrs):
-        key = attrs.get('key') or attrs.get('field_key')
-        if not key:
-            raise serializers.ValidationError(
-                {'key': 'Either key or field_key is required.'}
-            )
-        label = attrs.get('label')
-        if label is None or not label.strip():
-            label = attrs.get('field_label') or key
-        attrs['key'] = key
-        attrs['label'] = label.strip()
-        return attrs
-
-class MappingSuggestionRequestSerializer(serializers.Serializer):
-    connection_id = serializers.UUIDField()
-    record_type = serializers.CharField(
-        max_length=64,
-        default='vendorBill',
-    )
-    source_fields = MappingSourceFieldSerializer(
-        many=True,
-        allow_empty=False,
-    )
-
-
-class MappingSuggestionSerializer(serializers.Serializer):
-    source_field_key = serializers.CharField()
-    source_field_label = serializers.CharField()
-    source_scope = serializers.CharField()
-    source_datatype = serializers.CharField()
-    status = serializers.ChoiceField(choices=[c[0] for c in MappingStatus.choices])
-    suggested_target = serializers.DictField(required=False, allow_null=True)
-    candidates = serializers.ListField()
-
-
 class MappingSaveItemSerializer(serializers.Serializer):
     source_field_key = serializers.CharField(
         max_length=150,

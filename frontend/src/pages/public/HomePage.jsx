@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+import Button from '../../components/ui/Button.jsx'
 import Card from '../../components/ui/Card.jsx'
 
 const FEATURES = [
@@ -64,7 +66,7 @@ export default function HomePage() {
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 -z-10 bg-gradient-to-b from-[var(--color-primary)]/5 to-transparent" />
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
+        <div className="mx-auto max-w-7xl px-4 pt-12 pb-0 sm:px-6 sm:pt-14 lg:px-8 lg:pt-16">
           <div className="mx-auto max-w-3xl text-center">
             <h1 className="font-[var(--font-display)] text-4xl font-bold tracking-tight text-[var(--color-ink)] sm:text-5xl lg:text-6xl">
               AGSuite ERP
@@ -73,12 +75,20 @@ export default function HomePage() {
               Transform your business operations with AI-driven invoice processing, NetSuite integration,
               and powerful analytics. The all-in-one platform for modern enterprises.
             </p>
+
+            <div className="mt-8 flex justify-center">
+              <Link to="/login">
+                <Button intent="primary" size="lg" className="px-8 sm:px-30 text-base sm:text-lg">
+                  Login
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </section>
 
       {/* Features Preview */}
-      <section className="py-20">
+      <section className="pt-6 pb-16 sm:pt-8 sm:pb-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="font-[var(--font-display)] text-3xl font-bold text-[var(--color-ink)]">
@@ -88,9 +98,9 @@ export default function HomePage() {
               From invoice processing to executive dashboards, AGSuite ERP covers every layer of your business.
             </p>
           </div>
-          <div className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-6 lg:gap-8">
             {FEATURES.map((feature) => (
-              <Card key={feature.title} className="p-6">
+              <Card key={feature.title} className="p-6 sm:col-span-1 lg:col-span-2">
                 <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--color-primary-soft)] text-[var(--color-primary)]">
                   {ICONS[feature.icon]}
                 </div>

@@ -1,49 +1,20 @@
 import { Link } from 'react-router-dom'
-import Button from '../ui/Button.jsx'
-
-const NAV_LINKS = [
-  { label: 'Home', to: '/' },
-  { label: 'Features', to: '/features' },
-  { label: 'Pricing', to: '/pricing' },
-  { label: 'About', to: '/about' },
-  { label: 'Contact', to: '/contact' },
-]
 
 export default function TemplatesPagePublicLayout({ children }) {
   return (
     <div className="flex min-h-screen flex-col bg-[var(--color-canvas)]">
       <nav className="sticky top-0 z-50 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-          <Link to="/" className="flex items-center gap-2">
+        <div className="mx-auto flex max-w-7xl items-center justify-center px-4 py-3 sm:px-6 lg:px-8">
+          <Link to="/" className="flex items-center justify-center gap-2">
             <span className="relative inline-flex h-2.5 w-2.5 text-[var(--color-positive)]">
               <span className="pulse-ring absolute inset-0" />
               <span className="relative inline-flex h-full w-full rounded-full bg-current" />
             </span>
-            <span className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
+
+            <span className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
               AGSuite ERP
             </span>
           </Link>
-
-          <div className="hidden items-center gap-6 md:flex">
-            {NAV_LINKS.map((link) => (
-              <Link
-                key={link.to}
-                to={link.to}
-                className="text-sm font-medium text-[var(--color-muted)] transition-colors hover:text-[var(--color-ink)]"
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Link to="/login">
-              <Button intent="secondary" size="sm">Login</Button>
-            </Link>
-            <Link to="/request-demo">
-              <Button intent="primary" size="sm">Request Demo</Button>
-            </Link>
-          </div>
         </div>
       </nav>
 
