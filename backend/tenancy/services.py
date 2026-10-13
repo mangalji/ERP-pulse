@@ -247,6 +247,11 @@ class ClientPortalService:
     def activate_employee(self, *, company, employee_id, acting_user):
         self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
+        if not employee.has_usable_password():
+            raise ValueError(
+                'This employee must complete the invitation '
+                'and set a password before activation.'
+            )
         employee.is_active = True
         employee.save(update_fields=['is_active'])
         audit_service.log(

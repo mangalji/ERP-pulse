@@ -157,9 +157,12 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         company = self._company(request)
-        employee = client_portal_service.activate_employee(
-            company=company, employee_id=pk, acting_user=request.user,
-        )
+        try:
+            employee = client_portal_service.activate_employee(
+                company=company, employee_id=pk, acting_user=request.user,
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return success_response(
             message='Employee activated successfully.',
             data=CompanyEmployeeSerializer(employee).data,

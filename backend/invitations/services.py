@@ -15,7 +15,7 @@ from common.contact_validation import normalize_phone
 from tenancy.services import company_lifecycle_service
 from tenancy.models import Company
 from rbac.models import Role
-
+from urllib.parse import urlsplit
 from .models import Invitation, InvitationStatus
 
 User = get_user_model()
@@ -392,14 +392,25 @@ class InvitationService:
         """
         frontend_url = settings.FRONTEND_URL.rstrip('/')
         invitation_link = f"{frontend_url}/#/invitation/{invitation.token}"
-        print("\n" + "=" * 70)
-        print("              AGSUITE INVITATION")
-        print("=" * 70)
-        print(f"Email:            {invitation.email}")
-        print(f"Company:          {invitation.company.name}")
-        print(f"Invitation Link:  {invitation_link}")
-        print(f"Expires At:       {invitation.expires_at}")
-        print("=" * 70 + "\n")
+        frontend_host = (urlsplit(frontend_url).hostname or '').lower()
+        is_local_frontend = frontend_host in {
+            'localhost',
+            '127.0.0.1',
+            '::1',
+        }
+        if settings.DEBUG and is_local_frontend:
+            logger.info(
+                "Invitation Link: %s, email: %s, company:%s, expires at: %s",
+                invitation_link,invitation.email,invitation.company.name,invitation.expirest_at,
+            )
+        # print("\n" + "=" * 70)
+        # print("              AGSUITE INVITATION")
+        # print("=" * 70)
+        # print(f"Email:            {invitation.email}")
+        # print(f"Company:          {invitation.company.name}")
+        # print(f"Invitation Link:  {invitation_link}")
+        # print(f"Expires At:       {invitation.expires_at}")
+        # print("=" * 70 + "\n")
 
         subject = f"You've been invited to join {invitation.company.name}"
         message = (

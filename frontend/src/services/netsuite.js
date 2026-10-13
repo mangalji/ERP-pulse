@@ -35,11 +35,6 @@ export const netsuiteApi = {
       `${NETSUITE_ENDPOINTS.companyConnections}${connectionId}/remove-employee/${employeeId}/`,
     ).then(unwrap),
 
-    reconnectConnection: (connectionId) =>
-    apiClient.post(
-      `${NETSUITE_ENDPOINTS.companyConnections}${connectionId}/reconnect/`,
-    ).then(unwrap),
-
   reconnectConnection: (connectionId) =>
     apiClient.post(
       `${NETSUITE_ENDPOINTS.companyConnections}${connectionId}/reconnect/`,

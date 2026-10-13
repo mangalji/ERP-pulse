@@ -156,7 +156,7 @@ def execution_status(probe: bool = True) -> dict:
 
     return {
         "configured_mode": configured,
-        "resolved_mode": reso,
+        "resolved_mode": resolved,
         "celery_available": _probe_state["ok"],
         "celery_probe_reason": _probe_state["reason"] or None,
         "background_workers": int(getattr(settings, "OCR_BACKGROUND_WORKERS", 2)),
@@ -178,6 +178,10 @@ class _BackgroundPool:
         self._workers_setting = workers_setting
         self._default_workers = default_workers
         self._prefix = prefix
+
+        self._lock = threading.Lock()
+        self._queue = queue.Queue()
+        self._threads = []
 
     def _ensure_started(self) -> None:
         with self._lock:

@@ -703,8 +703,8 @@ const isFormValid = () => {
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{getRoleName(employee)}</td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.department || '—'}</td>
                       <td className="py-3 pr-4">
-                        <Badge tone={employee.is_active ? 'positive' : 'neutral'}>
-                          {employee.is_active ? 'Active' : 'Inactive'}
+                        <Badge tone={!hasEmployeePassword(employee) ? 'neutral' : employee.is_active ? 'positive' : 'neutral'}>
+                          {!hasEmployeePassword(employee) ? 'neutral' : employee.is_active ? 'Active' : 'Inactive'}
                         </Badge>
                       </td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)] capitalize">
@@ -713,6 +713,7 @@ const isFormValid = () => {
                           : '—'}
                       </td>
                       <td className="py-3">
+                        {hasEmployeePassword(employee) ? (
                         <div className="flex flex-wrap items-center gap-1">
                           <button
                             onClick={() => handleView(employee)}
@@ -740,6 +741,11 @@ const isFormValid = () => {
                             {employee.is_active ? 'Deactivate' : 'Activate'}
                           </Button>
                         </div>
+                        ):(
+                          <span className="text-xs text-[var(--color-muted)]">
+                             Awaiting password setup
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

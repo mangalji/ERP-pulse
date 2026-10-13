@@ -84,6 +84,7 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.name', read_only=True)
     roles = serializers.SerializerMethodField()
     invitation_status = serializers.SerializerMethodField()
+    has_password = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -107,6 +108,7 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
             'company_name',
             'roles',
             'invitation_status',
+            'has_password',
             'created_at',
         )
         read_only_fields = fields
@@ -121,6 +123,10 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
                 'role__name': obj.role.name,
             }
         ]
+    def get_has_password(self, obj):
+            """Whether the employee has set a usable login password."""
+            return obj.has_usable_password()
+    
     def get_invitation_status(self, obj):
         
         # List views pass the latest invitation per email in the serializer
