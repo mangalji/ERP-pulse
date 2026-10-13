@@ -16,10 +16,10 @@
 
 | Layer | URL | Host |
 |-------|-----|------|
-| Frontend | [https://agsuite-erp-gamma.vercel.app](https://agsuite-erp-gamma.vercel.app) | Vercel |
-| Backend API | [https://agsuite-erp-backend.onrender.com](https://agsuite-erp-backend.onrender.com) | Render |
+| Frontend | https://agsuiteerp-60086947932.development.catalystserverless.in | Catalyst |
+| Backend API | https://agsuiteerp-50046369262.development.catalystappsail.in | Catayst |
 | Database | Supabase PostgreSQL | Supabase |
-| Redis | Render Key Value | Render |
+| Redis | upstash Key Value | upstash |
 
 ---
 

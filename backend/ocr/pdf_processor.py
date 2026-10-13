@@ -24,6 +24,7 @@ from __future__ import annotations
 import shutil, time
 from pathlib import Path
 from django.conf import settings
+from ocr.storage import resolve_scratch_dir
 
 def get_fitz():
     import fitz
@@ -42,8 +43,8 @@ MAX_PAGES: int = settings.OCR_MAX_PAGES
 DPI: int = settings.OCR_PDF_DPI
 
 #: Root directory for temporary PDF conversion output.
-TMP_ROOT: Path = Path(settings.MEDIA_ROOT) / 'ocr' / 'tmp'
-
+# TMP_ROOT: Path = Path(settings.MEDIA_ROOT) / 'ocr' / 'tmp'
+TMP_ROOT: Path = resolve_scratch_dir('tmp')
 class PDFProcessor:
     """
     Convert PDF files to PNG images using PyMuPDF.

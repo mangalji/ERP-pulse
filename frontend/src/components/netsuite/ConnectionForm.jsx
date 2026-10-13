@@ -9,6 +9,7 @@ export default function ConnectionForm({ onSubmit, isLoading, initialData = {} }
     client_id: initialData.client_id || '',
     client_secret: initialData.client_secret || '',
     netsuite_account_id: initialData.netsuite_account_id || '',
+    callback_uri: initialData.callback_uri || '',
   })
 
   const handleChange = (field) => (e) => {
@@ -37,6 +38,7 @@ export default function ConnectionForm({ onSubmit, isLoading, initialData = {} }
       <Input label="NetSuite Account ID" value={form.netsuite_account_id} onChange={handleChange('netsuite_account_id')} required />
       <Input label="Client ID" type="password" value={form.client_id} onChange={handleChange('client_id')} required />
       <Input label="Client Secret" type="password" value={form.client_secret} onChange={handleChange('client_secret')} required />
+      <Input label="Callback URI" value={form.callback_uri} onChange={handleChange('callback_uri')} placeholder="Enter callback URI" maxlength={500} required/>
       <Button type="submit" isLoading={isLoading} className="w-full">
         {initialData.client_name ? 'Update Connection' : 'Create Connection'}
       </Button>

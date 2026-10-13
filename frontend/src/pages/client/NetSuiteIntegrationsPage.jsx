@@ -187,7 +187,7 @@ export default function NetSuiteIntegrationsPage() {
           <Button onClick={() => { setEditingId(null); setShowForm(true); }}>New Connection</Button>
         </div>
 
-        <Card className="p-4">
+        {/* <Card className="p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Redirect URI</p>
             <Button
@@ -205,7 +205,7 @@ export default function NetSuiteIntegrationsPage() {
           <p className="mt-2 break-all text-sm text-[var(--color-ink)]">
             {netsuiteRedirectUri}
           </p>
-        </Card>
+        </Card> */}
 
         {showForm && (
           <Card className="p-6">

@@ -1,9 +1,7 @@
 """
-API views for the OCR application.
+API views for OCR uploads, history, validation state, and extraction templates.
 
-Views are thin: they validate input via a serializer, delegate to
-``OCRService``, and return the standard response envelope. No business
-logic lives here.
+Views validate requests and coordinate persistence and delegated OCR services.
 """
 
 from __future__ import annotations
@@ -12,9 +10,11 @@ import json
 import redis
 
 from django.conf import settings
+
+from common.infra import get_redis_client, warn_throttled
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Q,Count, Prefetch
+from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -27,13 +27,8 @@ from netsuite.models import NetSuiteOCRPosting
 from ocr.serializers import (
     DocumentHistorySerializer,
     DocumentVersionSerializer,
-    OCRDocumentHistorySerializer,
-    OCRHistoryListSerializer,
-    OCRHistoryVersionSerializer,
     OCRBatchHistorySerializer,
-    OCRBatchHistoryItemSerializer,
     OCRHistoryEntrySerializer,
-    OCRHistoryFileSerializer,
     OCRSaveRequestSerializer,
     OCRExtractionTemplateSerializer,
     OCRExtractionTemplateCreateSerializer,
@@ -44,7 +39,9 @@ from ocr.exceptions import OCRException
 from ocr.services import ocr_service
 from ocr.services.extraction_persistence import persist_extraction
 from ocr.notebook_extraction_service import get_standard_field_catalog, resolve_field_config
-from ocr.tasks import process_ocr_upload_task, process_single_ocr_upload
+from ocr.exceptions import OCRTimeBudgetExceeded
+from ocr.execution import dispatch_upload, recover_batch
+from ocr.tasks import process_single_ocr_upload
 from ocr.utils import logger
 from ocr.services.zip_upload_service import (
     ZipValidationError,
@@ -210,10 +207,7 @@ def _get_live_ocr_result(upload_id):
 
     cache_key = f"erp-pulse:ocr:live:{upload_id}"
     try:
-        client = redis.Redis.from_url(
-            settings.CELERY_BROKER_URL,
-            decode_responses=True,
-        )
+        client = get_redis_client()
         cached = client.get(cache_key)
         if cached:
             result = json.loads(cached)
@@ -222,10 +216,9 @@ def _get_live_ocr_result(upload_id):
                 return result
 
     except redis.RedisError as exc:
-        logger.warning(
-            "Redis live OCR result unavailable; using DB fallback — "
-            "upload_id=%s error=%s",
-            upload_id,
+        warn_throttled(
+            "ocr-live-result-redis-read",
+            "Redis live OCR result unavailable; reading from PostgreSQL: %s",
             exc,
             )
 
@@ -252,15 +245,6 @@ def _get_live_ocr_result(upload_id):
         )
 
     return None
-    
-def _batch_scope(user):
-    """
-    Employee: own batches only.
-    Company Admin: all batches in the same company.
-    """
-    if _is_company_admin(user):
-        return OCRBatch.objects.filter(company_id=user.company_id)
-    return OCRBatch.objects.filter(user_id=user.id)
 
 
 def _build_upload_result(upload):
@@ -476,9 +460,6 @@ class OCRHistoryListView(APIView):
         # Everything the loops below need is loaded here in a fixed number of
         # queries. Calling .order_by()/.first() on a related manager later would
         # bypass the prefetch and run one extra query per batch / document.
-        
-
-
         batches = list(
             _visible_batch_queryset(request.user)
             .select_related("user")
@@ -875,10 +856,7 @@ class OCRReviewSaveView(APIView):
             )
 
             return Response(
-                {
-                    "detail": "Unable to save OCR result.",
-                    "error": str(exc),
-                },
+                {"detail": "Unable to save OCR result."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -1171,7 +1149,7 @@ class OCRExtractView(APIView):
                 )
             except ZipValidationError:
                 raise
-            except OCRException as exc:
+            except OCRException:
                 raise
             except Exception as exc:
                 raise ZipValidationError(
@@ -1184,39 +1162,6 @@ class OCRExtractView(APIView):
             )
 
         return expanded
-
-    @staticmethod
-    def _is_company_admin(user):
-        if getattr(user, "is_superuser", False):
-            return True
-
-        if not getattr(user, "company_id", None):
-            return False
-
-        if getattr(user, "is_staff", False):
-            return True
-
-        role = getattr(user, "role", None)
-
-        return role is not None and role.name.lower() == "company admin"
-
-    def _get_batch_for_request(self, request, batch_id):
-        queryset = OCRBatch.objects.prefetch_related(
-            "uploads__document__versions"
-        )
-
-        if self._is_company_admin(request.user):
-            queryset = queryset.filter(company=request.user.company)
-        else:
-            queryset = queryset.filter(
-                user=request.user,
-                company=request.user.company,
-            )
-
-        try:
-            return queryset.get(pk=batch_id)
-        except OCRBatch.DoesNotExist as exc:
-            raise NotFound("OCR batch not found.") from exc
 
     @staticmethod
     def _serialize_upload(upload):
@@ -1239,6 +1184,43 @@ class OCRExtractView(APIView):
         }
 
         return item
+
+    def _accept_for_background(self, request, batch, created_uploads):
+        """
+        Hand every upload to the best available background executor
+        (Celery -> in-process threads -> inline) and answer 202; the client
+        polls the batch status. Executor failures fall back automatically.
+        """
+        modes = set()
+
+        for upload in created_uploads:
+            modes.add(
+                dispatch_upload(str(upload.id), str(request.user.id))
+            )
+
+        return Response(
+            {
+                "batch_id": str(batch.id),
+                "status": batch.status,
+                "source_type": batch.source_type,
+                "source_filename": batch.original_filename,
+                "total_files": len(created_uploads),
+                "queued_files": len(created_uploads),
+                "execution_mode": (
+                    next(iter(modes)) if len(modes) == 1 else "mixed"
+                ),
+                "files": [
+                    {
+                        "upload_id": str(upload.id),
+                        "filename": upload.original_filename,
+                        "status": upload.status,
+                    }
+                    for upload in created_uploads
+                ],
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
 
     def post(self, request):
 
@@ -1440,20 +1422,36 @@ class OCRExtractView(APIView):
             if mode == "single":
                 upload = created_uploads[0]
 
+                # Hosts with short request limits can ask for pure
+                # accept-and-poll behaviour.
+                if getattr(settings, "OCR_SINGLE_ASYNC", False):
+                    return self._accept_for_background(
+                        request, batch, created_uploads
+                    )
+
                 try:
-                    result = process_single_ocr_upload(
+                    process_single_ocr_upload(
                         upload_id=str(upload.id),
                         user_id=str(request.user.id),
                         time_budget_seconds=(
                             settings.OCR_SINGLE_TIME_BUDGET_SECONDS
                         ),
+                        handoff_on_budget=True,
                     )
+                except OCRTimeBudgetExceeded:
+                    # Not a failure: the file is processed in the background
+                    # and the client polls the batch status.
+                    return self._accept_for_background(
+                        request, batch, created_uploads
+                    )
+                
                 except Exception as exc:
-                    logger.exception(
+                    logger.warning(
                         "Single OCR processing failed — "
-                        "upload_id=%s batch_id=%s",
+                        "upload_id=%s batch_id=%s reason=%s",
                         upload.id,
                         batch.id,
+                        exc,
                     )
 
                     upload.refresh_from_db()
@@ -1510,53 +1508,11 @@ class OCRExtractView(APIView):
                     status=status.HTTP_200_OK,
                 )
 
-
-            # -------------------------
             # MULTIPLE MODE
-            # -------------------------
-
-            queued = 0
-
-            for upload in created_uploads:
-                task = getattr(
-                    process_ocr_upload_task,
-                    "delay",
-                    None,
-                )
-
-                if task is None:
-                    process_ocr_upload_task(
-                        str(upload.id),
-                        str(request.user.id),
-                    )
-                else:
-                    task(
-                        str(upload.id),
-                        str(request.user.id),
-                    )
-
-                queued += 1
-
-            return Response(
-                {
-                    "batch_id": str(batch.id),
-                    "status": batch.status,
-                    "source_type": batch.source_type,
-                    "source_filename": batch.original_filename,
-                    "total_files": len(created_uploads),
-                    "queued_files": queued,
-                    "files": [
-                        {
-                            "upload_id": str(upload.id),
-                            "filename": upload.original_filename,
-                            "status": upload.status,
-                        }
-                        for upload in created_uploads
-                    ],
-                },
-                status=status.HTTP_202_ACCEPTED,
+            return self._accept_for_background(
++                request, batch, created_uploads
             )
-
+        
         except ZipValidationError as exc:
             logger.warning(
                 "OCR batch validation failed — user=%s error=%s",
@@ -1591,8 +1547,9 @@ class OCRExtractView(APIView):
 
             return Response(
                 {
-                    "detail": "OCR batch submission failed.",
-                    "error": str(exc),
+                    # "detail": "OCR batch submission failed.",
+                    # "error": str(exc),
+                    "detail": "OCR batch submission failed. Please try again.",
                     "batch_id": str(batch.id) if batch else None,
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1669,6 +1626,19 @@ class OCRBatchStatusView(APIView):
             batch = queryset.get(pk=batch_id)
         except OCRBatch.DoesNotExist as exc:
             raise NotFound("OCR batch not found.") from exc
+
+        # Self-healing: re-queue jobs whose worker died or that were never
+        # picked up. Triggered by the client's polling, so it needs no
+        # scheduler. A failure here must never break the status response.
+        try:
+            if recover_batch(batch.id):
+                batch = queryset.get(pk=batch_id)
+        except Exception as exc:  # noqa: BLE001
+            warn_throttled(
+                "ocr-recovery-failed",
+                "OCR job recovery skipped: %s",
+                exc,
+            )
 
         uploads = list(batch.uploads.all().order_by("created_at"))
 

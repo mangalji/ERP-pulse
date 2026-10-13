@@ -9,6 +9,8 @@ Monitoring API views.
   (stack traces, request volume) so they're restricted to staff users
   (IsAdminUser -> request.user.is_staff), not just any authenticated user.
 """
+import logging
+import time
 
 from datetime import timedelta
 
@@ -24,6 +26,18 @@ from common.common_utils import success_response
 from monitoring.models import ErrorLog, RequestLog
 from monitoring.serializers import ErrorLogSerializer
 
+logger = logging.getLogger(__name__)
+_cache: dict = {}
+
+def _cached(key: str, ttl: float, fn):
+    """Tiny per-process cache so frequent health probes stay cheap."""
+    now = time.monotonic()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    value = fn()
+    _cache[key] = (now, value)
+    return value
 
 class HealthCheckView(APIView):
     """
@@ -38,9 +52,15 @@ class HealthCheckView(APIView):
     - netsuite_encryption: FIELD_ENCRYPTION_KEY must be set or no
       NetSuite connection can be created or used.
 
-    Overall status is "healthy" only if every check passes, "degraded"
-    if a non-critical check (email, encryption config) fails, and "down"
-    if the database check fails.
+    - storage: where OCR files live (local / db / s3) and a real
+      write-read-delete probe (cached for 60s).
+    - redis / ocr_execution: OPTIONAL services. They are reported for
+      visibility but never make the status "degraded": without Redis or
+      Celery the app transparently uses PostgreSQL / background threads.
+
+    Overall status is "healthy" only if every required check passes,
+    "degraded" if a non-critical check (email, encryption config,
+    storage) fails, and "down" if the database check fails.
     """
 
     permission_classes = [AllowAny]
@@ -51,6 +71,9 @@ class HealthCheckView(APIView):
             "database": self._check_database(),
             "email": self._check_email(),
             "netsuite_encryption": self._check_encryption(),
+            "storage": self._check_storage(),
+            "redis": self._check_redis(),
+            "ocr_execution": self._check_ocr_execution(),
         }
 
         if not checks["database"]["ok"]:
@@ -75,7 +98,45 @@ class HealthCheckView(APIView):
                 cursor.execute("SELECT 1")
             return {"ok": True, "detail": "Database reachable."}
         except Exception as exc:
-            return {"ok": False, "detail": str(exc)}
+            logger.warning("Health check: database unreachable (%s)", type(exc).__name__)
+            return {"ok": False, "detail": "Database unreachable."}
+
+    def _check_storage(self):
+        from ocr.storage import storage_backend_name, storage_self_test
+
+        def probe():
+            ok, reason = storage_self_test()
+            return ok, reason, storage_backend_name()
+
+        try:
+            ok, reason, backend = _cached("storage", 60, probe)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Health check: storage probe failed (%s)", type(exc).__name__)
+            return {"ok": False, "detail": "Storage probe failed."}
+
+        if ok:
+            return {"ok": True, "backend": backend, "detail": f"Storage ({backend}) writable."}
+        return {"ok": False, "backend": backend, "detail": f"Storage ({backend}) check failed ({reason})."}
+
+    def _check_redis(self):
+        from common.infra import redis_available, redis_url
+
+        if not redis_url():
+            return {"ok": True, "state": "disabled", "detail": "Redis not configured; using PostgreSQL fallbacks."}
+        if redis_available():
+            return {"ok": True, "state": "connected", "detail": "Redis reachable."}
+        return {"ok": True, "state": "unavailable", "detail": "Redis unreachable; using PostgreSQL fallbacks."}
+
+    def _check_ocr_execution(self):
+        from ocr.execution import execution_status
+
+        info = execution_status(probe=False)
+        return {
+            "ok": True,
+            "mode": info["resolved_mode"],
+            "configured_mode": info["configured_mode"],
+            "detail": f"OCR background execution: {info['resolved_mode']}.",
+        }
 
     def _check_email(self):
         if settings.EMAIL_BACKEND.endswith("smtp.EmailBackend") and settings.EMAIL_HOST:

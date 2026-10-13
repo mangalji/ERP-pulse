@@ -862,7 +862,7 @@ const handleRefreshNetSuiteFields = async () => {
       setMessage(
         added > 0
           ? `Refresh successful. ${added} new field(s) added.`
-          : 'Refresh successful. No new fields found; existing fields were preserved.',
+          : 'Refresh successful. No new fields found.',
       )
     }
   } catch (err) {
@@ -1491,7 +1491,7 @@ const handleRefreshNetSuiteFields = async () => {
           </div>
           {!isDetailPage && (
             <div className="flex flex-wrap items-center gap-2">
-              {isCompanyAdmin && (
+              {/* {isCompanyAdmin && (
                 <Button
                   type="button"
                   onClick={handleRefreshNetSuiteFields}
@@ -1504,14 +1504,9 @@ const handleRefreshNetSuiteFields = async () => {
                     ? 'Refreshing NetSuite Fields...'
                     : 'Refresh NetSuite Fields'}
                 </Button>
-              )}
+              )} */}
 
-              <Button
-                type="button"
-                onClick={startNewTemplate}
-              >
-                + New Template
-              </Button>
+              <Button type="button" onClick={startNewTemplate}>+ New Template</Button>
             </div>
           )}
         </div>
@@ -1705,11 +1700,29 @@ const handleRefreshNetSuiteFields = async () => {
                       Standard and custom fields can be edited or temporarily disabled. Disabled fields remain visible and can be restored with Use.
                     </p>
                   </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                  {isCompanyAdmin && (
+                    <Button
+                      type="button"
+                      intent="secondary"
+                      size="sm"
+                      onClick={handleRefreshNetSuiteFields}
+                      disabled={
+                        refreshingCatalogue ||
+                        !getConnectionId(connection)
+                      }
+                    >
+                      {refreshingCatalogue
+                        ? 'Refreshing NetSuite Fields...'
+                        : 'Refresh NetSuite Fields'}
+                    </Button>
+                  )}
                   {mode !== 'view' && (
                     <Button type="button" intent="secondary" size="sm" onClick={addCustomField}>
                       + Add Field
                     </Button>
                   )}
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">

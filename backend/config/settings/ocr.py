@@ -5,7 +5,7 @@ All OCR-related configurable values live here so no magic numbers
 appear inside the OCR codebase. Values can be overridden via
 environment variables for environment-specific tuning.
 """
-
+import os
 from decouple import config
 
 # ------------------------------------------------------------------
@@ -113,6 +113,60 @@ OCR_GEMINI_CONCURRENCY_LEASE_SECONDS: int = config(
     cast=int,
 )
 OCR_SINGLE_MAX_PAGES: int = config('OCR_SINGLE_MAX_PAGES', default=3, cast=int)
-OCR_SINGLE_TIME_BUDGET_SECONDS: int = config('OCR_SINGLE_TIME_BUDGET_SECONDS', default=180, cast=int)
+# Catalyst AppSail ends every request after 30s, so on that platform the inline
+# attempt must hand over to background processing well before that.
+ON_CATALYST: bool = bool(os.environ.get("X_ZOHO_CATALYST_LISTEN_PORT"))
+
+OCR_SINGLE_TIME_BUDGET_SECONDS: int = config(
+    'OCR_SINGLE_TIME_BUDGET_SECONDS',
+    default=20 if ON_CATALYST else 180,
+    cast=int,
+)
+# true = never process inline: accept the file and let the client poll.
+OCR_SINGLE_ASYNC: bool = config('OCR_SINGLE_ASYNC', default=False, cast=bool)
+# OCR_SINGLE_TIME_BUDGET_SECONDS: int = config('OCR_SINGLE_TIME_BUDGET_SECONDS', default=180, cast=int)
 OCR_MULTI_MAX_FILES: int = config('OCR_MULTI_MAX_FILES', default=200, cast=int)
-OCR_MULTIPLE_ENABLED: bool = config('OCR_MULTIPLE_ENABLED', default=False, cast=bool)
+# OCR_MULTIPLE_ENABLED: bool = config('OCR_MULTIPLE_ENABLED', default=False, cast=bool)
+# Multiple-file mode works with or without Celery/Redis (see OCR_EXECUTION_MODE).
+OCR_MULTIPLE_ENABLED: bool = config('OCR_MULTIPLE_ENABLED', default=True, cast=bool)
+# ---------------------------------------------------------------------------
+# Background execution (all optional; the defaults work on any host)
+# ---------------------------------------------------------------------------
+# auto   : Celery when a broker AND a live worker are detected, otherwise
+#          in-process background threads.
+# celery : prefer Celery (still degrades to threads if it is unreachable).
+# thread : always use in-process background threads.
+# inline : run in the requesting process (no background execution).
+OCR_EXECUTION_MODE: str = config('OCR_EXECUTION_MODE', default='auto').strip().lower()
+OCR_BACKGROUND_WORKERS: int = config('OCR_BACKGROUND_WORKERS', default=2, cast=int)
+# A running job renews its lease; a job whose lease expired is considered
+# interrupted and is re-queued by the recovery logic.
+# Threads for in-process NetSuite batch jobs (kept separate from OCR so a long
+# posting batch never starves OCR).
+NETSUITE_BACKGROUND_WORKERS: int = config('NETSUITE_BACKGROUND_WORKERS', default=1, cast=int)
+OCR_JOB_LEASE_SECONDS: int = config('OCR_JOB_LEASE_SECONDS', default=300, cast=int)
+OCR_JOB_MAX_RETRIES: int = config('OCR_JOB_MAX_RETRIES', default=5, cast=int)
+# Retry back-off: base * 2**attempt seconds (+ jitter), capped at 15 minutes.
+OCR_JOB_RETRY_BASE_SECONDS: float = config('OCR_JOB_RETRY_BASE_SECONDS', default=15, cast=float)
+# How long a queued job may sit unclaimed before recovery re-dispatches it.
+OCR_THREAD_REDISPATCH_AFTER_SECONDS: int = config(
+    'OCR_THREAD_REDISPATCH_AFTER_SECONDS', default=60, cast=int
+)
+OCR_CELERY_REDISPATCH_AFTER_SECONDS: int = config(
+    'OCR_CELERY_REDISPATCH_AFTER_SECONDS', default=900, cast=int
+)
+OCR_CELERY_PROBE_SECONDS: int = config('OCR_CELERY_PROBE_SECONDS', default=30, cast=int)
+
+# ---------------------------------------------------------------------------
+# File storage (see ocr/storage.py): auto | local | db | s3
+# ---------------------------------------------------------------------------
+OCR_STORAGE_BACKEND: str = config('OCR_STORAGE_BACKEND', default='auto').strip().lower()
+# Temporary page images etc. (defaults to MEDIA_ROOT/ocr/..., falls back to the
+# system temp dir when that is read-only).
+OCR_SCRATCH_DIR: str = config('OCR_SCRATCH_DIR', default='')
+# S3-compatible bucket (only when OCR_STORAGE_BACKEND=s3; needs django-storages + boto3).
+OCR_S3_BUCKET: str = config('OCR_S3_BUCKET', default='')
+OCR_S3_REGION: str = config('OCR_S3_REGION', default='')
+OCR_S3_ENDPOINT_URL: str = config('OCR_S3_ENDPOINT_URL', default='')
+OCR_S3_ACCESS_KEY_ID: str = config('OCR_S3_ACCESS_KEY_ID', default='')
+OCR_S3_SECRET_ACCESS_KEY: str = config('OCR_S3_SECRET_ACCESS_KEY', default='')

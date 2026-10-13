@@ -128,3 +128,24 @@ class OCRExtractionFailedException(OCRException):
     Maps to HTTP 500 because the failure originates server-side.
     """
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+class InvalidExtractionResultException(OCRException, ValueError):
+    """
+    Raised when the AI extractor returns data that does not match the
+    expected shape (not a dict, malformed ``line_items`` ...).
+
+    Also a ``ValueError`` so existing ``except ValueError`` handlers keep
+    working.
+    """
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+class OCRTimeBudgetExceeded(GeminiTimeoutException):
+    """
+    The inline (request-bound) time budget ran out before extraction finished.
+
+    This is not a provider failure: the upload is handed over to background
+    processing instead of being marked FAILED.
+    """

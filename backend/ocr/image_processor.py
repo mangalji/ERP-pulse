@@ -26,13 +26,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 from django.conf import settings
+from ocr.storage import resolve_scratch_dir
 from PIL import Image
 
 from ocr.exceptions import ImageProcessingException, InvalidImageException
 from ocr.utils import logger
 
 #: Root directory for processed image output.
-PROCESSED_ROOT: Path = Path(settings.MEDIA_ROOT) / 'ocr' / 'processed'
+# PROCESSED_ROOT: Path = Path(settings.MEDIA_ROOT) / 'ocr' / 'processed'
+PROCESSED_ROOT: Path = resolve_scratch_dir('processed')
 
 
 class ImageProcessor:

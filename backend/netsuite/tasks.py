@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-import redis
-
 from celery import shared_task
 from django.conf import settings
 
@@ -83,40 +81,6 @@ BATCH_MAX_DOCUMENTS = int(
 BATCH_JOB_TTL_SECONDS = 60 * 60 * 24
 BATCH_ACTIONS = {"validate", "post"}
 
-def _batch_job_redis():
-    return redis.Redis.from_url(
-        settings.CELERY_RESULT_BACKEND,
-        decode_responses=True,
-    )
-
-
-def _batch_job_access_key(task_id: str) -> str:
-    return f"erp-pulse:netsuite:batch-job:{task_id}"
-
-
-def _store_batch_job_owner(task_id: str, user_id: str, action: str) -> None:
-    _batch_job_redis().setex(
-        _batch_job_access_key(task_id),
-        BATCH_JOB_TTL_SECONDS,
-        f"{user_id}:{action}",
-    )
-
-
-def get_batch_job_owner(task_id: str):
-    raw = _batch_job_redis().get(_batch_job_access_key(task_id))
-    if not raw:
-        return None
-
-    try:
-        user_id, action = raw.split(":", 1)
-    except ValueError:
-        return None
-
-    if action not in BATCH_ACTIONS:
-        return None
-
-    return {"user_id": user_id, "action": action}
-
 def _is_batch_success(status: str) -> bool:
     return status in {
         "VALIDATED",
@@ -157,6 +121,24 @@ def _is_failed_status(
         }
     )
 
+def _expected_item_errors() -> tuple:
+    """Exception types that mean "this document was rejected", not "bug"."""
+    import netsuite.exceptions as ns_exceptions
+    from django.core.exceptions import ValidationError as DjangoValidationError
+    from ocr.exceptions import OCRException
+    from rest_framework.exceptions import APIException
+
+    domain = tuple(
+        value
+        for value in vars(ns_exceptions).values()
+        if isinstance(value, type)
+        and issubclass(value, Exception)
+        and value.__module__ == ns_exceptions.__name__
+    )
+    return domain + (APIException, DjangoValidationError, OCRException)
+
+
+
 def _run_netsuite_batch(
     *,
     task,
@@ -164,6 +146,7 @@ def _run_netsuite_batch(
     document_ids: list[str],
     user_id: str,
     connection_id: str | None = None,
+    resume_results: list | None = None,
 ) -> dict:
     from accounts.models import User
     from netsuite.services import (
@@ -181,8 +164,16 @@ def _run_netsuite_batch(
 
     user = User.objects.get(pk=user_id)
 
-    results = []
-    completed = 0
+    # A resumed job keeps the documents already processed and skips them
+    # (posting is idempotent, but there is no reason to repeat NetSuite calls).
+    results = list(resume_results or [])
+    done_ids = {str(item.get("document_id")) for item in results}
+    completed = len(results)
+
+    for document_id in document_ids:
+        if str(document_id) in done_ids:
+            continue
+
 
     for document_id in document_ids:
         result = {
@@ -242,13 +233,25 @@ def _run_netsuite_batch(
             result["code"] = "NETSUITE_REAUTH_REQUIRED"
 
         except Exception as exc:
-            logger.exception(
-                "NetSuite batch item failed — action=%s document=%s user=%s",
-                # batch_id,
-                action,
-                document_id,
-                user_id,
-            )
+            if isinstance(exc, _expected_item_errors()):
+                # A document NetSuite/validation rejected: an expected outcome
+                # reported to the user, not a bug -> one-line warning.
+                logger.warning(
+                    "NetSuite batch item rejected — action=%s document=%s "
+                    "user=%s reason=%s",
+                    action,
+                    document_id,
+                    user_id,
+                    exc,
+                )
+            else:
+                logger.exception(
+                    "NetSuite batch item failed unexpectedly — action=%s "
+                    "document=%s user=%s",
+                    action,
+                    document_id,
+                    user_id,
+                )
             result["error"] = str(exc)[:2000]
 
         results.append(result)
@@ -280,6 +283,8 @@ def _run_netsuite_batch(
                     )
                 ),
                 "results": results[-25:],
+                # full list so a crashed job can be resumed from the DB
+                "all_results": results,
             },
         )
 
@@ -303,50 +308,29 @@ def _run_netsuite_batch(
         ),
         "results": results,
     }
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=15,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    ignore_result=True,
+)
+def run_netsuite_batch_job_task(self, job_id):
+    """
+    Celery entry point for one NetSuite batch job (validate or post).
 
+    All state lives in ``NetSuiteBatchJob`` (PostgreSQL); Celery only provides
+    the queueing, so the job also runs without Celery/Redis (see
+    ``netsuite.jobs``).
+    """
+    from netsuite.jobs import run_batch_job
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=15)
-def batch_validate_documents_task(self, document_ids, user_id, connection_id):
-    """Validate up to 100 OCR documents without depending on the browser."""
-    try:
-        normalized_ids = [str(value) for value in document_ids]
-        return _run_netsuite_batch(
-            task=self,
-            action="validate",
-            document_ids=normalized_ids,
-            user_id=str(user_id),
-            connection_id=str(connection_id) if connection_id else None,
-        )
-    except Exception as exc:
-        logger.exception(
-            "NetSuite batch validation job failed — task=%s user=%s",
-            self.request.id,
-            user_id,
-        )
-        raise self.retry(exc=exc, countdown=15)
+    outcome = run_batch_job(
+        str(job_id),
+        owner=f"celery:{self.request.id}",
+        claim=False,
+    )
 
-
-@shared_task(bind=True, max_retries=2, default_retry_delay=15)
-def batch_post_documents_task(
-    self,
-    document_ids,
-    user_id,
-    connection_id=None,
-):
-    """Post up to 100 validated OCR documents from a Celery worker."""
-    try:
-        normalized_ids = [str(value) for value in document_ids]
-        return _run_netsuite_batch(
-            task=self,
-            action="post",
-            document_ids=normalized_ids,
-            user_id=str(user_id),
-            connection_id=str(connection_id) if connection_id else None,
-        )
-    except Exception as exc:
-        logger.exception(
-            "NetSuite batch posting job failed — task=%s user=%s",
-            self.request.id,
-            user_id,
-        )
-        raise self.retry(exc=exc, countdown=15)
+    if outcome == "retry":
+            raise self.retry(countdown=15)

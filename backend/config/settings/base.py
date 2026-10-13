@@ -232,3 +232,36 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+
+CELERY_BROKER_CONNECTION_TIMEOUT = config(
+    "CELERY_BROKER_CONNECTION_TIMEOUT", default=2, cast=float
+)
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "socket_connect_timeout": config(
+        "CELERY_BROKER_CONNECT_TIMEOUT", default=2, cast=float
+    ),
+}
+CELERY_TASK_PUBLISH_RETRY_POLICY = {
+    "max_retries": 1,
+    "interval_start": 0,
+    "interval_step": 0.2,
+    "interval_max": 0.5,
+}
+
+# ------------------------------------------------------------------
+# Redis (OPTIONAL)
+# ------------------------------------------------------------------
+# Redis is only an accelerator (OCR result cache, extraction lock, Gemini rate
+# limiter). The app must run without it. Set REDIS_URL to enable it; if unset,
+# it falls back to CELERY_BROKER_URL when that is a redis:// URL (backward
+# compatible). Set REDIS_ENABLED=false to switch Redis usage off completely.
+REDIS_ENABLED = config("REDIS_ENABLED", default=True, cast=bool)
+REDIS_URL = config("REDIS_URL", default="").strip() or (
+    CELERY_BROKER_URL
+    if str(CELERY_BROKER_URL).startswith(("redis://", "rediss://"))
+    else ""
+)
+REDIS_CONNECT_TIMEOUT = config("REDIS_CONNECT_TIMEOUT", default=1.0, cast=float)
+REDIS_SOCKET_TIMEOUT = config("REDIS_SOCKET_TIMEOUT", default=2.0, cast=float)
+# How long an up/down Redis probe result is trusted before probing again.
+REDIS_RETRY_INTERVAL = config("REDIS_RETRY_INTERVAL", default=30, cast=int)

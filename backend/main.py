@@ -17,11 +17,12 @@ try:
     sys.argv = [
         "gunicorn",
         "config.wsgi:application",
+        "--config", os.path.join(os.path.dirname(os.path.abspath(__file__)), "gunicorn.conf.py"),
         "--bind", f"0.0.0.0:{port}",
-        "--workers", "2",
-        "--timeout", "120",
-        "--access-logfile", "-",
-        "--error-logfile", "-"
+        # "--workers", "2",
+        # "--timeout", "120",
+        # "--access-logfile", "-",
+        # "--error-logfile", "-"
     ]
     run()
 except Exception as e:

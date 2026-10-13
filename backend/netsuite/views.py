@@ -1,17 +1,13 @@
 """
-NetSuite OAuth connect/callback views.
+API views for NetSuite OAuth, connection management, data reads, and OCR workflows.
 
-View responsibilities only: authenticate (connect) or not (callback —
-see NetSuiteConnectionService.handle_callback docstring for why),
-validate request shape, call NetSuiteConnectionService, return a
-response. No NetSuite HTTP calls or token handling happen here.
+Views validate requests and delegate business logic to the NetSuite service layer.
 """
-
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.conf import settings
 from django.shortcuts import redirect
-from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -21,31 +17,31 @@ from common.pagination import paginated_response
 from common.common_utils import success_response
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.constants import NetSuiteRecordType
-from netsuite.exceptions import NetSuiteAuthorizationDeniedException, NetSuiteConnectionNotFoundException, NetSuiteRecordFetchException, NetSuiteTokenExchangeException
+from netsuite.exceptions import (
+    NetSuiteAuthorizationDeniedException, 
+    NetSuiteConnectionNotFoundException, 
+    NetSuiteRecordFetchException, 
+    NetSuiteTokenExchangeException,
+)
 from ocr.ai.providers import AIProviderError
 from netsuite.diagnostics_service import net_suite_diagnostics_service
-from celery.result import AsyncResult
-from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteOCRPosting
+from netsuite.models import NetSuiteConnection, NetSuiteBatchJob
 from accounts.models import User
 from netsuite.serializers import (
     NetSuiteCallbackSerializer, 
     NetSuiteConnectionCreateSerializer,
     NetSuiteConnectionListSerializer,
     NetSuiteConnectionRenameSerializer,
-    NetSuiteConnectionSwitchSerializer,
     EmployeeConnectionSerializer,
     AssignEmployeeSerializer,
-    NetSuiteFieldCatalogueSerializer,
     MappingSuggestionSerializer,
     MappingSuggestionRequestSerializer,
     SaveMappingRequestSerializer,
     OCRNetSuiteFieldMappingSerializer,
-    OCRValidationResultSerializer,
     ValidateDocumentRequestSerializer,
     CheckOCRReferencesRequestSerializer,
     CreateCustomFieldRequestSerializer,
     NetSuiteCustomFieldSerializer,
-    NetSuiteConnectionTestSerializer,
 )
 from netsuite.services import (
     NetSuiteConnectionService,
@@ -55,16 +51,10 @@ from netsuite.services import (
     NetSuiteValidationService,
     NetSuiteCustomFieldService,
 )
-from ocr.models import OCRDocument, OCRDocumentVersion, OCRNetSuiteFieldMapping, OCRValidationResult
-from tenancy.services import company_lifecycle_service
-from netsuite.tasks import (
-    BATCH_MAX_DOCUMENTS,
-    _store_batch_job_owner,
-    get_batch_job_owner,
-    batch_validate_documents_task,
-    batch_post_documents_task,
-)
-
+from netsuite.oauth import resolve_post_connect_redirect_url_from_state
+from ocr.models import OCRDocument
+from netsuite.jobs import create_job, dispatch_job, recover_jobs
+from netsuite.tasks import BATCH_MAX_DOCUMENTS
 logger = logging.getLogger(__name__)
 
 
@@ -137,14 +127,17 @@ class NetSuiteCallbackView(APIView):
             raise NetSuiteAuthorizationDeniedException(
                 'NetSuite did not return an authorization code.'
             )
-
+        post_connect_redirect_url = resolve_post_connect_redirect_url_from_state(
+            params['state']
+        )
         NetSuiteConnectionService().handle_callback(
             code=params['code'], state=params['state']
         )
 
         return redirect(
-    f'{settings.FRONTEND_URL.rstrip('/')}/#/app/integrations/netsuite?netsuite=connected'
-)
+            post_connect_redirect_url or
+            f'{settings.FRONTEND_URL.rstrip('/')}/#/app/integrations/netsuite?netsuite=connected'
+        )
 
 
 class NetSuiteCustomersView(APIView):
@@ -1609,21 +1602,18 @@ class NetSuiteBatchValidateView(NetSuiteBatchBaseView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        task = batch_validate_documents_task.delay(
-            document_ids,
-            str(request.user.id),
-            str(connection_id)
+        job = create_job(
+            user=request.user,
+            action="validate",
+            document_ids=document_ids,
+            connection_id=connection_id,
         )
-        _store_batch_job_owner(
-            task.id,
-            str(request.user.id),
-            "validate",
-        )
+        dispatch_job(job.id)
 
         return success_response(
             message="Batch validation queued successfully.",
             data={
-                "job_id": task.id,
+                "job_id": str(job.id),
                 "action": "validate",
                 "total": len(document_ids),
                 "status": "PENDING",
@@ -1640,21 +1630,18 @@ class NetSuiteBatchPostView(NetSuiteBatchBaseView):
 
         connection_id = request.data.get("connection_id")
 
-        task = batch_post_documents_task.delay(
-            document_ids,
-            str(request.user.id),
-            str(connection_id) if connection_id else None,
+        job = create_job(
+            user=request.user,
+            action="post",
+            document_ids=document_ids,
+            connection_id=connection_id,
         )
-        _store_batch_job_owner(
-            task.id,
-            str(request.user.id),
-            "post",
-        )
+        dispatch_job(job.id)
 
         return success_response(
             message="Batch posting queued successfully.",
             data={
-                "job_id": task.id,
+                "job_id": str(job.id),
                 "action": "post",
                 "total": len(document_ids),
                 "status": "PENDING",
@@ -1663,47 +1650,49 @@ class NetSuiteBatchPostView(NetSuiteBatchBaseView):
 
 
 class NetSuiteBatchJobStatusView(APIView):
-    """Return progress for an authorized Celery NetSuite batch job."""
+    """Return progress for an authorized NetSuite batch job (PostgreSQL-backed)."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, job_id):
-        owner = get_batch_job_owner(str(job_id))
-        if owner is None:
-            return Response(
-                {"detail": "Batch job not found or expired."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        try:
+            job = NetSuiteBatchJob.objects.filter(pk=str(job_id)).first()
+        except (ValueError, DjangoValidationError):
+            job = None
 
-        if owner["user_id"] != str(request.user.id):
-            raise PermissionDenied("You cannot access this batch job.")
+        if job is None:
+             return Response(
+                 {"detail": "Batch job not found or expired."},
+                 status=status.HTTP_404_NOT_FOUND,
+             )
+            
 
-        task_result = AsyncResult(str(job_id))
-        meta = task_result.info if isinstance(task_result.info, dict) else {}
+        if str(job.user_id) != str(request.user.id):
+             raise PermissionDenied("You cannot access this batch job.")
+
+        # Self-healing: resume jobs whose worker died. Triggered by the
+        # client's polling; must never break the status response.
+        try:
+            if recover_jobs(job.user_id):
+                job.refresh_from_db()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("NetSuite batch recovery skipped: %s", exc)
+
+        finished = job.status == NetSuiteBatchJob.STATUS_SUCCESS
 
         data = {
-            "job_id": str(job_id),
-            "action": owner["action"],
-            "status": task_result.status,
-            "total": meta.get("total"),
-            "completed": meta.get("completed", 0),
-            "succeeded": meta.get("succeeded", 0),
-            "failed": meta.get("failed", 0),
-            "results": meta.get("results", []),
+            "job_id": str(job.id),
+            "action": job.action,
+            "status": job.status,
+            "total": job.total,
+            "completed": job.completed,
+            "succeeded": job.succeeded,
+            "failed": job.failed,
+            # progress responses carry the latest items; a finished job all of them
+            "results": job.results if finished else (job.results or [])[-25:],
         }
 
-        if task_result.successful():
-            result = task_result.result if isinstance(task_result.result, dict) else {}
-            data.update(
-                {
-                    "total": result.get("total", data["total"]),
-                    "completed": result.get("completed", data["completed"]),
-                    "succeeded": result.get("succeeded", data["succeeded"]),
-                    "failed": result.get("failed", data["failed"]),
-                    "results": result.get("results", []),
-                }
-            )
-        elif task_result.failed():
-            data["error"] = str(task_result.result)[:2000]
+        if job.status == NetSuiteBatchJob.STATUS_FAILURE:
+            data["error"] = job.error or "The batch job failed."
 
         return success_response(
             message="Batch job status retrieved successfully.",

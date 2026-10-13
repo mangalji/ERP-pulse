@@ -374,3 +374,54 @@ class NetSuiteCustomField(models.Model):
 
     def __str__(self) -> str:
         return f'{self.field_id} ({self.record_type}:{self.scope})'
+
+
+class NetSuiteBatchJob(models.Model):
+    """
+    State of one NetSuite batch validate/post job.
+
+    Lives in PostgreSQL so it works with or without Celery/Redis: the same
+    row is updated by a Celery task, an in-process worker thread or the
+    dedicated worker process, and a job whose worker died is resumed from the
+    per-document results already stored here (posting is idempotent).
+    Status values mirror Celery's (PENDING / PROGRESS / SUCCESS / FAILURE) so
+    the API contract stays unchanged.
+    """
+
+    STATUS_PENDING = "PENDING"
+    STATUS_PROGRESS = "PROGRESS"
+    STATUS_SUCCESS = "SUCCESS"
+    STATUS_FAILURE = "FAILURE"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="netsuite_batch_jobs",
+    )
+    action = models.CharField(max_length=16)
+    document_ids = models.JSONField(default=list)
+    connection_id = models.CharField(max_length=64, null=True, blank=True)
+
+    status = models.CharField(max_length=16, default=STATUS_PENDING, db_index=True)
+    total = models.PositiveIntegerField(default=0)
+    completed = models.PositiveIntegerField(default=0)
+    succeeded = models.PositiveIntegerField(default=0)
+    failed = models.PositiveIntegerField(default=0)
+    results = models.JSONField(default=list)
+    error = models.TextField(blank=True, default="")
+
+    # background execution bookkeeping (see ocr.leases / netsuite.jobs)
+    lease_owner = models.CharField(max_length=80, blank=True, default="")
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    queued_at = models.DateTimeField(null=True, blank=True)
+    queued_via = models.CharField(max_length=16, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "netsuite_batch_job"
+        ordering = ["-created_at"]

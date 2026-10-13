@@ -81,11 +81,11 @@ class NetSuiteConnectionService:
                 company=company
             )
     
-    def get_authorization_url(self, *, user: User, connection) -> str:
+    def get_authorization_url(self, *, user: User, connection,post_connect_redirect_url: str | None = None) -> str:
         """Step 1: build the URL the frontend should redirect the browser to."""
         self._ensure_user_company_operational(user=user)
         return build_authorization_url(user_id=str(user.id),connection_id=str(connection.id),account_id=connection.netsuite_account_id,
-        client_id=connection.client_id,)
+        client_id=connection.client_id,post_connect_redirect_url=post_connect_redirect_url,)
 
     def get_reconnect_url(self, *, user: User, connection_id) -> str:
         """
@@ -219,6 +219,7 @@ class NetSuiteConnectionService:
             client_id:str,
             client_secret:str,
             netsuite_account_id:str,
+            callback_uri: str | None = None,
             company_id=None):
         self._ensure_user_company_operational(user=user)
 
@@ -287,7 +288,7 @@ class NetSuiteConnectionService:
                 },
             )
 
-        authorization_url = self.get_authorization_url(user=user,connection=connection)
+        authorization_url = self.get_authorization_url(user=user,connection=connection,post_connect_redirect_url=callback_uri)
 
         return {
             "connection":connection,

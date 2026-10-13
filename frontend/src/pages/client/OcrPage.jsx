@@ -1487,19 +1487,39 @@ useEffect(() => {
       setResults(initialFiles)
 
       if (ocrMode === 'single') {
-        sessionStorage.setItem(
-          'ocr_test_result',
-          JSON.stringify({
-            status:
-              payload?.status ??
-              initialFiles[0]?.status ??
-              'COMPLETED',
-            batch_id: batchId,
-            files: initialFiles,
-            template_id: selectedTemplateId || null,
-          }),
+        // sessionStorage.setItem(
+        //   'ocr_test_result',
+        //   JSON.stringify({
+        //     status:
+        //       payload?.status ??
+        //       initialFiles[0]?.status ??
+        //       'COMPLETED',
+        //     batch_id: batchId,
+        //     files: initialFiles,
+        //     template_id: selectedTemplateId || null,
+        //   }),
+
+        // The backend normally answers a single file synchronously. If it
+        // handed the file over to background processing (HTTP 202 / a
+        // non-terminal status), fall through to the polling loop below.
+        const singleIsFinished = ['COMPLETED', 'FAILED'].includes(
+          initialFiles[0]?.status,
         )
-        return
+        if (singleIsFinished || initialFiles.length === 0) {
+          sessionStorage.setItem(
+            'ocr_test_result',
+            JSON.stringify({
+              status:
+                payload?.status ??
+                initialFiles[0]?.status ??
+                'COMPLETED',
+              batch_id: batchId,
+              files: initialFiles,
+              template_id: selectedTemplateId || null,
+            }),
+          )
+          return
+        }
       }
 
       const terminalStatuses = new Set([
@@ -1556,7 +1576,9 @@ useEffect(() => {
         await new Promise((resolve) => setTimeout(resolve, 1500))
       }
 
-      clearSelectedFilesAfterExtraction()
+      if (ocrMode !== 'single') {
+        clearSelectedFilesAfterExtraction()
+      }
     } catch (err) {
       console.error('OCR batch submission failed:', err)
 

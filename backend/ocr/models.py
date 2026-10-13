@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 
 from django.conf import settings
+from ocr.storage import ocr_file_storage
 from django.db import models
 from common.crypto import EncryptedTextField
 
@@ -202,7 +203,7 @@ class OCRUpload(models.Model):
 
     original_filename = models.CharField(max_length=255)
     stored_filename = models.CharField(max_length=255)
-    file = models.FileField(upload_to='ocr/')
+    file = models.FileField(upload_to='ocr/', storage=ocr_file_storage)
     file_size = models.PositiveBigIntegerField()
     mime_type = models.CharField(max_length=100)
     extension = models.CharField(max_length=10)
@@ -220,6 +221,24 @@ class OCRUpload(models.Model):
     processing_completed_at = models.DateTimeField(null=True, blank=True)
     processing_duration_ms = models.PositiveIntegerField(null=True, blank=True)
     failure_reason = models.TextField(null=True, blank=True)
+    # Stable machine-readable failure category (see ocr.error_taxonomy).
+    failure_code = models.CharField(max_length=32, blank=True, default="")
+
+    # --- background execution bookkeeping (see ocr.leases / ocr.execution) ---
+    # Who is running this upload and until when. A running job keeps renewing
+    # the lease; an expired lease means the worker died and the job is recovered.
+    
+    lease_owner = models.CharField(max_length=80, blank=True, default="")
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+
+    # Earliest time a retry may start (None = immediately).
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    
+    # When/how the job was last handed to an executor ("celery" / "thread" / "inline").
+    queued_at = models.DateTimeField(null=True, blank=True)
+    queued_via = models.CharField(max_length=16, blank=True, default="")
+
     live_result_json = models.JSONField(
         null=True,
         blank=True,
@@ -378,8 +397,8 @@ class OCRDocumentVersion(models.Model):
         related_name='versions',
     )
     version_number = models.PositiveIntegerField()
-    original_document = models.FileField(upload_to='ocr/versions/original/', null=True, blank=True)
-    processed_document = models.FileField(upload_to='ocr/versions/processed/', null=True, blank=True)
+    original_document = models.FileField(upload_to='ocr/versions/original/', null=True, blank=True, storage=ocr_file_storage)
+    processed_document = models.FileField(upload_to='ocr/versions/processed/', null=True, blank=True, storage=ocr_file_storage)
     raw_ocr = models.JSONField(default=dict, blank=True)
     normalized_json = models.JSONField(default=dict, blank=True)
     reviewed_json = models.JSONField(default=dict, blank=True)
@@ -636,3 +655,33 @@ class AIProviderModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.provider_name} → {self.model_name}"
+
+class OCRGeminiLease(models.Model):
+    """
+    PostgreSQL-backed fallback for the Gemini concurrency / RPM limiter.
+
+    Used only when Redis is not configured or unreachable. One row is one
+    "request start": ``created_at`` drives the rolling 60-second RPM window and
+    ``lease_expires_at`` (until ``released_at`` is set) drives the concurrency
+    cap, so a crashed worker can never hold a slot forever.
+    """
+
+    token = models.CharField(max_length=128, primary_key=True)
+    created_at = models.DateTimeField(db_index=True)
+    lease_expires_at = models.DateTimeField(db_index=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ocr_gemini_lease"
+
+class OCRStoredFile(models.Model):
+    """File contents when ``OCR_STORAGE_BACKEND`` is ``db`` (see ocr.storage)."""
+
+    name = models.CharField(max_length=255, unique=True)
+    content = models.BinaryField()
+    size = models.BigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "ocr_stored_file"
+

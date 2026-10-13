@@ -3,9 +3,10 @@ from netsuite.models import NetSuiteConnection, EmployeeConnection, NetSuiteCust
 from django.utils import timezone
 from django.core.validators import RegexValidator
 from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, MappingStatus
+from urllib.parse import urlsplit, urlunsplit
+from django.conf import settings
 
-# NetSuite account IDs are alphanumeric plus underscore (e.g. "1234567",
-# "1234567_SB1", "TD1234567") — see netsuite/oauth.py's
+# NetSuite account IDs are alphanumeric plus underscore (e.g. "TD1234567") — see netsuite/oauth.py's
 # netsuite_account_domain() for the exact transformation applied to this
 # value. Anything outside that character set can never be a real
 # NetSuite account id.
@@ -38,6 +39,71 @@ class NetSuiteConnectionCreateSerializer(serializers.Serializer):
     netsuite_account_id = serializers.CharField(
         min_length=1, max_length=20, validators=[netsuite_account_id_validator],
     )
+    callback_uri = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+    )
+
+    def validate_callback_uri(self, value):
+        value = (value or "").strip()
+
+        if not value:
+            return None
+
+        if any(character.isspace() for character in value):
+            raise serializers.ValidationError(
+                "Spaces in redirect URLs must be URL-encoded."
+            )
+
+        if value.startswith("//"):
+            raise serializers.ValidationError(
+                "Enter a full URL or an application-relative path, "
+                "not a protocol-relative URL."
+            )
+
+        if value.startswith("/"):
+            frontend_url = str(getattr(settings, "FRONTEND_URL", "") or "")
+            frontend = urlsplit(frontend_url)
+
+
+            if frontend.scheme not in ("http", "https") or not frontend.netloc:
+                raise serializers.ValidationError(
+                    "The frontend base URL is not configured correctly."
+                )
+
+            relative = urlsplit(value)
+            value = urlunsplit((
+                frontend.scheme,
+                frontend.netloc,
+                relative.path,
+                relative.query,
+                relative.fragment,
+            ))
+        elif not value.lower().startswith(("http://", "https://")):
+            value = f"https://{value}"
+
+        try:
+            parsed = urlsplit(value)
+            hostname = parsed.hostname
+            _ = parsed.port
+        except ValueError as exc:
+            raise serializers.ValidationError(
+                "Enter a valid redirect URL."
+            ) from exc
+
+        if (
+            parsed.scheme.lower() not in ("http", "https")
+            or not parsed.netloc
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise serializers.ValidationError(
+                "Enter a valid HTTP or HTTPS redirect URL."
+            )
+
+        return value
 
 
 class EmployeeConnectionSerializer(serializers.ModelSerializer):
@@ -65,8 +131,6 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
     class Meta:
         model = NetSuiteConnection
         fields = (
- 
- 
             "id",
             "client_name",
             "environment",
@@ -103,19 +167,8 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
 class NetSuiteConnectionRenameSerializer(serializers.Serializer):
     client_name = serializers.CharField(max_length=255)
 
-class NetSuiteConnectionSwitchSerializer(serializers.Serializer):
-    pass
-
-
-
-
 class AssignEmployeeSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
-
-
-class NetSuiteConnectionTestSerializer(serializers.Serializer):
-    connection_id = serializers.UUIDField()
-
 
 class OCRNetSuiteFieldMappingSerializer(serializers.ModelSerializer):
     class Meta:
@@ -149,27 +202,6 @@ class OCRNetSuiteFieldMappingSerializer(serializers.ModelSerializer):
             'updated_at',
         )
 
-
-class OCRValidationResultSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = OCRValidationResult
-        fields = (
-            'id',
-            'document',
-            'version',
-            'connection',
-            'status',
-            'vendor_extracted_name',
-            'vendor_matched',
-            'vendor_netsuite_id',
-            'items',
-            'errors',
-            'created_at',
-            'updated_at',
-        )
-        read_only_fields = ('id', 'created_at', 'updated_at')
-
-
 class NetSuiteCustomFieldSerializer(serializers.ModelSerializer):
     class Meta:
         model = NetSuiteCustomField
@@ -196,18 +228,6 @@ class NetSuiteCustomFieldSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         )
-
-
-class NetSuiteFieldCatalogueSerializer(serializers.Serializer):
-    record_type = serializers.CharField()
-    fields = serializers.DictField()
-    custom_fields = serializers.ListField(required=False, default=list)
-    fetched_at = serializers.CharField(required=False, allow_null=True, default=None)
-    source = serializers.CharField(required=False, default='database')
-    stale = serializers.BooleanField(required=False, default=False)
-    available = serializers.BooleanField(required=False, default=True)
-    error = serializers.CharField(required=False, allow_null=True, default=None)
-
 
 class MappingSourceFieldSerializer(serializers.Serializer):
     key = serializers.CharField(required=False, allow_blank=False, max_length=150)
@@ -253,7 +273,6 @@ class MappingSuggestionSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=[c[0] for c in MappingStatus.choices])
     suggested_target = serializers.DictField(required=False, allow_null=True)
     candidates = serializers.ListField()
-
 
 
 class MappingSaveItemSerializer(serializers.Serializer):
