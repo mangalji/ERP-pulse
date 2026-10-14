@@ -14,31 +14,6 @@ from ocr.models import (
     OCRDocumentVersion,
 )
 
-# These are the fields explicitly requested by the current approved extraction
-# schema. They are persisted as first-class DB columns on OCRDocumentVersion.
-EXTRACTION_FIELDS = (
-    'invoice_number',
-    'invoice_date',
-    'due_date',
-    'vendor_name',
-    'customer_name',
-    'subsidiary',
-    'currency',
-    'subtotal',
-    'tax_amount',
-    'tax_rate',
-    'total_amount',
-    'payment_terms',
-)
-
-LINE_ITEM_FIELDS = (
-    'description',
-    'quantity',
-    'unit_price',
-    'amount',
-)
-
-
 def _nullable_string(value):
     if value is None:
         return None
@@ -65,6 +40,18 @@ def _nullable_date(value):
     except (TypeError, ValueError) as exc:
         raise ValueError(f'Invalid date extraction value: {value!r}') from exc
 
+def _remove_customer_name_key(value):
+    """Remove the unsupported Vendor Bill Customer Name field from JSON payloads."""
+    if isinstance(value, dict):
+        return {
+            key: _remove_customer_name_key(item)
+            for key, item in value.items()
+            if str(key).strip().lower() not in {"customer_name", "customer name"}
+        }
+    if isinstance(value, list):
+        return [_remove_customer_name_key(item) for item in value]
+    return value
+
 
 def normalize_extraction_payload(result: dict) -> dict:
     """Build the stable DB payload without dropping the complete JSON response."""
@@ -80,7 +67,7 @@ def normalize_extraction_payload(result: dict) -> dict:
         'invoice_date': _nullable_date(data.get('invoice_date')),
         'due_date': _nullable_date(data.get('due_date')),
         'vendor_name': _nullable_string(data.get('vendor_name')),
-        'customer_name': _nullable_string(data.get('customer_name')),
+        # 'customer_name': _nullable_string(data.get('customer_name')),
         'subsidiary': _nullable_string(data.get('subsidiary')),
         'currency': _nullable_string(data.get('currency')),
         'subtotal': _nullable_decimal(data.get('subtotal')),
@@ -89,29 +76,6 @@ def normalize_extraction_payload(result: dict) -> dict:
         'total_amount': _nullable_decimal(data.get('total_amount')),
         'payment_terms': _nullable_string(data.get('payment_terms')),
     }
-
-
-def normalize_line_items(result: dict) -> list[dict]:
-    data = result.get('data', result)
-    line_items = data.get('line_items') if isinstance(data, dict) else []
-
-    if line_items is None:
-        return []
-    if not isinstance(line_items, list):
-        raise ValueError('Gemini line_items must be an array when present.')
-
-    normalized = []
-    for item in line_items:
-        if not isinstance(item, dict):
-            raise ValueError('Each Gemini line item must be a JSON object.')
-        normalized.append({
-            'description': _nullable_string(item.get('description')),
-            'quantity': _nullable_decimal(item.get('quantity')),
-            'unit_price': _nullable_decimal(item.get('unit_price')),
-            'amount': _nullable_decimal(item.get('amount')),
-        })
-    return normalized
-
 
 @transaction.atomic
 def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | None = None,allow_company_admin=False):
@@ -131,10 +95,11 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
     if reviewed_result is not None and not isinstance(reviewed_result, dict):
         raise ValueError('Reviewed OCR result must be a JSON object.')
 
-    # ``result`` is the original AI extraction snapshot. ``reviewed_result``
-    # is the final user-reviewed version that should become the current
-    # business data. For an unedited save, callers may simply pass the same
-    # object for both arguments.
+    # Do not retain the deprecated Customer Name field in newly saved snapshots.
+    result = _remove_customer_name_key(result)
+    if reviewed_result is not None:
+        reviewed_result = _remove_customer_name_key(reviewed_result)
+
     effective_result = reviewed_result if reviewed_result is not None else result
 
     normalized = normalize_extraction_payload(effective_result)

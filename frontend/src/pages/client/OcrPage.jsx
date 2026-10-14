@@ -14,7 +14,6 @@ const TOP_LEVEL_FIELDS = [
   { key: 'invoice_date', label: 'Invoice Date', type: 'date' },
   { key: 'due_date', label: 'Due Date', type: 'date' },
   { key: 'vendor_name', label: 'Vendor Name', type: 'text' },
-  { key: 'customer_name', label: 'Customer Name', type: 'text' },
   { key: 'subsidiary', label: 'Subsidiary', type: 'text' },
   { key: 'currency', label: 'Currency', type: 'text' },
   { key: 'subtotal', label: 'Subtotal', type: 'number' },
@@ -64,7 +63,11 @@ function cloneData(data) {
     source = source.data
   }
 
-  return JSON.parse(JSON.stringify(source))
+  const cloned = JSON.parse(JSON.stringify(source))
+  if (cloned && typeof cloned === 'object' && !Array.isArray(cloned)){
+    delete cloned.customer_name
+  }
+  return cloned
 }
 function AIDiagnosticGuidance({
   diagnostic,
@@ -287,23 +290,38 @@ const FieldInput =  memo(function FieldInput({ field, value, editable, onChange 
   )
 })
 
-const ALLOWED_TYPES = [
-  'application/pdf',
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-  'image/bmp',
-  'image/tiff',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'text/csv',
-  'text/plain',
-]
+const FILE_RULES_BY_EXTENSION = {
+  pdf: { mimeTypes: ['application/pdf'], maxSizeMB: 20 },
+  docx: {
+    mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    maxSizeMB: 20,
+  },
+  jpg: { mimeTypes: ['image/jpeg'], maxSizeMB: 20 },
+  jpeg: { mimeTypes: ['image/jpeg'], maxSizeMB: 20 },
+  png: { mimeTypes: ['image/png'], maxSizeMB: 20 },
+  webp: { mimeTypes: ['image/webp'], maxSizeMB: 20 },
+  gif: { mimeTypes: ['image/gif'], maxSizeMB: 20 },
+  bmp: { mimeTypes: ['image/bmp', 'image/x-windows-bmp'], maxSizeMB: 20 },
+  tif: { mimeTypes: ['image/tiff'], maxSizeMB: 20 },
+  tiff: { mimeTypes: ['image/tiff'], maxSizeMB: 20 },
+  xlsx: {
+    mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    maxSizeMB: 10,
+  },
+  csv: {
+    mimeTypes: ['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain'],
+    maxSizeMB: 10,
+  },
+  txt: { mimeTypes: ['text/plain'], maxSizeMB: 5 },
+}
 
-const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff,.docx,.xlsx,.csv,.txt,application/pdf,image/png,image/jpeg,image/webp,image/gif,image/bmp,image/tiff,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain'
-const MAX_FILE_SIZE = 10 * 1024 * 1024
+const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff,.docx,.xlsx,.csv,.txt,application/pdf,image/png,image/jpeg,image/webp,image/gif,image/bmp,image/tiff,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,application/csv,application/vnd.ms-excel,text/plain'
 const MAX_FILES = 200
+
+function getFileRule(file) {
+  const extension = String(file?.name || '').split('.').pop().toLowerCase()
+  return FILE_RULES_BY_EXTENSION[extension] || null
+}
 
 function createPreview(file) {
   if (!file || (!isPdf(file) && !isImage(file))) {
@@ -313,7 +331,7 @@ function createPreview(file) {
 }
 
 function isImage(file) {
-  return file?.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|tiff)$/i.test(file?.name || '')
+  return file?.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|tif|tiff)$/i.test(file?.name || '')
 }
 
 function isPdf(file) {
@@ -1241,10 +1259,19 @@ useEffect(() => {
     const validated = []
 
     for (const file of incoming) {
-      if (!ALLOWED_TYPES.includes(file.type)) {
+      const fileRule = getFileRule(file)
+      if (!fileRule) {
         return {
           files: [],
-          error: `${file.name}: unsupported file type.`,
+          error: `${file.name}: Supported formats: PDF, DOCX, JPG, PNG, WEBP, GIF, BMP, TIF/TIFF, XLSX, CSV and TXT.`,
+        }
+      }
+
+      if (!fileRule.mimeTypes.includes(file.type)) {
+        return {
+          files: [],
+          error: `${file.name}: file type does not match its extension.`,
+
         }
       }
 
@@ -1255,19 +1282,11 @@ useEffect(() => {
         }
       }
 
-      if (file.size > MAX_FILE_SIZE) {
+      const maxBytes = fileRule.maxSizeMB * 1024 * 1024
+      if (file.size > maxBytes) {
         return {
           files: [],
-          error: `${file.name}: file size exceeds 10 MB.`,
-        }
-      }
-
-      const category = getFileCategory(file)
-      const limit = category === 'Text' ? 5 * 1024 * 1024 : MAX_FILE_SIZE
-      if (file.size > limit) {
-        return {
-          files: [],
-          error: `${file.name}: ${category} file size exceeds ${Math.round(limit / 1024 / 1024)} MB.`,
+          error: `${file.name}: file size exceeds ${fileRule.maxSizeMB} MB.`,
         }
       }
 
@@ -1487,21 +1506,6 @@ useEffect(() => {
       setResults(initialFiles)
 
       if (ocrMode === 'single') {
-        // sessionStorage.setItem(
-        //   'ocr_test_result',
-        //   JSON.stringify({
-        //     status:
-        //       payload?.status ??
-        //       initialFiles[0]?.status ??
-        //       'COMPLETED',
-        //     batch_id: batchId,
-        //     files: initialFiles,
-        //     template_id: selectedTemplateId || null,
-        //   }),
-
-        // The backend normally answers a single file synchronously. If it
-        // handed the file over to background processing (HTTP 202 / a
-        // non-terminal status), fall through to the polling loop below.
         const singleIsFinished = ['COMPLETED', 'FAILED'].includes(
           initialFiles[0]?.status,
         )
@@ -2057,7 +2061,7 @@ useEffect(() => {
 
       {viewMode === 'json' ? (
     <pre className="min-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
-      {JSON.stringify(data, null, 2)}
+      {JSON.stringify(jsonDisplayData, null, 2)}
     </pre>
   ) : (
     <>

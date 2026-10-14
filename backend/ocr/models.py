@@ -429,7 +429,6 @@ class OCRDocumentVersion(models.Model):
     invoice_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
     vendor_name = models.CharField(max_length=255, null=True, blank=True)
-    customer_name = models.CharField(max_length=255, null=True, blank=True)
     subsidiary = models.CharField(max_length=255, null=True, blank=True)
     currency = models.CharField(max_length=16, null=True, blank=True)
     subtotal = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)

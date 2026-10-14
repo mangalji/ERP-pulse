@@ -1,15 +1,6 @@
 """
 Generic utility functions for AGSuite ERP.
 
-Only utilities that are NOT already in ``common/utils/`` belong here.
-Existing utilities (``common/utils/crypto.py``, ``common/utils/datetime.py``,
-``common/utils/hash.py``, ``common/utils/response.py``,
-``common/utils/pagination.py``, ``common/utils/signed_token.py``,
-``common/utils/otp.py``) remain in place — this file does not duplicate
-or replace them.
-
-New code should import from ``core/utils.py`` for generic helpers and
-from ``common/utils/`` for the existing utilities listed above.
 """
 
 import logging

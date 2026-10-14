@@ -81,14 +81,6 @@ BATCH_MAX_DOCUMENTS = int(
 BATCH_JOB_TTL_SECONDS = 60 * 60 * 24
 BATCH_ACTIONS = {"validate", "post"}
 
-def _is_batch_success(status: str) -> bool:
-    return status in {
-        "VALIDATED",
-        "POSTED",
-        "ALREADY_POSTED",
-    }
-
-
 def _is_batch_failure(
     status: str,
     error: str | None = None,
@@ -107,19 +99,6 @@ def _is_success_status(status: str) -> bool:
         "POSTED",
         "ALREADY_POSTED",
     }
-
-
-def _is_failed_status(
-    status: str,
-    error=None,
-) -> bool:
-    return (
-        bool(error)
-        or status in {
-            "FAILED",
-            "VALIDATION_FAILED",
-        }
-    )
 
 def _expected_item_errors() -> tuple:
     """Exception types that mean "this document was rejected", not "bug"."""
@@ -264,11 +243,6 @@ def _run_netsuite_batch(
                 "succeeded": sum(
                     1
                     for item in results
-                    # if item["status"] in {
-                    #     "VALIDATED",
-                    #     "POSTED",
-                    #     "ALREADY_POSTED",
-                    # }
                     if _is_success_status(
                         item["status"]
                     )

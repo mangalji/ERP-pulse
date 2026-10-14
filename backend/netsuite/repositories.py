@@ -1,49 +1,11 @@
 from accounts.models import User
-from netsuite.models import NetSuiteConnection
 from django.db import transaction
 from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteReferenceRecord, NetSuiteOCRPosting
-import logging
-from netsuite.exceptions import NetSuiteConnectionNotFoundException
-
-logger = logging.getLogger(__name__)
-
 
 class NetSuiteConnectionRepository:
     """
     Persistence-only operations for NetSuiteConnection.
-
-    Contains no OAuth/HTTP logic — token exchange happens in
-    NetSuiteAuthClient (client.py), orchestration in
-    NetSuiteConnectionService (services.py). This class only reads from
-    and writes to the database.
     """
-    def _get_authorized_connection(self, *, connection_id, company):
-
-        connection = (
-            NetSuiteConnection.objects
-            .filter(
-                id=connection_id,
-                company=company,
-                status="connected",
-                is_active=True,
-            )
-            .first()
-        )
-        if connection is None:
-            raise NetSuiteConnectionNotFoundException(
-                "NetSuite connection not found or not accessible."
-            )
-
-        return connection
-
-    def get_by_user(self, user: User) -> NetSuiteConnection | None:
-
-        return (
-            NetSuiteConnection.objects.filter(
-                user=user,
-                is_active=True,
-            ).first()
-        )
 
     def get_for_user(self, user: User) -> NetSuiteConnection | None:
         available = self.list_available_for_user(user)
@@ -73,6 +35,12 @@ class NetSuiteConnectionRepository:
         )
 
         return selected
+
+    def deactivate(self, connection: NetSuiteConnection) -> NetSuiteConnection:
+        """Mark a connection inactive (e.g. on disconnect) without deleting history."""
+        connection.is_active = False
+        connection.save(update_fields=['is_active', 'updated_at'])
+        return connection
 
     def get_authorized_for_user(
         self,
@@ -145,7 +113,6 @@ class NetSuiteConnectionRepository:
         )
         connections = NetSuiteConnection.objects.filter(
             company_id = user.company_id,
-            # status="connected",
             is_active=True,
         ).order_by("-connected_at")
     
@@ -266,28 +233,11 @@ class NetSuiteConnectionRepository:
                 "updated_at",
             ]
         )
-    
-        return connection
-
-    def deactivate(self, connection: NetSuiteConnection) -> NetSuiteConnection:
-        """Mark a connection inactive (e.g. on disconnect) without deleting history."""
-        connection.is_active = False
-        connection.save(update_fields=['is_active', 'updated_at'])
-        return connection
-
-    def list_by_user(self,user:User):
-
-        return self.list_available_for_user(user)
-    
+        
     def get_by_id(self,user:User,connection_id)-> NetSuiteConnection | None:
         return NetSuiteConnection.objects.filter(
             id=connection_id,
             company_id=user.company_id,
-        ).first()
-
-    def get_by_id_any(self, connection_id) -> NetSuiteConnection | None:
-        return NetSuiteConnection.objects.filter(
-            id=connection_id,
         ).first()
 
     def get_for_company( self, *, connection_id, company) -> NetSuiteConnection | None:
@@ -296,20 +246,6 @@ class NetSuiteConnectionRepository:
             company=company,
             ).first()
         )
-
-
-    def exists_for_account(self, company_id, netsuite_account_id: str) -> bool:
-        """
-        Used by NetSuiteConnectionService.create_connection() to give a
-        clean validation error instead of letting the (user,
-        netsuite_account_id) unique constraint raise an IntegrityError
-        that the generic exception handler can't map to anything but a
-        500.
-        """
-        return NetSuiteConnection.objects.filter(
-            company_id=company_id,
-            netsuite_account_id=netsuite_account_id,
-        ).exists()
     
     def get_locked(self, connection_id) -> NetSuiteConnection:
         """
@@ -425,32 +361,11 @@ class NetSuiteConnectionRepository:
         connection.last_error = error_message[:2000]
         connection.consecutive_failures += 1
         update_fields = ['last_error', 'consecutive_failures', 'updated_at']
-        # Three or more failures in a row means this connection needs
-        # attention — surface it in the connection list rather than
-        # continuing to show a stale "connected" status.
+
         if connection.consecutive_failures >= NetSuiteConnection.UNHEALTHY_FAILURE_THRESHOLD and connection.status == 'connected':
             connection.status = 'error'
             update_fields.append('status')
         connection.save(update_fields=update_fields)
-        return connection
-
-    def record_connection_success(self,connection: NetSuiteConnection) -> NetSuiteConnection:
-        """
-        Mark a connection healthy after a successful live NetSuite operation.
-        """
-        connection.status = "connected"
-        connection.consecutive_failures = 0
-        connection.last_error = None
-
-        connection.save(
-            update_fields=[
-                "status",
-                "consecutive_failures",
-                "last_error",
-                "updated_at",
-            ]
-        )
-
         return connection
 
     def touch_last_used(self, connection: NetSuiteConnection) -> NetSuiteConnection:
@@ -559,8 +474,6 @@ class NetSuiteConnectionRepository:
             record_type=record_type,
             is_inactive=False,
         )
-
-        # Exact match is intentional: financial posting must never guess.
         return list(
             queryset.filter(search_name__iexact=value)
             .order_by("internal_id")

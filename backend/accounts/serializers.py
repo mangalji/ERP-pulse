@@ -9,7 +9,6 @@ from common.common_utils import (
     MAX_OTP_ATTEMPTS,
 )
 from accounts.models import User, Gender
-from common.contact_validation import normalize_phone
 from audit.models import AuditLog
 
 otp_code_validator = RegexValidator(
@@ -47,39 +46,6 @@ def human_name_field(*, max_length: int = 100, required: bool = True) -> seriali
         required=required,
         allow_blank=not required,
     )
-
-def add_normalized_phone(attrs,*,required:bool=False):
-    """
-    Normalize phone data in serializers that receive both phone and country.
-
-    This helper leaves blank phone data alone only when required=False.
-    """
-    phone = attrs.get("mobile_number")
-    country = attrs.get("country")
-
-    if not phone:
-        if required:
-            raise serializers.ValidationError(
-                {"mobile_number": "Phone number is required."}
-            )
-        return attrs
-
-    if not country:
-        raise serializers.ValidationError(
-            {"country": "Country is required when a phone number is provided."}
-        )
-
-    try:
-        normalized = normalize_phone(phone=phone, country=country)
-    except ValueError as exc:
-        raise serializers.ValidationError(
-            {"mobile_number": str(exc)}
-        ) from exc
-
-    attrs["mobile_number"] = normalized.number
-    attrs["country"] = normalized.country_code
-    attrs["phone_country_code"] = normalized.dial_code
-    return attrs
 
 class ResendLoginOTPSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=100)

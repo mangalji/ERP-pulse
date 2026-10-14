@@ -42,6 +42,17 @@ from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, ValidationS
 
 logger = logging.getLogger(__name__)
 
+# NetSuite metadata/catalogue uses script-style field IDs, while the REST
+# Records API expects camelCase JSON properties for these standard fields.
+# Keep catalogue IDs unchanged in saved mappings; translate only when
+# constructing the outbound REST payload.
+NETSUITE_REST_BODY_FIELD_NAMES = {
+    "tranid": "tranId",
+    "trandate": "tranDate",
+    "duedate": "dueDate",
+}
+
+
 def raise_if_reauth_required(connection) -> None:
     """
     A connection whose tokens were cleared after ``invalid_grant`` can never
@@ -67,8 +78,8 @@ class NetSuiteConnectionService:
     def __init__(
         self,
         repository: NetSuiteConnectionRepository | None = None,
-        client: NetSuiteAuthClient | None = None,
-        token_manager: NetSuiteTokenManager | None=None,
+        # client: NetSuiteAuthClient | None = None,
+        token_manager: NetSuiteTokenManager | None = None,
     ):
         self.repository = repository or NetSuiteConnectionRepository()
         self.token_manager = token_manager or NetSuiteTokenManager(repository=self.repository)
@@ -207,9 +218,9 @@ class NetSuiteConnectionService:
             raise
 
 
-    def list_connections(self,*,user:User):
-        self._ensure_user_company_operational(user=user)
-        return self.repository.list_by_user(user)
+    # def list_connections(self,*,user:User):
+    #     self._ensure_user_company_operational(user=user)
+    #     return self.repository.list_by_user(user)
     
     def create_connection(
             self,*,
@@ -527,11 +538,11 @@ class NetSuiteConnectionService:
             )
         
 
-    def get_employee_connection(self, *, employee_id):
+    # def get_employee_connection(self, *, employee_id):
 
-        user = User.objects.select_related("company").get(pk=employee_id)
+    #     user = User.objects.select_related("company").get(pk=employee_id)
 
-        return self.repository.get_for_user(user)
+    #     return self.repository.get_for_user(user)
 
     def test_connection(self, *, connection_id):
         connection = NetSuiteConnection.objects.select_related('company').get(pk=connection_id)
@@ -702,30 +713,32 @@ class NetSuiteDataService:
             params=params,
         )
 
-    def get_record(
-        self,
-        *,
-        record_type: str,
-        record_id: str,
-        user: User,
-        params: dict | None = None,
-    ) -> dict:
-        client, connection = self._get_authenticated_client(user)
-        return self._call_and_track_health(
-            connection,
-            client.get_record,
-            record_type=record_type,
-            record_id=record_id,
-            params=params,
-        )
+    # def get_record(
+    #     self,
+    #     *,
+    #     record_type: str,
+    #     record_id: str,
+    #     user: User,
+    #     params: dict | None = None,
+    # ) -> dict:
+    #     client, connection = self._get_authenticated_client(user)
+    #     return self._call_and_track_health(
+    #         connection,
+    #         client.get_record,
+    #         record_type=record_type,
+    #         record_id=record_id,
+    #         params=params,
+    #     )
 
     def execute_suiteql(self, *, query: str, user: User, limit: int | None = None, offset: int | None = None) -> dict:
         """
         Run a SuiteQL query for `user`'s connected NetSuite account.
 
-        Reuses _get_authenticated_client() — the same connection lookup
-        and token-refresh path get_records()/get_record() already use —
-        so authentication logic isn't duplicated for SuiteQL. The Client
+        # Reuses _get_authenticated_client() — the same connection lookup
+        # and token-refresh path get_records()/get_record() already use —
+        # so authentication logic isn't duplicated for SuiteQL. The Client
+        Reuses _get_authenticated_client() so connection lookup and token
+        refresh logic stay centralized. The Client
         (netsuite.client.NetSuiteAuthClient.execute_suiteql) is the only
         thing that actually talks to NetSuite.
         """
@@ -750,34 +763,32 @@ class NetSuiteDataService:
         self.repository.touch_last_used(connection)
         return result
 
-    def get_customers(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=user, limit=limit, offset=offset)
+    # def get_customers(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+    #     return self.get_records(record_type=NetSuiteRecordType.CUSTOMER, user=user, limit=limit, offset=offset)
 
-    def get_employees(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.EMPLOYEE, user=user, limit=limit, offset=offset)
+    # def get_employees(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+    #     return self.get_records(record_type=NetSuiteRecordType.EMPLOYEE, user=user, limit=limit, offset=offset)
 
-    def get_vendors(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.VENDOR, user=user, limit=limit, offset=offset)
+    # def get_vendors(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+    #     return self.get_records(record_type=NetSuiteRecordType.VENDOR, user=user, limit=limit, offset=offset)
 
-    def get_sales_orders(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.SALES_ORDER, user=user, limit=limit, offset=offset)
+    # def get_sales_orders(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+    #     return self.get_records(record_type=NetSuiteRecordType.SALES_ORDER, user=user, limit=limit, offset=offset)
     
-    def get_purchase_orders(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.PURCHASE_ORDER, user=user, limit=limit, offset=offset)
+    # def get_purchase_orders(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+    #     return self.get_records(record_type=NetSuiteRecordType.PURCHASE_ORDER, user=user, limit=limit, offset=offset)
     
-    def get_invoices(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
-        return self.get_records(record_type=NetSuiteRecordType.INVOICE, user=user, limit=limit, offset=offset)
+    # def get_invoices(self, *, user: User, limit: int | None = None, offset: int | None = None) -> dict:
+    #     return self.get_records(record_type=NetSuiteRecordType.INVOICE, user=user, limit=limit, offset=offset)
 
-    def get_items(self, *, user: User, item_type: str = NetSuiteRecordType.INVENTORY_ITEM, limit: int | None = None, offset: int | None = None) -> dict:
-        if not NetSuiteRecordType.is_valid(item_type):
-            raise ValueError(f"Invalid NetSuite item type: {item_type}")
-        return self.get_records(record_type=item_type, user=user, limit=limit, offset=offset)
-
-    # -----------------------------------------------------------------
+    # def get_items(self, *, user: User, item_type: str = NetSuiteRecordType.INVENTORY_ITEM, limit: int | None = None, offset: int | None = None) -> dict:
+    #     if not NetSuiteRecordType.is_valid(item_type):
+    #         raise ValueError(f"Invalid NetSuite item type: {item_type}")
+    #     return self.get_records(record_type=item_type, user=user, limit=limit, offset=offset)--------
     # SuiteQL-based list methods
     #
-    # The plain REST record collection endpoint (get_customers() etc.
-    # above, via get_records()) returns only {id, links} per item —
+    # The plain REST record collection endpoint, accessed via
+    # get_records(), returns only {id, links} per item —
     # no business fields at all. This is documented NetSuite behavior,
     # not a bug in this client: see "Listing All Record Instances" in
     # Oracle's NetSuite REST API docs, which shows exactly this shape.
@@ -787,7 +798,7 @@ class NetSuiteDataService:
     # no extra round trips.
     #
     # Field verification status:
-    # - customer/vendor id/entityid/companyname/email fields: already
+    #''' - customer/vendor id/entityid/companyname/email fields: already
     #   verified against a live NetSuite sandbox (see analytics/services.py).
     # - transaction id/tranid/entity/foreigntotal/trandate/type fields:
     #   same — already verified in analytics/services.py.
@@ -795,8 +806,12 @@ class NetSuiteDataService:
     #   NOT yet verified against this project's NetSuite sandbox —
     #   sourced from Oracle's official SuiteQL documentation and
     #   confirmed community examples, but should be tested against a
-    #   real account and adjusted if any field name doesn't match.
-    # -----------------------------------------------------------------
+    #   real account and adjusted if any field name doesn't match.'''
+    #  Vendor id/entityid/companyname/email fields: verified against a
+    #   live NetSuite sandbox in analytics/services.py.
+    # - Inventory item fields and BUILTIN.DF() usage below: not yet
+    #   verified against this project's NetSuite sandbox; test against a
+    #   real account if a field name fails for that account--------
 
     def _list_via_suiteql(self, *, user: User, query: str, limit: int, offset: int) -> dict:
         response = self.execute_suiteql(query=query, user=user, limit=limit, offset=offset)
@@ -805,27 +820,27 @@ class NetSuiteDataService:
             'totalResults': response.get('totalResults', 0),
         }
 
-    def list_customers(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        raw = self._list_via_suiteql(
-            user=user, limit=limit, offset=offset,
-            query="""
-                SELECT id, entityid, companyname, email, phone, isinactive
-                FROM customer
-                ORDER BY id
-            """,
-        )
-        raw['items'] = [
-            {
-                'id': row.get('id'),
-                'entityId': row.get('entityid'),
-                'companyName': row.get('companyname'),
-                'email': row.get('email'),
-                'phone': row.get('phone'),
-                'status': 'Inactive' if row.get('isinactive') == 'T' else 'Active',
-            }
-            for row in raw['items']
-        ]
-        return raw
+    # def list_customers(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     raw = self._list_via_suiteql(
+    #         user=user, limit=limit, offset=offset,
+    #         query="""
+    #             SELECT id, entityid, companyname, email, phone, isinactive
+    #             FROM customer
+    #             ORDER BY id
+    #         """,
+    #     )
+    #     raw['items'] = [
+    #         {
+    #             'id': row.get('id'),
+    #             'entityId': row.get('entityid'),
+    #             'companyName': row.get('companyname'),
+    #             'email': row.get('email'),
+    #             'phone': row.get('phone'),
+    #             'status': 'Inactive' if row.get('isinactive') == 'T' else 'Active',
+    #         }
+    #         for row in raw['items']
+    #     ]
+    #     return raw
 
     def list_vendors(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
         raw = self._list_via_suiteql(
@@ -849,29 +864,29 @@ class NetSuiteDataService:
         ]
         return raw
 
-    def list_employees(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        raw = self._list_via_suiteql(
-            user=user, limit=limit, offset=offset,
-            query="""
-                SELECT id, entityid, firstname, lastname, email, title,
-                       BUILTIN.DF(department) AS department
-                FROM employee
-                ORDER BY id
-            """,
-        )
-        raw['items'] = [
-            {
-                'id': row.get('id'),
-                'entityId': row.get('entityid'),
-                'firstName': row.get('firstname'),
-                'lastName': row.get('lastname'),
-                'email': row.get('email'),
-                'title': row.get('title'),
-                'department': row.get('department'),
-            }
-            for row in raw['items']
-        ]
-        return raw
+    # def list_employees(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     raw = self._list_via_suiteql(
+    #         user=user, limit=limit, offset=offset,
+    #         query="""
+    #             SELECT id, entityid, firstname, lastname, email, title,
+    #                    BUILTIN.DF(department) AS department
+    #             FROM employee
+    #             ORDER BY id
+    #         """,
+    #     )
+    #     raw['items'] = [
+    #         {
+    #             'id': row.get('id'),
+    #             'entityId': row.get('entityid'),
+    #             'firstName': row.get('firstname'),
+    #             'lastName': row.get('lastname'),
+    #             'email': row.get('email'),
+    #             'title': row.get('title'),
+    #             'department': row.get('department'),
+    #         }
+    #         for row in raw['items']
+    #     ]
+    #     return raw
 
     def list_inventory_items(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
         """
@@ -933,63 +948,63 @@ class NetSuiteDataService:
                 'totalResults': response.get('totalResults', len(items)),
             }
 
-    def _list_transactions_via_suiteql(self, *, user: User, transaction_type: str, limit: int, offset: int) -> dict:
-        """Shared by sales orders/purchase orders/invoices — all live in NetSuite's single `transaction` table, discriminated by `type`."""
-        raw = self._list_via_suiteql(
-            user=user, limit=limit, offset=offset,
-            query=f"""
-                SELECT id, tranid, entity, BUILTIN.DF(entity) AS entityname,
-                       BUILTIN.DF(status) AS status, foreigntotal, trandate
-                FROM transaction
-                WHERE type = '{transaction_type}'
-                ORDER BY id
-            """,
-        )
-        raw['items'] = [
-            {
-                'id': row.get('id'),
-                'tranId': row.get('tranid'),
-                'entity': {'id': row.get('entity'), 'name': row.get('entityname')},
-                'status': row.get('status'),
-                'total': row.get('foreigntotal'),
-                'createdDate': row.get('trandate'),
-            }
-            for row in raw['items']
-        ]
-        return raw
+    # def _list_transactions_via_suiteql(self, *, user: User, transaction_type: str, limit: int, offset: int) -> dict:
+    #     """Shared by sales orders/purchase orders/invoices — all live in NetSuite's single `transaction` table, discriminated by `type`."""
+    #     raw = self._list_via_suiteql(
+    #         user=user, limit=limit, offset=offset,
+    #         query=f"""
+    #             SELECT id, tranid, entity, BUILTIN.DF(entity) AS entityname,
+    #                    BUILTIN.DF(status) AS status, foreigntotal, trandate
+    #             FROM transaction
+    #             WHERE type = '{transaction_type}'
+    #             ORDER BY id
+    #         """,
+    #     )
+    #     raw['items'] = [
+    #         {
+    #             'id': row.get('id'),
+    #             'tranId': row.get('tranid'),
+    #             'entity': {'id': row.get('entity'), 'name': row.get('entityname')},
+    #             'status': row.get('status'),
+    #             'total': row.get('foreigntotal'),
+    #             'createdDate': row.get('trandate'),
+    #         }
+    #         for row in raw['items']
+    #     ]
+    #     return raw
 
-    def list_sales_orders(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        return self._list_transactions_via_suiteql(user=user, transaction_type='SalesOrd', limit=limit, offset=offset)
+    # def list_sales_orders(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     return self._list_transactions_via_suiteql(user=user, transaction_type='SalesOrd', limit=limit, offset=offset)
 
-    def list_purchase_orders(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        return self._list_transactions_via_suiteql(user=user, transaction_type='PurchOrd', limit=limit, offset=offset)
+    # def list_purchase_orders(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     return self._list_transactions_via_suiteql(user=user, transaction_type='PurchOrd', limit=limit, offset=offset)
 
-    def list_invoices(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        return self._list_transactions_via_suiteql(user=user, transaction_type='CustInvc', limit=limit, offset=offset)
+    # def list_invoices(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     return self._list_transactions_via_suiteql(user=user, transaction_type='CustInvc', limit=limit, offset=offset)
 
-    def list_cash_sales(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        return self._list_transactions_via_suiteql(
-            user=user,
-            transaction_type='CashSale',
-            limit=limit,
-            offset=offset,
-        )
+    # def list_cash_sales(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     return self._list_transactions_via_suiteql(
+    #         user=user,
+    #         transaction_type='CashSale',
+    #         limit=limit,
+    #         offset=offset,
+    #     )
     
-    def list_vendor_bills(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        return self._list_transactions_via_suiteql(
-            user=user,
-            transaction_type='VendBill',
-            limit=limit,
-            offset=offset,
-        )
+    # def list_vendor_bills(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     return self._list_transactions_via_suiteql(
+    #         user=user,
+    #         transaction_type='VendBill',
+    #         limit=limit,
+    #         offset=offset,
+    #     )
     
-    def list_vendor_payments(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
-        return self._list_transactions_via_suiteql(
-            user=user,
-            transaction_type='VendPymt',
-            limit=limit,
-            offset=offset,
-        )
+    # def list_vendor_payments(self, *, user: User, limit: int = 20, offset: int = 0) -> dict:
+    #     return self._list_transactions_via_suiteql(
+    #         user=user,
+    #         transaction_type='VendPymt',
+    #         limit=limit,
+    #         offset=offset,
+    #     )
         
 
     def _require_connection(self, user: User):  
@@ -1903,9 +1918,19 @@ class NetSuiteVendorBillPostingService:
 
         for mapping in standard_field_mappings:
             target_field_id = mapping.target_field_id
-            if not target_field_id or target_field_id in payload:
-                # Already set explicitly above (entity/item), or a
-                # duplicate mapping row — first mapping wins.
+            # if not target_field_id or target_field_id in payload:
+            if not target_field_id:
+                continue
+
+            target_field_key = target_field_id.strip().lower()
+            api_field_name = NETSUITE_REST_BODY_FIELD_NAMES.get(
+                target_field_key,target_field_id
+            )
+            if api_field_name.casefold() in {
+                str(key).casefold() for key in payload
+            }:
+                # # Already set explicitly above (entity/item), or a
+                # # duplicate mapping row — first mapping wins.
                 continue
 
             if target_field_id.strip().lower() in NETSUITE_VENDOR_BILL_UNSUPPORTED_FIELDS:
@@ -1946,7 +1971,7 @@ class NetSuiteVendorBillPostingService:
                     value=raw_value,
                 )
                 if resolved_id:
-                    payload[target_field_id] = {"id": resolved_id}
+                    payload[api_field_name] = {"id": resolved_id}
                     continue
 
                 if mapping.is_required:
@@ -1982,6 +2007,10 @@ class NetSuiteVendorBillPostingService:
                 continue
 
             payload[target_field_id] = raw_value
+            if api_field_name == "tranId":
+                # Vendor Bill Reference No. supports up to 45 characters.
+                raw_value = str(raw_value).strip()[:45]
+            payload[api_field_name] = raw_value
 
         # Fallback defaults for the most common header fields, only if
         # not already supplied by an explicit field mapping above.
@@ -2675,12 +2704,6 @@ class NetSuiteFieldMappingService:
                         nested_id
                     ).lower()
 
-                    # "items" is the collection wrapper used by
-                    # NetSuite's Vendor Bill sublist schema.
-                    #
-                    # Do not expose "items" itself as a field.
-                    # Continue walking underneath it while keeping
-                    # the original item/expense context.
                     if lower_nested_id == "items":
                         walk_sublist_schema(
                             nested_schema,
@@ -2696,9 +2719,6 @@ class NetSuiteFieldMappingService:
                         "items"
                     )
 
-                    # If this is another schema container,
-                    # continue walking it without losing the
-                    # original sublist context.
                     if (
                         isinstance(nested_properties, dict)
                         or isinstance(nested_items, dict)
@@ -2736,9 +2756,7 @@ class NetSuiteFieldMappingService:
                     current_required,
                 )
 
-        # ---------------------------------------------------------
         # Root Vendor Bill fields
-        # ---------------------------------------------------------
         for field_id, field_schema in properties.items():
             lower_id = str(field_id).lower()
 
@@ -2770,7 +2788,6 @@ class NetSuiteFieldMappingService:
                 required,
             )
 
-        # ---------------------------------------------------------
         # Deduplicate
         #
         # Same field ID is allowed in both:
@@ -2778,7 +2795,7 @@ class NetSuiteFieldMappingService:
         #   column + expense
         #
         # Therefore sublist_id MUST be part of the key.
-        # ---------------------------------------------------------
+
         def dedupe(fields):
             seen = set()
             output = []
@@ -3979,9 +3996,7 @@ class NetSuiteValidationService:
                 "NetSuite connection is not active."
             )
         
-        # ---------------------------------------------------------
         # Template-based NetSuite mapping
-        # ---------------------------------------------------------
         upload = getattr(document, "upload", None)
         batch = getattr(upload, "batch", None) if upload else None
 
@@ -5387,9 +5402,7 @@ class NetSuiteValidationService:
 
         normalized_input = self._normalize_match_name(raw_item_name)
         
-        # ---------------------------------------------------------
         # Round 1: exact case-insensitive match
-        # ---------------------------------------------------------
 
         if not normalized_input:
             return {
@@ -5575,140 +5588,3 @@ class NetSuiteValidationService:
             )
 
         return result
-
-class NetSuiteCustomFieldService:
-    """
-    Create and manage NetSuite custom fields for OCR custom fields.
-
-    Enforces duplicate protection and preserves authoritative mapping
-    between OCR custom fields and NetSuite script IDs.
-    """
-
-    def __init__(self, repository=None, token_manager=None):
-        self.repository = repository or NetSuiteConnectionRepository()
-        self.token_manager = token_manager or NetSuiteTokenManager(repository=self.repository)
-
-    def create_custom_field(self, *, company, connection_id, record_type, scope, field_label, datatype, source_field_key, source_field_label):
-        connection = self.repository._get_authorized_connection(
-            connection_id=connection_id,
-            company=company,
-            )
-        if connection is None:
-            raise NetSuiteConnectionNotFoundException("NetSuite connection not found.")
-
-        candidate_id = self._generate_candidate_id(source_field_key, scope)
-
-        existing = NetSuiteCustomField.objects.filter(
-            company=company,
-            connection=connection,
-            record_type=record_type,
-            scope=scope,
-            source_field_key=source_field_key,
-        ).first()
-
-        if existing and existing.netsuite_field_id:
-            return existing
-
-        if existing and not existing.netsuite_field_id:
-            candidate_id = existing.field_id
-
-        custom_field = NetSuiteCustomField.objects.create(
-            company=company,
-            connection=connection,
-            record_type=record_type,
-            scope=scope,
-            field_label=field_label,
-            field_id=candidate_id,
-            datatype=datatype,
-            source_field_key=source_field_key,
-            source_field_label=source_field_label,
-            status='pending',
-        )
-
-        try:
-            ns_field_id = self._create_in_netsuite(
-                connection=connection,
-                record_type=record_type,
-                scope=scope,
-                field_label=field_label,
-                field_id=candidate_id,
-                datatype=datatype,
-            )
-            custom_field.netsuite_field_id = str(ns_field_id)
-            custom_field.status = 'created'
-            custom_field.save(update_fields=['netsuite_field_id', 'status', 'updated_at'])
-        except Exception as exc:
-            custom_field.status = 'error'
-            custom_field.error = str(exc)[:1000]
-            custom_field.save(update_fields=['status', 'error', 'updated_at'])
-            raise
-
-        return custom_field
-
-    @staticmethod
-    def _generate_candidate_id(source_field_key, scope):
-        safe = ''.join(
-            c if c.isalnum() else '_'
-            for c in source_field_key
-        ).lower()
-        safe = safe.strip('_') or 'custom_field'
-        if len(safe) > 25:
-            safe = safe[:25]
-
-        prefix = 'custbody' if scope in {'header', 'body'} else 'custcol'
-        return f'{prefix}_{safe}'
-
-    def _create_in_netsuite(self, *, connection, record_type, scope, field_label, field_id, datatype):
-        """
-        Create the custom field in NetSuite via REST API.
-
-        This is a minimal implementation. Production should use the
-        NetSuite custom field REST endpoint with proper error handling.
-        """
-        from netsuite.client import NetSuiteAuthClient
-        from tenancy.services import company_lifecycle_service
-
-        company = getattr(connection, 'company', None)
-        if company is not None:
-            company_lifecycle_service.ensure_operational(company=company)
-
-        access_token = self.token_manager.get_valid_access_token(connection)
-
-        ns_datatype = {
-            'text': 'text',
-            'number': 'integer',
-            'date': 'date',
-            'boolean': 'checkbox',
-            'currency': 'currency',
-        }.get(datatype, 'text')
-
-        ns_record_type = record_type
-        if record_type == 'vendorBill':
-            ns_record_type = 'vendorBill'
-
-        payload = {
-            'recordType': ns_record_type,
-            'label': field_label,
-            'scriptId': field_id,
-            'type': ns_datatype,
-            'applyTo': scope,
-        }
-
-        import requests
-        base_url = f"https://{connection.netsuite_account_id}.suitetalk.api.netsuite.com"
-        url = f"{base_url}/record/v1/customrecord_customfield"
-
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json',
-        }
-
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-
-        if response.status_code not in (200, 201):
-            raise ValueError(
-                f"NetSuite custom field creation failed: {response.status_code} {response.text[:500]}"
-            )
-
-        result = response.json()
-        return result.get('id') or result.get('internalId') or field_id

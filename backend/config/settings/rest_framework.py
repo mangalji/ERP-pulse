@@ -58,12 +58,7 @@ REST_FRAMEWORK = {
             "THROTTLE_REGISTER_OTP",
             default="5/min",
         ),
-
-        "ai_chat": config(
-            "THROTTLE_AI_CHAT",
-            default="60/min",
-        ),
-
+        
         "dashboard": config(
             "THROTTLE_DASHBOARD",
             default="120/min",

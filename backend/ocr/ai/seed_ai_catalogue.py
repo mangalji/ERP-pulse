@@ -18,7 +18,7 @@ PROVIDERS = {
     "google": {
         "name": "Google",
         "models": [
-            # Gemini 3 family
+
             ("gemini-3.8-flash", "Gemini 3.8 Flash"),
             ("gemini-3.8-live", "Gemini 3.8 Live"),
             (

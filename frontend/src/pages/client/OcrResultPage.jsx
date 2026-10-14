@@ -14,7 +14,6 @@ const TOP_LEVEL_FIELDS = [
   { key: 'invoice_date', label: 'Invoice Date', type: 'date' },
   { key: 'due_date', label: 'Due Date', type: 'date' },
   { key: 'vendor_name', label: 'Vendor Name', type: 'text' },
-  { key: 'customer_name', label: 'Customer Name', type: 'text' },
   { key: 'subsidiary', label: 'Subsidiary', type: 'text' },
   { key: 'currency', label: 'Currency', type: 'text' },
   { key: 'subtotal', label: 'Subtotal', type: 'number' },
@@ -62,7 +61,11 @@ function cloneData(data) {
     source = source.data
   }
 
-  return JSON.parse(JSON.stringify(source))
+  const cloned = JSON.parse(JSON.stringify(source))
+  if (cloned && typeof cloned === 'object' && !Array.isArray(cloned)) {
+    delete cloned.customer_name
+  }
+  return cloned
 }
 
 function toInputValue(value) {
@@ -1165,7 +1168,6 @@ export default function OcrResultPage() {
                       </button>
                     </div>
                   </div>
-
                   {viewMode === 'json' ? (
                     <pre className="mt-4 min-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
                       {JSON.stringify(data, null, 2)}

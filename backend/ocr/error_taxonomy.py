@@ -24,10 +24,8 @@ from ocr.exceptions import (
     GeminiRateLimitException,
     GeminiTimeoutException,
     GeminiValidationException,
-    ImageProcessingException,
     InvalidExtractionResultException,
     InvalidFileException,
-    InvalidImageException,
     PDFProcessingException,
     PDFTooLargeException,
     UnsupportedFormatException,
@@ -68,7 +66,6 @@ QUOTA_MESSAGE = (
 
 _FILE_ERRORS = (
     InvalidFileException,
-    InvalidImageException,
     UnsupportedFormatException,
     PDFTooLargeException,
     PDFProcessingException,
@@ -134,14 +131,6 @@ def classify_failure(exc: BaseException) -> FailureInfo:
             FailureCode.INFRA_UNAVAILABLE,
             True,
             "A required service is temporarily unavailable. Please try again.",
-        )
-
-    if isinstance(exc, ImageProcessingException):
-        return FailureInfo(
-            FailureCode.INTERNAL,
-            False,
-            "The document could not be processed.",
-            expected=True,
         )
 
     return FailureInfo(

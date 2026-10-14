@@ -76,10 +76,6 @@ class NetSuiteConnection(models.Model):
     connected_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # Failure streak beyond which a "connected" connection is reported as
-    # unhealthy rather than healthy — chosen to tolerate a couple of
-    # transient blips without flapping the status, while still surfacing
-    # a connection that's genuinely stuck failing.
     UNHEALTHY_FAILURE_THRESHOLD = 3
 
     class Meta:
@@ -93,11 +89,6 @@ class NetSuiteConnection(models.Model):
         ]
 
         indexes = [
-            # Covers NetSuiteConnectionRepository.get_by_user()'s exact
-            # filter shape — the unique constraint above indexes
-            # (user, netsuite_account_id), a different column pair that
-            # doesn't help this query.
-            models.Index(fields=["user", "is_active"], name="netsuite_conn_user_active_idx"),
             models.Index(fields=["company", "is_active"], name="ns_conn_co_active_idx"),
         ]
 

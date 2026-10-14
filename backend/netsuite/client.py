@@ -133,27 +133,6 @@ class NetSuiteAuthClient:
             params=query_params,
         )
 
-    def get_record(
-        self,
-        *,
-        record_type: str,
-        record_id: str,
-        params: dict | None = None,
-        access_token: str | None = None,
-    ) -> dict:
-        """
-        GET /record/v1/{record_type}/{id} — generic NetSuite REST Record
-        single-item endpoint.
-        """
-        if not NetSuiteRecordType.is_valid(record_type):
-            raise ValueError(f"Unsupported record type: {record_type}")
-
-        return self._get(
-            path=f'record/v1/{record_type}/{record_id}',
-            access_token=access_token,
-            params=params,
-        )
-
     def create_record(
         self,
         *,
@@ -179,16 +158,6 @@ class NetSuiteAuthClient:
             # timeout instead of failing a request NetSuite may still
             # be successfully processing.
             timeout=http.WRITE_TIMEOUT_SECONDS,
-        )
-
-    def get_customers(self, *, access_token: str | None = None) -> dict:
-        """
-        GET /record/v1/customer — NetSuite's REST Record collection endpoint.
-        Kept for 100% backward compatibility.
-        """
-        return self.get_records(
-            record_type=NetSuiteRecordType.CUSTOMER,
-            access_token=access_token,
         )
 
     def execute_suiteql(
@@ -231,9 +200,7 @@ class NetSuiteAuthClient:
             retryable=True,
         )
 
-    # -----------------------------------------------------------------
     # Internal request helpers
-    # -----------------------------------------------------------------
 
     def _get(self, *, path: str, access_token: str | None = None, params: dict | None = None) -> dict:
         token = access_token or self.access_token

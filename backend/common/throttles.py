@@ -18,8 +18,8 @@ class LoginOTPThrottle(AnonRateThrottle):
 class RegisterOTPThrottle(AnonRateThrottle):
     scope = 'register_otp'
 
-class AIChatThrottle(UserRateThrottle):
-    scope = 'ai_chat'
+# class AIChatThrottle(UserRateThrottle):
+#     scope = 'ai_chat'
 
 class DashboardThrottle(UserRateThrottle):
     scope = 'dashboard'

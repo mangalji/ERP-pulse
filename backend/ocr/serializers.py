@@ -70,12 +70,12 @@ class DocumentHistorySerializer(serializers.Serializer):
     versions = DocumentVersionSerializer(many=True)
 
 
-class OCRBatchHistoryItemSerializer(serializers.Serializer):
-    upload_id = serializers.UUIDField()
-    filename = serializers.CharField()
-    status = serializers.CharField()
-    document_id = serializers.UUIDField(allow_null=True)
-    created_at = serializers.DateTimeField()
+# class OCRBatchHistoryItemSerializer(serializers.Serializer):
+#     upload_id = serializers.UUIDField()
+#     filename = serializers.CharField()
+#     status = serializers.CharField()
+#     document_id = serializers.UUIDField(allow_null=True)
+#     created_at = serializers.DateTimeField()
 
 class OCRHistoryFileSerializer(serializers.Serializer):
     """One file entry exposed from a single file or an OCR batch."""
@@ -134,51 +134,6 @@ class OCRBatchHistorySerializer(serializers.Serializer):
     owner_id = serializers.CharField(allow_null=True, allow_blank=True)
     owner_name = serializers.CharField(allow_null=True, allow_blank=True)
     files = OCRHistoryFileSerializer(many=True)
-
-
-class OCRHistoryVersionSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = __import__('ocr.models', fromlist=['OCRDocumentVersion']).OCRDocumentVersion
-        fields = [
-            'id',
-            'version_number',
-            'invoice_number',
-            'invoice_date',
-            'due_date',
-            'vendor_name',
-            'customer_name',
-            'subsidiary',
-            'currency',
-            'subtotal',
-            'tax_amount',
-            'tax_rate',
-            'total_amount',
-            'payment_terms',
-            'normalized_json',
-            'created_at',
-        ]
-
-
-class OCRDocumentHistorySerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    upload_id = serializers.UUIDField(allow_null=True)
-    filename = serializers.CharField(allow_null=True, allow_blank=True)
-    document_type = serializers.CharField()
-    status = serializers.CharField()
-    current_version = serializers.IntegerField()
-    overall_confidence = serializers.FloatField(allow_null=True)
-    processing_metadata = serializers.JSONField()
-    versions = OCRHistoryVersionSerializer(many=True)
-
-
-class OCRHistoryListSerializer(serializers.Serializer):
-    upload_id = serializers.UUIDField()
-    document_id = serializers.UUIDField(allow_null=True)
-    filename = serializers.CharField()
-    status = serializers.CharField()
-    document_type = serializers.CharField(allow_null=True, allow_blank=True)
-    created_at = serializers.DateTimeField()
 
 
 class OCRExtractionTemplateSerializer(serializers.ModelSerializer):

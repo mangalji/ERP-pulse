@@ -23,6 +23,20 @@ function createFieldId(prefix = 'field') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function isCustomerNameField(field) {
+  const values =
+    typeof field === 'string'
+      ? [field]
+      : [field?.key, field?.original_key, field?.label, field?.name]
+
+  return values.some((value) =>
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_') === 'customer_name',
+  )
+}
+
 const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
   invoice_number: {
     id: 'tranid',
@@ -224,25 +238,29 @@ function normalizeTemplateConfig(config) {
 
   return {
     standard_fields: Array.isArray(config.standard_fields)
-      ? config.standard_fields
+      ? config.standard_fields.filter((key) => !isCustomerNameField(key))
       : [],
     standard_field_overrides:
       config.standard_field_overrides &&
       typeof config.standard_field_overrides === 'object'
-        ? config.standard_field_overrides
+        ? Object.fromEntries(
+            Object.entries(config.standard_field_overrides).filter(
+              ([key]) => !isCustomerNameField(key),
+            ),
+          )
         : {},
     custom_fields: Array.isArray(config.custom_fields)
-      ? config.custom_fields.map((field, index) =>
-          normalizeCustomField(field, index),
-        )
+      ? config.custom_fields
+          .filter((field) => !isCustomerNameField(field))
+          .map((field, index) => normalizeCustomField(field, index))
       : [],
     disabled_standard_fields: Array.isArray(config.disabled_standard_fields)
-      ? config.disabled_standard_fields
+      ? config.disabled_standard_fields.filter((key) => !isCustomerNameField(key))
       : [],
     disabled_custom_fields: Array.isArray(config.disabled_custom_fields)
-      ? config.disabled_custom_fields.map((field, index) =>
-          normalizeCustomField(field, index),
-        )
+      ? config.disabled_custom_fields
+          .filter((field) => !isCustomerNameField(field))
+          .map((field, index) => normalizeCustomField(field, index))
       : [],
   }
 }
@@ -752,7 +770,7 @@ export default function FileTemplatePage() {
       ...(Array.isArray(catalog.line_fields)
         ? catalog.line_fields
         : []),
-    ]
+    ].filter((field) => !isCustomerNameField(field))
   }, [catalog])
 
   const getConnectionId = (value) => (
@@ -980,11 +998,6 @@ const handleRefreshNetSuiteFields = async () => {
 
   const createDefaultFields = (availableFields=sortedNetSuiteFields) =>
   catalogFields
-    .filter(
-      (catalogField) =>
-        String(catalogField?.key || '').trim().toLowerCase() !==
-        'customer_name',
-    )
     .map((catalogField) => {
       const field = normalizeCatalogField(catalogField)
 
@@ -1256,6 +1269,10 @@ const handleRefreshNetSuiteFields = async () => {
     const activeFields = fields.filter((field) => field.enabled !== false)
     if (!activeFields.length) {
       return 'Use at least one field in the template before saving.'
+    }
+
+    if (fields.some((field) => isCustomerNameField(field))) {
+      return 'Customer Name is not supported for Vendor Bill extraction. Use Vendor Name instead.'
     }
 
     const seenKeys = new Set()

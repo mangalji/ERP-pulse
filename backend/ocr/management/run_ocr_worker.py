@@ -1,5 +1,7 @@
 """
 Dedicated OCR worker that needs only PostgreSQL (no Celery, no Redis).
+It also runs NetSuite batch jobs and, once a day, the housekeeping jobs that
+Celery beat would normally run (disable with --no-scheduled-tasks).
 
 Run it as a second process on any host (VM, ECS/Cloud Run job, Render
 background worker, docker compose service ...) and set
@@ -17,9 +19,12 @@ atomically, and an upload whose worker died is recovered automatically.
 import logging
 import signal
 import threading
+import time
 
 from django.core.management.base import BaseCommand
 from django.db import close_old_connections
+from common.scheduled import run_scheduled_tasks
+from netsuite import jobs as netsuite_jobs
 
 from ocr.execution import claim_and_run_next, reset_stale_processing
 
@@ -34,6 +39,11 @@ class Command(BaseCommand):
             "--once",
             action="store_true",
             help="Process everything that is runnable now, then exit.",
+        )
+        parser.add_argument(
+            "--no-scheduled-tasks",
+            action="store_true",
+            help="Do not run the daily housekeeping jobs from this worker.",
         )
         parser.add_argument(
             "--interval",
@@ -57,6 +67,8 @@ class Command(BaseCommand):
 
         once = options["once"]
         interval = max(0.5, options["interval"])
+        run_daily = not options["no_scheduled_tasks"] and not once
+        last_daily=None
 
         self.stdout.write("OCR worker started (PostgreSQL queue; Ctrl+C to stop).")
 
@@ -64,8 +76,14 @@ class Command(BaseCommand):
             ran = False
             try:
                 close_old_connections()
+                if run_daily and (last_daily is None or time.monotonic() - last_daily >= 86400):
+                    run_scheduled_tasks()
+                    last_daily = time.monotonic()
                 reset_stale_processing()
                 ran = claim_and_run_next("worker")
+                netsuite_jobs.reset_stale_jobs()
+                ran = claim_and_run_next("worker") or netsuite_jobs.claim_and_run_next("worker")
+                
             except Exception:  # noqa: BLE001 - keep the worker alive
                 logger.error("OCR worker iteration failed", exc_info=True)
 

@@ -17,21 +17,20 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
-import tempfile
 
 from django.db import transaction
 
 from ocr.models import OCRUpload
 from ocr.utils import logger
 from ocr.file_validation import (
-    get_extension_from_mime_type,
+    get_extension_from_filename,
     validate_extension,
     validate_file_size,
     validate_mime_type,
     validate_file_format,
     lookup_format
 )
-from ocr.exceptions import InvalidFileException, UnsupportedFormatException, DocumentProcessingException
+from ocr.exceptions import InvalidFileException
 
 
 class OCRService:
@@ -78,7 +77,8 @@ class OCRService:
         file_hash = hashlib.sha256(content).hexdigest()
         file.seek(0)
 
-        extension = get_extension_from_mime_type(file.content_type)
+        extension = get_extension_from_filename(original_filename)
+
         stored_filename = f'{uuid.uuid4().hex}.{extension}'
 
         # Write content to a temporary file for format validation.

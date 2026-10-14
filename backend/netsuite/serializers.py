@@ -201,73 +201,7 @@ class OCRNetSuiteFieldMappingSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         )
-
-class NetSuiteCustomFieldSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = NetSuiteCustomField
-        fields = (
-            'id',
-            'company',
-            'connection',
-            'record_type',
-            'scope',
-            'field_label',
-            'field_id',
-            'datatype',
-            'source_field_key',
-            'source_field_label',
-            'netsuite_field_id',
-            'status',
-            'error',
-            'created_at',
-            'updated_at',
-        )
-        read_only_fields = (
-            'id',
-            'company',
-            'created_at',
-            'updated_at',
-        )
-
-class MappingSaveItemSerializer(serializers.Serializer):
-    source_field_key = serializers.CharField(
-        max_length=150,
-        allow_blank=False,
-    )
-    source_field_label = serializers.CharField(
-        max_length=255,
-        required=False,
-        allow_blank=True,
-    )
-    source_scope = serializers.ChoiceField(
-        choices=('header', 'line'),
-        default='header',
-    )
-    source_datatype = serializers.ChoiceField(
-        choices=('text', 'number', 'date', 'boolean', 'currency'),
-        default='text',
-    )
-    target_field_id = serializers.CharField(
-        max_length=150,
-        allow_blank=True,
-        required=False,
-        default='',
-    )
-    mapping_status = serializers.ChoiceField(
-        choices=[c[0] for c in MappingStatus.choices],
-        required=False,
-    )
-    confidence = serializers.FloatField(
-        required=False,
-        allow_null=True,
-        min_value=0,
-        max_value=1,
-    )
-    metadata = serializers.DictField(
-        required=False,
-        default=dict,
-    )
-
+        
 
 class SaveMappingRequestSerializer(serializers.Serializer):
     connection_id = serializers.UUIDField()
@@ -281,16 +215,3 @@ class SaveMappingRequestSerializer(serializers.Serializer):
 class ValidateDocumentRequestSerializer(serializers.Serializer):
     document_id = serializers.UUIDField()
     connection_id = serializers.UUIDField()
-
-class CheckOCRReferencesRequestSerializer(serializers.Serializer):
-    document_id = serializers.UUIDField()
-    connection_id = serializers.UUIDField()
-
-
-class CreateCustomFieldRequestSerializer(serializers.Serializer):
-    record_type = serializers.CharField(default='vendorBill')
-    scope = serializers.ChoiceField(choices=[c[0] for c in NetSuiteCustomField.SCOPE_CHOICES])
-    field_label = serializers.CharField(max_length=255)
-    datatype = serializers.ChoiceField(choices=[c[0] for c in NetSuiteCustomField.DATATYPE_CHOICES])
-    source_field_key = serializers.CharField(max_length=100)
-    source_field_label = serializers.CharField(max_length=255)

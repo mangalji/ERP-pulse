@@ -26,12 +26,12 @@ class InvalidFileException(OCRException):
 
     status_code = status.HTTP_400_BAD_REQUEST
 
-class OCRServiceException(OCRException):
-    """
-    Raised when the OCR service encounters an internal failure.
-    """
+# class OCRServiceException(OCRException):
+#     """
+#     Raised when the OCR service encounters an internal failure.
+#     """
 
-    status_code = status.HTTP_502_BAD_GATEWAY
+#     status_code = status.HTTP_502_BAD_GATEWAY
 
 class PDFTooLargeException(OCRException):
     """
@@ -47,22 +47,6 @@ class PDFProcessingException(OCRException):
     """
 
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
-
-class InvalidImageException(OCRException):
-    """
-    Raised when an image file fails validation.
-    """
-
-    status_code = status.HTTP_400_BAD_REQUEST
-
-
-class ImageProcessingException(OCRException):
-    """
-    Raised when the image processing pipeline encounters an internal
-    failure.
-    """
-
-    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 class GeminiConnectionException(OCRException):
     """
@@ -121,13 +105,13 @@ class DocumentProcessingException(OCRException):
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
-class OCRExtractionFailedException(OCRException):
-    """
-    Raised when the OCR extraction pipeline fails.
+# class OCRExtractionFailedException(OCRException):
+#     """
+#     Raised when the OCR extraction pipeline fails.
 
-    Maps to HTTP 500 because the failure originates server-side.
-    """
-    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+#     Maps to HTTP 500 because the failure originates server-side.
+#     """
+#     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
 class InvalidExtractionResultException(OCRException, ValueError):

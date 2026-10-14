@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.contrib.auth.hashers import check_password, make_password
 from rest_framework.response import Response
-from django.core import signing
+# from django.core import signing
 
 OTP_LENGTH = 6
 
@@ -63,18 +63,18 @@ def success_response(*,message:str,data:dict|None=None, status_code:int=200)->Re
          status=status_code,
     )
 
-def generate_signed_token(*, payload: dict, salt: str) -> str:
-    """Create a signed, tamper-proof token carrying `payload`."""
-    return signing.dumps(payload, salt=salt)
+# def generate_signed_token(*, payload: dict, salt: str) -> str:
+#     """Create a signed, tamper-proof token carrying `payload`."""
+#     return signing.dumps(payload, salt=salt)
 
 
-def verify_signed_token(*, token: str, salt: str, max_age_seconds: int) -> dict:
-    """
-    Decode and verify a token created by generate_signed_token().
+# def verify_signed_token(*, token: str, salt: str, max_age_seconds: int) -> dict:
+#     """
+#     Decode and verify a token created by generate_signed_token().
 
-    Raises django.core.signing.BadSignature (invalid/tampered/wrong salt)
-    or django.core.signing.SignatureExpired (past max_age_seconds).
-    Callers should catch these and translate to a domain-specific
-    exception rather than let them leak past the service layer.
-    """
-    return signing.loads(token, salt=salt, max_age=max_age_seconds)
+#     Raises django.core.signing.BadSignature (invalid/tampered/wrong salt)
+#     or django.core.signing.SignatureExpired (past max_age_seconds).
+#     Callers should catch these and translate to a domain-specific
+#     exception rather than let them leak past the service layer.
+#     """
+#     return signing.loads(token, salt=salt, max_age=max_age_seconds)

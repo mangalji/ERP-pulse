@@ -14,7 +14,6 @@ OpenCV preprocessing pipeline are intentionally outside this service.
 
 from __future__ import annotations
 
-import json
 import re
 import time
 import uuid
@@ -48,7 +47,6 @@ FIELD_DESCRIPTIONS = {
     "invoice_date": "Invoice date, format YYYY-MM-DD if possible",
     "due_date": "Payment due date, format YYYY-MM-DD if possible",
     "vendor_name": "Name of the vendor/supplier issuing the invoice",
-    "customer_name": "Name of the customer/bill-to party",
     "subsidiary": "Company subsidiary or business unit, if mentioned",
     "currency": "3-letter currency code, e.g. USD, INR, EUR",
     "subtotal": "Subtotal amount before tax (number only, no currency symbol)",
@@ -65,14 +63,11 @@ LINE_ITEM_FIELDS = {
     "amount": "Line item total amount (number only)",
 }
 
-# Human-readable labels for the standard fields, used by the dynamic
-# extraction configuration UI (Phase 2) and by the API field catalogue.
 FIELD_LABELS = {
     "invoice_number": "Invoice Number",
     "invoice_date": "Invoice Date",
     "due_date": "Due Date",
     "vendor_name": "Vendor Name",
-    "customer_name": "Customer Name",
     "subsidiary": "Subsidiary",
     "currency": "Currency",
     "subtotal": "Subtotal",
@@ -89,11 +84,6 @@ LINE_ITEM_LABELS = {
     "amount": "Amount",
 }
 
-# Custom-field datatype vocabulary (Phase 2). This metadata is preserved
-# end-to-end so the safe JSON representation never loses the intended type:
-# the schema uses an appropriate JSON type, the prompt carries formatting
-# instructions, and the field config (requested_fields_json /
-# OCRExtractionTemplate.fields_config) stores the original datatype.
 VALID_DATA_TYPES = frozenset({"text", "number", "date", "boolean", "currency"})
 
 
@@ -212,13 +202,6 @@ def _coerce_data_type(value: Any) -> str:
         )
     return data_type
 
-
-# Central authoritative datatype registry. Every supported datatype is
-# described in exactly one place here. The same registry is used for:
-#   - JSON schema type selection
-#   - Prompt format hints
-#   - Server-side value normalization
-#   - Configuration validation
 DATATYPE_REGISTRY: dict[str, dict[str, Any]] = {
     "text": {
         "json_schema_type": "string",
@@ -247,14 +230,11 @@ DATATYPE_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
-# Declared datatype for each standard header/line field. Custom fields
-# declare their own datatype in the configuration.
 FIELD_DATA_TYPES = {
     "invoice_number": "text",
     "invoice_date": "date",
     "due_date": "date",
     "vendor_name": "text",
-    "customer_name": "text",
     "subsidiary": "text",
     "currency": "text",
     "subtotal": "number",
@@ -392,13 +372,6 @@ def _slugify_field_key(label: str) -> str:
     """Turn an arbitrary custom-field label into a safe JSON key."""
     slug = re.sub(r"[^a-z0-9]+", "_", (label or "").strip().lower()).strip("_")
     return slug or "custom_field"
-
-
-# Dynamic extraction configuration (Phase 2 — see OCRBatch.requested_fields_json
-# and OCRExtractionTemplate). A caller can select a subset of the standard
-# fields below, drop line_items entirely, and/or add custom fields with an
-# AI description/instruction and a header-or-line scope.
-
 
 def resolve_field_config(
     requested_fields: dict[str, Any] | None,
@@ -625,35 +598,6 @@ Rules:
 - Use null when a requested value is genuinely absent or cannot be determined.
 - The final JSON must contain only the fields defined by this template.
 """
-
-
-
-
-def parse_json_response(text: str) -> dict:
-    """Parse Gemini's JSON response, tolerating accidental fences/extra text."""
-    if not isinstance(text, str) or not text.strip():
-        raise GeminiValidationException("Gemini returned an empty response.")
-
-    cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r"```$", "", cleaned).strip()
-
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-    if match:
-        cleaned = match.group(0)
-
-    try:
-        result = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise GeminiValidationException(
-            f"Failed to parse Gemini response as JSON: {exc}"
-        ) from exc
-
-    if not isinstance(result, dict):
-        raise GeminiValidationException("Gemini response is not a JSON object.")
-
-    return result
-
 
 class NotebookGeminiExtractor:
     """Company-scoped OCR extractor with a provider-neutral AI backend.

@@ -893,7 +893,7 @@ class OCRReviewSaveView(APIView):
                 "version_id": str(version.id),
                 "version_number": version.version_number,
                 "status": document.status,
-                "data": reviewed_result,
+                "data": version.reviewed_result,
             },
             status_code=status.HTTP_200_OK,
         )

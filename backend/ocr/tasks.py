@@ -67,19 +67,14 @@ OCR_EXTRACTION_LOCK_POLL_INTERVAL_SECONDS = getattr(
     1,
 )
 
-OCR_EXTRACTION_CACHE_VERSION = "v3"
-OCR_EXTRACTION_CONTRACT_VERSION = "v2"
+OCR_EXTRACTION_CACHE_VERSION = "v4"
+OCR_EXTRACTION_CONTRACT_VERSION = "v3"
 
 
 def _live_result_key(upload_id: str) -> str:
-    return (
-        f"erp-pulse:ocr:live:{upload_id}"
-        )
-
-def _is_daily_gemini_quota_error(exc: Exception) -> bool:
-    """Backward-compatible alias of ``error_taxonomy.is_daily_quota_error``."""
-    return is_daily_quota_error(exc)
-
+    # Version the key so stale cached results from the retired Customer Name
+    # extraction contract are not returned after deployment.
+    return f"erp-pulse:ocr:live:v2:{upload_id}"
 
 def _mark_upload_failed(upload, reason: str, code: str = "") -> None:
     completed_at = timezone.now()
@@ -401,7 +396,6 @@ def _canonical_config(requested_fields: Any) -> dict:
                 "invoice_date",
                 "due_date",
                 "vendor_name",
-                "customer_name",
                 "subsidiary",
                 "currency",
                 "subtotal",
@@ -710,36 +704,6 @@ def write_completed_cached_result(
             file_hash,
             exc,
         )
-
-
-def _config_hash(requested_fields: Any) -> str:
-    """
-    Short, stable hash of the dynamic extraction configuration.
-
-    Kept for backward compatibility with call sites that still pass
-    config_hash explicitly. New code should use ``build_extraction_config_hash``.
-    """
-    return build_extraction_config_hash(requested_fields)
-
-
-def _file_result_cache_key(file_hash: str, config_hash: str | None = None) -> str:
-    """
-    Backward-compatible cache key builder.
-
-    New code should use ``build_ocr_cache_key`` which includes the
-    contract version. This wrapper preserves the old signature for
-    existing callers.
-    """
-    if config_hash is None:
-        config_hash = build_extraction_config_hash(None)
-    return (
-        f"erp-pulse:ocr:file-result:"
-        f"{OCR_EXTRACTION_CACHE_VERSION}:"
-        f"{OCR_EXTRACTION_CONTRACT_VERSION}:"
-        f"{config_hash}:"
-        f"{file_hash}"
-    )
-
 
 def _build_lock_key(file_hash: str, requested_fields: Any, scope: str = "") -> str:
     """
@@ -1144,6 +1108,8 @@ def _read_cached_result(file_hash: str, requested_fields: Any, scope: str = ""):
     Accepts the legacy ``config_hash`` signature via ``_config_hash``
     for existing callers, but validates cache metadata before
     returning any result.
+    Preserve the internal call interface while validating cache metadata
+    before returning any result.
     """
     return read_valid_cached_result(file_hash, requested_fields, scope)
 
@@ -1160,6 +1126,7 @@ def _write_cached_result(
 
     Accepts the legacy ``config_hash`` signature via ``_config_hash``
     for existing callers.
+    Preserve the internal call interface for completed-result cache writes.
     """
     write_completed_cached_result(file_hash, requested_fields, result, ttl=ttl, scope=scope)
 
@@ -1183,8 +1150,6 @@ def _write_live_result(upload_id: str, result: dict) -> None:
             exc,
         )
 
-# def _begin_processing(upload):
-#     """Common 'job started' state transition. Returns the start timestamp."""
 def _begin_processing(upload, owner: str = ""):
     """
     Common 'job started' state transition. Returns the start timestamp.
@@ -1517,51 +1482,13 @@ def process_single_ocr_upload(
         _persist_failure(upload, exc)
         raise
 
-# try:
-#     from celery import shared_task
-
 @dataclass
 class JobOutcome:
     """Result of one execution attempt of an upload job."""
-    # @shared_task(
-    #     bind=True,
-    #     max_retries=5,
-    #     default_retry_delay=30,
-    #     acks_late=True,
-    #     reject_on_worker_lost=True,
-    # )
-    # def process_ocr_upload_task(
-    #     self,
-    #     upload_id: str,
-    #     user_id: str,
-    # ) -> None:
-    #     """
-    #     Process one uploaded OCR file.
+
     status: str  # "done" | "failed" | "retry" | "skipped"
     exc: BaseException | None = None
     countdown: float = 0.0
-
-        # Celery provides async execution. Redis provides a global
-        # concurrency/RPM limiter shared across all workers.
-        # """
-        # upload = None
-        # limiter = GeminiQuotaLimiter()
-        # token = None
-
-        # try:
-        #     upload = OCRUpload.objects.select_related(
-        #         "user",
-        #         "batch",
-        #     ).get(pk=upload_id)
-
-        #     if str(upload.user_id) != str(user_id):
-        #         logger.error(
-        #             "OCR task ownership mismatch — upload=%s user=%s upload_owner=%s",
-        #             upload_id,
-        #             user_id,
-        #             upload.user_id,
-        #         )
-        #         return
 
 def execute_upload_job(
     upload_id: str,
@@ -1581,7 +1508,7 @@ def execute_upload_job(
             #     _refresh_batch_status(upload.batch_id)
             #     return
 
-     This is the single implementation behind every background executor
+    This is the single implementation behind every background executor
     (Celery task, in-process worker threads, ``run_ocr_worker``). It never
     raises for a failed document and never schedules the retry itself: a
     retryable failure is reported as ``JobOutcome("retry", countdown=...)``
@@ -1652,7 +1579,7 @@ def execute_upload_job(
         )
 
         if result is None:
-                # IMPORTANT: acquire the distributed extraction lock exactly
+            # IMPORTANT: acquire the distributed extraction lock exactly
             # once. The previous implementation called acquire twice;
             # the first call acquired the lock and the second call then
             # saw the same worker's lock as HELD and waited on itself.

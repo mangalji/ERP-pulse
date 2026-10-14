@@ -6,9 +6,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 from ocr.exceptions import InvalidFileException, UnsupportedFormatException
-# ------------------------------------------------------------------
-# Format categories
-# ------------------------------------------------------------------
 
 class FormatCategory(str, Enum):
     DOCUMENT = 'document'
@@ -17,9 +14,7 @@ class FormatCategory(str, Enum):
     TEXT = 'text'
 
 
-# ------------------------------------------------------------------
 # Registry entry
-# ------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class FormatEntry:
@@ -35,9 +30,7 @@ class FormatEntry:
     description: str = ''
 
 
-# ------------------------------------------------------------------
 # Helpers
-# ------------------------------------------------------------------
 
 def _guess_mime(path: Path) -> Optional[str]:
     mime, _ = mimetypes.guess_type(str(path))
@@ -142,12 +135,7 @@ def get_supported_mime_types() -> frozenset[str]:
     )
 
 
-# ------------------------------------------------------------------
 # Supported formats registry
-# ------------------------------------------------------------------
-# Only formats that can be reliably processed by the current stack are
-# listed here.  If a parser is unavailable or the format is unsafe, the
-# format is intentionally omitted.
 
 SUPPORTED_FORMATS: dict[str, FormatEntry] = {
     # Documents
@@ -282,10 +270,7 @@ SUPPORTED_FORMATS: dict[str, FormatEntry] = {
     ),
 }
 
-
-# ------------------------------------------------------------------
 # Constants
-# ------------------------------------------------------------------
 
 #: Maximum allowed upload size in bytes (10 MB).
 MAX_FILE_SIZE: int = 10 * 1024 * 1024
@@ -300,9 +285,7 @@ MIME_TYPE_TO_EXTENSION: dict[str, str] = {
     for ext, entry in SUPPORTED_FORMATS.items()
 }
 
-# ------------------------------------------------------------------
 # Utility Functions
-# ------------------------------------------------------------------
 
 def get_extension_from_filename(filename: str) -> str:
     """
@@ -343,9 +326,7 @@ def get_extension_from_mime_type(mime_type: str) -> str:
     validate_mime_type(mime_type)
     return MIME_TYPE_TO_EXTENSION.get(mime_type, '')
 
-# ------------------------------------------------------------------
 # Validators
-# ------------------------------------------------------------------
 
 def validate_file_size(file_size: int, max_size: int = MAX_FILE_SIZE) -> None:
     """
@@ -458,13 +439,3 @@ def validate_file_format(file_path: str | Path, original_filename: str) -> dict:
         errors.append(str(exc))
 
     return {'is_valid': len(errors) == 0, 'errors': errors}
-
-
-def get_format_for_file(file_path: str | Path) -> FormatEntry | None:
-    """
-    Return the format entry for a file, or None if unsupported.
-    """
-    try:
-        return detect_format(file_path)
-    except UnsupportedFormatException:
-        return None
