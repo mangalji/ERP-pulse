@@ -456,6 +456,8 @@ export default function OcrPage() {
   const [posting, setPosting] = useState(false)
   const validationAbortControllerRef = useRef(null)
   const postingAbortControllerRef = useRef(null)
+  const validationInFlightRef = useRef(false)
+  const postingInFlightRef = useRef(false)
   const [viewMode, setViewMode] = useState('fields')
   const [data, setData] = useState({})
   const [aiDiagnostics, setAiDiagnostics] = useState([])
@@ -562,8 +564,14 @@ export default function OcrPage() {
           : 0,
       )
 
+      const interruptedAction =
+        stored?.actionInterrupted === true ||
+        stored?.validating === true ||
+        stored?.posting === true
+
+
       setValidationResult(
-        stored?.validationResult || null,
+        interruptedAction ? null : stored?.validationResult || null,
       )
 
       setEditing(
@@ -600,36 +608,63 @@ export default function OcrPage() {
           ? stored.previewError
           : '',
       )
-      const restoredSelectedFiles =
-        Array.isArray(stored?.selectedFiles)
-          ? stored.selectedFiles
-              .filter((item) => item?.filename)
-              .map((item) => ({
-                id:
-                  item.id ||
-                  `${item.filename}-${item.lastModified || 0}`,
+      // const restoredSelectedFiles =
+      //   Array.isArray(stored?.selectedFiles)
+      //     ? stored.selectedFiles
+      //         .filter((item) => item?.filename)
+      //         .map((item) => ({
+      //           id:
+      //             item.id ||
+      //             `${item.filename}-${item.lastModified || 0}`,
 
-                file: {
-                  name: item.filename,
-                  type: item.fileType || '',
-                  size:
-                    Number(item.fileSize) || 0,
-                  lastModified:
-                    Number(item.lastModified) || 0,
-                },
+      //           file: {
+      //             name: item.filename,
+      //             type: item.fileType || '',
+      //             size:
+      //               Number(item.fileSize) || 0,
+      //             lastModified:
+      //               Number(item.lastModified) || 0,
+      //           },
 
-                previewUrl: null,
-              }))
-          : []
+      //           previewUrl: null,
+      //         }))
+      //     : []
 
-      setSelectedFiles(
-        restoredSelectedFiles,
-      )
+      // setSelectedFiles(
+      //   restoredSelectedFiles,
+      // )
 
-      const restoredResults =
-        Array.isArray(stored?.results)
-          ? stored.results
-          : []
+      // const restoredResults =
+      //   Array.isArray(stored?.results)
+      //     ? stored.results
+      //     : []
+
+      const storedSelectedFileCount = Array.isArray(stored?.selectedFiles)
+        ? stored.selectedFiles.filter((item) => item?.filename).length
+        : 0
+
+      // Browser File objects cannot be reconstructed from sessionStorage metadata.
+      // Keep persisted OCR results, but require source files to be selected again.
+      setSelectedFiles([])
+
+      const restoredResults = Array.isArray(stored?.results)
+        ? stored.results
+        : []
+
+      if (storedSelectedFileCount > 0 && restoredResults.length === 0) {
+        setError(
+          'Your selected source files cannot be restored after a page refresh. Please select them again before extraction.',
+        )
+      }
+
+      if (interruptedAction) {
+        setValidationResult(null)
+        setAiDiagnostics([])
+        setDiagnosticError('')
+        setError(
+          'The previous validation or posting action was interrupted by a page refresh. Validate again before posting. If a post request was in progress, check NetSuite for an existing Vendor Bill before retrying to avoid duplicates.',
+        )
+      }
 
       const restoredIndex =
         Number.isInteger(stored?.activeIndex)
@@ -687,6 +722,8 @@ useEffect(() => {
       activeIndex,
       validationResult,
       editing,
+      validating,
+      posting,
       viewMode,
       data,
       aiDiagnostics,
@@ -712,6 +749,8 @@ useEffect(() => {
     activeIndex,
     validationResult,
     editing,
+    validating,
+    posting,
     viewMode,
     data,
     aiDiagnostics,
@@ -752,7 +791,23 @@ useEffect(() => {
       sessionStorage.removeItem(OCR_PAGE_SESSION_KEY)
     }
 
-    const isOcrPath = (pathname) => pathname === '/app/ocr'
+    // const isOcrPath = (pathname) => pathname === '/app/ocr'
+    const getRoutePath = (value = window.location.href) => {
+      const target = new URL(String(value), window.location.href)
+      const hashRoute = target.hash.startsWith('#/')
+        ? target.hash.slice(1).split('?')[0]
+        : ''
+      return hashRoute || target.pathname
+    }
+
+    const isOcrPath = (value = window.location.href) =>
+      getRoutePath(value) === '/app/ocr'
+
+    const handleRouteChange = () => {
+      if (!isOcrPath(window.location.href)) {
+        clearOcrPageSession()
+      }
+    }
 
     const originalPushState = window.history.pushState
     const originalReplaceState = window.history.replaceState
@@ -760,7 +815,7 @@ useEffect(() => {
     window.history.pushState = function pushStateWithOcrCleanup(state, title, url) {
       if (url != null) {
         const nextUrl = new URL(String(url), window.location.href)
-        if (!isOcrPath(nextUrl.pathname)) {
+        if (!isOcrPath(nextUrl.href)) {
           clearOcrPageSession()
         }
       }
@@ -770,9 +825,10 @@ useEffect(() => {
     window.history.replaceState = function replaceStateWithOcrCleanup(state, title, url) {
       if (url != null) {
         const nextUrl = new URL(String(url), window.location.href)
-        if (!isOcrPath(nextUrl.pathname)) {
-          clearOcrPageSession()
-        }
+        // if (!isOcrPath(nextUrl.href)) {
+        //   clearOcrPageSession()
+        // }
+        handleRouteChange()
       }
       return originalReplaceState.apply(this, [state, title, url])
     }
@@ -791,27 +847,57 @@ useEffect(() => {
       if (!anchor) return
 
       const href = anchor.getAttribute('href')
-      if (!href || href.startsWith('#') || href.startsWith('javascript:')) return
+      // if (!href || href.startsWith('#') || href.startsWith('javascript:')) return
+      if (!href || href.startsWith('javascript:')) return
+      // Preserve ordinary in-page anchors, but handle HashRouter links (#/route).
+      if (href.startsWith('#') && !href.startsWith('#/')) return
 
       const nextUrl = new URL(href, window.location.href)
-      if (nextUrl.origin === window.location.origin && !isOcrPath(nextUrl.pathname)) {
+      if (nextUrl.origin === window.location.origin && !isOcrPath(nextUrl.href)) {
         clearOcrPageSession()
       }
     }
 
     window.addEventListener('popstate', handlePopState)
+    window.addEventListener('hashchange', handleRouteChange)
     document.addEventListener('click', handleDocumentClick, true)
 
     return () => {
       window.history.pushState = originalPushState
       window.history.replaceState = originalReplaceState
       window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('hashchange', handleRouteChange)
       document.removeEventListener('click', handleDocumentClick, true)
     }
   }, [])
 
   useEffect(() => {
   const cancelActiveRequests = () => {
+    const actionWasInFlight =
+      validationInFlightRef.current || postingInFlightRef.current
+
+    if (actionWasInFlight) {
+      // Persist an invalidated validation before aborting/unloading. Aborting
+      // the browser request does not prove the server stopped processing it.
+      try {
+        const raw = sessionStorage.getItem(OCR_PAGE_SESSION_KEY)
+        if (raw) {
+          const snapshot = JSON.parse(raw)
+          snapshot.validationResult = null
+          snapshot.aiDiagnostics = []
+          snapshot.diagnosticError = ''
+          snapshot.validating = false
+          snapshot.posting = false
+          snapshot.actionInterrupted = true
+          sessionStorage.setItem(OCR_PAGE_SESSION_KEY, JSON.stringify(snapshot))
+        }
+      } catch (storageError) {
+        console.warn('Could not persist interrupted OCR action state:', storageError)
+      }
+    }
+
+    validationInFlightRef.current = false
+    postingInFlightRef.current = false
     validationAbortControllerRef.current?.abort()
     postingAbortControllerRef.current?.abort()
 
@@ -859,6 +945,9 @@ useEffect(() => {
   }, [data?.line_items])
 
   const setField = useCallback((key, value) => {
+    setValidationResult(null)
+    setAiDiagnostics([])
+    setDiagnosticError('')
     setData((current) => ({
       ...current,
       [key]: value,
@@ -866,6 +955,9 @@ useEffect(() => {
   },[])
 
   const setLineItemField = useCallback((index, key, value) => {
+    setValidationResult(null)
+    setAiDiagnostics([])
+    setDiagnosticError('')
     setData((current) => {
       const nextItems = Array.isArray(current.line_items)
         ? [...current.line_items]
@@ -885,6 +977,9 @@ useEffect(() => {
   },[])
 
   const addLineItem = useCallback(() => {
+    setValidationResult(null)
+    setAiDiagnostics([])
+    setDiagnosticError('')
     setData((current) => ({
       ...current,
       line_items: [
@@ -895,6 +990,9 @@ useEffect(() => {
   },[])
 
   const removeLineItem = useCallback((index) => {
+    setValidationResult(null)
+    setAiDiagnostics([])
+    setDiagnosticError('')
     setData((current) => ({
       ...current,
       line_items: (Array.isArray(current.line_items)
@@ -988,10 +1086,19 @@ useEffect(() => {
 
   const controller = new AbortController()
   validationAbortControllerRef.current = controller
+  validationInFlightRef.current = true
+  // A previous successful validation must never remain usable while a new
+  // validation is pending or if this attempt fails/is interrupted.
+  setValidationResult(null)
+  setAiDiagnostics([])
+  setDiagnosticError('')
+  setValidating(true)
+  let saveCompleted = false
   setValidating(true)
 
   try {
     const savedResult = await handleSave()
+    saveCompleted = true
 
     if (controller.signal.aborted) {
       return
@@ -1054,7 +1161,20 @@ useEffect(() => {
       'Save & Validate failed:',
       err,
     )
+    
+    // handleSave already shows its own toast when the save request fails.
+    // Only show a toast here when saving succeeded but validation failed.
+    if (saveCompleted) {
+      addToast(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Could not validate the OCR data. Please try again.',
+        'error',
+      )
+    }
   } finally {
+    validationInFlightRef.current = false
     setValidating(false)
 
     if (
@@ -1073,6 +1193,13 @@ useEffect(() => {
   }
 
   const handlePost = async () => {
+    if (editing || saving || validating || posting) {
+    addToast(
+      'Finish editing and saving the OCR data before posting it to NetSuite.',
+      'error',
+    )
+    return
+  }
   if (!activeResult?.document_id) {
     addToast(
       'Please save the OCR data before posting it to NetSuite.',
@@ -1095,6 +1222,7 @@ useEffect(() => {
   const controller = new AbortController()
 
   postingAbortControllerRef.current = controller
+  postingInFlightRef.current = true
   setPosting(true)
   
   try {
@@ -1155,6 +1283,7 @@ useEffect(() => {
       'error',
     )
   } finally {
+    postingInFlightRef.current = false
     setPosting(false)
 
     if (
@@ -1690,11 +1819,6 @@ useEffect(() => {
         const message = await getPreviewErrorMessage(err)
 
         if (!cancelled) {
-          // setPreviewError(
-          //   err?.response?.data?.detail ||
-          //     err?.message ||
-          //     'Unable to load file preview.',
-          // )
           setPreviewError(message)
         }
       }
@@ -2097,7 +2221,7 @@ useEffect(() => {
 
       {viewMode === 'json' ? (
     <pre className="min-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
-      {JSON.stringify(jsonDisplayData, null, 2)}
+      {JSON.stringify(cloneData(data), null, 2)}
     </pre>
   ) : (
     <>
@@ -2256,6 +2380,10 @@ useEffect(() => {
           type="button"
           intent="secondary"
           onClick={() => {
+            // Editing changes the data that was previously validated.
+            setValidationResult(null)
+            setAiDiagnostics([])
+            setDiagnosticError('')
             setViewMode('fields')
             setEditing(true)
           }}
@@ -2315,6 +2443,10 @@ useEffect(() => {
             <option
               value="post"
               disabled={
+                editing ||
+                saving ||
+                validating ||
+                posting ||
                 String(validationResult?.status || '').toUpperCase() !== 'VALIDATED'
                 }
             >
