@@ -1578,14 +1578,44 @@ class OCRUploadPreviewView(APIView):
         try:
             file_handle = upload.file.open("rb")
 
+        except FileNotFoundError:
+            # The upload record may outlive the underlying file. This can
+            # happen with a local MEDIA_ROOT reset or a missing DB-storage row.
+            # Treat it as an expected missing-preview condition, not an
+            # unhandled storage exception. Keep the saved OCR result intact.
+            logger.warning(
+                "OCR preview source file is missing from storage — "
+                "upload_id=%s storage_name=%s",
+                upload_id,
+                upload.file.name,
+            )
+            return Response(
+                {
+                    "detail": (
+                        "The original uploaded file is no longer available in "
+                        "storage, so its preview cannot be displayed. Your "
+                        "saved OCR result is still available. Re-upload the "
+                        "source file if you need to view it again."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
         except Exception as exc:
             logger.exception(
                 "Unable to open OCR preview — upload_id=%s",
                 upload_id,
             )
-            raise NotFound(
-                "OCR file could not be opened."
-            ) from exc
+            return Response(
+                {
+                    "detail": (
+                        "The original file preview could not be loaded because "
+                        "of a storage error. Your saved OCR result is still "
+                        "available. Please try again later."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         response = FileResponse(
             file_handle,
