@@ -38,7 +38,7 @@ from audit.services import audit_service
 from netsuite.token_manager import NetSuiteTokenManager
 from netsuite.vendor_bill_baseline import VENDOR_BILL_BASELINE_FIELDS
 from tenancy.services import company_lifecycle_service
-from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, ValidationStatus
+from ocr.models import OCRValidationResult, ValidationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,235 @@ NETSUITE_REST_BODY_FIELD_NAMES = {
     "duedate": "dueDate",
 }
 
+def _build_template_netsuite_mappings(
+    requested_fields: dict,
+    *,
+    connection=None,
+    record_type: str = "vendorBill",
+) -> list[dict]:
+    """Build posting/validation mappings exclusively from the selected OCR template.
+
+    ``OCRBatch.requested_fields_json`` is a snapshot of the saved template used
+    for this OCR run. The legacy OCRNetSuiteFieldMapping table is deliberately
+    not consulted here, so stale/global rows cannot override the selected
+    template's source field, NetSuite field ID, scope, or sublist.
+    """
+    if not isinstance(requested_fields, dict) or not requested_fields:
+        raise ValueError(
+            "This OCR upload has no saved template configuration. Select a saved "
+            "template and upload/process the document again."
+        )
+
+    standard_fields = requested_fields.get("standard_fields") or []
+    standard_overrides = requested_fields.get("standard_field_overrides") or {}
+    custom_fields = requested_fields.get("custom_fields") or []
+
+    if not isinstance(standard_fields, list):
+        raise ValueError("The selected template has an invalid standard_fields list.")
+    if not isinstance(standard_overrides, dict):
+        raise ValueError("The selected template has invalid standard field mappings.")
+    if not isinstance(custom_fields, list):
+        raise ValueError("The selected template has an invalid custom_fields list.")
+
+    # NetSuiteFieldCatalogue stores live target-field metadata (datatype,
+    # required flag, and sublist identity). It is reference metadata only;
+    # source-to-target mapping always comes from this saved template.
+    catalogue_fields: list[dict] = []
+    if connection is not None:
+        catalogue = (
+            NetSuiteFieldCatalogue.objects
+            .filter(connection=connection, record_type=record_type)
+            .first()
+        )
+        if catalogue is not None:
+            for fallback_scope, fields in (
+                ("body", catalogue.body_fields or []),
+                ("column", catalogue.line_fields or []),
+            ):
+                for field in fields:
+                    if not isinstance(field, dict):
+                        continue
+                    field_id = str(field.get("field_id") or field.get("id") or "").strip()
+                    if not field_id:
+                        continue
+                    raw_scope = str(field.get("scope") or fallback_scope).strip().lower()
+                    normalized_scope = (
+                        "column"
+                        if raw_scope in {"line", "column", "sublist"}
+                        else "body"
+                    )
+                    sublist_id = str(
+                        field.get("sublist_id")
+                        or field.get("sublist")
+                        or field.get("sublistId")
+                        or ""
+                    ).strip().lower() if normalized_scope == "column" else ""
+                    catalogue_fields.append({
+                        **field,
+                        "field_id": field_id,
+                        "_normalized_scope": normalized_scope,
+                        "_normalized_sublist_id": sublist_id,
+                    })
+
+    mappings: list[dict] = []
+    seen_targets: set[tuple[str, str, str]] = set()
+
+    def add_mapping(source_key, config, *, is_custom):
+        source_key = str(source_key or "").strip()
+        if not source_key:
+            return
+        if not isinstance(config, dict):
+            raise ValueError(
+                f'Template mapping for "{source_key}" must be an object.'
+            )
+
+        target_field_id = str(config.get("netsuite_field_id") or "").strip()
+        if not target_field_id:
+            raise ValueError(
+                f'Template field "{config.get("label") or source_key}" has no '
+                "NetSuite Field ID. Edit and save the template before posting."
+            )
+
+        source_scope = (
+            "line"
+            if str(config.get("scope") or "header").strip().lower() == "line"
+            else "header"
+        )
+        raw_target_scope = str(config.get("netsuite_field_scope") or "").strip().lower()
+        if not raw_target_scope:
+            target_scope = "column" if source_scope == "line" else "body"
+        elif raw_target_scope in {"line", "column", "sublist"}:
+            target_scope = "column"
+        elif raw_target_scope in {"body", "header"}:
+            target_scope = "body"
+        else:
+            raise ValueError(
+                f'Template field "{config.get("label") or source_key}" has an '
+                f'unsupported NetSuite field scope "{raw_target_scope}".'
+            )
+
+        if source_scope == "header" and target_scope != "body":
+            raise ValueError(
+                f'Template field "{config.get("label") or source_key}" is a '
+                "header field but targets a NetSuite line/sublist field."
+            )
+        if source_scope == "line" and target_scope != "column":
+            raise ValueError(
+                f'Template field "{config.get("label") or source_key}" is a '
+                "line field but targets a NetSuite body field."
+            )
+
+        target_sublist_id = str(
+            config.get("netsuite_field_sublist_id") or ""
+        ).strip().lower()
+        target_identity = (
+            target_field_id.casefold(),
+            target_scope,
+            target_sublist_id,
+        )
+        if target_identity in seen_targets:
+            raise ValueError(
+                f'NetSuite field "{target_field_id}" is mapped more than once '
+                "in the selected template for the same scope/sublist. Use a "
+                "distinct target field for each source field."
+            )
+        seen_targets.add(target_identity)
+
+        target_metadata_candidates = [
+            field for field in catalogue_fields
+            if str(field.get("field_id") or "").strip().casefold()
+            == target_field_id.casefold()
+            and field.get("_normalized_scope") == target_scope
+            and (
+                target_scope == "body"
+                or not target_sublist_id
+                or field.get("_normalized_sublist_id") == target_sublist_id
+            )
+        ]
+        if target_scope == "column" and not target_sublist_id:
+            candidate_sublists = {
+                field.get("_normalized_sublist_id")
+                for field in target_metadata_candidates
+            }
+            if len(candidate_sublists) > 1:
+                raise ValueError(
+                    f'NetSuite field "{target_field_id}" exists on multiple '
+                    "sublists. Reopen the template and select the correct field "
+                    "context (Item or Expense)."
+                )
+        target_metadata = (
+            target_metadata_candidates[0]
+            if target_metadata_candidates else {}
+        )
+        if target_metadata and target_scope == "column":
+            metadata_sublist = target_metadata.get("_normalized_sublist_id") or ""
+            if target_sublist_id and metadata_sublist and metadata_sublist != target_sublist_id:
+                raise ValueError(
+                    f'NetSuite field "{target_field_id}" no longer matches the '
+                    "sublist saved in the selected template. Edit and save the template again."
+                )
+            target_sublist_id = target_sublist_id or metadata_sublist
+
+        label = str(config.get("label") or source_key).strip()
+        mappings.append(
+            {
+                "source_field_key": source_key,
+                "source_field_label": label,
+                "source_scope": source_scope,
+                "source_datatype": str(config.get("data_type") or "text").strip().lower(),
+                "target_field_id": target_field_id,
+                "target_field_label": str(
+                    target_metadata.get("label")
+                    or config.get("target_field_label")
+                    or target_field_id
+                ).strip(),
+                "target_scope": target_scope,
+                "target_sublist_id": target_sublist_id,
+                "target_datatype": str(
+                    target_metadata.get("datatype")
+                    or config.get("target_datatype")
+                    or config.get("netsuite_field_datatype")
+                    or ""
+                ).strip().lower(),
+                "is_required": bool(
+                    target_metadata.get("is_required", config.get("is_required", False))
+                ),
+                "target_is_custom": bool(target_metadata.get("is_custom", False)),
+                "reference_type": target_metadata.get("reference_type"),
+                # This flag describes whether the OCR source key is a custom
+                # template field, not whether the NetSuite target is custom.
+                "is_custom": is_custom,
+            }
+        )
+
+    for raw_key in standard_fields:
+        source_key = str(raw_key or "").strip()
+        if not source_key or source_key == "line_items":
+            continue
+        add_mapping(
+            source_key,
+            standard_overrides.get(source_key),
+            is_custom=False,
+        )
+
+    from ocr.notebook_extraction_service import _slugify_field_key
+
+    for custom in custom_fields:
+        if not isinstance(custom, dict):
+            raise ValueError("A custom field in the selected template is invalid.")
+        if custom.get("enabled") is False:
+            continue
+        raw_source_key = str(custom.get("key") or custom.get("label") or "").strip()
+        source_key = _slugify_field_key(raw_source_key) if raw_source_key else ""
+        if not source_key:
+            raise ValueError("Every custom template field must have a key or label.")
+        add_mapping(source_key, custom, is_custom=True)
+
+    if not mappings:
+        raise ValueError(
+            "No NetSuite field mappings are configured in the selected OCR template."
+        )
+    return mappings
 
 def raise_if_reauth_required(connection) -> None:
     """
@@ -1258,6 +1487,72 @@ class NetSuiteVendorBillPostingService:
         return data
 
     @staticmethod
+    def _normalise_mapped_value(value, mapping, *, line_number=None):
+        """Return a JSON-safe value using the target field's saved metadata.
+
+        The template snapshot determines both the source key and the NetSuite
+        target key.  This helper only normalises values (for example OCR's
+        numeric strings); it never substitutes another source field.
+        """
+        field_label = (
+            mapping.get("target_field_label")
+            or mapping.get("target_field_id")
+            or "field"
+        )
+        prefix = f"Line {line_number}: " if line_number is not None else ""
+
+        if isinstance(value, str):
+            value = value.strip()
+
+        if value in (None, ""):
+            return None
+
+        datatype = str(
+            mapping.get("target_datatype")
+            or mapping.get("source_datatype")
+            or ""
+        ).strip().lower()
+
+        if isinstance(value, (list, tuple, set)):
+            raise ValueError(
+                f"{prefix}NetSuite {field_label} must have one value."
+            )
+
+        if isinstance(value, dict):
+            record_id = value.get("id")
+            if record_id not in (None, ""):
+                return {"id": str(record_id).strip()}
+            raise ValueError(
+                f"{prefix}NetSuite {field_label} needs an internal ID."
+            )
+
+        if datatype in {
+            "integer", "number", "currency", "decimal", "float",
+            "percent", "percentage",
+        }:
+            if isinstance(value, bool):
+                raise ValueError(f"{prefix}NetSuite {field_label} must be numeric.")
+            try:
+                numeric_value = float(str(value).replace(",", ""))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{prefix}NetSuite {field_label} value {value!r} is not numeric."
+                ) from exc
+            return int(numeric_value) if numeric_value.is_integer() else numeric_value
+
+        if datatype in {"checkbox", "boolean", "bool"}:
+            if isinstance(value, bool):
+                return value
+            normalized = str(value).strip().lower()
+            if normalized in {"true", "t", "yes", "y", "1"}:
+                return True
+            if normalized in {"false", "f", "no", "n", "0"}:
+                return False
+            raise ValueError(f"{prefix}NetSuite {field_label} must be true or false.")
+
+        return value
+
+    @staticmethod
     def _normalization_key(value) -> str:
         return " ".join(str(value or "").strip().lower().split())
 
@@ -1320,15 +1615,19 @@ class NetSuiteVendorBillPostingService:
     
         custom_fields = {}
 
+        from ocr.notebook_extraction_service import _slugify_field_key
+
         for field in custom_fields_config:
             if not isinstance(field, dict):
                 continue
 
-            source_key = str(
+            # source_key = str(
+            raw_source_key = str(
                 field.get("key")
                 or field.get("label")
                 or ""
             ).strip()
+            source_key = _slugify_field_key(raw_source_key) if raw_source_key else ""
 
             target_field_id = str(
                 field.get("netsuite_field_id") or ""
@@ -1515,270 +1814,123 @@ class NetSuiteVendorBillPostingService:
                 continue
             validated_items_by_line[str(line_index)] = validated_item
 
-        item_mapping = (
-            OCRNetSuiteFieldMapping.objects
-            .filter(
-                company=company,
-                connection=connection,
-                record_type="vendorBill",
-                mapping_status="MAPPED",
-            )
-            .filter(
-                Q(target_field_id__iexact="item") 
-                | Q(target_field_id__iexact="items"),
-                source_scope__iexact="line",
-            )
-            .order_by("created_at")
-            .first()
+        # Build mappings from the exact template snapshot used for this OCR upload.
+        # Do not read a legacy mapping table here: separate rows may contain stale
+        # mappings from the separate Field Mapping screen and must not override
+        # the user's selected template.
+        upload = getattr(document, "upload", None)
+        batch = getattr(upload, "batch", None) if upload else None
+
+        requested_fields = (
+            getattr(batch, "requested_fields_json", None)
+            if batch else None
+        )
+        template_mappings = _build_template_netsuite_mappings(
+            requested_fields,
+            connection=connection,
+            record_type="vendorBill"
         )
 
-        vendor = {
-            "internal_id": str(validated_vendor_id),
-        }
+        item_line_mappings = [
+            mapping for mapping in template_mappings
+            if mapping.get("source_scope") == "line"
+            and mapping.get("target_scope") == "column"
+            and mapping.get("target_sublist_id") in {"", "item", "items"}
+        ]
+        item_mapping = next(
+            (
+                mapping for mapping in item_line_mappings
+                if str(mapping.get("target_field_id") or "").strip().lower()
+                in {"item", "items"}
+            ),
+            None,
+        )
+        if item_mapping is None:
+            raise ValueError(
+                "The selected template must map one line field to NetSuite Item."
+            )
 
-        # Resolve Location from the reviewed OCR data using the validated
-        # NetSuite connection. Never guess a Location or use a hardcoded default.
-        posting_location_id = None
+        unsupported_line_mappings = [
+            mapping for mapping in template_mappings
+            if mapping.get("source_scope") == "line"
+            and mapping.get("target_scope") == "column"
+            and mapping.get("target_sublist_id") not in {"", "item", "items"}
+        ]
+        if unsupported_line_mappings:
+            labels = ", ".join(
+                str(mapping.get("target_field_label") or mapping.get("target_field_id"))
+                for mapping in unsupported_line_mappings
+            )
+            raise ValueError(
+                "The selected template contains line mappings outside the Vendor "
+                f"Bill Item sublist: {labels}."
+            )
 
         payload_items = []
+        item_source_key = item_mapping["source_field_key"]
+        for index, line in enumerate(line_items, start=1):
+            if not isinstance(line, dict):
+                raise ValueError(f"Line {index}: OCR line item is invalid.")
 
+            item_name = line.get(item_source_key)
+            if isinstance(item_name, str):
+                item_name = item_name.strip()
+            if item_name in (None, ""):
+                continue
 
-        # Same NetSuite item matched by multiple OCR line rows (e.g. OCR
-        # extracted "Laptop" 3 times for one line, or several rows
-        # string-matched to the same item) would otherwise post as
-        # duplicate lines on the Vendor Bill. For now, keep only the
-        # first occurrence of a given NetSuite item ID and skip the
-        # rest — one real line per item until we have a proper reason
-        # to treat repeats as intentional (e.g. distinct rate/quantity
-        # combinations).
-        # Track the first payload line for each NetSuite item + rate pair.
-        # Duplicate OCR occurrences of the same item at the same rate are
-        # merged by increasing the first occurrence's quantity instead of
-        # silently dropping later lines. If the same item has a different
-        # rate, keep it as a separate NetSuite line so the original invoice
-        # pricing is not lost.
-        item_payload_indexes = {}
+            validated_item = validated_items_by_line.get(str(index))
+            if not isinstance(validated_item, dict):
+                raise ValueError(
+                    f"Line {index}: no persisted NetSuite item validation exists "
+                    "for this OCR line. Validate the document again before posting."
+                )
+            if validated_item.get("ambiguous"):
+                raise ValueError(
+                    f'Line {index}: multiple NetSuite items were matched for '
+                    f'"{item_name}" during validation. Please correct the item '
+                    "mapping and validate again."
+                )
+            if not validated_item.get("matched"):
+                raise ValueError(
+                    f'Line {index}: NetSuite item "{item_name}" was not '
+                    "successfully validated. Validate the document again before posting."
+                )
 
-        if line_items:
-            posting_item_source_key = (
-                item_mapping.source_field_key
-                if item_mapping is not None
-                else None
-            )
+            item_id = validated_item.get("netsuite_id")
+            if not item_id:
+                raise ValueError(f"Line {index}: validated NetSuite item ID is missing.")
 
-            for index, line in enumerate(line_items, start=1):
-                if not isinstance(line, dict):
-                    raise ValueError(
-                f"Line {index}: OCR line item is invalid."
-            )
-                if posting_item_source_key:
-                    item_name = line.get(posting_item_source_key)
-
-                else:
-                    item_name = (
-                        line.get("item") or line.get("item_name") or line.get("itemName") or line.get("description")
-                    )
-
-                if isinstance(item_name, str):
-                    item_name = item_name.strip()
-
-                description = line.get("item") or line.get("description")
-                quantity = line.get("quantity")
-                rate = line.get("unit_price")
-
-                # A row without quantity AND rate is not an item line for an
-                # item-based Vendor Bill. These OCR rows are commonly GL
-                # account / tax / TDS / GST rows. Do this check BEFORE any
-                # NetSuite item lookup so text such as "Advances Paid" cannot
-                # accidentally match an unrelated item record.
-                if quantity in (None, "") and rate in (None, ""):
-                    logger.warning(
-                        "Ignoring non-item OCR row before NetSuite item lookup "
-                        "— line=%s description=%r item_name=%r; no quantity or "
-                        "rate was supplied — connection=%s",
-                        index,
-                        description,
-                        item_name,
-                        connection.id,
-                    )
+            item_payload = {}
+            for mapping in item_line_mappings:
+                target_field_id = str(mapping.get("target_field_id") or "").strip()
+                target_key = target_field_id.lower()
+                if target_key in {"item", "items"}:
+                    # ``item`` is the Vendor Bill REST column name. The source
+                    # field remains fully template-driven; the value is the ID
+                    # selected during validation, never a second text lookup.
+                    item_payload["item"] = {"id": str(item_id)}
                     continue
 
-                validated_item = validated_items_by_line.get(str(index))
-
-                if not isinstance(validated_item, dict):
-                    raise ValueError(
-                        f"Line {index}: no persisted NetSuite item validation "
-                        "exists for this OCR line. Validate the document again "
-                        "before posting."
-                    )
-
-                if validated_item.get("ambiguous"):
-                    raise ValueError(
-                        f'Line {index}: multiple NetSuite items were matched '
-                        f'for "{item_name}" during validation. Please correct '
-                        "the item mapping and validate again."
-                    )
-
-                if not validated_item.get("matched"):
-                    raise ValueError(
-                        f'Line {index}: NetSuite item "{item_name}" was not '
-                        "successfully validated. Validate the document again "
-                        "before posting."
-                    )
-
-                item_id = validated_item.get("netsuite_id")
-                if not item_id:
-                    raise ValueError(
-                        f'Line {index}: validated NetSuite item ID is missing.'
-                    )
-
-                # NetSuite expects numeric transaction quantities/rates.
-                # OCR commonly stores these as strings, so normalize simple
-                # numeric strings before constructing the REST payload.
-                for numeric_name, numeric_value in (
-                    ("quantity", quantity),
-                    ("rate", rate),
-                ):
-                    if numeric_value in (None, ""):
-                        continue
-                    if isinstance(numeric_value, bool):
-                        raise ValueError(
-                            f"Line {index}: {numeric_name} must be numeric."
-                        )
-                    if isinstance(numeric_value, str):
-                        cleaned_numeric = numeric_value.strip().replace(",", "")
-                        try:
-                            parsed_numeric = float(cleaned_numeric)
-                        except ValueError as exc:
-                            raise ValueError(
-                                f"Line {index}: {numeric_name} "
-                                f"value {numeric_value!r} is not numeric."
-                            ) from exc
-
-                        if parsed_numeric.is_integer():
-                            parsed_numeric = int(parsed_numeric)
-
-                        if numeric_name == "quantity":
-                            quantity = parsed_numeric
-                        else:
-                            rate = parsed_numeric
-
-                # Merge only when the NetSuite item AND rate are the same.
-                # This preserves separate lines when the same item was sold
-                # at different prices on the source document.
-                normalized_rate = (
-                    str(rate).strip()
-                    if rate not in (None, "")
-                    else None
+                mapped_value = self._normalise_mapped_value(
+                    line.get(mapping["source_field_key"]),
+                    mapping,
+                    line_number=index,
                 )
-                merge_key = (str(item_id), normalized_rate)
+                if mapped_value is not None:
+                    item_payload[target_field_id] = mapped_value
 
-                existing_index = item_payload_indexes.get(merge_key)
+            payload_items.append(item_payload)
 
-                if existing_index is not None:
-                    existing_payload = payload_items[existing_index]
-                    existing_quantity = existing_payload.get("quantity")
+        payload = {}
 
-                    # Only merge when both duplicate lines have quantities.
-                    # If either quantity is missing, retain separate lines
-                    # rather than inventing a quantity.
-                    if (
-                        quantity not in (None, "")
-                        and existing_quantity not in (None, "")
-                    ):
-                        try:
-                            merged_quantity = (
-                                float(existing_quantity)
-                                + float(quantity)
-                            )
-
-                            if merged_quantity.is_integer():
-                                merged_quantity = int(merged_quantity)
-
-                            existing_payload["quantity"] = merged_quantity
-
-                            logger.info(
-                                "Merged duplicate NetSuite item on Vendor Bill "
-                                "— item=%s id=%s previous_quantity=%s "
-                                "added_quantity=%s final_quantity=%s rate=%s "
-                                "connection=%s",
-                                item_name,
-                                item_id,
-                                existing_quantity,
-                                quantity,
-                                merged_quantity,
-                                rate,
-                                connection.id,
-                            )
-                            continue
-                        except (TypeError, ValueError):
-                            logger.warning(
-                                "Could not numerically merge duplicate "
-                                "NetSuite item; keeping separate lines — "
-                                "item=%s id=%s previous_quantity=%s "
-                                "added_quantity=%s rate=%s connection=%s",
-                                item_name,
-                                item_id,
-                                existing_quantity,
-                                quantity,
-                                rate,
-                                connection.id,
-                            )
-
-                item_payload = {
-                    "item":{
-                        "id":str(item_id)
-                    },
-                }
-
-                if posting_location_id is not None:
-                    item_payload["location"] = {
-                        "id": str(posting_location_id),
-                    }
-
-                if quantity not in (None, ""):
-                    item_payload["quantity"] = quantity
-
-                if rate not in (None, ""):
-                    item_payload["rate"] = rate
-
-                if description not in (None, ""):
-                    item_payload["description"] = description
-
-                item_payload_indexes[merge_key] = len(payload_items)
-                payload_items.append(item_payload)
-
-        payload = {
-            "entity": {"id": vendor["internal_id"]},
-        }
-
-        if payload_items:
-            payload["item"] = {
-                "items": payload_items,
-            }
-
-        # Apply every other saved, MAPPED, non-custom BODY field mapping
-        # (subsidiary, currency, memo, location, department, class,
-        # terms, tranid/trandate/duedate if explicitly mapped, etc.) —
-        # not just the two hardcoded date fields below. Without this,
-        # any account that requires fields NetSuite itself marks
-        # required on Vendor Bill (subsidiary and currency on every
-        # OneWorld/multi-subsidiary account) will have every single
-        # post rejected regardless of vendor/item correctness, since
-        # those fields were previously never sent at all.
-        standard_field_mappings = (
-            OCRNetSuiteFieldMapping.objects
-            .filter(
-                company=company,
-                connection=connection,
-                record_type="vendorBill",
-                mapping_status="MAPPED",
-                is_custom=False,
-                target_scope__iexact="body",
-            )
-            .exclude(target_field_id__iexact="entity")
-            .order_by("created_at")
-        )
+        # Every Vendor Bill body field comes from the saved OCR-template
+        # snapshot. This includes custom ``custbody_*`` fields; a separate
+        # database mapping must never add, replace, or redirect a value.
+        body_field_mappings = [
+            mapping for mapping in template_mappings
+            if mapping.get("source_scope") == "header"
+            and mapping.get("target_scope") == "body"
+        ]
 
         validation_service = NetSuiteValidationService()
 
@@ -1803,13 +1955,21 @@ class NetSuiteVendorBillPostingService:
             "entityid",
         }
 
-        for mapping in standard_field_mappings:
-            target_field_id = mapping.target_field_id
-            # if not target_field_id or target_field_id in payload:
+        for mapping in body_field_mappings:
+            target_field_id = str(
+                mapping.get("target_field_id") or ""
+            ).strip()
             if not target_field_id:
                 continue
 
             target_field_key = target_field_id.strip().lower()
+            if target_field_key in {"entity", "vendor"}:
+                # The template must explicitly map its vendor source field to
+                # Entity/Vendor.  The validated internal ID, rather than OCR
+                # text, is the only value safe to send for that reference.
+                payload["entity"] = {"id": str(validated_vendor_id)}
+                continue
+
             api_field_name = NETSUITE_REST_BODY_FIELD_NAMES.get(
                 target_field_key,target_field_id
             )
@@ -1841,10 +2001,11 @@ class NetSuiteVendorBillPostingService:
                 )
                 continue
 
-            raw_value = data.get(mapping.source_field_key)
-            if isinstance(raw_value, str):
-                raw_value = raw_value.strip()
-            if raw_value in (None, ""):
+            raw_value = self._normalise_mapped_value(
+                data.get(mapping["source_field_key"]),
+                mapping,
+            )
+            if raw_value is None:
                 continue
 
             table_config = validation_service.SELECT_FIELD_SUITEQL_TABLES.get(
@@ -1852,6 +2013,9 @@ class NetSuiteVendorBillPostingService:
             )
 
             if table_config is not None:
+                if isinstance(raw_value, dict) and raw_value.get("id"):
+                    payload[api_field_name] = raw_value
+                    continue
                 resolved_id = validation_service._resolve_select_field_live(
                     connection=connection,
                     target_field_id=target_field_id,
@@ -1864,10 +2028,10 @@ class NetSuiteVendorBillPostingService:
                     payload[api_field_name] = {"id": resolved_id}
                     continue
 
-                if mapping.is_required:
+                if mapping.get("is_required", False):
                     raise ValueError(
                         f'"{raw_value}" could not be matched to an active '
-                        f'NetSuite {mapping.target_field_label or target_field_id} '
+                        f'NetSuite {mapping.get("target_field_label") or target_field_id} '
                         "record. Create or correct it in NetSuite, then "
                         "validate and post again."
                     )
@@ -1882,140 +2046,44 @@ class NetSuiteVendorBillPostingService:
                 )
                 continue
 
-            if (mapping.target_datatype or "").strip().lower() == "select":
-                # A select/reference field we don't know how to resolve
-                # (no SuiteQL table mapping above). Sending raw OCR text
-                # for a reference field would be rejected by NetSuite,
-                # so skip rather than guess — required ones will still
-                # surface as a clear NetSuite-side rejection.
-                logger.warning(
-                    "Skipping NetSuite select field with no known "
-                    "SuiteQL lookup table — field=%s connection=%s",
-                    target_field_id,
-                    connection.id,
+            if (mapping.get("target_datatype") or "").strip().lower() == "select":
+                if isinstance(raw_value, dict) and raw_value.get("id"):
+                    payload[api_field_name] = raw_value
+                    continue
+                # NetSuite does not accept a display name for arbitrary custom
+                # select fields. Failing here is safer than silently omitting a
+                # mapped value or writing it to a different field.
+                raise ValueError(
+                    f'NetSuite {mapping.get("target_field_label") or target_field_id} '
+                    "requires an internal ID in the reviewed OCR data."
                 )
-                continue
 
             if api_field_name == "tranId":
                 # Vendor Bill Reference No. supports up to 45 characters.
                 raw_value = str(raw_value).strip()[:45]
             payload[api_field_name] = raw_value
 
-        # Fallback defaults for the most common header fields, only if
-        # not already supplied by an explicit field mapping above.
-        payload_keys_lower = {key.lower() for key in payload}
-
-        # REST record field names are camelCase. In particular, the Vendor
-        # Bill REST schema uses tranId / tranDate / dueDate. The old fallback
-        # used SuiteScript/SuiteQL-style lowercase IDs (tranid/trandate/duedate),
-        # which can make NetSuite reject the entire JSON body with the generic
-        # INVALID_CONTENT response.
-        if "tranid" not in payload_keys_lower and data.get("invoice_number"):
-            payload["tranId"] = str(data["invoice_number"])[:45]
-
-        if "trandate" not in payload_keys_lower and data.get("invoice_date"):
-            payload["tranDate"] = data["invoice_date"]
-
-        if "duedate" not in payload_keys_lower and data.get("due_date"):
-            payload["dueDate"] = data["due_date"]
-
-        # Location is a subsidiary-sensitive NetSuite reference. Use the
-        # mapped/resolved body Location when one was supplied. Only fall back
-        # to the temporary Pune default when the document has no Location
-        # mapping/value. Then force every item line to use the same Location
-        # as the Vendor Bill header so header/line references cannot diverge.
-
-        upload = getattr(document, "upload", None)
-        batch = getattr(upload, "batch", None) if upload else None
-
-        requested_fields = (
-            getattr(batch, "requested_fields_json", None)
-            if batch else None
-        )
-        if not isinstance(requested_fields, dict):
-            requested_fields = {}
-
-        standard_fields = requested_fields.get("standard_fields") or []
-        standard_overrides = requested_fields.get("standard_field_overrides") or {}
-
-        location_override = (
-            standard_overrides.get("location")
-            if isinstance(standard_overrides, dict)
-            else None
-        )
-
-        location_mapping_configured = (
-            isinstance(standard_fields, list)
-            and "location" in standard_fields
-            and isinstance(location_override, dict)
-            and str(
-                location_override.get("netsuite_field_id") or ""
-            ).strip().lower() == "location"
-            and str(
-                location_override.get("scope") or "header"
-            ).strip().lower() == "header"
-            and str(
-                location_override.get("netsuite_field_scope") or ""
-            ).strip().lower() == "body"
-        )
-
-        if not location_mapping_configured:
+        if "entity" not in payload:
             raise ValueError(
-                "Location is required for Vendor Bill posting. Add the standard "
-                "Location field to the template and map it to NetSuite Location."
+                "The selected template must map a header field to NetSuite Entity."
             )
-
-        raw_location_value = data.get("location")
-
-        if isinstance(raw_location_value, dict):
-            raw_location_value = (
-                raw_location_value.get("name")
-                or raw_location_value.get("label")
-                or raw_location_value.get("text")
-            )
-
-        raw_location_value = str(raw_location_value or "").strip()
-
-        if not raw_location_value:
-            raise ValueError(
-                "Location is required. Enter the exact NetSuite Location name "
-                "in OCR review, save the result, and validate again before posting."
-            )
-
-        posting_location_id = validation_service._resolve_select_field_live(
-            connection=connection,
-            target_field_id="location",
-            value=raw_location_value,
-            require_unique=True,
-        )
-
-        if not posting_location_id:
-            raise ValueError(
-                f'NetSuite Location "{raw_location_value}" could not be matched '
-                "to one active Location. Validate the document again before posting."
-            )
-
-        posting_location_id = str(posting_location_id)
-        payload["location"] = {"id": posting_location_id}
-
-        for item_payload in payload_items:
-            item_payload["location"] = {"id": posting_location_id}
-
+        # NetSuite UI may default the header Location onto item rows, but the
+        # REST API can require it explicitly for inventory items.
+        header_location = payload.get("location")
+        if (
+            payload_items
+            and isinstance(header_location,dict)
+            and header_location.get("id") not in (None,"")
+        ):
+            for item_payload in payload_items:
+                # A separately mapped line Location, if present, must remain unchanged
+                if not item_payload.get("location"):
+                    item_payload["location"] = {
+                        "id":str(header_location["id"]),
+                    }
         if payload_items:
-            payload["item"] = {
-                "items": payload_items,
-            }
+            payload["item"] = {"items":payload_items}
 
-        custom_fields = self._apply_custom_fields(
-            company=company,
-            connection=connection,
-            record_type="vendorBill",
-            data=data,
-            document=document,
-        )
-        if custom_fields:
-            # REST body properties use their script IDs, not SOAP customFieldList.
-            payload.update(custom_fields)
         # Stable reconciliation identity across versions and interrupted attempts.
         payload['externalId'] = f'agsuite-vb-{company.pk}-{document.pk}'
 
@@ -2025,8 +2093,8 @@ class NetSuiteVendorBillPostingService:
             "vendor_id=%s location_id=%s subsidiary=%s currency=%s "
             "item_count=%s item_lines=%s body_keys=%s custom_fields=%s "
             "connection=%s",
-            vendor["internal_id"],
-            posting_location_id,
+            str(validated_vendor_id),
+            (payload.get("location") or {}).get("id"),
             payload.get("subsidiary"),
             payload.get("currency"),
             len(payload_items),
@@ -2063,11 +2131,12 @@ class NetSuiteVendorBillPostingService:
                 else None
             )
 
+            # Subsidiary is account-specific. When the selected template maps
+            # it, it is resolved above and checked against the items. Accounts
+            # that do not use OneWorld subsidiaries are allowed to post without
+            # inventing a subsidiary value.
             if payload_subsidiary_id in (None, ""):
-                raise ValueError(
-                    "Vendor Bill subsidiary could not be resolved before posting. "
-                    "Map a valid Subsidiary and validate the document again."
-                )
+                payload_subsidiary_id = None
 
             final_item_ids = []
             for line_number, item_payload in enumerate(
@@ -2093,11 +2162,13 @@ class NetSuiteVendorBillPostingService:
 
                 final_item_ids.append(str(item_id).strip())
 
-            invalid_items = validation_service._validate_item_ids_for_subsidiary_live(
-                connection=connection,
-                item_ids=final_item_ids,
-                subsidiary_id=payload_subsidiary_id,
-            )
+            invalid_items = []
+            if payload_subsidiary_id is not None:
+                invalid_items = validation_service._validate_item_ids_for_subsidiary_live(
+                    connection=connection,
+                    item_ids=final_item_ids,
+                    subsidiary_id=payload_subsidiary_id,
+                )
 
             if invalid_items:
                 invalid = invalid_items[0]
@@ -3271,164 +3342,6 @@ class NetSuiteFieldMappingService:
         ]
         return {'body': body_fields, 'column': item_fields}
 
-    @transaction.atomic
-    def save_mappings(self, *, company, connection_id, record_type, mappings):
-        """Persist only valid, connection-specific mappings."""
-        connection = self._get_connection(
-            company=company,
-            connection_id=connection_id,
-        )
-
-        # Validate all target IDs against the same account that owns the mapping.
-        catalogue = self.get_field_catalogue(
-            company=company,
-            connection_id=connection.id,
-            record_type=record_type,
-        )
-        catalogue_fields = (
-            catalogue.get("fields", {}).get("body", [])
-            + catalogue.get("fields", {}).get("column", [])
-        )
-
-        def normalize_source_scope(scope):
-            return "line" if str(scope or "").lower() in {"line", "column", "sublist"} else "header"
-
-        def normalize_target_scope(scope):
-            return "column" if str(scope or "").lower() in {"line", "column", "sublist"} else "body"
-
-        target_map = {
-            (
-                str(field.get("field_id")).casefold(),
-                normalize_target_scope(field.get("scope")),
-            ): field
-            for field in catalogue_fields
-            if field.get("field_id")
-        }
-
-        saved = []
-
-        for mapping in mappings:
-            source_key = str(
-                mapping.get("source_field_key") or ""
-            ).strip()
-            if not source_key:
-                continue
-
-            target_field_id = str(
-                mapping.get("target_field_id") or ""
-            ).strip()
-
-            # Unresolved fields are intentionally not persisted because the DB
-            # requires a non-null target_field_id. Remove stale mappings instead.
-            if not target_field_id:
-                (
-                    OCRNetSuiteFieldMapping.objects
-                    .filter(
-                        company=company,
-                        connection=connection,
-                        record_type=record_type,
-                        source_field_key=source_key,
-                    )
-                    .delete()
-                )
-                continue
-
-            source_scope = normalize_source_scope(
-                mapping.get("source_scope")
-            )
-            target_scope = normalize_target_scope(
-                mapping.get("target_scope")
-            )
-
-            # The line/header relationship is authoritative: a line source must
-            # never be saved against a body target, and vice versa.
-            if target_scope == "column" and source_scope != "line":
-                raise ValueError(
-                    f"Invalid mapping scope for '{source_key}': a line NetSuite field requires a line application field."
-                )
-
-            if target_scope == "body" and source_scope == "line":
-                raise ValueError(
-                    f"Invalid mapping scope for '{source_key}': a line application field cannot map to a body NetSuite field."
-                )
-
-            target = target_map.get(
-                (target_field_id.casefold(), target_scope)
-            )
-            if target is None:
-                raise ValueError(
-                    f"NetSuite field '{target_field_id}' is not available in the selected connection."
-                )
-
-            obj, _ = OCRNetSuiteFieldMapping.objects.update_or_create(
-                company=company,
-                connection=connection,
-                record_type=record_type,
-                source_field_key=source_key,
-                defaults={
-                    "source_field_label": (
-                        mapping.get("source_field_label")
-                        or source_key
-                    ),
-                    "source_scope": source_scope,
-                    "source_datatype": (
-                        mapping.get("source_datatype")
-                        or "text"
-                    ),
-                    "target_field_id": str(target["field_id"]),
-                    "target_field_label": (
-                        target.get("label")
-                        or target["field_id"]
-                    ),
-                    "target_scope": target_scope,
-                    "target_datatype": (
-                        target.get("datatype")
-                        or "text"
-                    ),
-                    # Account-specific metadata is authoritative.
-                    "is_required": bool(
-                        target.get("is_required")
-                    ),
-                    "is_custom": bool(
-                        target.get("is_custom")
-                    ),
-                    "reference_type": target.get(
-                        "reference_type"
-                    ),
-                    "mapping_status": "MAPPED",
-                    "confidence": mapping.get(
-                        "confidence"
-                    ),
-                    "metadata": mapping.get(
-                        "metadata"
-                    ) or {},
-                },
-            )
-            saved.append(obj)
-
-        return saved
-
-    def get_mappings(self, *, company, connection_id, record_type):
-        connection = self.repository.get_for_company(
-            connection_id=connection_id,
-            company=company,
-        )
-        if connection is None:
-            raise NetSuiteConnectionNotFoundException(
-                "NetSuite connection not found."
-            )
-
-        return (
-            OCRNetSuiteFieldMapping.objects
-            .filter(
-                company=company,
-                connection=connection,
-                record_type=record_type,
-            )
-            .select_related("company", "connection")
-            .order_by("updated_at", "source_field_key")
-        )
-
 class NetSuiteValidationService:
     """
     Validate extracted OCR data against NetSuite reference data.
@@ -3958,107 +3871,14 @@ class NetSuiteValidationService:
             if batch
             else None
         )
-        if not isinstance(requested_fields, dict):
-            requested_fields = {}
-
-        standard_fields = requested_fields.get("standard_fields") or []
-        standard_overrides = (
-            requested_fields.get("standard_field_overrides") or {}
+        template_mappings = _build_template_netsuite_mappings(
+            requested_fields,
+            connection=connection,
+            record_type="vendorBill",
         )
-        custom_fields = requested_fields.get("custom_fields") or []
 
-        if not isinstance(standard_fields, list):
-            standard_fields = []
-
-        if not isinstance(standard_overrides, dict):
-            standard_overrides = {}
-
-        if not isinstance(custom_fields, list):
-            custom_fields = []
-
-        template_mappings = []
-
-        # Standard fields
-        for source_key in standard_fields:
-            source_key = str(source_key).strip()
-
-            if not source_key:
-                continue
-
-            override = standard_overrides.get(source_key) or {}
-
-            if not isinstance(override, dict):
-                continue
-
-            target_field_id = str(
-                override.get("netsuite_field_id") or ""
-            ).strip()
-
-            if not target_field_id:
-                continue
-
-            template_mappings.append(
-                {
-                    "source_field_key": source_key,
-                    "source_field_label": (
-                        override.get("label")
-                        or source_key
-                    ),
-                    "source_scope": (
-                        "line"
-                        if override.get("scope") == "line"
-                        else "header"
-                    ),
-                    "target_field_id": target_field_id,
-                    "target_scope": str(
-                        override.get("netsuite_field_scope") or ""
-                    ).strip().lower(),
-                    "target_field_label": (
-                        override.get("label")
-                        or target_field_id
-                    ),
-                    "is_custom": False,
-                }
-            )
-
-        # Custom fields
-        for custom in custom_fields:
-            if not isinstance(custom, dict):
-                continue
-            source_key = str(
-                custom.get("key")
-                or custom.get("label")
-                or ""
-            ).strip()
-            target_field_id = str(
-                custom.get("netsuite_field_id") or ""
-            ).strip()
-            if not source_key or not target_field_id:
-                continue
-            template_mappings.append(
-                {
-                    "source_field_key": source_key,
-                    "source_field_label": (
-                        custom.get("label")
-                        or source_key
-                    ),
-                    "source_scope": (
-                        "line"
-                        if custom.get("scope") == "line"
-                        else "header"
-                    ),
-                    "target_field_id": target_field_id,
-                    "target_field_label": target_field_id,
-                    "is_custom": True,
-                }
-            )
-        # Old-format OCR result: the selected template contained
-        # no NetSuite mappings at all.
-        if not template_mappings:
-            raise ValueError(
-                "No NetSuite field mappings are configured" 
-                "in the selected OCR template."
-            )
+        # The shared builder is the single source of truth for validation and posting.
+        # It already validates the template JSON and returns enriched mapping dictionaries.
 
         vendor_mapping = next(
             (
@@ -4263,7 +4083,7 @@ class NetSuiteValidationService:
         if not vendor_name:
             raise ValueError(
                 f'Vendor value is required. '
-                f'Expected value in OCR field "{vendor_mapping.source_field_key}".'
+                f'Expected value in OCR field "{vendor_mapping["source_field_key"]}".'
             )
 
         line_items = data.get("line_items") or []
@@ -4279,15 +4099,25 @@ class NetSuiteValidationService:
         # Validate only real Vendor Bill item rows. OCR can also return
         # account/tax/TDS/GST rows inside line_items; those rows do not have
         # quantity or unit price and must not become NetSuite item lines.
+        if item_mapping is None:
+            raise ValueError(
+                "Item field mapping is required before NetSuite reference validation."
+            )
+        item_source_key = item_mapping["source_field_key"]
         real_item_lines = []
         real_item_line_indexes = []
         for line_index, line in enumerate(line_items, start=1):
             if not isinstance(line, dict):
                 continue
-            quantity = line.get("quantity")
-            rate = line.get("unit_price")
-            if quantity in (None, "") and rate in (None, ""):
+            item_name = line.get(item_source_key)
+
+            # quantity = line.get("quantity")
+            # rate = line.get("unit_price")
+            # if quantity in (None, "") and rate in (None, ""):
+            #     continue
+            if item_name is None or not str(item_name).strip():
                 continue
+
             real_item_lines.append(line)
             real_item_line_indexes.append(line_index)
 
@@ -5011,7 +4841,7 @@ class NetSuiteValidationService:
         rows_by_name = {}
 
         # Keep each SuiteQL request comfortably bounded.
-        chunk_size = 25
+        chunk_size = 200
 
         for start in range(
             0,
@@ -5052,7 +4882,7 @@ class NetSuiteValidationService:
             response = self._execute_live_suiteql(
                 connection=connection,
                 query=query,
-                limit=100,
+                limit=1000,
             )
 
             rows = (

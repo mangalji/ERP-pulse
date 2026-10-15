@@ -33,15 +33,13 @@ from netsuite.serializers import (
     NetSuiteConnectionRenameSerializer,
     EmployeeConnectionSerializer,
     AssignEmployeeSerializer,
-    SaveMappingRequestSerializer,
-    OCRNetSuiteFieldMappingSerializer,
     ValidateDocumentRequestSerializer,
 )
 from netsuite.services import (
     NetSuiteConnectionService,
     NetSuiteVendorBillPostingService,
-    NetSuiteFieldMappingService,
     NetSuiteValidationService,
+    NetSuiteFieldMappingService,
 )
 from netsuite.oauth import resolve_post_connect_redirect_url_from_state
 from ocr.models import OCRDocument
@@ -620,118 +618,6 @@ class NetSuiteFieldCatalogueView(APIView):
                     'error': 'The field catalogue could not be loaded.',
                 },
             )
-
-
-class NetSuiteFieldMappingListCreateView(APIView):
-    """List or save OCR → NetSuite Vendor Bill field mappings."""
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        connection_id = request.query_params.get("connection_id")
-        record_type = request.query_params.get("record_type", "vendorBill")
-
-        if not connection_id:
-            return Response(
-                {"detail": "connection_id is required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        company = getattr(request.user, "company", None)
-        if company is None:
-            return Response(
-                {"detail": "User is not associated with a company."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            service = NetSuiteFieldMappingService()
-            mappings = service.get_mappings(
-                company=company,
-                connection_id=connection_id,
-                record_type=record_type,
-            )
-            return success_response(
-                message="Saved NetSuite field mappings fetched successfully.",
-                data=OCRNetSuiteFieldMappingSerializer(
-                    mappings,
-                    many=True,
-                ).data,
-            )
-        except NetSuiteConnectionNotFoundException as exc:
-            message = str(exc)
-
-            if "not active" in message.lower():
-                return _reauth_required_response()
-
-            return Response(
-                {"detail": message},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except ValueError as exc:
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to load field mappings — user=%s",
-                getattr(request.user, "id", None),
-            )
-            return success_response(
-                message='No saved field mappings are currently available.',
-                data=[],
-            )
-
-    def post(self, request):
-        serializer = SaveMappingRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        payload = serializer.validated_data
-
-        company = getattr(request.user, "company", None)
-        if company is None:
-            return Response(
-                {"detail": "User is not associated with a company."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            service = NetSuiteFieldMappingService()
-            saved = service.save_mappings(
-                company=company,
-                connection_id=payload["connection_id"],
-                record_type=payload["record_type"],
-                mappings=payload["mappings"],
-            )
-            return success_response(
-                data=OCRNetSuiteFieldMappingSerializer(
-                    saved,
-                    many=True,
-                ).data,
-                message="Mappings saved successfully.",
-            )
-        except NetSuiteConnectionNotFoundException as exc:
-            message = str(exc)
-            if "not active" in message.lower():
-                return _reauth_required_response()
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        except ValueError as exc:
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to save field mappings — user=%s",
-                getattr(request.user, "id", None),
-            )
-            return Response(
-                {"detail": "Failed to save field mappings."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
 
 class NetSuiteValidateDocumentView(APIView):
     """Validate an OCR document against NetSuite reference data."""

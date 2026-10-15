@@ -48,34 +48,34 @@ from ocr.services.zip_upload_service import (
     extract_supported_files_from_zip,
 )
 
-def _parse_requested_fields(raw) -> dict | None:
-    """
-    Normalize the user-supplied dynamic extraction configuration.
+# def _parse_requested_fields(raw) -> dict | None:
+#     """
+#     Normalize the user-supplied dynamic extraction configuration.
 
-    Accepts either a JSON object or a JSON-encoded string.
-    Returns None when nothing usable was supplied.
-    """
-    if raw is None:
-        return None
+#     Accepts either a JSON object or a JSON-encoded string.
+#     Returns None when nothing usable was supplied.
+#     """
+#     if raw is None:
+#         return None
 
-    if isinstance(raw, str):
-        raw = raw.strip()
-        if not raw:
-            return None
+#     if isinstance(raw, str):
+#         raw = raw.strip()
+#         if not raw:
+#             return None
 
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            raise ValueError(
-                "requested_fields must be a valid JSON object."
-            )
+#         try:
+#             raw = json.loads(raw)
+#         except (json.JSONDecodeError, ValueError):
+#             raise ValueError(
+#                 "requested_fields must be a valid JSON object."
+#             )
 
-    if not isinstance(raw, dict):
-        raise ValueError(
-            "requested_fields must be a JSON object."
-        )
+#     if not isinstance(raw, dict):
+#         raise ValueError(
+#             "requested_fields must be a JSON object."
+#         )
 
-    return raw
+#     return raw
 
 
 def _resolve_template_config(template_id, user) -> dict:
@@ -104,28 +104,42 @@ def _resolve_template_config(template_id, user) -> dict:
 
 def _build_requested_fields(request) -> dict | None:
     """
-    Resolve the effective requested_fields from the upload request.
-
-    An explicit template_id takes precedence over inline
-    requested_fields.
+    Resolve extraction configuration only from a saved company template.
+    ``OCRBatch.requested_fields_json`` will snapshot this JSON for deterministic
+    processing. Inline request mappings are deliberately unsupported so a
+    caller cannot bypass template save-time validation.
     """
     template_id = request.data.get("template_id")
-    raw_requested = _parse_requested_fields(
-        request.data.get("requested_fields")
+    # raw_requested = _parse_requested_fields(
+    #     request.data.get("requested_fields")
+    # )
+
+    # if template_id:
+    #     requested_fields = _resolve_template_config(
+    #         template_id,
+    #         request.user,
+    #     )
+    if not template_id:
+        raise ValueError(
+            "A saved OCR extraction template is required. Select a template before uploading."
+         )
+    # elif raw_requested is not None:
+    #     requested_fields = raw_requested
+    # else:
+    #     requested_fields = None
+
+    # if requested_fields:
+    #     resolve_field_config(requested_fields)
+    requested_fields = _resolve_template_config(
+        template_id,
+        request.user,
     )
-
-    if template_id:
-        requested_fields = _resolve_template_config(
-            template_id,
-            request.user,
+    if not requested_fields:
+        raise ValueError(
+            "The selected OCR extraction template has no saved field configuration. Open and save the template before uploading."
         )
-    elif raw_requested is not None:
-        requested_fields = raw_requested
-    else:
-        requested_fields = None
 
-    if requested_fields:
-        resolve_field_config(requested_fields)
+    resolve_field_config(requested_fields)
 
     return requested_fields
 
@@ -960,7 +974,9 @@ class OCRExtractionTemplateListView(APIView):
         )
 
     def post(self, request):
-        serializer = OCRExtractionTemplateCreateSerializer(data=request.data)
+        serializer = OCRExtractionTemplateCreateSerializer(
+            data=request.data, context={"request": request}
+        )
         serializer.is_valid(raise_exception=True)
         name = serializer.validated_data["name"].strip()
         fields_config = serializer.validated_data["fields_config"]
@@ -1012,7 +1028,7 @@ class OCRExtractionTemplateDetailView(APIView):
         template = self._get_template(request, template_id)
 
         serializer = OCRExtractionTemplateUpdateSerializer(
-            data=request.data
+            data=request.data, context={"request": request}
         )
         serializer.is_valid(raise_exception=True)
 

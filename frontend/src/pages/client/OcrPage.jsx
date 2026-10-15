@@ -51,6 +51,58 @@ function toInputType(dataType) {
   return 'text'
 }
 
+function numericValue(value) {
+  if (value === null || value === undefined || value === '') return null
+
+  const parsed = Number(String(value).replace(/,/g, ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function money(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100
+}
+
+function recalculateInvoiceTotals(current) {
+  const items = Array.isArray(current?.line_items) ? current.line_items : []
+
+  let totalTax = 0
+  let invoiceTotal = 0
+
+  const lineItems = items.map((item) => {
+    const quantity = numericValue(item?.quantity)
+    const unitPrice = numericValue(item?.unit_price)
+
+    const subtotal = quantity !== null && unitPrice !== null
+      ? money(quantity * unitPrice)
+      : numericValue(item?.subtotal)
+
+    const taxRate = numericValue(item?.tax_rate)
+    const taxAmount = taxRate !== null && subtotal !== null
+      ? money(subtotal * taxRate / 100)
+      : numericValue(item?.tax_amount)
+
+    const totalAmount = subtotal !== null
+      ? money(subtotal + (taxAmount ?? 0))
+      : numericValue(item?.total_amount)
+
+    totalTax += taxAmount ?? 0
+    invoiceTotal += totalAmount ?? 0
+
+    return {
+      ...item,
+      subtotal,
+      tax_amount: taxAmount,
+      total_amount: totalAmount,
+    }
+  })
+
+  return {
+    ...current,
+    line_items: lineItems,
+    total_tax_amount: money(totalTax),
+    amount: money(invoiceTotal),
+  }
+}
 function resolveConfiguredFields(config, fallbackData = {}) {
   const hasTemplateConfig =
     config &&
@@ -1040,10 +1092,10 @@ useEffect(() => {
         [key]: value,
       }
 
-      return {
+      return recalculateInvoiceTotals({
         ...current,
         line_items: nextItems,
-      }
+      })
     })
   },[])
 
@@ -1051,7 +1103,7 @@ useEffect(() => {
     setValidationResult(null)
     setAiDiagnostics([])
     setDiagnosticError('')
-    setData((current) => ({
+    setData((current) => recalculateInvoiceTotals({
       ...current,
       line_items: [
         ...(Array.isArray(current.line_items) ? current.line_items : []),
@@ -1064,7 +1116,7 @@ useEffect(() => {
     setValidationResult(null)
     setAiDiagnostics([])
     setDiagnosticError('')
-    setData((current) => ({
+    setData((current) => recalculateInvoiceTotals({
       ...current,
       line_items: (Array.isArray(current.line_items)
         ? current.line_items

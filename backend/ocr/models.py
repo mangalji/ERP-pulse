@@ -79,13 +79,12 @@ class OCRBatch(models.Model):
         default=Status.CREATED,
         db_index=True,
     )
-
-    # Dynamic extraction configuration chosen at upload time — which
-    # standard fields to keep, which to drop, and any custom fields with
-    # their AI instructions and header/line scope. Empty/blank means "use
-    # the full default standard field set", which is exactly today's
-    # existing behavior — see notebook_extraction_service.resolve_field_config().
-    # Shape: {"standard_fields": [...], "custom_fields": [{"key","label","description","scope"}]}
+    # Immutable JSON snapshot of the saved OCRExtractionTemplate.fields_config
+    # selected for this upload. Extraction, validation and posting use this
+    # snapshot so later template edits do not silently change an in-flight batch.
+    # Upload endpoints require a saved template; inline requested_fields are not
+    # accepted as an alternate mapping source.
+    # Shape includes standard_fields, standard_field_overrides and custom_fields.
     requested_fields_json = models.JSONField(default=dict, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -440,77 +439,6 @@ class OCRDocumentVersion(models.Model):
 
     def __str__(self) -> str:
         return f'{self.document_id} v{self.version_number}'
-
-class MappingStatus(models.TextChoices):
-    MAPPED = 'MAPPED', 'Mapped'
-    AMBIGUOUS = 'AMBIGUOUS', 'Ambiguous'
-    UNRESOLVED = 'UNRESOLVED', 'Unresolved'
-    INCOMPATIBLE = 'INCOMPATIBLE', 'Incompatible'
-
-
-class OCRNetSuiteFieldMapping(models.Model):
-    """
-    Mapping between an OCR source field and a NetSuite target field.
-
-    Scoped per company + NetSuite connection + record type so that
-    multiple AGSuite companies using the same NetSuite account do not
-    share or overwrite each other's mappings.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    company = models.ForeignKey(
-        'tenancy.Company',
-        on_delete=models.CASCADE,
-        related_name='ocr_netsuite_field_mappings',
-    )
-    connection = models.ForeignKey(
-        'netsuite.NetSuiteConnection',
-        on_delete=models.CASCADE,
-        related_name='ocr_field_mappings',
-    )
-    record_type = models.CharField(max_length=80, default='vendorBill')
-
-    source_field_key = models.CharField(max_length=100)
-    source_field_label = models.CharField(max_length=255)
-    source_scope = models.CharField(max_length=20, choices=[('header', 'Header'), ('line', 'Line Item')])
-    source_datatype = models.CharField(max_length=20)
-
-    target_field_id = models.CharField(max_length=100)
-    target_field_label = models.CharField(max_length=255)
-    target_scope = models.CharField(max_length=20)
-    target_datatype = models.CharField(max_length=20)
-    is_required = models.BooleanField(default=False)
-    is_custom = models.BooleanField(default=False)
-    reference_type = models.CharField(max_length=80, null=True, blank=True)
-
-    mapping_status = models.CharField(
-        max_length=20,
-        choices=MappingStatus.choices,
-        default=MappingStatus.MAPPED,
-    )
-    confidence = models.FloatField(null=True, blank=True)
-    metadata = models.JSONField(default=dict, blank=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'ocr_netsuite_field_mapping'
-        ordering = ['source_field_key']
-        constraints = [
-            models.UniqueConstraint(
-                fields=['company', 'connection', 'record_type', 'source_field_key'],
-                name='unique_ocr_netsuite_mapping_per_connection',
-            ),
-        ]
-        indexes = [
-            models.Index(fields=['company', 'connection', 'record_type'], name='ocr_ns_map_conn_idx'),
-            models.Index(fields=['source_field_key'], name='ocr_ns_map_src_idx'),
-        ]
-
-    def __str__(self) -> str:
-        return f'{self.source_field_key} → {self.target_field_id} ({self.mapping_status})'
-
 
 class ValidationStatus(models.TextChoices):
     VALIDATED = 'VALIDATED', 'Validated'

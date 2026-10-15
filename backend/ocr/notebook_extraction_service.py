@@ -492,31 +492,52 @@ def resolve_field_config(
 
     seen_keys = set(header_fields) | set(line_fields)
     for idx, custom in enumerate(custom_fields):
+        
         if not isinstance(custom, dict):
             raise ValueError(f"custom_fields[{idx}] must be a dict, got {type(custom).__name__}")
+
+        if custom.get("enabled") is False:
+            continue
+
         label = str(custom.get("label") or custom.get("key") or "").strip()
+        
         if not label:
             raise ValueError(f"custom_fields[{idx}] must have a non-empty label or key")
+        
         key = _slugify_field_key(str(custom.get("key") or label))
+        
         if key in reserved_keys:
             raise ValueError(f"Custom field '{label}' conflicts with a standard field name ('{key}').")
+        
         if key in seen_keys:
             raise ValueError(f"Duplicate custom field '{label}' (resolved key '{key}').")
+        
         description = str(custom.get("questionaire") or custom.get("description") or "").strip()
+        
         if not description:
             raise ValueError(f"Questionaire is required for custom field '{label}'.")
+        
         data_type = _coerce_data_type(custom.get("data_type"))
+        
         scope = custom.get("scope") or "header"
+        
         if scope not in {"header", "line"}:
             raise ValueError(f"Invalid scope for custom field '{label}'.")
+        
         if scope == "line":
             line_fields[key] = description
             line_types[key] = data_type
+        
         else:
             header_fields[key] = description
             header_types[key] = data_type
+        
         seen_keys.add(key)
-
+        
+    if not header_fields and not line_fields:
+        raise ValueError(
+            "Extraction template must contain at least one enabled field."
+        )
     include_line_items = bool(line_fields) or "line_items" in selected_standard
     if include_line_items and not line_fields:
         raise ValueError("Line-item extraction was requested but no line fields are configured.")

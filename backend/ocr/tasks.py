@@ -368,7 +368,10 @@ def _canonical_config(requested_fields: Any) -> dict:
 
     selected_standard = requested_fields.get("standard_fields")
     
-    if selected_standard is not None and not isinstance(selected_standard, list):
+    if selected_standard is None:
+        selected_standard = []
+
+    if not isinstance(selected_standard, list):
         raise ValueError("standard_fields must be a list.")
 
     custom_fields = requested_fields.get("custom_fields")
@@ -420,19 +423,27 @@ def _canonical_config(requested_fields: Any) -> dict:
         if relevant:
             normalized_overrides[key] = relevant
 
+    from ocr.notebook_extraction_service import _slugify_field_key
+    
     normalized_custom = []
+    
     for idx, custom in enumerate(custom_fields or []):
         if not isinstance(custom, dict):
             raise ValueError(
                 f"custom_fields[{idx}] must be a dict, got {type(custom).__name__}"
             )
+        if custom.get("enabled") is False:
+            continue
+        
         label = str(custom.get("label") or custom.get("key") or "").strip()
         if not label:
             raise ValueError(f"custom_fields[{idx}] must have a non-empty label or key")
         
         normalized_custom.append(
             {
-                "key": str(custom.get("key") or label).strip(),
+                "key": _slugify_field_key(
+                    str(custom.get("key") or label)
+                ),
                 "label": label,
                 "description": str(custom.get("questionaire") or custom.get("description") or "").strip(),
                 "scope": str(custom.get("scope") or "header").strip().lower(),

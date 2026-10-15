@@ -86,7 +86,6 @@ const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
   total_amount: {
     id: 'grossAmt',
     scope: 'line',
-    preferredSublistId: 'item'
   },
   item: {
     id: 'item',
@@ -622,12 +621,29 @@ function getCreatedBy(template) {
 }
 
 function getErrorMessage(error, fallback) {
+  const responseData = error?.response?.data || {}
+  const fieldsConfigError = responseData.fields_config
+  const connectionError = responseData.connection_id
+  const detail = responseData.detail
+
+  const normalizeFieldError = (value) => {
+    if (typeof value === 'string') return value
+    if (Array.isArray(value)) return value.find(Boolean) || ''
+    return ''
+  }
+
   return (
-    error?.response?.data?.message ||
-    error?.response?.data?.detail ||
-    error?.response?.data?.name?.[0] ||
-    error?.response?.data?.fields_config?.[0] ||
-    error?.response?.data?.error ||
+    // error?.response?.data?.message ||
+    // error?.response?.data?.detail ||
+    // error?.response?.data?.name?.[0] ||
+    // error?.response?.data?.fields_config?.[0] ||
+    // error?.response?.data?.error ||
+    responseData.message ||
+    (typeof detail === 'string' ? detail : normalizeFieldError(detail)) ||
+    normalizeFieldError(responseData.name) ||
+    normalizeFieldError(fieldsConfigError) ||
+    normalizeFieldError(connectionError) ||
+    responseData.error ||
     fallback
   )
 }
@@ -822,12 +838,13 @@ const handleRefreshNetSuiteFields = async () => {
     return
   }
 
+
   const connectionId = getConnectionId(connection)
 
   if (!connectionId) {
-    setError('No active NetSuite connection is available.')
-    return
-  }
+      setError('A NetSuite connection is required to validate the template field IDs. Connect or select a connection, then try again.')
+      return
+    }
 
   setRefreshingCatalogue(true)
   setError('')
@@ -1251,6 +1268,12 @@ const handleRefreshNetSuiteFields = async () => {
     }
 
     const activeFields = fields.filter((field) => field.enabled !== false)
+    const unsupportedCustomLineField = activeFields.find(
+      (field) => !field.standard && field.scope === 'line',
+    )
+    if (unsupportedCustomLineField) {
+      return `Custom line field "${unsupportedCustomLineField.label || unsupportedCustomLineField.key || 'Unnamed field'}" is not supported for NetSuite posting yet. Use Header scope.`
+    }
     if (!activeFields.length) {
       return 'Use at least one field in the template before saving.'
     }
@@ -1331,8 +1354,10 @@ const handleRefreshNetSuiteFields = async () => {
 
     setSaving(true)
     try {
+      const connectionId = getConnectionId(connection)
       const payload = {
         name: nameToSave,
+        connection_id: connectionId,
         fields_config: buildFieldsConfig(),
       }
 

@@ -1,4 +1,5 @@
 import logging
+import os
 from django.db import transaction
 from accounts.exceptions import (
     OTPExpiredException, 
@@ -109,6 +110,19 @@ class OTPService:
                 user.id,
                 purpose,
             )
+
+            # Local development only: make the generated code available in
+            # the runserver terminal even when a local SMTP configuration is
+            # present. Production settings never log OTP secrets.
+            if os.environ.get("DJANGO_SETTINGS_MODULE") == "config.settings.local":
+                logger.info(
+                    "LOCAL OTP | purpose=%s | user_id=%s | email=%s | code=%s | expires_in_minutes=%s",
+                    purpose,
+                    user.id,
+                    user.email,
+                    raw_code,
+                    OTP_EXPIRY_MINUTES,
+                )
 
         # Email delivery outside the atomic transaction — failure here
         # must NOT roll back the OTP record. The OTP is already saved,

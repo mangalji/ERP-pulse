@@ -2,7 +2,7 @@ from rest_framework import serializers
 from netsuite.models import NetSuiteConnection, EmployeeConnection, NetSuiteCustomField
 from django.utils import timezone
 from django.core.validators import RegexValidator
-from ocr.models import OCRNetSuiteFieldMapping, OCRValidationResult, MappingStatus
+from ocr.models import OCRValidationResult
 from urllib.parse import urlsplit, urlunsplit
 from django.conf import settings
 
@@ -169,48 +169,6 @@ class NetSuiteConnectionRenameSerializer(serializers.Serializer):
 
 class AssignEmployeeSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
-
-class OCRNetSuiteFieldMappingSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = OCRNetSuiteFieldMapping
-        fields = (
-            'id',
-            'company',
-            'connection',
-            'record_type',
-            'source_field_key',
-            'source_field_label',
-            'source_scope',
-            'source_datatype',
-            'target_field_id',
-            'target_field_label',
-            'target_scope',
-            'target_datatype',
-            'is_required',
-            'is_custom',
-            'reference_type',
-            'mapping_status',
-            'confidence',
-            'metadata',
-            'created_at',
-            'updated_at',
-        )
-        read_only_fields = (
-            'id',
-            'company',
-            'created_at',
-            'updated_at',
-        )
-        
-
-class SaveMappingRequestSerializer(serializers.Serializer):
-    connection_id = serializers.UUIDField()
-    record_type = serializers.CharField(default='vendorBill',max_length=64)
-    mappings = serializers.ListField(
-        child=serializers.DictField(),
-        allow_empty=False,
-    )
-
 
 class ValidateDocumentRequestSerializer(serializers.Serializer):
     document_id = serializers.UUIDField()
