@@ -95,6 +95,7 @@ class OCRHistoryEntrySerializer(serializers.Serializer):
 
     type = serializers.ChoiceField(choices=("single", "batch"))
     batch_id = serializers.UUIDField(allow_null=True)
+    history_number = serializers.IntegerField()
     document_id = serializers.UUIDField(allow_null=True)
     document_ids = serializers.ListField(
         child=serializers.UUIDField(),

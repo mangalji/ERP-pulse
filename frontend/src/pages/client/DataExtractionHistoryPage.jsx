@@ -47,6 +47,21 @@ function formatDate(value) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '--' : formatDateTime(date)
 }
+
+function historyRecordLabel(record) {
+  const historyNumber = record?.history_number
+  const identifier = historyNumber ? `History #${historyNumber}` : 'History record'
+  return `${identifier} — ${record?.filename || 'Unnamed OCR file'}`
+}
+
+function errorMessage(error) {
+  return (
+    error?.response?.data?.detail ||
+    error?.response?.data?.error ||
+    error?.message ||
+    'The requested action failed.'
+  )
+}
 // function isCompanyAdminUser(user) {
 //   if (user?.is_superadmin || user?.is_staff) return true
 
@@ -75,6 +90,7 @@ export default function DataExtractionHistoryPage() {
   const [deletingSelected, setDeletingSelected] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [actionMessages, setActionMessages] = useState([])
   const [reauthRequired, setReauthRequired] = useState(false)
   const [connection, setConnection] = useState(null)
 
@@ -229,13 +245,19 @@ export default function DataExtractionHistoryPage() {
       setDeletingId(item.batch_id)
       setError('')
       setNotice('')
+      setActionMessages([])
 
       const recordType = item?.type === 'batch' ? 'batch' : 'upload'
       await apiClient.delete(
         `/ocr/history/uploads/${recordId}/?record_type=${recordType}`,
       )
 
-      setNotice('✓ OCR history record deleted successfully.')
+      setActionMessages([
+        {
+          tone: 'success',
+          text: `${historyRecordLabel(item)}: deleted successfully.`,
+        },
+      ])
       setRecords((current) =>
         current.filter((record) => record.batch_id !== item.batch_id),
       )
@@ -277,6 +299,7 @@ export default function DataExtractionHistoryPage() {
       setDeletingSelected(true)
       setError('')
       setNotice('')
+      setActionMessages([])
       await apiClient.delete('/ocr/history/bulk/', {
         data: {
           records: targets.map(({ id, record_type }) => ({ id, record_type })),
@@ -292,7 +315,12 @@ export default function DataExtractionHistoryPage() {
         deletedHistoryIds.forEach((id) => next.delete(id))
         return next
       })
-      setNotice(`✓ ${targets.length} OCR history record(s) deleted successfully.`)
+      setActionMessages(
+        selectedRecords.map((record) => ({
+          tone: 'success',
+          text: `${historyRecordLabel(record)}: deleted successfully.`,
+        })),
+      )
     } catch (err) {
       console.error('Failed to delete selected OCR history records:', err)
       setError(
@@ -324,166 +352,163 @@ export default function DataExtractionHistoryPage() {
 }
 
   const runBatchAction = async () => {
-  if (!selectedRecords.length) {
-    setError('Select at least one history record first.')
-    return
-  }
+    if (!selectedRecords.length) {
+      setError('Select at least one history record first.')
+      return
+    }
 
-  if (!connection?.id) {
-    setError('A NetSuite connection is required before validation or posting.')
-    return
-  }
+    if (!connection?.id) {
+      setError('A NetSuite connection is required before validation or posting.')
+      return
+    }
 
-  try {
-    setWorking(true)
-    setError('')
-    setReauthRequired(false)
-    setNotice('')
+    const recordByDocumentId = new Map()
+    selectedRecords.forEach((record) => {
+      const documentIds = Array.isArray(record?.document_ids)
+        ? record.document_ids
+        : record?.document_id
+          ? [record.document_id]
+          : []
+      documentIds.forEach((documentId) => {
+        recordByDocumentId.set(String(documentId), record)
+      })
+    })
 
-    const singleRecords = selectedRecords.filter(
-      (item) => item?.type !== 'batch',
-    )
+    const labelForDocument = (documentId) =>
+      historyRecordLabel(recordByDocumentId.get(String(documentId)))
 
-    const batchRecords = selectedRecords.filter(
-      (item) => item?.type === 'batch',
-    )
-
-    if (allSelectedAreValidated) {
-      const singleDocumentIds = [
-        ...new Set(
-          singleRecords
-            .map((item) => item?.document_id)
-            .filter(Boolean),
-        ),
-      ]
-
-      const batchDocumentIds = [
-        ...new Set(
-          batchRecords.flatMap((item) =>
-            Array.isArray(item?.document_ids)
-              ? item.document_ids
-              : item?.document_id
-                ? [item.document_id]
-                : [],
-          ),
-        ),
-      ]
-
-      if (batchDocumentIds.length) {
-        const queued = await netsuiteApi.batchPostDocuments(
-          batchDocumentIds,
-          connection.id,
+    const addBatchResultMessages = (results, action, successStatuses, messages) => {
+      results.forEach((result) => {
+        const succeeded = successStatuses.includes(
+          String(result?.status || '').toUpperCase(),
         )
+        const reason = result?.error ||
+          (Array.isArray(result?.errors) && result.errors.length
+            ? result.errors.join('; ')
+            : result?.status || 'Unknown error')
 
-        const jobId = queued?.job_id
+        messages.push({
+          tone: succeeded ? 'success' : 'error',
+          text: succeeded
+            ? `${labelForDocument(result?.document_id)}: ${action} successfully.`
+            : `${labelForDocument(result?.document_id)}: ${action} failed — ${reason}`,
+        })
+      })
+    }
 
-        if (!jobId) {
-          throw new Error(
-            'NetSuite batch posting did not return a job ID.',
-          )
-        }
+    try {
+      setWorking(true)
+      setError('')
+      setReauthRequired(false)
+      setNotice('')
+      setActionMessages([])
 
-        const job = await waitForBatchJob(jobId)
-
-        if (job.status !== 'SUCCESS' || Number(job?.failed || 0) > 0) {
-          if (isNetSuiteReauthJob(job)) {
-            setReauthRequired(true)
-          }
-          throw new Error(
-            job?.error ||
-              `${Number(job?.failed || 0)} document(s) failed to post.`,
-          )
-        }
-      }
-
-      for (const documentId of singleDocumentIds) {
-        await netsuiteApi.postOCRVendorBill(
-          documentId,
-          connection.id,
-        )
-      }
-
-      setNotice(
-        '✓ Selected OCR record(s) posted successfully to NetSuite.',
+      const messages = []
+      const singleRecords = selectedRecords.filter(
+        (item) => item?.type !== 'batch',
       )
-    } else {
-      const singleValidationIds = [
-        ...new Set(
-          singleRecords
-            .flatMap((item) =>
+      const batchRecords = selectedRecords.filter(
+        (item) => item?.type === 'batch',
+      )
+
+      if (allSelectedAreValidated) {
+        const singleDocumentIds = [
+          ...new Set(singleRecords.map((item) => item?.document_id).filter(Boolean)),
+        ]
+        const batchDocumentIds = [
+          ...new Set(batchRecords.flatMap((item) => item?.document_ids || [])),
+        ]
+
+        if (batchDocumentIds.length) {
+          const queued = await netsuiteApi.batchPostDocuments(batchDocumentIds, connection.id)
+          if (!queued?.job_id) {
+            throw new Error('NetSuite batch posting did not return a job ID.')
+          }
+
+          const job = await waitForBatchJob(queued.job_id)
+          if (isNetSuiteReauthJob(job)) setReauthRequired(true)
+          const results = Array.isArray(job?.results) ? job.results : []
+          addBatchResultMessages(results, 'posted to NetSuite', ['POSTED', 'ALREADY_POSTED'], messages)
+          if (!results.length) {
+            batchRecords.forEach((record) => {
+              messages.push({
+                tone: 'error',
+                text: `${historyRecordLabel(record)}: posting failed — ${job?.error || 'No result was returned.'}`,
+              })
+            })
+          }
+        }
+
+        for (const documentId of singleDocumentIds) {
+          try {
+            await netsuiteApi.postOCRVendorBill(documentId, connection.id)
+            messages.push({ tone: 'success', text: `${labelForDocument(documentId)}: posted to NetSuite successfully.` })
+          } catch (err) {
+            if (isNetSuiteReauthError(err)) setReauthRequired(true)
+            messages.push({ tone: 'error', text: `${labelForDocument(documentId)}: posting failed — ${errorMessage(err)}` })
+          }
+        }
+      } else {
+        const singleValidationIds = [
+          ...new Set(
+            singleRecords.flatMap((item) =>
               Array.isArray(item?.unvalidated_document_ids)
                 ? item.unvalidated_document_ids
                 : item?.document_id
                   ? [item.document_id]
                   : [],
-            )
-            .filter(Boolean),
-        ),
-      ]
-
-      const batchValidationIds = [
-        ...new Set(
-          batchRecords.flatMap((item) =>
-            Array.isArray(item?.unvalidated_document_ids)
-              ? item.unvalidated_document_ids
-              : [],
+            ).filter(Boolean),
           ),
-        ),
-      ]
+        ]
+        const batchValidationIds = [
+          ...new Set(batchRecords.flatMap((item) => item?.unvalidated_document_ids || [])),
+        ]
 
-      if (batchValidationIds.length) {
-        const queued = await netsuiteApi.validateBatchDocuments(
-          batchValidationIds,
-          connection.id,
-        )
+        if (batchValidationIds.length) {
+          const queued = await netsuiteApi.validateBatchDocuments(batchValidationIds, connection.id)
+          if (!queued?.job_id) {
+            throw new Error('NetSuite batch validation did not return a job ID.')
+          }
 
-        const jobId = queued?.job_id
-
-        if (!jobId) {
-          throw new Error(
-            'NetSuite batch validation did not return a job ID.',
-          )
+          const job = await waitForBatchJob(queued.job_id)
+          if (isNetSuiteReauthJob(job)) setReauthRequired(true)
+          const results = Array.isArray(job?.results) ? job.results : []
+          addBatchResultMessages(results, 'validated', ['VALIDATED'], messages)
+          if (!results.length) {
+            batchRecords.forEach((record) => {
+              messages.push({
+                tone: 'error',
+                text: `${historyRecordLabel(record)}: validation failed — ${job?.error || 'No result was returned.'}`,
+              })
+            })
+          }
         }
 
-        const job = await waitForBatchJob(jobId)
-
-        if (job.status !== 'SUCCESS') {
-          throw new Error(
-            job?.error || 'Batch validation failed.',
-          )
+        for (const documentId of singleValidationIds) {
+          try {
+            await netsuiteApi.validateDocument(documentId, connection.id)
+            messages.push({ tone: 'success', text: `${labelForDocument(documentId)}: validated successfully.` })
+          } catch (err) {
+            if (isNetSuiteReauthError(err)) setReauthRequired(true)
+            messages.push({ tone: 'error', text: `${labelForDocument(documentId)}: validation failed — ${errorMessage(err)}` })
+          }
         }
       }
 
-      for (const documentId of singleValidationIds) {
-        await netsuiteApi.validateDocument(
-          documentId,
-          connection.id,
-        )
-      }
-
-      setNotice(
-        '✓ Selected OCR record(s) were validated again.',
-      )
+      setActionMessages(messages)
+      await loadHistory()
+    } catch (err) {
+      console.error('Data Extraction History action failed:', err)
+      if (isNetSuiteReauthError(err)) setReauthRequired(true)
+      const reason = errorMessage(err)
+      setActionMessages(selectedRecords.map((record) => ({
+        tone: 'error',
+        text: `${historyRecordLabel(record)}: action failed — ${reason}`,
+      })))
+    } finally {
+      setWorking(false)
     }
-
-    await loadHistory()
-  } catch (err) {
-    console.error('Data Extraction History action failed:', err)
-
-    if (isNetSuiteReauthError(err)) {
-      setReauthRequired(true)
-    }
-
-    setError(
-      err?.response?.data?.detail ||
-        err?.response?.data?.error ||
-        err?.message ||
-        'The OCR history action failed.',
-    )
-  } finally {
-    setWorking(false)
   }
-}
 
   return (
     <ClientLayout
@@ -565,6 +590,28 @@ export default function DataExtractionHistoryPage() {
               {notice}
             </div>
           )}
+
+          {actionMessages.length > 0 && (
+            <div className="mt-5 max-h-72 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+              <p className="mb-3 text-sm font-semibold text-[var(--color-ink)]">
+                Operation results
+              </p>
+              <ul className="space-y-2 text-sm">
+                {actionMessages.map((message, index) => (
+                  <li
+                    key={`${message.text}-${index}`}
+                    className={`rounded-md border px-3 py-2 ${
+                      message.tone === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    }`}
+                  >
+                    {message.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </Card>
 
         <Card className="overflow-hidden">
@@ -580,9 +627,10 @@ export default function DataExtractionHistoryPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1000px]">
-                <div className="grid grid-cols-[44px_1.35fr_90px_70px_150px_150px_120px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+              <div className="min-w-[1100px]">
+                <div className="grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   <div />
+                  <div>History #</div>
                   <div>File / Batch</div>
                   <div>Type</div>
                   <div>Files</div>
@@ -600,7 +648,7 @@ export default function DataExtractionHistoryPage() {
                     return (
                       <div
                         key={item.batch_id}
-                        className={`grid grid-cols-[44px_1.35fr_90px_70px_150px_150px_120px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
+                        className={`grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
                       >
                         <div>
                           <input
@@ -610,6 +658,10 @@ export default function DataExtractionHistoryPage() {
                             disabled={working || deletingId || deletingSelected || isPosted}
                             aria-label={`Select ${item.filename || 'OCR record'}`}
                           />
+                        </div>
+
+                        <div className="font-mono text-sm font-semibold text-[var(--color-ink)]">
+                          #{item.history_number || '--'}
                         </div>
 
                         <div className="min-w-0">

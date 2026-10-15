@@ -734,6 +734,7 @@ class OCRHistoryListView(APIView):
                 {
                     "type": record_type,
                     "batch_id": str(batch.id),
+                    "history_number": batch.history_number,
                     "document_id": single_document_id,
                     "document_ids": document_ids,
                     "upload_id": single_upload_id,

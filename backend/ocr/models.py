@@ -12,7 +12,7 @@ import uuid
 
 from django.conf import settings
 from ocr.storage import ocr_file_storage
-from django.db import models
+from django.db import models, transaction
 from common.crypto import EncryptedTextField
 
 class OCRBatch(models.Model):
@@ -36,6 +36,14 @@ class OCRBatch(models.Model):
         FAILED = 'FAILED', 'Failed'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # A short, permanent identifier for support and audit workflows. Unlike
+    # the UUID primary key, this is shown to users as "History #<number>".
+    # Numbers are never reused, including after a batch is deleted.
+    history_number = models.BigIntegerField(
+        unique=True,
+        editable=False,
+        db_index=True,
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -102,6 +110,21 @@ class OCRBatch(models.Model):
 
     def __str__(self):
         return f'OCRBatch {self.id} ({self.status})'
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and self.history_number is None:
+            # Lock the latest row while allocating. A deleted number is never
+            # considered because allocation always advances from the maximum.
+            with transaction.atomic():
+                latest = (
+                    type(self).objects.select_for_update()
+                    .order_by("-history_number")
+                    .first()
+                )
+                self.history_number = (latest.history_number if latest else 0) + 1
+                return super().save(*args, **kwargs)
+
+        return super().save(*args, **kwargs)
 
 
 class OCRExtractionTemplate(models.Model):
