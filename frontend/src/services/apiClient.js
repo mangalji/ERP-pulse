@@ -16,8 +16,24 @@ const apiClient = axios.create({
   withCredentials: true, // Send httpOnly cookies when on same origin
 })
 
+const csrfClient = axios.create({ baseURL: API_BASE, withCredentials: true })
+let csrfPromise = null
+const getCsrfToken = () => {
+  if (!csrfPromise) {
+    csrfPromise = csrfClient.get('/auth/csrf/').then((response) => {
+      const token = response.data?.data?.csrf_token
+      if (!token) throw new Error('Could not initialize request security.')
+      return token
+    }).catch((error) => { csrfPromise = null; throw error })
+  }
+  return csrfPromise
+}
+
 // Inject the in-memory access token as an Authorization header on every request.
-apiClient.interceptors.request.use((config) => {
+apiClient.interceptors.request.use(async (config) => {
+  if (!['get', 'head', 'options'].includes((config.method || 'get').toLowerCase())) {
+    config.headers['X-CSRFToken'] = await getCsrfToken()
+  }
   const token = getAccessToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
@@ -49,6 +65,7 @@ apiClient.interceptors.response.use(
     const is401 = error.response?.status === 401
 
     // Attach the backend's error response so unwrap-like logic works
+    if (error.response?.status === 403) csrfPromise = null
     if (error.response?.data) {
       error.payload = error.response.data
     }

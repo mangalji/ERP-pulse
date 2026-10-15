@@ -150,3 +150,4 @@ docker-images-package/
 .venv312
 commands_for_inspection.txt
 env_var_prod_catalyst.yaml
+qa_audit

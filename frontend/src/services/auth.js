@@ -1,18 +1,28 @@
 import apiClient, { unwrap } from './apiClient.js'
 import { AUTH_ENDPOINTS } from '../utils/constants.js'
 
+const LOGIN_CHALLENGE_KEY = 'agsuite_login_challenge'
+const rememberChallenge = (data) => {
+  sessionStorage.setItem(LOGIN_CHALLENGE_KEY, data.challenge)
+  return data
+}
+const challenge = () => sessionStorage.getItem(LOGIN_CHALLENGE_KEY) || ''
+
 export const authApi = {
   requestLoginOtp: (email, password) =>
   apiClient.post(AUTH_ENDPOINTS.login, {
     email,
     password,
-  }).then(unwrap),
+  }).then(unwrap).then(rememberChallenge),
 
   verifyLoginOtp: (email, otpCode) =>
-    apiClient.post(AUTH_ENDPOINTS.verifyLoginOtp, { email, otp_code: otpCode }).then(unwrap),
+    apiClient.post(AUTH_ENDPOINTS.verifyLoginOtp, { email, otp_code: otpCode, challenge: challenge() }).then(unwrap).then((data) => {
+      sessionStorage.removeItem(LOGIN_CHALLENGE_KEY)
+      return data
+    }),
 
   resendLoginOtp: (email) =>
-    apiClient.post(AUTH_ENDPOINTS.resendLoginOtp, { email }).then(unwrap),
+    apiClient.post(AUTH_ENDPOINTS.resendLoginOtp, { email, challenge: challenge() }).then(unwrap).then(rememberChallenge),
 
   forgotPassword: (email) =>
     apiClient.post(AUTH_ENDPOINTS.forgotPassword, { email }).then(unwrap),

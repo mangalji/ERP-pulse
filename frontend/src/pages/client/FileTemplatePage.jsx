@@ -58,17 +58,25 @@ const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
     id: 'subsidiary',
     scope: 'body',
   },
+  location: {
+    id: 'location',
+    scope: 'body',
+  },
   currency: {
     id: 'currency',
     scope: 'body',
   },
   subtotal: {
-    id: 'total',
-    scope: 'body',
+    id: 'amount',
+    scope: 'line',
   },
-  tax_amount: {
+  total_tax_amount: {
     id: 'taxtotal',
     scope: 'body',
+  },
+  tax_amount:{
+    id:'tax1Amt',
+    scope:'line'
   },
   tax_rate: {
     id: 'taxRate1',
@@ -80,11 +88,7 @@ const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
     scope: 'line',
     preferredSublistId: 'item'
   },
-  payment_terms: {
-    id: 'paymentmethod',
-    scope: 'body',
-  },
-  description: {
+  item: {
     id: 'item',
     scope: 'line',
     preferredSublistId: 'item',
@@ -162,10 +166,12 @@ function normalizeCatalogField(field) {
     original_key: field?.key || '',
     label: field?.label || field?.key || '',
     description:
+    normalizeDescriptionText(
       field?.questionaire ||
       field?.description ||
       field?.label ||
       '',
+    ),
     data_type: field?.data_type || 'text',
     scope: field?.scope === 'line' ? 'line' : 'header',
     
@@ -188,6 +194,17 @@ function normalizeCatalogField(field) {
     standard: true,
     enabled: field?.enabled !== false,
   }
+}
+function normalizeDescriptionText(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((part) => String(part ?? '').trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim()
+  }
+
+  return String(value ?? '').trim()
 }
 
 function normalizeCustomField(field, index = 0) {
@@ -338,16 +355,6 @@ function normalizeNetSuiteFieldCatalogue(payload) {
       .trim()
       .toLowerCase()
 
-    /*
-     * Keep item and expense as separate options.
-     *
-     * Example:
-     * taxrate1:line:item
-     * taxrate1:line:expense
-     * taxrate1:line:
-     *
-     * These are three different catalogue entries initially.
-     */
     const key = `${id}:${scope}:${sublistId}`
 
     if (deduped.has(key)) {
@@ -384,28 +391,6 @@ function normalizeNetSuiteFieldCatalogue(payload) {
   })
 
   const entries = [...deduped.values()]
-
-  /*
-   * If a field has one or more real sublist contexts
-   * (item / expense), remove only its generic line entry.
-   *
-   * Example:
-   *
-   * taxrate1 | line | expense
-   * taxrate1 | line | item
-   * taxrate1 | line |
-   *
-   * becomes:
-   *
-   * taxrate1 | line | expense
-   * taxrate1 | line | item
-   *
-   * But if only:
-   *
-   * taxrate1 | line |
-   *
-   * exists, keep it.
-   */
   const contextualKeys = new Set()
 
   entries.forEach((entry) => {
@@ -646,7 +631,6 @@ function getErrorMessage(error, fallback) {
     fallback
   )
 }
-
 
 function ActionIcon({ name, className = 'h-5 w-5' }) {
   const common = {
@@ -1220,8 +1204,8 @@ const handleRefreshNetSuiteFields = async () => {
           netsuite_field_sublist_id:
             field.netsuite_field_sublist_id || '',
 
-          description: field.description?.trim(),
-          questionaire: field.description?.trim(),
+          description: normalizeDescriptionText(field.description),
+          questionaire: normalizeDescriptionText(field.description),
           data_type: field.data_type,
           scope: field.scope,
           enabled: field.enabled !== false,
@@ -1241,8 +1225,8 @@ const handleRefreshNetSuiteFields = async () => {
         field.netsuite_field_sublist_id || '',
 
       label: field.label?.trim(),
-      description: field.description?.trim(),
-      questionaire: field.description?.trim(),
+      description: normalizeDescriptionText(field.description),
+      questionaire: normalizeDescriptionText(field.description),
       data_type: field.data_type,
       scope: field.scope,
       enabled: field.enabled !== false,
@@ -1285,7 +1269,7 @@ const handleRefreshNetSuiteFields = async () => {
       }
 
       
-      if (!field.description?.trim()) {
+      if (!normalizeDescriptionText(field.description)) {
         return `Questionaire is required for "${label}".`
       }
       
@@ -1508,21 +1492,6 @@ const handleRefreshNetSuiteFields = async () => {
           </div>
           {!isDetailPage && (
             <div className="flex flex-wrap items-center gap-2">
-              {/* {isCompanyAdmin && (
-                <Button
-                  type="button"
-                  onClick={handleRefreshNetSuiteFields}
-                  disabled={
-                    refreshingCatalogue ||
-                    !getConnectionId(connection)
-                  }
-                >
-                  {refreshingCatalogue
-                    ? 'Refreshing NetSuite Fields...'
-                    : 'Refresh NetSuite Fields'}
-                </Button>
-              )} */}
-
               <Button type="button" onClick={startNewTemplate}>+ New Template</Button>
             </div>
           )}

@@ -1,5 +1,6 @@
 from django.urls import path
 from accounts.views import (
+    CSRFTokenView,
     LoginView,
     LogoutView,
     MeView,
@@ -30,6 +31,7 @@ from accounts.views import (
 # --------------------------------------------------------------------
 
 urlpatterns = [
+    path('csrf/', CSRFTokenView.as_view(), name='auth-csrf'),
     path('login/',LoginView.as_view(),name='login'),
     path('login/verify-otp/',VerifyLoginOTPView.as_view(),name='verify-login-otp'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),

@@ -17,7 +17,40 @@ import logging
 
 from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.authentication import CSRFCheck
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+
+
+def enforce_cookie_csrf(request):
+    if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+        return
+    check = CSRFCheck(lambda req: None)
+    check.process_request(request)
+    reason = check.process_view(request, None, (), {})
+    if reason:
+        raise PermissionDenied('CSRF verification failed. Reload the page and retry.')
+
+
+class TenantJWTAuthentication(JWTAuthentication):
+    def get_user(self, validated_token):
+        user = super().get_user(validated_token)
+        if user.company_id:
+            from tenancy.services import company_lifecycle_service
+            if not company_lifecycle_service.is_operational(company=user.company):
+                raise PermissionDenied('Your company account is suspended.')
+        return user
+
+
+class CheckedTokenRefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        token = self.token_class(attrs['refresh'])
+        # SimpleJWT's default refresh serializer does not check the password
+        # revocation claim. Reuse get_user for both revocation and tenancy.
+        TenantJWTAuthentication().get_user(token)
+        return super().validate(attrs)
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +70,9 @@ class CookieJWTAuthentication(BaseAuthentication):
             'rest_framework_simplejwt.authentication.JWTAuthentication',
         ]
     """
+
+    def authenticate_header(self, request):
+        return 'Bearer realm="api"'
 
     def authenticate(self, request):
         """
@@ -59,7 +95,7 @@ class CookieJWTAuthentication(BaseAuthentication):
         from rest_framework_simplejwt.authentication import JWTAuthentication
         from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
-        jwt_auth = JWTAuthentication()
+        jwt_auth = TenantJWTAuthentication()
         try:
             validated_token = jwt_auth.get_validated_token(access_token)
 
@@ -71,6 +107,7 @@ class CookieJWTAuthentication(BaseAuthentication):
         except AuthenticationFailed:
             logger.debug("Ignoring access_token cookie for inactive/invalid user.")
             return None
+        enforce_cookie_csrf(request)
         return user, validated_token
 
 

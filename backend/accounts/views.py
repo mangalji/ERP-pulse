@@ -14,7 +14,6 @@ business logic lives in AuthenticationService
 repositories directly.
 """
 
-from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
@@ -31,14 +30,29 @@ from accounts.serializers import (
     LoginHistorySerializer,
     ForgotPasswordSerializer,
     ResetPasswordSerializer,
-    VerifyProfileUpdateOTPSerializer,
     ProfileUpdateSerializer,
 )
 from common.pagination import paginated_response
 from common.common_utils import success_response
 from common.throttles import LoginOTPThrottle, RegisterOTPThrottle
-from common.authentication import set_auth_cookies, clear_auth_cookies
+from common.authentication import (
+    set_auth_cookies, clear_auth_cookies, enforce_cookie_csrf,
+    CheckedTokenRefreshSerializer,
+)
+from django.middleware.csrf import get_token
+
+
+class CSRFTokenView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        response = success_response(message='CSRF token issued.', data={'csrf_token': get_token(request)})
+        response['Cache-Control'] = 'no-store'
+        return response
+
 from accounts.models import OTP
+from accounts import password_verified_login_challenge
 from audit.models import AuditAction, AuditModule, AuditLog
 from audit.services import audit_service
 
@@ -70,6 +84,7 @@ class LoginView(APIView):
     throttle_classes = [LoginOTPThrottle]
 
     def post(self, request):
+        enforce_cookie_csrf(request)
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
@@ -79,7 +94,7 @@ class LoginView(APIView):
             raise
         return success_response(
             message='OTP sent to your registered email. Please verify to continue.',
-            data={'email': user.email},
+            data={'email': user.email, 'challenge': password_verified_login_challenge.issue(user)},
         )
 
 
@@ -103,6 +118,7 @@ class VerifyLoginOTPView(APIView):
     throttle_classes = [LoginOTPThrottle]
 
     def post(self, request):
+        enforce_cookie_csrf(request)
         serializer = VerifyLoginOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -159,6 +175,7 @@ class ResendLoginOTPView(APIView):
 
 
 class TokenRefreshView(BaseTokenRefreshView):
+    serializer_class = CheckedTokenRefreshSerializer
     """
     POST /api/v1/auth/token/refresh/
 
@@ -180,6 +197,7 @@ class TokenRefreshView(BaseTokenRefreshView):
         if not data.get('refresh'):
             cookie_token = request.COOKIES.get('refresh_token')
             if cookie_token:
+                enforce_cookie_csrf(request)
                 data = data.copy()
                 data['refresh'] = cookie_token
 
@@ -224,6 +242,7 @@ class LogoutView(BaseTokenBlacklistView):
         if not data.get('refresh'):
             cookie_token = request.COOKIES.get('refresh_token')
             if cookie_token:
+                enforce_cookie_csrf(request)
                 data = data.copy()
                 data['refresh'] = cookie_token
 

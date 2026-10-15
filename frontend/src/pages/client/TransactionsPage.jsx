@@ -10,11 +10,8 @@ const EMPTY_FORM = {}
 export default function TransactionsPage() {
   const [searchParams] = useSearchParams()
 
-  const queryParams = Object.fromEntries(searchParams.entries())
-  const queryParamEntries = Object.entries(queryParams)
-
-  const transactionType = queryParamEntries[0]?.[1] || ''
-  const recordType = queryParamEntries[1]?.[1] || ''
+  const transactionType = searchParams.get('transaction_type') || ''
+  const recordType = searchParams.get('record_type') || ''
 
   const hasProductContext = Boolean(transactionType && recordType)
 

@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Prefetch
 from django.utils.text import slugify
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
@@ -18,6 +18,15 @@ from .models import (
 )
 
 User = get_user_model()
+
+
+class CanReadOrManageGlobalNavigation(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and (
+            request.method in ('GET', 'HEAD', 'OPTIONS') or user.is_superuser
+        ))
+
 
 class DynamicNavigationMenuView(APIView):
     """Return the active 3-level navigation tree for the current user."""
@@ -61,6 +70,15 @@ class DynamicNavigationMenuView(APIView):
         effective_query_params = dict(inherited_query_params or {})
         for key in (tab.query_params or {}):
             effective_query_params[key] = tab.name
+
+        if effective_route == '/app/transactions' and effective_query_params:
+            # Legacy configurable keys are interpreted in hierarchy order here,
+            # before producing a URL. The browser only accepts canonical keys.
+            values = list(effective_query_params.values())
+            effective_query_params = {
+                'transaction_type': values[0] if values else '',
+                **({'record_type': values[1]} if len(values) > 1 else {}),
+            }
 
         return {
             "id": str(tab.id),
@@ -535,7 +553,7 @@ class CenterTabsView(APIView):
         - sort_order (optional; auto-incremented when omitted)
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
     def get(self, request):
         page_number = request.query_params.get("page", "1")
@@ -655,7 +673,7 @@ class CenterTabsBulkDeleteView(APIView):
     }
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
     def post(self, request):
         ids = request.data.get("ids")
@@ -746,7 +764,7 @@ class CenterCategoriesBulkDeleteView(APIView):
     }
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
     def post(self, request):
         ids = request.data.get("ids")
@@ -1108,7 +1126,7 @@ class NavigationAccessUpdateView(APIView):
 class NavigationMasterCreateView(APIView):
     """Create a new top-level, level-2, or level-3 navigation tab."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
     def post(self, request):
         if not _is_company_admin(request.user):
@@ -1270,7 +1288,7 @@ class NavigationMasterCreateView(APIView):
 class NavigationMasterUpdateView(APIView):
     """Update an existing top-level, level-2, or level-3 navigation tab."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
     def patch(self, request, level, tab_id):
         if not _is_company_admin(request.user):
@@ -1512,7 +1530,7 @@ class CenterCategoriesView(APIView):
     Manage Level-2 Center Categories.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
     def get(self, request):
         page_number = request.query_params.get("page", "1")
@@ -1738,7 +1756,7 @@ class CenterCategoryChildrenView(APIView):
     POST /api/v1/navigation/center-categories/<category_id>/children/
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
     def get_category(self, category_id):
         return (

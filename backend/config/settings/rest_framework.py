@@ -18,7 +18,7 @@ REST_FRAMEWORK = {
     # keep working unchanged.
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "common.authentication.CookieJWTAuthentication",
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "common.authentication.TenantJWTAuthentication",
     ),
 
     # Permissions

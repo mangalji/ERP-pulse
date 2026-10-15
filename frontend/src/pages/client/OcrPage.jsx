@@ -9,6 +9,7 @@ import { useToast, default as Toast } from '../../components/ui/Toast.jsx'
 import { aiIntegrationApi } from '../../services/aiIntegration.js'
 
 const OCR_PAGE_SESSION_KEY = 'ocr_page_session_state'
+
 const TOP_LEVEL_FIELDS = [
   { key: 'invoice_number', label: 'Invoice Number', type: 'text' },
   { key: 'invoice_date', label: 'Invoice Date', type: 'date' },
@@ -16,31 +17,198 @@ const TOP_LEVEL_FIELDS = [
   { key: 'vendor_name', label: 'Vendor Name', type: 'text' },
   { key: 'subsidiary', label: 'Subsidiary', type: 'text' },
   { key: 'currency', label: 'Currency', type: 'text' },
-  { key: 'subtotal', label: 'Subtotal', type: 'number' },
-  { key: 'tax_amount', label: 'Tax Amount', type: 'number' },
-  { key: 'tax_rate', label: 'Tax Rate (%)', type: 'number' },
-  { key: 'total_amount', label: 'Total Amount', type: 'number' },
-  { key: 'payment_terms', label: 'Payment Terms', type: 'text' },
+  { key: 'location', label: 'Location', type: 'text' },
+  { key: 'total_tax_amount', label: 'Total Tax', type: 'currency' },
+  { key: 'amount', label: 'Amount', type: 'currency' },
 ]
 
 const LINE_ITEM_FIELDS = [
-  { key: 'description', label: 'Description', type: 'text' },
+  { key: 'item', label: 'Item / account/ description', type: 'text' },
   { key: 'quantity', label: 'Qty', type: 'number' },
-  { key: 'unit_price', label: 'Unit Price', type: 'number' },
-  { key: 'amount', label: 'Amount', type: 'number' },
+  { key: 'unit_price', label: 'Unit Price', type: 'currency' },
+  { key: 'subtotal', label: 'Subtotal', type: 'currency' },
+  { key: 'tax_amount', label: 'Tax Amount', type: 'currency' },
+  { key: 'tax_rate', label: 'Tax Rate (%)', type: 'number' },
+  { key: 'total_amount', label: 'Total Amount', type: 'currency' },
 ]
 
-const TOP_LEVEL_KEY_SET = new Set(TOP_LEVEL_FIELDS.map((f) => f.key))
-const LINE_ITEM_KEY_SET = new Set(LINE_ITEM_FIELDS.map((f) => f.key))
+const DEFAULT_FIELD_DEFINITIONS = [
+  ...TOP_LEVEL_FIELDS.map((field) => ({ ...field, scope: 'header', dataType: field.type })),
+  ...LINE_ITEM_FIELDS.map((field) => ({ ...field, scope: 'line', dataType: field.type })),
+]
 
-function emptyLineItem() {
-  return {
-    description: null,
-    quantity: null,
-    unit_price: null,
-    amount: null,
-  }
+function slugifyFieldKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'custom_field'
 }
+
+function toInputType(dataType) {
+  if (dataType === 'number' || dataType === 'currency') return 'number'
+  if (dataType === 'date') return 'date'
+  return 'text'
+}
+
+function resolveConfiguredFields(config, fallbackData = {}) {
+  const hasTemplateConfig =
+    config &&
+    typeof config === 'object' &&
+    (Array.isArray(config.standard_fields) || Array.isArray(config.custom_fields))
+
+  let headerFields = []
+  let lineFields = []
+
+  if (hasTemplateConfig) {
+    const overrides =
+      config.standard_field_overrides && typeof config.standard_field_overrides === 'object'
+        ? config.standard_field_overrides
+        : {}
+
+    const standardFields = (Array.isArray(config.standard_fields) ? config.standard_fields : [])
+      .map((rawKey) => {
+        const key = String(rawKey || '').trim()
+        if (!key || key === 'line_items' || key === 'customer_name') return null
+
+        const base = DEFAULT_FIELD_DEFINITIONS.find((field) => field.key === key)
+        const override = overrides[key] && typeof overrides[key] === 'object'
+          ? overrides[key]
+          : {}
+        if (!base || override.enabled === false) return null
+
+        const dataType = override.data_type || base.dataType || base.type || 'text'
+        const scope = override.scope === 'line' || override.scope === 'header'
+          ? override.scope
+          : base.scope
+        return {
+          ...base,
+          key,
+          label: String(override.label || base.label || key),
+          description: String(override.questionaire || override.description || base.description || ''),
+          dataType,
+          type: toInputType(dataType),
+          scope,
+          standard: true,
+        }
+      })
+      .filter(Boolean)
+
+    const customFields = (Array.isArray(config.custom_fields) ? config.custom_fields : [])
+      .filter((field) => field && field.enabled !== false)
+      .map((field) => {
+        const rawKey = field.key || field.label
+        const key = slugifyFieldKey(rawKey)
+        const dataType = field.data_type || 'text'
+        return {
+          key,
+          label: String(field.label || rawKey || key),
+          description: String(field.questionaire || field.description || ''),
+          dataType,
+          type: toInputType(dataType),
+          scope: field.scope === 'line' ? 'line' : 'header',
+          standard: false,
+        }
+      })
+
+    const allFields = [...standardFields, ...customFields]
+    const seen = new Set()
+    allFields.forEach((field) => {
+      if (seen.has(field.key)) return
+      seen.add(field.key)
+      if (field.scope === 'line') lineFields.push(field)
+      else headerFields.push(field)
+    })
+  } else {
+    // Compatibility for older saved OCR results that predate stored template metadata.
+    const source = fallbackData && typeof fallbackData === 'object' ? fallbackData : {}
+    const defaultByKey = new Map(DEFAULT_FIELD_DEFINITIONS.map((field) => [field.key, field]))
+    Object.keys(source).forEach((key) => {
+      if (key === 'line_items' || key === 'customer_name') return
+      const base = defaultByKey.get(key)
+      const dataType = base?.dataType || 'text'
+      headerFields.push({
+        key,
+        label: base?.label || key,
+        dataType,
+        type: toInputType(dataType),
+        scope: 'header',
+      })
+    })
+
+    const seenLineKeys = new Set()
+    ;(Array.isArray(source.line_items) ? source.line_items : []).forEach((item) => {
+      if (!item || typeof item !== 'object') return
+      Object.keys(item).forEach((key) => {
+        if (key === 'customer_name' || seenLineKeys.has(key)) return
+        seenLineKeys.add(key)
+        const base = defaultByKey.get(key)
+        const dataType = base?.dataType || 'text'
+        lineFields.push({
+          key,
+          label: base?.label || key,
+          dataType,
+          type: toInputType(dataType),
+          scope: 'line',
+        })
+      })
+    })
+  }
+
+  const typesByKey = {}
+  ;[...headerFields, ...lineFields].forEach((field) => {
+    typesByKey[field.key] = field.dataType || 'text'
+  })
+
+  return { headerFields, lineFields, typesByKey, hasTemplateConfig: Boolean(hasTemplateConfig) }
+}
+
+function projectDataToConfiguredFields(data, configuredFields) {
+  const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
+  const projected = {}
+
+  ;(configuredFields?.headerFields || []).forEach((field) => {
+    projected[field.key] = source[field.key] ?? null
+  })
+
+  const lineFields = configuredFields?.lineFields || []
+  if (lineFields.length) {
+    const items = Array.isArray(source.line_items) ? source.line_items : []
+    projected.line_items = items.map((item) => {
+      const row = {}
+      lineFields.forEach((field) => {
+        row[field.key] = item && typeof item === 'object' ? (item[field.key] ?? null) : null
+      })
+      return row
+    })
+  }
+
+  return projected
+}
+
+function normalizeFieldValue(value, dataType) {
+  if (value === '' || value === null || value === undefined) return null
+
+  if (dataType === 'number' || dataType === 'currency') {
+    const parsed = typeof value === 'number' ? value : Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  if (dataType === 'boolean') {
+    if (typeof value === 'boolean') return value
+    const lowered = String(value).trim().toLowerCase()
+    if (['true', 'yes', '1'].includes(lowered)) return true
+    if (['false', 'no', '0'].includes(lowered)) return false
+    return null
+  }
+
+  if (typeof value === 'string') return value.trim() || null
+  return value
+}
+
+function emptyLineItem(lineFields = []) {
+  return Object.fromEntries(lineFields.map((field) => [field.key, null]))
+ }
 
 function cloneData(data) {
   if (!data || typeof data !== 'object') return {}
@@ -187,77 +355,26 @@ function toInputValue(value) {
   return value === null || value === undefined ? '' : String(value)
 }
 
-function normalizeEditedData(data, customFieldTypes = {}) {
-  const next = cloneData(data)
+function normalizeEditedData(data, configuredFields) {
+  const source = cloneData(data)
+  const next = {}
+  const headerFields = configuredFields?.headerFields || []
+  const lineFields = configuredFields?.lineFields || []
 
-  TOP_LEVEL_FIELDS.forEach(({ key, type }) => {
-    const value = next[key]
-
-    if (type === 'number') {
-      if (value === '' || value === null || value === undefined) {
-        next[key] = null
-      } else {
-        const parsed = Number(value)
-        next[key] = Number.isFinite(parsed) ? parsed : null
-      }
-      return
-    }
-
-    if (value === '') {
-      next[key] = null
-    }
+  headerFields.forEach((field) => {
+    next[field.key] = normalizeFieldValue(source[field.key], field.dataType || 'text')
   })
 
-  // Normalize custom header fields by their declared datatype.
-  Object.keys(customFieldTypes).forEach((key) => {
-    if (!(key in next)) return
-    const dataType = customFieldTypes[key]
-    const value = next[key]
-
-    if (value === '' || value === null || value === undefined) {
-      next[key] = null
-      return
-    }
-
-    if (dataType === 'number' || dataType === 'currency') {
-      const parsed = Number(value)
-      next[key] = Number.isFinite(parsed) ? parsed : null
-    } else if (dataType === 'boolean') {
-      if (typeof value === 'string') {
-        const lowered = value.trim().toLowerCase()
-        next[key] = lowered === 'true' || lowered === 'yes' || lowered === '1'
-      } else {
-        next[key] = Boolean(value)
-      }
-    }
-    // text and date are kept as-is (strings)
-  })
-
-  next.line_items = Array.isArray(next.line_items)
-    ? next.line_items.map((item) => {
-        const normalized = { ...emptyLineItem(), ...(item || {}) }
-
-        LINE_ITEM_FIELDS.forEach(({ key, type }) => {
-          if (type === 'number') {
-            if (
-              normalized[key] === '' ||
-              normalized[key] === null ||
-              normalized[key] === undefined
-            ) {
-              normalized[key] = null
-            } else {
-              const parsed = Number(normalized[key])
-              normalized[key] = Number.isFinite(parsed) ? parsed : null
-            }
-          } else if (normalized[key] === '') {
-            normalized[key] = null
-          }
-        })
-
-        return normalized
+  if (lineFields.length) {
+    next.line_items = (Array.isArray(source.line_items) ? source.line_items : []).map((item) => {
+      const row = {}
+      lineFields.forEach((field) => {
+        row[field.key] = normalizeFieldValue(item?.[field.key], field.dataType || 'text')
       })
-    : []
-
+    return row
+    })
+  }
+  
   return next
 }
 
@@ -469,21 +586,24 @@ export default function OcrPage() {
   const restoredResultKeyRef = useRef(null)
   const initialResultEffectSkippedRef = useRef(false)
 
-  const connectionId = connection?.id || null
-
-  const customFieldTypes = useMemo(
-    () =>
-      (extractionTemplates.find(
-        (template) => String(template?.id) === String(selectedTemplateId),
-      )?.fields_config?.custom_fields || []).reduce((acc, field) => {
-        const key = field?.key || field?.label
-        if (key) acc[key] = field?.data_type || 'text'
-        return acc
-      }, {}),
+  const connectionId = connection?.id || null  
+  const selectedTemplate = useMemo(
+    () => extractionTemplates.find(
+      (template) => String(template?.id) === String(selectedTemplateId),
+    ) || null,
     [extractionTemplates, selectedTemplateId],
   )
 
   const activeResult = results[activeIndex] ?? null
+
+  const activeTemplateConfig =
+    activeResult?.requested_fields || activeResult?.fields_config || selectedTemplate?.fields_config || null
+  const configuredFields = useMemo(
+    () => resolveConfiguredFields(activeTemplateConfig, data),
+    [activeTemplateConfig, data],
+  )
+  const headerFieldDefinitions = configuredFields.headerFields
+  const lineFieldDefinitions = configuredFields.lineFields
 
   const aiDiagnosticsByReference = useMemo(
     () =>
@@ -608,36 +728,6 @@ export default function OcrPage() {
           ? stored.previewError
           : '',
       )
-      // const restoredSelectedFiles =
-      //   Array.isArray(stored?.selectedFiles)
-      //     ? stored.selectedFiles
-      //         .filter((item) => item?.filename)
-      //         .map((item) => ({
-      //           id:
-      //             item.id ||
-      //             `${item.filename}-${item.lastModified || 0}`,
-
-      //           file: {
-      //             name: item.filename,
-      //             type: item.fileType || '',
-      //             size:
-      //               Number(item.fileSize) || 0,
-      //             lastModified:
-      //               Number(item.lastModified) || 0,
-      //           },
-
-      //           previewUrl: null,
-      //         }))
-      //     : []
-
-      // setSelectedFiles(
-      //   restoredSelectedFiles,
-      // )
-
-      // const restoredResults =
-      //   Array.isArray(stored?.results)
-      //     ? stored.results
-      //     : []
 
       const storedSelectedFileCount = Array.isArray(stored?.selectedFiles)
         ? stored.selectedFiles.filter((item) => item?.filename).length
@@ -791,7 +881,6 @@ useEffect(() => {
       sessionStorage.removeItem(OCR_PAGE_SESSION_KEY)
     }
 
-    // const isOcrPath = (pathname) => pathname === '/app/ocr'
     const getRoutePath = (value = window.location.href) => {
       const target = new URL(String(value), window.location.href)
       const hashRoute = target.hash.startsWith('#/')
@@ -825,16 +914,16 @@ useEffect(() => {
     window.history.replaceState = function replaceStateWithOcrCleanup(state, title, url) {
       if (url != null) {
         const nextUrl = new URL(String(url), window.location.href)
-        // if (!isOcrPath(nextUrl.href)) {
-        //   clearOcrPageSession()
-        // }
+        if (!isOcrPath(nextUrl.href)) {
+          clearOcrPageSession()
+        }
         handleRouteChange()
       }
       return originalReplaceState.apply(this, [state, title, url])
     }
 
     const handlePopState = () => {
-      if (!isOcrPath(window.location.pathname)) {
+      if (!isOcrPath(window.location.href)) {
         clearOcrPageSession()
       }
     }
@@ -847,8 +936,8 @@ useEffect(() => {
       if (!anchor) return
 
       const href = anchor.getAttribute('href')
-      // if (!href || href.startsWith('#') || href.startsWith('javascript:')) return
       if (!href || href.startsWith('javascript:')) return
+
       // Preserve ordinary in-page anchors, but handle HashRouter links (#/route).
       if (href.startsWith('#') && !href.startsWith('#/')) return
 
@@ -922,27 +1011,10 @@ useEffect(() => {
     [data.line_items],
   )
 
-  // Custom / extra header fields (anything returned by OCR that is not a
-  // standard top-level field) are rendered generically so they survive the
-  // review/save flow visibly rather than only inside the raw JSON view.
-  const extraHeaderFields = useMemo(() => {
-    if (!data || typeof data !== 'object') return []
-    return Object.keys(data).filter(
-      (key) => key !== 'line_items' && !TOP_LEVEL_KEY_SET.has(key),
-    )
-  }, [data])
-
-  const extraLineKeys = useMemo(() => {
-    const keys = new Set()
-    ;(Array.isArray(data?.line_items) ? data.line_items : []).forEach((item) => {
-      if (item && typeof item === 'object') {
-        Object.keys(item).forEach((key) => {
-          if (!LINE_ITEM_KEY_SET.has(key)) keys.add(key)
-        })
-      }
-    })
-    return Array.from(keys)
-  }, [data?.line_items])
+  const jsonDisplayData = useMemo(
+    () => projectDataToConfiguredFields(data, configuredFields),
+    [data, configuredFields],
+  )
 
   const setField = useCallback((key, value) => {
     setValidationResult(null)
@@ -964,7 +1036,6 @@ useEffect(() => {
         : []
 
       nextItems[index] = {
-        ...emptyLineItem(),
         ...(nextItems[index] || {}),
         [key]: value,
       }
@@ -984,10 +1055,10 @@ useEffect(() => {
       ...current,
       line_items: [
         ...(Array.isArray(current.line_items) ? current.line_items : []),
-        emptyLineItem(),
+        emptyLineItem(lineFieldDefinitions),
       ],
     }))
-  },[])
+  }, [lineFieldDefinitions])
 
   const removeLineItem = useCallback((index) => {
     setValidationResult(null)
@@ -1012,7 +1083,7 @@ useEffect(() => {
       setSaving(true)
 
       const payload = {
-        data: normalizeEditedData(data, customFieldTypes),
+        data: normalizeEditedData(data, configuredFields),
       }
 
       if (activeResult.document_id) {
@@ -1655,6 +1726,7 @@ useEffect(() => {
         throw new Error('OCR batch was created without a batch ID.')
       }
 
+      const usedTemplateConfig = payload?.requested_fields || selectedTemplate?.fields_config || null
       const initialFiles = Array.isArray(payload.files)
         ? payload.files.map((item) => ({
             status: item.status || 'UPLOADED',
@@ -1663,6 +1735,8 @@ useEffect(() => {
             data: item.data || null,
             error: item.error || null,
             preview_url: item.preview_url || null,
+            template_id: selectedTemplateId || null,
+            requested_fields: item.requested_fields || usedTemplateConfig,
           }))
         : []
 
@@ -1683,6 +1757,7 @@ useEffect(() => {
               batch_id: batchId,
               files: initialFiles,
               template_id: selectedTemplateId || null,
+              requested_fields: usedTemplateConfig,
             }),
           )
           return
@@ -1704,9 +1779,12 @@ useEffect(() => {
         )
 
         const batch = statusResponse?.data ?? {}
-        const files = Array.isArray(batch?.files)
-          ? batch.files
-          : []
+        const polledConfig = batch?.requested_fields || usedTemplateConfig
+        const files = (Array.isArray(batch?.files) ? batch.files : []).map((item) => ({
+          ...item,
+          template_id: selectedTemplateId || null,
+          requested_fields: item.requested_fields || polledConfig,
+        }))
 
         setResults(files)
         setActiveIndex((current) => {
@@ -1726,6 +1804,7 @@ useEffect(() => {
               batch_id: batchId,
               files,
               template_id: selectedTemplateId || null,
+              requested_fields: polledConfig,
             }),
           )
         }
@@ -2187,178 +2266,151 @@ useEffect(() => {
                     </div>
                   ) : (
                     <>
-      <div className="flex justify-end">
-        <div className="inline-flex overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-1"
-      role="group"
-      aria-label="OCR output view">
-          <button
-            type="button"
-            onClick={() => setViewMode('json')}
-            className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-              viewMode === 'json'
-                ? 'bg-[var(--color-primary)] text-white'
-                : 'text-[var(--color-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-ink)]'
-            }`}
-            aria-pressed={viewMode === 'json'}
-          >
-            JSON
-          </button>
-          
-          <button
-            type="button"
-            onClick={() => setViewMode('fields')}
-            className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-              viewMode === 'fields'
-                ? 'bg-[var(--color-primary)] text-white'
-                : 'text-[var(--color-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-ink)]'
-            }`}
-            aria-pressed={viewMode === 'fields'}
-              >
-            Fields
-          </button>
-        </div>
-      </div>
+                  <div className="flex justify-end">
+                    <div className="inline-flex overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-1"
+                  role="group"
+                  aria-label="OCR output view">
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('json')}
+                        className={`rounded-md px-4 py-2 text-sm font-medium transition ${
+                          viewMode === 'json'
+                            ? 'bg-[var(--color-primary)] text-white'
+                            : 'text-[var(--color-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-ink)]'
+                        }`}
+                        aria-pressed={viewMode === 'json'}
+                      >
+                        JSON
+                      </button>
+                      
+                      <button
+                        type="button"
+                        onClick={() => setViewMode('fields')}
+                        className={`rounded-md px-4 py-2 text-sm font-medium transition ${
+                          viewMode === 'fields'
+                            ? 'bg-[var(--color-primary)] text-white'
+                            : 'text-[var(--color-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-ink)]'
+                        }`}
+                        aria-pressed={viewMode === 'fields'}
+                          >
+                        Fields
+                      </button>
+                    </div>
+                  </div>
 
-      {viewMode === 'json' ? (
-    <pre className="min-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
-      {JSON.stringify(cloneData(data), null, 2)}
-    </pre>
-  ) : (
-    <>
-      <div className="grid gap-4 sm:grid-cols-2">
-        {TOP_LEVEL_FIELDS.map((field) => (
-          <FieldInput
-            key={field.key}
-            field={field}
-            value={data[field.key]}
-            editable={editing && !saving}
-            onChange={setField}
-          />
-        ))}
-
-        {extraHeaderFields.map((key) => {
-          const dataType = customFieldTypes[key] || 'text'
-          const field = { key, label: key, type: dataType === 'currency' ? 'number' : dataType }
-          return (
-            <FieldInput
-              key={key}
-              field={field}
-              value={data[key]}
-              editable={editing && !saving}
-              onChange={setField}
-            />
-          )
-        })}
-      </div>
-
-      <Card className="overflow-hidden border border-[var(--color-border)] shadow-none">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-4">
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--color-ink)]">
-              Line Items
-            </h3>
-            <p className="mt-1 text-xs text-[var(--color-muted)]">
-              {lineItems.length} {lineItems.length === 1 ? 'row' : 'rows'}
-            </p>
-          </div>
-
-          {editing && (
-            <Button type="button" intent="secondary" size="sm" onClick={addLineItem} disabled={saving}>
-              Add Line Item
-            </Button>
-          )}
-        </div>
-
-        {lineItems.length ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-[760px] w-full text-left text-sm">
-              <thead className="bg-[var(--color-canvas)] text-xs uppercase tracking-wide text-[var(--color-muted)]">
-                <tr>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3">Qty</th>
-                  <th className="px-4 py-3">Unit Price</th>
-                  <th className="px-4 py-3">Amount</th>
-                  {extraLineKeys.map((key) => (
-                    <th key={key} className="px-4 py-3">
-                      {key}
-                    </th>
-                  ))}
-                  {editing && <th className="px-4 py-3">Action</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {lineItems.map((item, index) => (
-                  <tr key={`${activeResult.upload_id || activeResult.document_id}-${index}`}>
-                    {LINE_ITEM_FIELDS.map((field) => (
-                      <td key={field.key} className="min-w-[150px] px-4 py-3 align-top">
-                        {editing ? (
-                          <input
-                            type={field.type}
-                            value={toInputValue(item?.[field.key])}
-                            step={field.type === 'number' ? 'any' : undefined}
-                            onChange={(event) =>
-                              setLineItemField(index, field.key, event.target.value)
-                            }
-                            className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                  {viewMode === 'json' ? (
+                    <pre className="min-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
+                      {JSON.stringify(jsonDisplayData, null, 2)}
+                    </pre>
+                  ) : (
+                    <>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {/* {TOP_LEVEL_FIELDS.map((field) => ( */}
+                        {headerFieldDefinitions.map((field) => (
+                          <FieldInput
+                            key={field.key}
+                            field={field}
+                            value={data[field.key]}
+                            editable={editing && !saving}
+                            onChange={setField}
                           />
-                        ) : (
-                          <span className="break-words text-[var(--color-ink)]">
-                            {toInputValue(item?.[field.key]) || '--'}
-                          </span>
-                        )}
-                      </td>
-                    ))}
-                    {extraLineKeys.map((key) => {
-                      const dataType = customFieldTypes[key] || 'text'
-                      const inputType = dataType === 'currency' || dataType === 'number' ? 'number' : dataType === 'date' ? 'date' : 'text'
-                      return (
-                        <td key={key} className="min-w-[150px] px-4 py-3 align-top">
-                          {editing ? (
-                            <input
-                              type={inputType}
-                              value={toInputValue(item?.[key])}
-                              step={inputType === 'number' ? 'any' : undefined}
-                              onChange={(event) =>
-                                setLineItemField(index, key, event.target.value)
-                              }
-                              className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                            />
-                          ) : (
-                            <span className="break-words text-[var(--color-ink)]">
-                              {toInputValue(item?.[key]) || '--'}
-                            </span>
-                          )}
-                        </td>
-                      )
-                    })}
-                    {editing && (
-                      <td className="px-4 py-3 align-top">
-                        <Button
-                          type="button"
-                          intent="ghost"
-                          size="sm"
-                          onClick={() => removeLineItem(index)}
-                          disabled={saving}
-                          className="text-red-600"
-                        >
-                          Remove
-                        </Button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="p-5 text-sm text-[var(--color-muted)]">
-            No line items were returned by OCR.
-            {editing && ' Use “Add Line Item” if a source row was missed.'}
-          </div>
-        )}
-      </Card>
-      </>
-      )}
+                        ))}
+
+                      </div>
+                      
+                          {lineFieldDefinitions.length > 0 && (
+                        <Card className="overflow-hidden border border-[var(--color-border)] shadow-none">
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-4">
+                            <div>
+                              <h3 className="text-sm font-semibold text-[var(--color-ink)]">Line Items</h3>
+                              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                                {lineItems.length} {lineItems.length === 1 ? 'row' : 'rows'}
+                              </p>
+                            </div>
+                            {editing && (
+                              <Button type="button" intent="secondary" size="sm" onClick={addLineItem} disabled={saving}>
+                                Add Line Item
+                              </Button>
+                            )}
+                        </div> 
+                          
+                        {/* {lineItems.length ? ( */}
+                          <div className="overflow-x-auto">
+                            <table className="min-w-[760px] w-full text-left text-sm">
+                              <thead className="bg-[var(--color-canvas)] text-xs uppercase tracking-wide text-[var(--color-muted)]">
+                                <tr>
+                                    {lineFieldDefinitions.map((field) => (
+                                    <th key={field.key} className="px-4 py-3">{field.label}</th>
+                                  ))}
+                                  {editing && <th className="px-4 py-3">Action</th>}
+                                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-4">
+                                  <div>
+                                    <h3 className="text-sm font-semibold text-[var(--color-ink)]">
+                                      Line Items
+                                    </h3>
+                                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                                      {lineItems.length} {lineItems.length === 1 ? 'row' : 'rows'}
+                                    </p>
+                                  </div>
+                                
+                                  {editing && (
+                                    <Button
+                                      type="button"
+                                      intent="secondary"
+                                      size="sm"
+                                      onClick={addLineItem}
+                                      disabled={saving}
+                                    >
+                                      Add Line Item
+                                    </Button>
+                                  )}
+                                </div>
+                                  {editing && <th className="px-4 py-3">Action</th>}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-[var(--color-border)]">
+                                {lineItems.length ? lineItems.map((item, index) => (
+                                  <tr key={`${activeResult.upload_id || activeResult.document_id}-${index}`}>
+                                    {lineFieldDefinitions.map((field) => (
+                                      <td key={field.key} className="min-w-[150px] px-4 py-3 align-top">
+                                        {editing ? (
+                                          <input
+                                            type={field.type}
+                                            value={toInputValue(item?.[field.key])}
+                                            step={field.type === 'number' ? 'any' : undefined}
+                                            onChange={(event) => setLineItemField(index, field.key, event.target.value)}
+                                            className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                                          />
+                                        ) : (
+                                          <span className="break-words text-[var(--color-ink)]">
+                                            {toInputValue(item?.[field.key]) || '--'}
+                                          </span>
+                                        )}
+                                      </td>
+                                    ))}
+                                    {editing && (
+                                      <td className="px-4 py-3 align-top">
+                                        <Button type="button" intent="ghost" size="sm" onClick={() => removeLineItem(index)} disabled={saving} className="text-red-600">
+                                          Remove
+                                        </Button>
+                                      </td>
+                                    )}
+                                  </tr>
+                                // ))}
+                                )) : (
+                                  <tr>
+                                    <td colSpan={lineFieldDefinitions.length + (editing ? 1 : 0)} className="px-4 py-5 text-sm text-[var(--color-muted)]">
+                                      No line items were returned by OCR.{editing && ' Use “Add Line Item” if a source row was missed.'}
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                      </Card>
+                      )}
+                      </>
+                      )}
                     </>
                   )
                 ) : (

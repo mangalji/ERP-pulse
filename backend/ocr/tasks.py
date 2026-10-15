@@ -35,7 +35,7 @@ from ocr.exceptions import (
     OCRTimeBudgetExceeded,
 )
 from ocr.models import OCRBatch, OCRDocument, OCRUpload
-from ocr.notebook_extraction_service import notebook_gemini_extractor
+from ocr.notebook_extraction_service import get_standard_field_catalog, notebook_gemini_extractor
 from ocr.adapters import get_adapter
 from common.infra import get_redis_client, report_redis_failure, warn_throttled
 from ocr.storage import local_file_path
@@ -68,13 +68,12 @@ OCR_EXTRACTION_LOCK_POLL_INTERVAL_SECONDS = getattr(
 )
 
 OCR_EXTRACTION_CACHE_VERSION = "v4"
-OCR_EXTRACTION_CONTRACT_VERSION = "v3"
+OCR_EXTRACTION_CONTRACT_VERSION = "v4"  
 
 
 def _live_result_key(upload_id: str) -> str:
-    # Version the key so stale cached results from the retired Customer Name
-    # extraction contract are not returned after deployment.
-    return f"erp-pulse:ocr:live:v2:{upload_id}"
+    # Keep live-result entries separate across extraction-contract changes.
+    return f"erp-pulse:ocr:live:v3:{upload_id}"
 
 def _mark_upload_failed(upload, reason: str, code: str = "") -> None:
     completed_at = timezone.now()
@@ -358,19 +357,9 @@ def _perform_ocr_extraction_sync(
 
 
 def _canonical_config(requested_fields: Any) -> dict:
-    """
-    Build a canonical, deterministic representation of an extraction
-    configuration suitable for hashing and comparison.
-
-    The backend is authoritative: callers must pass the persisted
-    ``OCRBatch.requested_fields_json`` or a comparable dict. Frontend
-    JSON is not trusted without canonicalization.
-
-    Raises ValueError for malformed configurations that cannot be
-    safely canonicalized.
-    """
+    """Create a deterministic hashable representation of the actual AI field contract."""
     if requested_fields is None:
-        return {"standard_fields": [], "custom_fields": []}
+        return {"standard_fields": [], "standard_field_overrides": {}, "custom_fields": []}
 
     if not isinstance(requested_fields, dict):
         raise ValueError(
@@ -378,59 +367,82 @@ def _canonical_config(requested_fields: Any) -> dict:
         )
 
     selected_standard = requested_fields.get("standard_fields")
+    
     if selected_standard is not None and not isinstance(selected_standard, list):
-        raise ValueError(
-            f"standard_fields must be a list, got {type(selected_standard).__name__}"
-        )
+        raise ValueError("standard_fields must be a list.")
 
     custom_fields = requested_fields.get("custom_fields")
+
     if custom_fields is not None and not isinstance(custom_fields, list):
-        raise ValueError(
-            f"custom_fields must be a list, got {type(custom_fields).__name__}"
-        )
+        raise ValueError("custom_fields must be a list.")
+    
+    raw_overrides = requested_fields.get("standard_field_overrides") or {}
+    
+    if not isinstance(raw_overrides, dict):
+        raise ValueError("standard_field_overrides must be an object.")
 
     if not isinstance(selected_standard, list):
+        field_catalog = get_standard_field_catalog()
         selected_standard = sorted(
             {
-                "invoice_number",
-                "invoice_date",
-                "due_date",
-                "vendor_name",
-                "subsidiary",
-                "currency",
-                "subtotal",
-                "tax_amount",
-                "tax_rate",
-                "total_amount",
-                "payment_terms",
-                "line_items",
+                 str(field.get("key") or "").strip()
+                for group_name in ("header_fields", "line_fields")
+                for field in field_catalog.get(group_name, [])
+                if isinstance(field, dict)
+                and str(field.get("key") or "").strip()
             }
         )
+
+    # These fields affect the prompt/schema and therefore must affect the cache key.
+    normalized_overrides = {}
+    normalized_standard_fields = sorted(
+        {
+            str(raw_key or "").strip()
+            for raw_key in selected_standard
+            if str(raw_key or "").strip()
+            and str(raw_key or "").strip() != "line_items"
+        }
+    )
+    for key in normalized_standard_fields:
+        override = raw_overrides.get(key)or {}
+        if not isinstance(override,dict):
+            raise ValueError(
+                f"standard_field_overrides['{key}'] must be an object."
+            )
+        relevant = {}
+        description = override.get("questionaire") or override.get("description")
+        if description is not None:
+            relevant["description"] = str(description).strip()
+        if override.get("scope"):
+            relevant["scope"] = str(override["scope"]).strip().lower()
+        if override.get("data_type"):
+            relevant["data_type"] = str(override["data_type"]).strip().lower()
+        if relevant:
+            normalized_overrides[key] = relevant
 
     normalized_custom = []
     for idx, custom in enumerate(custom_fields or []):
         if not isinstance(custom, dict):
             raise ValueError(
-                f"custom_fields[{idx}] must be a dict, "
-                f"got {type(custom).__name__}"
+                f"custom_fields[{idx}] must be a dict, got {type(custom).__name__}"
             )
         label = str(custom.get("label") or custom.get("key") or "").strip()
         if not label:
-            raise ValueError(
-                f"custom_fields[{idx}] must have a non-empty label or key"
-            )
+            raise ValueError(f"custom_fields[{idx}] must have a non-empty label or key")
+        
         normalized_custom.append(
             {
                 "key": str(custom.get("key") or label).strip(),
                 "label": label,
-                "description": str(custom.get("description") or "").strip(),
+                "description": str(custom.get("questionaire") or custom.get("description") or "").strip(),
                 "scope": str(custom.get("scope") or "header").strip().lower(),
                 "data_type": str(custom.get("data_type") or "text").strip().lower(),
             }
         )
 
     return {
-        "standard_fields": sorted(selected_standard),
+        "standard_fields":normalized_standard_fields,
+        "standard_field_overrides":normalized_overrides,
         "custom_fields": sorted(
             normalized_custom,
             key=lambda c: (c["key"], c["label"], c["description"], c["scope"], c["data_type"]),

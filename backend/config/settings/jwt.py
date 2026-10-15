@@ -34,6 +34,7 @@ SIMPLE_JWT = {
     ),
 
     # Refresh Behaviour
+    "CHECK_REVOKE_TOKEN": True,
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
 

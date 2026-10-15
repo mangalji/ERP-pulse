@@ -48,6 +48,7 @@ def human_name_field(*, max_length: int = 100, required: bool = True) -> seriali
     )
 
 class ResendLoginOTPSerializer(serializers.Serializer):
+    challenge = serializers.CharField(max_length=2048)
     email = serializers.EmailField(max_length=100)
     
 
@@ -62,6 +63,7 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, max_length=128)
 
 class VerifyLoginOTPSerializer(serializers.Serializer):
+    challenge = serializers.CharField(max_length=2048)
     """
     Validates Step 2 (OTP) login input.
  
@@ -150,36 +152,6 @@ class ResetPasswordSerializer(serializers.Serializer):
         if attrs['password'] != confirm_password:
             raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
         return attrs
-
-
-class VerifyProfileUpdateOTPSerializer(serializers.Serializer):
-    """Validates POST /api/v1/auth/profile/update/ input."""
-    otp_code = serializers.CharField(
-        max_length=OTP_LENGTH,
-        min_length=OTP_LENGTH,
-        validators=[otp_code_validator],
-    )
-    first_name = human_name_field(required=False)
-    last_name = human_name_field(required=False)
-    mobile_number = serializers.CharField(
-        max_length=16,
-        validators=[mobile_number_validator],
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-    )
-    country = serializers.CharField(
-        max_length=2,
-        required=False,
-        allow_blank=True,
-    )
-    gender = serializers.ChoiceField(
-        choices=Gender.choices,
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-    )
-    profile_pic = serializers.ImageField(required=False, allow_null=True)
 
 class ProfileUpdateSerializer(serializers.Serializer):
     """Validates POST /api/v1/auth/profile/update/ input."""

@@ -31,6 +31,11 @@ class TransactionListSerializer(serializers.ModelSerializer):
         )
 
 class TransactionCreateSerializer(serializers.ModelSerializer):
+    def validate_amount(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Amount cannot be negative.")
+        return value
+
     class Meta:
         model = Transaction
         fields = [

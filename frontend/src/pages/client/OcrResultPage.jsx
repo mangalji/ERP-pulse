@@ -15,32 +15,200 @@ const TOP_LEVEL_FIELDS = [
   { key: 'due_date', label: 'Due Date', type: 'date' },
   { key: 'vendor_name', label: 'Vendor Name', type: 'text' },
   { key: 'subsidiary', label: 'Subsidiary', type: 'text' },
+  { key: 'location', label: 'Location', type: 'text' },
   { key: 'currency', label: 'Currency', type: 'text' },
-  { key: 'subtotal', label: 'Subtotal', type: 'number' },
-  { key: 'tax_amount', label: 'Tax Amount', type: 'number' },
-  { key: 'tax_rate', label: 'Tax Rate (%)', type: 'number' },
-  { key: 'total_amount', label: 'Total Amount', type: 'number' },
-  { key: 'payment_terms', label: 'Payment Terms', type: 'text' },
+  { key: 'total_tax_amount', label: 'Total Tax', type: 'currency' },
+  { key: 'amount', label: 'Amount', type: 'currency' },
 ]
 
 const LINE_ITEM_FIELDS = [
-  { key: 'description', label: 'Description', type: 'text' },
+  { key: 'item', label: 'Item / account/ description', type: 'text' },
   { key: 'quantity', label: 'Qty', type: 'number' },
-  { key: 'unit_price', label: 'Unit Price', type: 'number' },
-  { key: 'amount', label: 'Amount', type: 'number' },
+  { key: 'unit_price', label: 'Unit Price', type: 'currency' },
+  { key: 'subtotal', label: 'Subtotal', type: 'currency' },
+  { key: 'tax_amount', label: 'Tax Amount', type: 'currency' },
+  { key: 'tax_rate', label: 'Tax Rate (%)', type: 'number' },
+  { key: 'total_amount', label: 'Total Amount', type: 'currency' },
 ]
 
-const TOP_LEVEL_KEY_SET = new Set(TOP_LEVEL_FIELDS.map((field) => field.key))
-const LINE_ITEM_KEY_SET = new Set(LINE_ITEM_FIELDS.map((field) => field.key))
+const DEFAULT_FIELD_DEFINITIONS = [
+  ...TOP_LEVEL_FIELDS.map((field) => ({ ...field, scope: 'header', dataType: field.type })),
+  ...LINE_ITEM_FIELDS.map((field) => ({ ...field, scope: 'line', dataType: field.type })),
+]
 
-function emptyLineItem() {
-  return {
-    description: null,
-    quantity: null,
-    unit_price: null,
-    amount: null,
-  }
+function slugifyFieldKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'custom_field'
 }
+
+function toInputType(dataType) {
+  if (dataType === 'number' || dataType === 'currency') return 'number'
+  if (dataType === 'date') return 'date'
+  return 'text'
+}
+
+function resolveConfiguredFields(config, fallbackData = {}) {
+  const hasTemplateConfig =
+    config &&
+    typeof config === 'object' &&
+    (Array.isArray(config.standard_fields) || Array.isArray(config.custom_fields))
+
+  let headerFields = []
+  let lineFields = []
+
+  if (hasTemplateConfig) {
+    const overrides =
+      config.standard_field_overrides && typeof config.standard_field_overrides === 'object'
+        ? config.standard_field_overrides
+        : {}
+
+    const standardFields = (Array.isArray(config.standard_fields) ? config.standard_fields : [])
+      .map((rawKey) => {
+        const key = String(rawKey || '').trim()
+        if (!key || key === 'line_items' || key === 'customer_name') return null
+
+        const base = DEFAULT_FIELD_DEFINITIONS.find((field) => field.key === key)
+        const override = overrides[key] && typeof overrides[key] === 'object'
+          ? overrides[key]
+          : {}
+        if (!base || override.enabled === false) return null
+
+        const dataType = override.data_type || base.dataType || base.type || 'text'
+        const scope = override.scope === 'line' || override.scope === 'header'
+          ? override.scope
+          : base.scope
+        return {
+          ...base,
+          key,
+          label: String(override.label || base.label || key),
+          description: String(override.questionaire || override.description || base.description || ''),
+          dataType,
+          type: toInputType(dataType),
+          scope,
+          standard: true,
+        }
+      })
+      .filter(Boolean)
+
+    const customFields = (Array.isArray(config.custom_fields) ? config.custom_fields : [])
+      .filter((field) => field && field.enabled !== false)
+      .map((field) => {
+        const rawKey = field.key || field.label
+        const key = slugifyFieldKey(rawKey)
+        const dataType = field.data_type || 'text'
+        return {
+          key,
+          label: String(field.label || rawKey || key),
+          description: String(field.questionaire || field.description || ''),
+          dataType,
+          type: toInputType(dataType),
+          scope: field.scope === 'line' ? 'line' : 'header',
+          standard: false,
+        }
+      })
+
+    const allFields = [...standardFields, ...customFields]
+    const seen = new Set()
+    allFields.forEach((field) => {
+      if (seen.has(field.key)) return
+      seen.add(field.key)
+      if (field.scope === 'line') lineFields.push(field)
+      else headerFields.push(field)
+    })
+  } else {
+    // Compatibility for older saved OCR results that predate stored template metadata.
+    const source = fallbackData && typeof fallbackData === 'object' ? fallbackData : {}
+    const defaultByKey = new Map(DEFAULT_FIELD_DEFINITIONS.map((field) => [field.key, field]))
+    Object.keys(source).forEach((key) => {
+      if (key === 'line_items' || key === 'customer_name') return
+      const base = defaultByKey.get(key)
+      const dataType = base?.dataType || 'text'
+      headerFields.push({
+        key,
+        label: base?.label || key,
+        dataType,
+        type: toInputType(dataType),
+        scope: 'header',
+      })
+    })
+
+    const seenLineKeys = new Set()
+    ;(Array.isArray(source.line_items) ? source.line_items : []).forEach((item) => {
+      if (!item || typeof item !== 'object') return
+      Object.keys(item).forEach((key) => {
+        if (key === 'customer_name' || seenLineKeys.has(key)) return
+        seenLineKeys.add(key)
+        const base = defaultByKey.get(key)
+        const dataType = base?.dataType || 'text'
+        lineFields.push({
+          key,
+          label: base?.label || key,
+          dataType,
+          type: toInputType(dataType),
+          scope: 'line',
+        })
+      })
+    })
+  }
+
+  const typesByKey = {}
+  ;[...headerFields, ...lineFields].forEach((field) => {
+    typesByKey[field.key] = field.dataType || 'text'
+  })
+
+  return { headerFields, lineFields, typesByKey, hasTemplateConfig: Boolean(hasTemplateConfig) }
+}
+
+function projectDataToConfiguredFields(data, configuredFields) {
+  const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
+  const projected = {}
+
+  ;(configuredFields?.headerFields || []).forEach((field) => {
+    projected[field.key] = source[field.key] ?? null
+  })
+
+  const lineFields = configuredFields?.lineFields || []
+  if (lineFields.length) {
+    const items = Array.isArray(source.line_items) ? source.line_items : []
+    projected.line_items = items.map((item) => {
+      const row = {}
+      lineFields.forEach((field) => {
+        row[field.key] = item && typeof item === 'object' ? (item[field.key] ?? null) : null
+      })
+      return row
+    })
+  }
+
+  return projected
+}
+
+function normalizeFieldValue(value, dataType) {
+  if (value === '' || value === null || value === undefined) return null
+
+  if (dataType === 'number' || dataType === 'currency') {
+    const parsed = typeof value === 'number' ? value : Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  if (dataType === 'boolean') {
+    if (typeof value === 'boolean') return value
+    const lowered = String(value).trim().toLowerCase()
+    if (['true', 'yes', '1'].includes(lowered)) return true
+    if (['false', 'no', '0'].includes(lowered)) return false
+    return null
+  }
+
+  if (typeof value === 'string') return value.trim() || null
+  return value
+}
+
+function emptyLineItem(lineFields = []) {
+  return Object.fromEntries(lineFields.map((field) => [field.key, null]))
+ }
+
 
 function cloneData(data) {
   if (!data || typeof data !== 'object') return {}
@@ -72,139 +240,28 @@ function toInputValue(value) {
   return value === null || value === undefined ? '' : String(value)
 }
 
-function normalizeEditedData(data, customFieldTypes = {}) {
-  const next = cloneData(data)
+function normalizeEditedData(data, configuredFields) {
+  const source = cloneData(data)
+  const next = {}
+  const headerFields = configuredFields?.headerFields || []
+  const lineFields = configuredFields?.lineFields || []
 
-  TOP_LEVEL_FIELDS.forEach(({ key, type }) => {
-    const value = next[key]
-
-    if (type === 'number') {
-      if (value === '' || value === null || value === undefined) {
-        next[key] = null
-      } else {
-        const parsed = Number(value)
-        next[key] = Number.isFinite(parsed) ? parsed : null
-      }
-      return
-    }
-
-    if (value === '') {
-      next[key] = null
-    }
+  headerFields.forEach((field) => {
+    next[field.key] = normalizeFieldValue(source[field.key], field.dataType || 'text')
   })
 
-  Object.keys(customFieldTypes).forEach((key) => {
-    if (!(key in next)) return
-
-    const dataType = customFieldTypes[key]
-    const value = next[key]
-
-    if (value === '' || value === null || value === undefined) {
-      next[key] = null
-      return
-    }
-
-    if (dataType === 'number' || dataType === 'currency') {
-      const parsed = Number(value)
-      next[key] = Number.isFinite(parsed) ? parsed : null
-    } else if (dataType === 'boolean') {
-      if (typeof value === 'string') {
-        const lowered = value.trim().toLowerCase()
-        next[key] =
-          lowered === 'true' ||
-          lowered === 'yes' ||
-          lowered === '1'
-      } else {
-        next[key] = Boolean(value)
-      }
-    }
-  })
-
-  next.line_items = Array.isArray(next.line_items)
-    ? next.line_items.map((item) => {
-        const normalized = { ...emptyLineItem(), ...(item || {}) }
-
-        LINE_ITEM_FIELDS.forEach(({ key, type }) => {
-          if (type === 'number') {
-            if (
-              normalized[key] === '' ||
-              normalized[key] === null ||
-              normalized[key] === undefined
-            ) {
-              normalized[key] = null
-            } else {
-              const parsed = Number(normalized[key])
-              normalized[key] = Number.isFinite(parsed) ? parsed : null
-            }
-          } else if (normalized[key] === '') {
-            normalized[key] = null
-          }
-        })
-
-        return normalized
+  if (lineFields.length) {
+    next.line_items = (Array.isArray(source.line_items) ? source.line_items : []).map((item) => {
+      const row = {}
+      lineFields.forEach((field) => {
+        row[field.key] = normalizeFieldValue(item?.[field.key], field.dataType || 'text')
       })
-    : []
+    // : []
+    return row
+    })
+  }
 
   return next
-}
-
-function getFileName(file) {
-  return file?.name || file?.filename || ''
-}
-
-function isImage(file) {
-  return (
-    file?.type?.startsWith('image/') ||
-    /\.(png|jpe?g|webp|gif|bmp|tiff)$/i.test(getFileName(file))
-  )
-}
-
-function isPdf(file) {
-  return (
-    file?.type === 'application/pdf' ||
-    /\.pdf$/i.test(getFileName(file))
-  )
-}
-
-function isDocx(file) {
-  return (
-    file?.type ===
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    /\.docx$/i.test(getFileName(file))
-  )
-}
-
-function isSpreadsheet(file) {
-  return (
-    file?.type ===
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    /\.xlsx$/i.test(getFileName(file))
-  )
-}
-
-function isCsv(file) {
-  return (
-    file?.type === 'text/csv' ||
-    file?.type === 'application/csv' ||
-    /\.csv$/i.test(getFileName(file))
-  )
-}
-
-function isText(file) {
-  return (
-    file?.type === 'text/plain' ||
-    /\.txt$/i.test(getFileName(file))
-  )
-}
-
-function getFileCategory(file) {
-  if (isPdf(file)) return 'PDF'
-  if (isDocx(file)) return 'DOCX'
-  if (isImage(file)) return 'Image'
-  if (isSpreadsheet(file)) return 'Spreadsheet'
-  if (isCsv(file)) return 'CSV'
-  if (isText(file)) return 'Text'
-  return 'Document'
 }
 
 const FieldInput = memo(function FieldInput({
@@ -383,7 +440,8 @@ export default function OcrResultPage() {
   const [error, setError] = useState('')
   const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
   const [previewError, setPreviewError] = useState('')
-  const [customFieldTypes, setCustomFieldTypes] = useState({})
+  // const [customFieldTypes, setCustomFieldTypes] = useState({})
+  const [requestedFieldsConfig, setRequestedFieldsConfig] = useState(null)
   const [connection, setConnection] = useState(null)
   const [validationResult, setValidationResult] = useState(null)
   const [editing, setEditing] = useState(false)
@@ -400,12 +458,6 @@ export default function OcrResultPage() {
 
   const { toasts, addToast, removeToast } = useToast()
   const connectionId = connection?.id || null
-
-  const customFieldKeys = useMemo(
-    () => new Set(Object.keys(customFieldTypes)),
-    [customFieldTypes],
-  )
-
   const aiDiagnosticsByReference = useMemo(
     () =>
       new Map(
@@ -422,37 +474,16 @@ export default function OcrResultPage() {
     [data?.line_items],
   )
 
-  const extraHeaderFields = useMemo(() => {
-    if (!data || typeof data !== 'object') return []
-
-    return Object.keys(data).filter(
-      (key) =>
-        key !== 'line_items' &&
-        !TOP_LEVEL_KEY_SET.has(key) &&
-        !customFieldKeys.has(key),
-    )
-  }, [customFieldKeys, data])
-
-  const templateHeaderFields = useMemo(() => {
-    const configured = Object.keys(customFieldTypes)
-
-    return configured.filter(
-      (key) => key in data && key !== 'line_items',
-    )
-  }, [customFieldTypes, data])
-
-  const extraLineKeys = useMemo(() => {
-    const keys = new Set()
-
-    lineItems.forEach((item) => {
-      if (!item || typeof item !== 'object') return
-      Object.keys(item).forEach((key) => {
-        if (!LINE_ITEM_KEY_SET.has(key)) keys.add(key)
-      })
-    })
-
-    return Array.from(keys)
-  }, [lineItems])
+  const configuredFields = useMemo(
+    () => resolveConfiguredFields(requestedFieldsConfig, data),
+    [requestedFieldsConfig, data],
+  )
+  const headerFieldDefinitions = configuredFields.headerFields
+  const lineFieldDefinitions = configuredFields.lineFields
+  const jsonDisplayData = useMemo(
+    () => projectDataToConfiguredFields(data, configuredFields),
+    [data, configuredFields],
+  )
 
   useEffect(() => {
   const cancelActiveRequests = () => {
@@ -575,17 +606,11 @@ export default function OcrResultPage() {
             ? latest.reviewed_json
             : latest?.normalized_json ?? {}
 
-        const customFields = payload?.requested_fields?.custom_fields || []
-
-        const customTypes = customFields.reduce((acc, field) => {
-          const key = field?.key || field?.label
-          if (key) {
-            acc[key] = field?.data_type || 'text'
-          }
-          return acc
-        }, {})
-
-        setCustomFieldTypes(customTypes)
+        setRequestedFieldsConfig(
+          payload?.requested_fields && typeof payload.requested_fields === 'object'
+            ? payload.requested_fields
+            : null,
+        )
 
         const loadedResult = {
           status: payload.status || 'APPROVED',
@@ -661,21 +686,29 @@ export default function OcrResultPage() {
     }
   }, [result?.preview_url])
 
-  const setField = useCallback((key, value) => {
-    setData((current) => ({
-      ...current,
-      [key]: value,
-    }))
-  }, [])
+  const invalidateValidation = useCallback(() => {
+  setValidationResult(null)
+  setAiDiagnostics([])
+  setDiagnosticError('')
+}, [])
+
+const setField = useCallback((key, value) => {
+  invalidateValidation()
+
+  setData((current) => ({
+    ...current,
+    [key]: value,
+  }))
+}, [invalidateValidation])
 
   const setLineItemField = useCallback((index, key, value) => {
+    invalidateValidation()
     setData((current) => {
       const nextItems = Array.isArray(current?.line_items)
         ? [...current.line_items]
         : []
 
       nextItems[index] = {
-        ...emptyLineItem(),
         ...(nextItems[index] || {}),
         [key]: value,
       }
@@ -685,21 +718,23 @@ export default function OcrResultPage() {
         line_items: nextItems,
       }
     })
-  }, [])
+  }, [invalidateValidation])
 
   const addLineItem = useCallback(() => {
+    invalidateValidation()
     setData((current) => ({
       ...current,
       line_items: [
         ...(Array.isArray(current?.line_items)
           ? current.line_items
           : []),
-        emptyLineItem(),
+        emptyLineItem(lineFieldDefinitions),
       ],
     }))
-  }, [])
+  }, [invalidateValidation,lineFieldDefinitions])
 
   const removeLineItem = useCallback((index) => {
+    invalidateValidation()
     setData((current) => ({
       ...current,
       line_items: (Array.isArray(current?.line_items)
@@ -707,7 +742,7 @@ export default function OcrResultPage() {
         : []
       ).filter((_, itemIndex) => itemIndex !== index),
     }))
-  }, [])
+  }, [invalidateValidation])
 
   const handleSave = async () => {
     if (!result?.document_id) {
@@ -723,10 +758,7 @@ export default function OcrResultPage() {
 
       const payload = {
         document_id: result.document_id,
-        data: normalizeEditedData(
-          data,
-          customFieldTypes,
-        ),
+        data: normalizeEditedData(data, configuredFields),
       }
 
       const response = await apiClient.post(
@@ -937,6 +969,13 @@ export default function OcrResultPage() {
   }
 
   const handlePost = async () => {
+    if (editing || saving || validating || posting) {
+      addToast(
+        'Finish editing and saving the OCR data before posting it to NetSuite.',
+        'error',
+      )
+      return
+    }
   if (!result?.document_id) {
     addToast(
       'Please save the OCR data before posting it to NetSuite.',
@@ -1029,6 +1068,62 @@ export default function OcrResultPage() {
       postingAbortControllerRef.current = null
     }
   }
+}
+function getFileName(file) {
+  return file?.name || file?.filename || ''
+}
+
+function isImage(file) {
+  return (
+    String(file?.type || '').startsWith('image/') ||
+    /\.(png|jpe?g|webp|gif|bmp|tif|tiff)$/i.test(
+      getFileName(file),
+    )
+  )
+}
+
+function isPdf(file) {
+  return (
+    file?.type === 'application/pdf' ||
+    /\.pdf$/i.test(getFileName(file))
+  )
+}
+function isDocx(file) {
+  return (
+    file?.type ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    /\.docx$/i.test(getFileName(file))
+  )
+}
+
+function isSpreadsheet(file) {
+  return (
+    file?.type ===
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    /\.xlsx$/i.test(getFileName(file))
+  )
+}
+
+function isCsv(file) {
+  return (
+    ['text/csv', 'application/csv', 'application/vnd.ms-excel'].includes(
+      file?.type,
+    ) || /\.csv$/i.test(getFileName(file))
+  )
+}
+
+function isText(file) {
+  return file?.type === 'text/plain' || /\.txt$/i.test(getFileName(file))
+}
+
+function getFileCategory(file) {
+  if (isPdf(file)) return 'PDF'
+  if (isDocx(file)) return 'DOCX'
+  if (isImage(file)) return 'Image'
+  if (isSpreadsheet(file)) return 'Spreadsheet'
+  if (isCsv(file)) return 'CSV'
+  if (isText(file)) return 'Text'
+  return 'Document'
 }
 
   const previewIsPdf = isPdf(result)
@@ -1203,12 +1298,13 @@ export default function OcrResultPage() {
                   </div>
                   {viewMode === 'json' ? (
                     <pre className="mt-4 min-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 font-mono text-xs leading-6 text-[var(--color-ink)] sm:text-sm">
-                      {JSON.stringify(data, null, 2)}
+                      {JSON.stringify(jsonDisplayData, null, 2)}
                     </pre>
                   ) : (
                     <>
                       <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                        {TOP_LEVEL_FIELDS.map((field) => (
+                        {/* {TOP_LEVEL_FIELDS.map((field) => ( */}
+                        {headerFieldDefinitions.map((field) => (
                           <FieldInput
                             key={field.key}
                             field={field}
@@ -1217,203 +1313,79 @@ export default function OcrResultPage() {
                             onChange={setField}
                           />
                         ))}
-
-                        {templateHeaderFields.map((key) => {
-                          const dataType = customFieldTypes[key] || 'text'
-                          const field = {
-                            key,
-                            label:
-                              customFieldTypes[key] === 'text'
-                                ? key
-                                : key,
-                            type:
-                              dataType === 'currency'
-                                ? 'number'
-                                : dataType === 'boolean'
-                                  ? 'text'
-                                  : dataType,
-                          }
-
-                          return (
-                            <FieldInput
-                              key={key}
-                              field={field}
-                              value={data[key]}
-                              editable={editing && !saving}
-                              onChange={setField}
-                            />
-                          )
-                        })}
-
-                        {extraHeaderFields.map((key) => {
-                          const field = {
-                            key,
-                            label: key,
-                            type: 'text',
-                          }
-
-                          return (
-                            <FieldInput
-                              key={key}
-                              field={field}
-                              value={data[key]}
-                              editable={editing && !saving}
-                              onChange={setField}
-                            />
-                          )
-                        })}
                       </div>
 
-                      <Card className="mt-4 overflow-hidden border border-[var(--color-border)] shadow-none">
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-4">
-                          <div>
-                            <h3 className="text-sm font-semibold text-[var(--color-ink)]">
-                              Line Items
-                            </h3>
-                            <p className="mt-1 text-xs text-[var(--color-muted)]">
-                              {lineItems.length}{' '}
-                              {lineItems.length === 1 ? 'row' : 'rows'}
-                            </p>
+                        {lineFieldDefinitions.length > 0 && (
+                        <Card className="mt-4 overflow-hidden border border-[var(--color-border)] shadow-none">
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-4">
+                            <div>
+                              <h3 className="text-sm font-semibold text-[var(--color-ink)]">Line Items</h3>
+                              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                                {lineItems.length} {lineItems.length === 1 ? 'row' : 'rows'}
+                              </p>
+                            </div>
+                            {editing && (
+                              <Button type="button" intent="secondary" size="sm" onClick={addLineItem} disabled={saving}>
+                                Add Line Item
+                              </Button>
+                            )}
                           </div>
 
-                          {editing && (
-                            <Button
-                              type="button"
-                              intent="secondary"
-                              size="sm"
-                              onClick={addLineItem}
-                              disabled={saving}
-                            >
-                              Add Line Item
-                            </Button>
-                          )}
-                        </div>
-
-                        {lineItems.length ? (
                           <div className="overflow-x-auto">
                             <table className="min-w-[760px] w-full text-left text-sm">
                               <thead className="bg-[var(--color-canvas)] text-xs uppercase tracking-wide text-[var(--color-muted)]">
                                 <tr>
-                                  <th className="px-4 py-3">Description</th>
-                                  <th className="px-4 py-3">Qty</th>
-                                  <th className="px-4 py-3">Unit Price</th>
-                                  <th className="px-4 py-3">Amount</th>
-                                  {extraLineKeys.map((key) => (
-                                    <th key={key} className="px-4 py-3">
-                                      {key}
-                                    </th>
+                                    {lineFieldDefinitions.map((field) => (
+                                    <th key={field.key} className="px-4 py-3">{field.label}</th>
                                   ))}
-                                  {editing && (
-                                    <th className="px-4 py-3">Action</th>
-                                  )}
+                                  {editing && <th className="px-4 py-3">Action</th>}
                                 </tr>
                               </thead>
 
                               <tbody className="divide-y divide-[var(--color-border)]">
-                                {lineItems.map((item, index) => (
-                                  <tr
-                                    key={`${result.document_id || result.upload_id}-${index}`}
-                                  >
-                                    {LINE_ITEM_FIELDS.map((field) => (
-                                      <td
-                                        key={field.key}
-                                        className="min-w-[150px] px-4 py-3 align-top"
-                                      >
+                                      {lineItems.length ? lineItems.map((item, index) => (
+                                  <tr key={`${result.document_id || result.upload_id}-${index}`}>
+                                    {lineFieldDefinitions.map((field) => (
+                                      <td key={field.key} className="min-w-[150px] px-4 py-3 align-top">
                                         {editing ? (
                                           <input
                                             type={field.type}
-                                            value={toInputValue(
-                                              item?.[field.key],
-                                            )}
-                                            step={
-                                              field.type === 'number'
-                                                ? 'any'
-                                                : undefined
-                                            }
-                                            onChange={(event) =>
-                                              setLineItemField(
-                                                index,
-                                                field.key,
-                                                event.target.value,
-                                              )
-                                            }
+                                            value={toInputValue(item?.[field.key])}
+                                            step={field.type === 'number' ? 'any' : undefined}
+                                            onChange={(event) => setLineItemField(index, field.key, event.target.value)}
                                             className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                                           />
                                         ) : (
                                           <span className="break-words text-[var(--color-ink)]">
-                                            {toInputValue(item?.[field.key]) ||
-                                              '--'}
+                                            {/* {toInputValue(item?.[field.key]) || */}
+                                            {toInputValue(item?.[field.key]) || '--'}
+                                              {/* '--'} */}
                                           </span>
                                         )}
                                       </td>
                                     ))}
 
-                                    {extraLineKeys.map((key) => {
-                                      const dataType = customFieldTypes[key] || 'text'
-                                      const inputType =
-                                        dataType === 'currency' || dataType === 'number'
-                                          ? 'number'
-                                          : dataType === 'date'
-                                            ? 'date'
-                                            : 'text'
-
-                                      return (
-                                        <td
-                                          key={key}
-                                          className="min-w-[150px] px-4 py-3 align-top"
-                                        >
-                                          {editing ? (
-                                            <input
-                                              type={inputType}
-                                              value={toInputValue(item?.[key])}
-                                              step={
-                                                inputType === 'number' ? 'any' : undefined
-                                              }
-                                              onChange={(event) =>
-                                                setLineItemField(
-                                                  index,
-                                                  key,
-                                                  event.target.value,
-                                                )
-                                              }
-                                              className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                                            />
-                                          ) : (
-                                            <span className="break-words text-[var(--color-ink)]">
-                                              {toInputValue(item?.[key]) || '--'}
-                                            </span>
-                                          )}
-                                        </td>
-                                      )
-                                    })}
-
                                     {editing && (
                                       <td className="px-4 py-3 align-top">
-                                        <Button
-                                          type="button"
-                                          intent="ghost"
-                                          size="sm"
-                                          onClick={() => removeLineItem(index)}
-                                          disabled={saving}
-                                          className="text-red-600"
-                                        >
+                                        <Button type="button" intent="ghost" size="sm" onClick={() => removeLineItem(index)} disabled={saving} className="text-red-600">
                                           Remove
                                         </Button>
                                       </td>
                                     )}
                                   </tr>
-                                ))}
+                                // ))}
+                                )) : (
+                                  <tr>
+                                    <td colSpan={lineFieldDefinitions.length + (editing ? 1 : 0)} className="px-4 py-5 text-sm text-[var(--color-muted)]">
+                                      No line items were returned by OCR.{editing && ' Use “Add Line Item” if a source row was missed.'}
+                                    </td>
+                                  </tr>
+                                )}
                               </tbody>
                             </table>
                           </div>
-                        ) : (
-                          <div className="p-5 text-sm text-[var(--color-muted)]">
-                            No line items were returned by OCR.
-                            {editing &&
-                              ' Use “Add Line Item” if a source row was missed.'}
-                          </div>
-                        )}
                       </Card>
+                      )}
                     </>
                   )}
                 </div>

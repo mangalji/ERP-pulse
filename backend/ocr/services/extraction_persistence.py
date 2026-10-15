@@ -116,6 +116,9 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
         },
     )
 
+    # Same lock as posting reservation: editing and posting cannot race.
+    document = OCRDocument.objects.select_for_update().get(pk=document.pk)
+
     if document.user_id != user.id:
         role = getattr(user, "role", None)
 
@@ -136,6 +139,12 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
         if document.company_id is None:
             document.company = company
             document.save(update_fields=['company', 'updated_at'])
+
+    if document.netsuite_postings.exists():
+        raise ValueError(
+            'This document has a posting attempt. Reconcile it before editing; '
+            'posted bills need an explicit correction workflow.'
+        )
 
     version_number = (
         OCRDocumentVersion.objects

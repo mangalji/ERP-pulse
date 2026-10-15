@@ -3,10 +3,10 @@ import logging
 from accounts.exceptions import (
     AccountNotVerifiedException,
     InvalidCredentialsException,
-    ResendCooldownException,
     UserAlreadyExistsException,
 )
 from accounts.models import OTP, User
+from accounts import password_verified_login_challenge
 from accounts.repositories import UserRepository
 from accounts.services import OTPService
 
@@ -184,7 +184,7 @@ class AuthenticationService:
         logger.info('Login OTP sent for user %s.', user.id)
         return user
 
-    def verify_login_otp(self, *, email: str, otp_code: str) -> User:
+    def verify_login_otp(self, *, email: str, otp_code: str, challenge: str) -> User:
         """
         Step 2 of login: verify the LOGIN OTP and return the authenticated
         User. Issues no token — that is a separate, later concern.
@@ -197,31 +197,18 @@ class AuthenticationService:
         self._ensure_user_company_operational(user=user)
 
         self.otp_service.verify_otp(
-            user=user, purpose=OTP.Purpose.LOGIN, submitted_code=otp_code
+            user=user, purpose=OTP.Purpose.LOGIN, submitted_code=otp_code,
+            expected_otp_id=password_verified_login_challenge.validate(user, challenge),
         )
 
         logger.info('Login completed for user %s.', user.id)
         return user
 
-    def resend_login_otp(self, *, email: str) -> dict:
-        """
-        Resend LOGIN OTP for an active login flow.
-        Enforces the same 60-second cooldown as registration.
-
-        Deliberately returns the same response whether the email exists
-        or not — never reveal whether an email is registered
-        (AUTHENTICATION_DESIGN.md, Section 10).
-        """
-        email = email.lower().strip()
-        user = self.user_repository.get_by_email(email)
-
+    def resend_login_otp(self, *, email: str, challenge: str) -> dict:
+        user = self.user_repository.get_by_email(email.lower().strip())
         if user is None:
-            logger.info('Login OTP resend requested for unknown email=%s.', email)
-            return {"email": email}
-
-        self.otp_service.generate_and_send_otp(user=user,purpose=OTP.Purpose.LOGIN)
-
-        logger.info("Login OTP resent for user %s.", user.id)
-        return {
-            "email": email,
-        }
+            raise InvalidCredentialsException('Restart login with your email and password.')
+        self._ensure_user_company_operational(user=user)
+        password_verified_login_challenge.validate(user, challenge)
+        self.otp_service.generate_and_send_otp(user=user, purpose=OTP.Purpose.LOGIN)
+        return {'email': user.email, 'challenge': password_verified_login_challenge.issue(user)}

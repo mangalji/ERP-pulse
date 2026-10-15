@@ -1261,104 +1261,6 @@ class NetSuiteVendorBillPostingService:
     def _normalization_key(value) -> str:
         return " ".join(str(value or "").strip().lower().split())
 
-    def _resolve_posting_location_id(self, *, connection) -> str:
-        """
-        Resolve the temporary/default Vendor Bill posting Location.
-
-        Current development rule:
-            Use the active NetSuite Location named "Pune".
-
-        IMPORTANT:
-            We do NOT hardcode the NetSuite internal ID because internal IDs
-            are account-specific. We resolve "Pune" against the selected
-            NetSuite connection and use the returned internal ID.
-
-        Production:
-            Replace only this method's selection strategy with the actual
-            company/connection/user business rule. The rest of the posting
-            flow should remain unchanged.
-        """
-        location_name = "Pune"
-
-        query_literal = NetSuiteValidationService._suiteql_literal(
-            location_name
-        )
-
-        query = f"""
-            SELECT
-                id,
-                name,
-                isinactive
-            FROM location
-            WHERE
-                LOWER(name) = LOWER({query_literal})
-                AND isinactive = 'F'
-            ORDER BY id
-        """
-
-        try:
-            response = NetSuiteValidationService()._execute_live_suiteql(
-                connection=connection,
-                query=query,
-                limit=50,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Failed to resolve posting Location — "
-                "connection=%s location=%r",
-                connection.id,
-                location_name,
-            )
-            raise NetSuiteRecordFetchException(
-                f'Unable to resolve NetSuite Location "{location_name}" '
-                "in the selected account."
-            ) from exc
-
-        rows = (
-            response.get("items", [])
-            if isinstance(response, dict)
-            else []
-        )
-
-        active_matches = []
-
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-
-            if str(row.get("isinactive", "F")).upper() == "T":
-                continue
-
-            location_id = row.get("id")
-            if location_id is None:
-                continue
-
-            active_matches.append(str(location_id))
-
-        if not active_matches:
-            raise ValueError(
-                f'NetSuite Location "{location_name}" does not exist '
-                "or is inactive in the selected account."
-            )
-
-        # Temporary development rule:
-        # use the first active Pune record if the account somehow contains
-        # duplicate Location names.
-        location_id = active_matches[0]
-
-        if len(active_matches) > 1:
-            logger.warning(
-                "Multiple active NetSuite Locations matched %r; "
-                "using first match — id=%s candidates=%s connection=%s",
-                location_name,
-                location_id,
-                len(active_matches),
-                connection.id,
-            )
-
-        return location_id
-
-
     def _resolve_unique_reference(
         self,
         *,
@@ -1436,19 +1338,13 @@ class NetSuiteVendorBillPostingService:
 
             # Only body custom fields belong in customFieldList.
             if scope != "header":
-                continue
+                raise ValueError('Custom line fields require an explicit REST line-field converter.')
 
             if not source_key or not target_field_id:
                 continue
 
             if not target_field_id.lower().startswith("custbody_"):
-                logger.warning(
-                    "Skipping non-body custom field during Vendor Bill posting "
-                    "— script_id=%s connection=%s",
-                    target_field_id,
-                    connection.id,
-                )
-                continue
+                raise ValueError(f'Unsupported custom body field: {target_field_id}')
 
             value = data.get(source_key)
 
@@ -1456,13 +1352,7 @@ class NetSuiteVendorBillPostingService:
                 continue
 
             if isinstance(value, (dict, list, tuple, set)):
-                logger.warning(
-                    "Skipping non-scalar custom field value during Vendor Bill "
-                    "posting — script_id=%s connection=%s",
-                    target_field_id,
-                    connection.id,
-                )
-                continue        
+                raise ValueError(f'Custom field {target_field_id} requires a typed REST converter.')
             custom_fields[target_field_id] = value
         return custom_fields or None
 
@@ -1646,10 +1536,8 @@ class NetSuiteVendorBillPostingService:
             "internal_id": str(validated_vendor_id),
         }
 
-        # Resolve the Vendor Bill header Location from the saved field mapping
-        # first. If no mapped Location is supplied, we fall back to the
-        # temporary development default (Pune). The line-level Location is
-        # synchronized with this final header Location below.
+        # Resolve Location from the reviewed OCR data using the validated
+        # NetSuite connection. Never guess a Location or use a hardcoded default.
         posting_location_id = None
 
         payload_items = []
@@ -1680,7 +1568,6 @@ class NetSuiteVendorBillPostingService:
 
             for index, line in enumerate(line_items, start=1):
                 if not isinstance(line, dict):
-                    # continue
                     raise ValueError(
                 f"Line {index}: OCR line item is invalid."
             )
@@ -1695,7 +1582,7 @@ class NetSuiteVendorBillPostingService:
                 if isinstance(item_name, str):
                     item_name = item_name.strip()
 
-                description = line.get("description")
+                description = line.get("item") or line.get("description")
                 quantity = line.get("quantity")
                 rate = line.get("unit_price")
 
@@ -1969,6 +1856,9 @@ class NetSuiteVendorBillPostingService:
                     connection=connection,
                     target_field_id=target_field_id,
                     value=raw_value,
+                    require_unique=(
+                        target_field_id.strip().lower() == "location"
+                    ),
                 )
                 if resolved_id:
                     payload[api_field_name] = {"id": resolved_id}
@@ -2006,7 +1896,6 @@ class NetSuiteVendorBillPostingService:
                 )
                 continue
 
-            payload[target_field_id] = raw_value
             if api_field_name == "tranId":
                 # Vendor Bill Reference No. supports up to 45 characters.
                 raw_value = str(raw_value).strip()[:45]
@@ -2035,24 +1924,82 @@ class NetSuiteVendorBillPostingService:
         # to the temporary Pune default when the document has no Location
         # mapping/value. Then force every item line to use the same Location
         # as the Vendor Bill header so header/line references cannot diverge.
-        mapped_location = payload.get("location")
-        if (
-            isinstance(mapped_location, dict)
-            and mapped_location.get("id") not in (None, "")
-        ):
-            posting_location_id = str(mapped_location["id"])
-        else:
-            posting_location_id = self._resolve_posting_location_id(
-                connection=connection,
+
+        upload = getattr(document, "upload", None)
+        batch = getattr(upload, "batch", None) if upload else None
+
+        requested_fields = (
+            getattr(batch, "requested_fields_json", None)
+            if batch else None
+        )
+        if not isinstance(requested_fields, dict):
+            requested_fields = {}
+
+        standard_fields = requested_fields.get("standard_fields") or []
+        standard_overrides = requested_fields.get("standard_field_overrides") or {}
+
+        location_override = (
+            standard_overrides.get("location")
+            if isinstance(standard_overrides, dict)
+            else None
+        )
+
+        location_mapping_configured = (
+            isinstance(standard_fields, list)
+            and "location" in standard_fields
+            and isinstance(location_override, dict)
+            and str(
+                location_override.get("netsuite_field_id") or ""
+            ).strip().lower() == "location"
+            and str(
+                location_override.get("scope") or "header"
+            ).strip().lower() == "header"
+            and str(
+                location_override.get("netsuite_field_scope") or ""
+            ).strip().lower() == "body"
+        )
+
+        if not location_mapping_configured:
+            raise ValueError(
+                "Location is required for Vendor Bill posting. Add the standard "
+                "Location field to the template and map it to NetSuite Location."
             )
-            payload["location"] = {
-                "id": str(posting_location_id),
-            }
+
+        raw_location_value = data.get("location")
+
+        if isinstance(raw_location_value, dict):
+            raw_location_value = (
+                raw_location_value.get("name")
+                or raw_location_value.get("label")
+                or raw_location_value.get("text")
+            )
+
+        raw_location_value = str(raw_location_value or "").strip()
+
+        if not raw_location_value:
+            raise ValueError(
+                "Location is required. Enter the exact NetSuite Location name "
+                "in OCR review, save the result, and validate again before posting."
+            )
+
+        posting_location_id = validation_service._resolve_select_field_live(
+            connection=connection,
+            target_field_id="location",
+            value=raw_location_value,
+            require_unique=True,
+        )
+
+        if not posting_location_id:
+            raise ValueError(
+                f'NetSuite Location "{raw_location_value}" could not be matched '
+                "to one active Location. Validate the document again before posting."
+            )
+
+        posting_location_id = str(posting_location_id)
+        payload["location"] = {"id": posting_location_id}
 
         for item_payload in payload_items:
-            item_payload["location"] = {
-                "id": str(posting_location_id),
-            }
+            item_payload["location"] = {"id": posting_location_id}
 
         if payload_items:
             payload["item"] = {
@@ -2067,11 +2014,11 @@ class NetSuiteVendorBillPostingService:
             document=document,
         )
         if custom_fields:
-            logger.warning(
-                "Skipping custom fields for Vendor Bill diagnostic test — "
-                "custom_fields=%s",
-                custom_fields,
-            )
+            # REST body properties use their script IDs, not SOAP customFieldList.
+            payload.update(custom_fields)
+        # Stable reconciliation identity across versions and interrupted attempts.
+        payload['externalId'] = f'agsuite-vb-{company.pk}-{document.pk}'
+
 
         logger.warning(
             "Vendor Bill payload summary before NetSuite POST — "
@@ -3645,6 +3592,7 @@ class NetSuiteValidationService:
         connection,
         target_field_id,
         value,
+        require_unique=False,
     ):
         """
         Resolve a mapped NetSuite "select" body field (Subsidiary,
@@ -3738,6 +3686,11 @@ class NetSuiteValidationService:
             return None
 
         if len(matches) > 1:
+            if require_unique:
+                raise ValueError(
+                    f'Multiple active NetSuite {table} records match "{raw_value}". '
+                    "Resolve duplicate names in NetSuite before posting."
+                )
             logger.warning(
                 "Multiple NetSuite %s matches found; using first — "
                 "value=%r ids=%s connection=%s",
@@ -4057,6 +4010,9 @@ class NetSuiteValidationService:
                         else "header"
                     ),
                     "target_field_id": target_field_id,
+                    "target_scope": str(
+                        override.get("netsuite_field_scope") or ""
+                    ).strip().lower(),
                     "target_field_label": (
                         override.get("label")
                         or target_field_id
@@ -4211,6 +4167,88 @@ class NetSuiteValidationService:
                         "extracted_name": transaction_subsidiary_name,
                     }
 
+        # A Vendor Bill must have one explicit active Location.
+        location_mapping = next(
+            (
+                mapping
+                for mapping in template_mappings
+                if str(mapping.get("target_field_id") or "").strip().lower()
+                == "location"
+                and str(mapping.get("source_scope") or "").strip().lower()
+                in {"header", "body"}
+                and str(mapping.get("target_scope") or "").strip().lower()
+                == "body"
+            ),
+            None,
+        )
+
+        location_name = None
+        location_netsuite_id = None
+        location_check = "failed"
+        location_error = None
+
+        if location_mapping is None:
+            location_error = {
+                "type": "LOCATION_MAPPING_REQUIRED",
+                "message": (
+                    "Add the Location standard field to the template and map it "
+                    "to the NetSuite Location field."
+                ),
+                "extracted_name": None,
+            }
+        else:
+            raw_location_value = data.get(
+                location_mapping["source_field_key"]
+            )
+
+            if isinstance(raw_location_value, dict):
+                location_name = (
+                    raw_location_value.get("name")
+                    or raw_location_value.get("label")
+                    or raw_location_value.get("text")
+                )
+            else:
+                location_name = raw_location_value
+
+            if location_name is not None:
+                location_name = str(location_name).strip()
+
+            if not location_name:
+                location_error = {
+                    "type": "LOCATION_VALUE_MISSING",
+                    "message": (
+                        "Enter the exact NetSuite Location name in OCR review, "
+                        "save the result, and validate again."
+                    ),
+                    "extracted_name": None,
+                }
+            else:
+                try:
+                    location_netsuite_id = self._resolve_select_field_live(
+                        connection=connection,
+                        target_field_id="location",
+                        value=location_name,
+                        require_unique=True,
+                    )
+                except ValueError as exc:
+                    location_error = {
+                        "type": "LOCATION_AMBIGUOUS",
+                        "message": str(exc),
+                        "extracted_name": location_name,
+                    }
+
+                if location_netsuite_id:
+                    location_check = "passed"
+                elif location_error is None:
+                    location_error = {
+                        "type": "LOCATION_NOT_FOUND",
+                        "message": (
+                            f'NetSuite Location "{location_name}" could not be '
+                            "matched to one active Location in the selected account."
+                        ),
+                        "extracted_name": location_name,
+                    }
+
         vendor_name = data.get(vendor_mapping["source_field_key"])
 
         if isinstance(vendor_name,str):
@@ -4278,6 +4316,9 @@ class NetSuiteValidationService:
 
         if subsidiary_validation_error:
             errors.append(subsidiary_validation_error)
+
+        if location_error:
+            errors.append(location_error)
 
         if not vendor_name or not str(vendor_name).strip():
             errors.append({
@@ -4444,6 +4485,15 @@ class NetSuiteValidationService:
                 "netsuite_id": (
                     str(transaction_subsidiary_id)
                     if transaction_subsidiary_id
+                    else None
+                ),
+            },
+            "location": {
+                "check": location_check,
+                "name": location_name,
+                "netsuite_id": (
+                    str(location_netsuite_id)
+                    if location_netsuite_id
                     else None
                 ),
             },

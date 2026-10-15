@@ -109,12 +109,6 @@ class OTPService:
                 user.id,
                 purpose,
             )
-        # Log OTP visibly for development (console backend prints to terminal).
-        logger.info(
-            "%s OTP for user %s (%s): %s (expires in %d minutes)",
-            purpose.replace('_', ' ').title(),
-            user.id, user.email, raw_code, OTP_EXPIRY_MINUTES,
-        )
 
         # Email delivery outside the atomic transaction — failure here
         # must NOT roll back the OTP record. The OTP is already saved,
@@ -148,75 +142,25 @@ class OTPService:
 
         return otp
 
-    def verify_otp(self, user, purpose: str, submitted_code: str) -> OTP:
-        """
-        Verify a submitted OTP code against the latest active OTP for the
-        given user/purpose. Marks the OTP as used on success.
-
-        Raises:
-            OTPNotFoundException: no active OTP exists for this user/purpose.
-            MaxOTPAttemptsExceededException: too many wrong guesses against
-                this OTP already (MAX_OTP_ATTEMPTS) —
-                checked before expiry so a locked-out OTP reports as
-                locked, not merely expired, even if both are true.
-            OTPExpiredException: the OTP exists but has expired.
-            OTPMismatchException: the submitted code does not match.
-        """
+    def verify_otp(self, user, purpose: str, submitted_code: str, *, expected_otp_id=None) -> OTP:
+        # Callers must not surround OTP verification with a rollback-on-error
+        # transaction: failure counters must survive an invalid-code response.
+        mismatch = False
         with transaction.atomic():
             otp = self.repository.get_latest_active_otp(
-                user=user,
-                purpose=purpose,
-                for_update=True,
+                user=user, purpose=purpose, for_update=True,
             )
-
-            if otp is None:
-                logger.warning(
-                    'No active OTP found for user %s (purpose=%s).',
-                    user.id,
-                    purpose,
-                )
-                raise OTPNotFoundException(
-                    'No active verification code found. Please request a new one.'
-                )
-
+            if otp is None or (expected_otp_id is not None and str(otp.pk) != str(expected_otp_id)):
+                raise OTPNotFoundException('No matching verification code. Restart login.')
             if otp.attempt_count >= MAX_OTP_ATTEMPTS:
-                logger.warning(
-                    "OTP attempt limit reached for user %s (purpose=%s).",
-                    user.id,
-                    purpose,
-                )
-                raise MaxOTPAttemptsExceededException(
-                    "Too many incorrect attempts. Please request a new code."
-                )
-
+                raise MaxOTPAttemptsExceededException('Too many incorrect attempts. Request a new code.')
             if is_expired(otp.expires_at):
-                logger.warning(
-                    'Expired OTP verification attempt for user %s.',
-                    user.id,
-                )
-                raise OTPExpiredException(
-                    'This OTP has expired. Please request a new code.'
-                )
-
+                raise OTPExpiredException('This OTP has expired. Request a new code.')
             if not verify_value(submitted_code, otp.otp_hash):
-                new_attempt_count = self.repository.increment_attempt_count(otp).attempt_count
-
-                logger.warning(
-                    'OTP mismatch for user %s (purpose=%s). Attempt %d/%d.',
-                    user.id,
-                    purpose,
-                    new_attempt_count,
-                    MAX_OTP_ATTEMPTS,
-                )
-                raise OTPMismatchException(
-                    'The code you entered is incorrect. Please try again.'
-                )
-
-            self.repository.mark_as_used(otp)
-
-            logger.info(
-                'OTP verified successfully for user %s (purpose=%s).',
-                user.id,
-                purpose,
-            )
-            return otp
+                self.repository.increment_attempt_count(otp)
+                mismatch = True
+            else:
+                self.repository.mark_as_used(otp)
+        if mismatch:
+            raise OTPMismatchException('The code you entered is incorrect. Please try again.')
+        return otp

@@ -43,24 +43,83 @@ MEDIA_TYPES = {
 }
 
 FIELD_DESCRIPTIONS = {
-    "invoice_number": "The invoice or document number/ID",
-    "invoice_date": "Invoice date, format YYYY-MM-DD if possible",
-    "due_date": "Payment due date, format YYYY-MM-DD if possible",
-    "vendor_name": "Name of the vendor/supplier issuing the invoice",
-    "subsidiary": "Company subsidiary or business unit, if mentioned",
-    "currency": "3-letter currency code, e.g. USD, INR, EUR",
-    "subtotal": "Subtotal amount before tax (number only, no currency symbol)",
-    "tax_amount": "Total tax amount (number only)",
-    "tax_rate": "Tax rate as a percentage if stated, e.g. 18 for 18%",
-    "total_amount": "Grand total / amount due (number only)",
-    "payment_terms": "Payment terms if stated, e.g. Net 30",
+    "invoice_number":( # field_id = tranid
+        "Invoice number or ID printed on the supplier invoice. "
+        "Do not use a purchase order number or vendor ID."
+        ),
+    "invoice_date": ( # field_id = trandate
+        "Invoice issue date, normalized format YYYY-MM-DD when unambiguous."
+        ),
+    "due_date": ( # field_id = duedate
+        "Payment due date, normalized to YYYY-MM-DD when stated. "
+        "Do not calculate or guess a missing due date."
+        ),
+    "vendor_name": ( # field_id = entity
+        "Name of the vendor or supplier issuing the invoice."
+        ),
+    "subsidiary": ( # field_id = subsidiary
+        "Company subsidiary or business unit, only when explicitly "
+        "identified. Do not guess."
+        ),
+    "location": (
+        "NetSuite Location, branch, site, or warehouse for this Vendor Bill. "
+        "Use the exact name only when explicitly stated on the invoice. "
+        "Do not infer a Location from an address or guess a default; return "
+        "null when the invoice does not identify one."
+    ),    
+    "currency": ( # field_id = currency
+        "Three-letter currency code, such as USD, INR, or EUR. "
+        "Return null if the currency cannot be identified reliably."
+        ),
+    "total_tax_amount":( # field_id = taxtotal
+        "Total tax amount for the entire invoice. Use the invoice-level "
+        "tax total when shown; otherwise sum line-item taxes only when "
+        "all relevant line tax amounts are available. "
+        "Return a number without a currency symbol."
+        ),
+    "amount": ( # field_id = usertotal
+        "Grand total of the entire invoice after discounts and including "
+        "applicable taxes and charges, as shown on the invoice. "
+        "Return a number without a currency symbol. Do not substitute "
+        "an individual line amount."
+        ),
 }
 
 LINE_ITEM_FIELDS = {
-    "description": "Item / service description",
-    "quantity": "Quantity (number only)",
-    "unit_price": "Price per unit (number only)",
-    "amount": "Line item total amount (number only)",
+    "item": ( # field_id = item
+        "Product, service, or charge name/description for this specific "
+        "invoice line. Do not combine separate line items."
+        ),
+    "quantity": ( # field_id = quantity
+        "Quantity for this line item. Return a number; do not guess "
+        "if the quantity is not shown."
+        ),
+    "unit_price": ( # field_id = rate
+        "Price per unit for this line item as printed on the invoice. "
+        "Return a number without a currency symbol; do not calculate "
+        "a missing unit price."
+        ),
+    "subtotal": ( # field_id = amount
+        "This line item's amount before tax, after any stated line-level "
+        "discounts. This is not the invoice-level subtotal. "
+        "Return a number without a currency symbol."
+        ),
+    "tax_amount": ( # field_id = tax1amt
+        "Tax amount attributable to this specific line item, not the "
+        "tax total for the entire invoice. Return a number without "
+        "a currency symbol."
+        ),
+    "tax_rate": ( # field_id = taxrate1
+        "Tax rate for this line item, expressed as a percentage when "
+        "explicitly stated, for example 18 for 18%. Do not guess "
+        "a missing rate."
+        ),
+    "total_amount":( # field_id = grossamt
+        "Final amount for this specific line item, including its "
+        "applicable taxes and line-level charges after discounts. "
+        "This is not the invoice grand total. Return a number "
+        "without a currency symbol."
+        )
 }
 
 FIELD_LABELS = {
@@ -70,18 +129,19 @@ FIELD_LABELS = {
     "vendor_name": "Vendor Name",
     "subsidiary": "Subsidiary",
     "currency": "Currency",
+    "location":'Location',
+    "total_tax_amount":"Total Tax",
+    "amount": "Amount",
+}
+
+LINE_ITEM_LABELS = {
+    "item": "Item",
+    "quantity": "Quantity",
+    "unit_price": "Unit Price",
     "subtotal": "Subtotal",
     "tax_amount": "Tax Amount",
     "tax_rate": "Tax Rate (%)",
     "total_amount": "Total Amount",
-    "payment_terms": "Payment Terms",
-}
-
-LINE_ITEM_LABELS = {
-    "description": "Description",
-    "quantity": "Quantity",
-    "unit_price": "Unit Price",
-    "amount": "Amount",
 }
 
 VALID_DATA_TYPES = frozenset({"text", "number", "date", "boolean", "currency"})
@@ -237,18 +297,19 @@ FIELD_DATA_TYPES = {
     "vendor_name": "text",
     "subsidiary": "text",
     "currency": "text",
-    "subtotal": "number",
-    "tax_amount": "number",
-    "tax_rate": "number",
-    "total_amount": "number",
-    "payment_terms": "text",
+    "location":"text",
+    "total_tax_amount":"currency",
+    "amount": "currency",
 }
 
 LINE_ITEM_DATA_TYPES = {
-    "description": "text",
+    "item": "text",
     "quantity": "number",
-    "unit_price": "number",
-    "amount": "currency",
+    "unit_price": "currency",
+    "subtotal": "currency",
+    "tax_amount": "number",
+    "tax_rate": "currency",
+    "total_amount": "currency",
 }
 
 
@@ -571,11 +632,15 @@ def build_prompt(
             for key, description in line_fields.items()
         )
         line_items_section = f"\nLine-item fields:\n{item_lines}\n"
-        line_item_rules = """- Extract EVERY clearly separated source row.
-- Preserve source-row order.
-- Never merge, collapse, skip, or summarize separate rows.
-- Preserve complete visible row information in the requested fields.
-- Before finalizing, recount source rows and compare that count with line_items."""
+        line_item_rules = """- Extract EVERY clearly separated source row that is visibly present in the document.
+- Preserve source-row order; each line_items entry must correspond to one visible source row.
+- Never merge, collapse, skip, duplicate, or summarize separate rows.
+- Read each requested line field from its own corresponding source cell/column for that row.
+- Do not fill a missing line field by copying a value from another row, header, footer, or nearby column.
+- Do not calculate or derive a missing value from other values. For example, do not calculate unit price from amount and quantity, do not calculate tax from tax rate, and do not add tax to the amount column.
+- If a requested line field has no directly supported value in that source row, return null for that field.
+- Preserve complete visible row information only within the fields the template requested.
+- Before finalizing, recount visible source rows and compare that count with line_items."""
     else:
         line_items_section = ""
         line_item_rules = "- Do not return line_items because no line fields were requested."
@@ -587,16 +652,19 @@ Top-level fields requested by the user's template:
 {line_items_section}
 Rules:
 - Respond with ONLY one valid JSON object.
-- Use EXACTLY the requested field names and structure.
+- Use EXACTLY the requested field names and structure; do not add extra keys.
+- The configured template is the complete field contract. Extract only the fields listed above.
 - Use each field's questionaire/instruction as the definition of what information to extract.
-- NEVER invent or guess a value.
-- Use null only when the requested value is genuinely absent or cannot be determined from the document.
+- NEVER invent, assume, calculate, or guess a requested value.
+- Extract a value only when it is directly supported by the source document for that exact field.
+- Do not derive one field from another field, even when the arithmetic seems obvious.
+- Do not substitute a nearby or similarly named value when the requested field's own value is absent.
+- Use null when the requested value is missing, unreadable, ambiguous, or cannot be directly matched to source evidence.
 - Inspect the entire document before deciding a field is null.
 - Follow the declared datatype for every field.
 {line_item_rules}
-- Return only the extracted values supported by the document.
-- Use null when a requested value is genuinely absent or cannot be determined.
-- The final JSON must contain only the fields defined by this template.
+- Do not output fields merely because other information is visible in the document; unrequested fields must be omitted.
+- The final JSON must contain exactly the header fields and line-item fields defined by this template.
 """
 
 class NotebookGeminiExtractor:

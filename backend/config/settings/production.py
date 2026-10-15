@@ -49,3 +49,8 @@ CSRF_COOKIE_SECURE = True
 
 # Strict referrer policy for production
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+
+# Cross-site cookie clients receive the masked token from /auth/csrf/.
+CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_SAMESITE = JWT_AUTH_COOKIE_SAMESITE
+CSRF_COOKIE_HTTPONLY = True
