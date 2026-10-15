@@ -2386,7 +2386,6 @@ useEffect(() => {
                             )}
                         </div> 
                           
-                        {/* {lineItems.length ? ( */}
                           <div className="overflow-x-auto">
                             <table className="min-w-[760px] w-full text-left text-sm">
                               <thead className="bg-[var(--color-canvas)] text-xs uppercase tracking-wide text-[var(--color-muted)]">
@@ -2394,29 +2393,7 @@ useEffect(() => {
                                     {lineFieldDefinitions.map((field) => (
                                     <th key={field.key} className="px-4 py-3">{field.label}</th>
                                   ))}
-                                  {editing && <th className="px-4 py-3">Action</th>}
-                                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-4">
-                                  <div>
-                                    <h3 className="text-sm font-semibold text-[var(--color-ink)]">
-                                      Line Items
-                                    </h3>
-                                    <p className="mt-1 text-xs text-[var(--color-muted)]">
-                                      {lineItems.length} {lineItems.length === 1 ? 'row' : 'rows'}
-                                    </p>
-                                  </div>
-                                
-                                  {editing && (
-                                    <Button
-                                      type="button"
-                                      intent="secondary"
-                                      size="sm"
-                                      onClick={addLineItem}
-                                      disabled={saving}
-                                    >
-                                      Add Line Item
-                                    </Button>
-                                  )}
-                                </div>
+                                  
                                   {editing && <th className="px-4 py-3">Action</th>}
                                 </tr>
                               </thead>

@@ -30,6 +30,7 @@ class OCRStandardFieldCatalogueTests(SimpleTestCase):
                 "vendor_name",
                 "subsidiary",
                 "currency",
+                "location",
                 "total_tax_amount",
                 "amount",
             },

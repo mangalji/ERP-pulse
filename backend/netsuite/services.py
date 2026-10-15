@@ -16,7 +16,6 @@ import requests
 import uuid
 from accounts.models import User
 from django.db import transaction
-from django.db.models import Q
 from datetime import timedelta
 from django.core.cache import cache
 from django.conf import settings
@@ -942,23 +941,6 @@ class NetSuiteDataService:
             params=params,
         )
 
-    # def get_record(
-    #     self,
-    #     *,
-    #     record_type: str,
-    #     record_id: str,
-    #     user: User,
-    #     params: dict | None = None,
-    # ) -> dict:
-    #     client, connection = self._get_authenticated_client(user)
-    #     return self._call_and_track_health(
-    #         connection,
-    #         client.get_record,
-    #         record_type=record_type,
-    #         record_id=record_id,
-    #         params=params,
-    #     )
-
     def execute_suiteql(self, *, query: str, user: User, limit: int | None = None, offset: int | None = None) -> dict:
         """
         Run a SuiteQL query for `user`'s connected NetSuite account.
@@ -1552,109 +1534,6 @@ class NetSuiteVendorBillPostingService:
 
         return value
 
-    @staticmethod
-    def _normalization_key(value) -> str:
-        return " ".join(str(value or "").strip().lower().split())
-
-    def _resolve_unique_reference(
-        self,
-        *,
-        connection_id,
-        record_type: str,
-        value: str,
-        label: str,
-    ):
-        matches = self.repository.find_reference_records(
-            connection_id=connection_id,
-            record_type=record_type,
-            search_name=self._normalization_key(value),
-        )
-
-        if not matches:
-            raise ValueError(
-                f'No active NetSuite {label} matched "{value}". '
-                "Run the NetSuite reference sync or correct the OCR value."
-            )
-
-        if len(matches) > 1:
-            raise ValueError(
-                f'Multiple NetSuite {label}s matched "{value}". '
-                "Posting was stopped to prevent selecting the wrong record."
-            )
-
-        return matches[0]
-
-    @staticmethod
-    def _apply_custom_fields(*, company, connection, record_type, data,document=None):
-        """
-        Apply saved custom field mappings to the NetSuite payload.
-
-        Returns a list of custom field dicts suitable for NetSuite's
-        customFieldList, or None if no custom fields are mapped.
-        """
-        if document is None:
-            return None
-
-        upload = getattr(document, "upload", None)
-        batch = getattr(upload, "batch", None) if upload else None
-
-        requested_fields = (
-            getattr(batch, "requested_fields_json", None)
-                if batch
-                else None
-            )
-        if not isinstance(requested_fields, dict):
-           return None
-
-        custom_fields_config = (
-            requested_fields.get("custom_fields") or []
-        )
-
-        if not isinstance(custom_fields_config, list):
-            return None
-    
-        custom_fields = {}
-
-        from ocr.notebook_extraction_service import _slugify_field_key
-
-        for field in custom_fields_config:
-            if not isinstance(field, dict):
-                continue
-
-            # source_key = str(
-            raw_source_key = str(
-                field.get("key")
-                or field.get("label")
-                or ""
-            ).strip()
-            source_key = _slugify_field_key(raw_source_key) if raw_source_key else ""
-
-            target_field_id = str(
-                field.get("netsuite_field_id") or ""
-            ).strip()
-
-            scope = field.get("scope") or "header"
-
-            # Only body custom fields belong in customFieldList.
-            if scope != "header":
-                raise ValueError('Custom line fields require an explicit REST line-field converter.')
-
-            if not source_key or not target_field_id:
-                continue
-
-            if not target_field_id.lower().startswith("custbody_"):
-                raise ValueError(f'Unsupported custom body field: {target_field_id}')
-
-            value = data.get(source_key)
-
-            if value is None or value == "":
-                continue
-
-            if isinstance(value, (dict, list, tuple, set)):
-                raise ValueError(f'Custom field {target_field_id} requires a typed REST converter.')
-            custom_fields[target_field_id] = value
-        return custom_fields or None
-
     def post_vendor_bill(self, *, document_id, user: User, connection_id=None) -> dict:
         """
         Post the latest validated OCR version as a NetSuite Vendor Bill.
@@ -1976,8 +1855,8 @@ class NetSuiteVendorBillPostingService:
             if api_field_name.casefold() in {
                 str(key).casefold() for key in payload
             }:
-                # # Already set explicitly above (entity/item), or a
-                # # duplicate mapping row — first mapping wins.
+                # Already set explicitly above (entity/item), or a
+                # duplicate mapping row — first mapping wins.
                 continue
 
             if target_field_id.strip().lower() in NETSUITE_VENDOR_BILL_UNSUPPORTED_FIELDS:
@@ -2805,14 +2684,6 @@ class NetSuiteFieldMappingService:
                 "body",
                 required,
             )
-
-        # Deduplicate
-        #
-        # Same field ID is allowed in both:
-        #   column + item
-        #   column + expense
-        #
-        # Therefore sublist_id MUST be part of the key.
 
         def dedupe(fields):
             seen = set()
@@ -4111,10 +3982,6 @@ class NetSuiteValidationService:
                 continue
             item_name = line.get(item_source_key)
 
-            # quantity = line.get("quantity")
-            # rate = line.get("unit_price")
-            # if quantity in (None, "") and rate in (None, ""):
-            #     continue
             if item_name is None or not str(item_name).strip():
                 continue
 

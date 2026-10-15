@@ -48,36 +48,6 @@ from ocr.services.zip_upload_service import (
     extract_supported_files_from_zip,
 )
 
-# def _parse_requested_fields(raw) -> dict | None:
-#     """
-#     Normalize the user-supplied dynamic extraction configuration.
-
-#     Accepts either a JSON object or a JSON-encoded string.
-#     Returns None when nothing usable was supplied.
-#     """
-#     if raw is None:
-#         return None
-
-#     if isinstance(raw, str):
-#         raw = raw.strip()
-#         if not raw:
-#             return None
-
-#         try:
-#             raw = json.loads(raw)
-#         except (json.JSONDecodeError, ValueError):
-#             raise ValueError(
-#                 "requested_fields must be a valid JSON object."
-#             )
-
-#     if not isinstance(raw, dict):
-#         raise ValueError(
-#             "requested_fields must be a JSON object."
-#         )
-
-#     return raw
-
-
 def _resolve_template_config(template_id, user) -> dict:
     """Load a saved extraction template's config (company-scoped)."""
     if not template_id:
@@ -110,26 +80,10 @@ def _build_requested_fields(request) -> dict | None:
     caller cannot bypass template save-time validation.
     """
     template_id = request.data.get("template_id")
-    # raw_requested = _parse_requested_fields(
-    #     request.data.get("requested_fields")
-    # )
-
-    # if template_id:
-    #     requested_fields = _resolve_template_config(
-    #         template_id,
-    #         request.user,
-    #     )
     if not template_id:
         raise ValueError(
             "A saved OCR extraction template is required. Select a template before uploading."
          )
-    # elif raw_requested is not None:
-    #     requested_fields = raw_requested
-    # else:
-    #     requested_fields = None
-
-    # if requested_fields:
-    #     resolve_field_config(requested_fields)
     requested_fields = _resolve_template_config(
         template_id,
         request.user,
@@ -1526,7 +1480,7 @@ class OCRExtractView(APIView):
 
             # MULTIPLE MODE
             return self._accept_for_background(
-+                request, batch, created_uploads
+                request, batch, created_uploads
             )
         
         except ZipValidationError as exc:
@@ -1563,8 +1517,6 @@ class OCRExtractView(APIView):
 
             return Response(
                 {
-                    # "detail": "OCR batch submission failed.",
-                    # "error": str(exc),
                     "detail": "OCR batch submission failed. Please try again.",
                     "batch_id": str(batch.id) if batch else None,
                 },

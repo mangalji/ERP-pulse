@@ -307,8 +307,8 @@ LINE_ITEM_DATA_TYPES = {
     "quantity": "number",
     "unit_price": "currency",
     "subtotal": "currency",
-    "tax_amount": "number",
-    "tax_rate": "currency",
+    "tax_amount": "currency",
+    "tax_rate": "number",
     "total_amount": "currency",
 }
 
