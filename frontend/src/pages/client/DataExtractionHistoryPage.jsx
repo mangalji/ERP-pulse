@@ -72,6 +72,7 @@ export default function DataExtractionHistoryPage() {
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [deletingId, setDeletingId] = useState(null)
+  const [deletingSelected, setDeletingSelected] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [reauthRequired, setReauthRequired] = useState(false)
@@ -235,7 +236,14 @@ export default function DataExtractionHistoryPage() {
       )
 
       setNotice('✓ OCR history record deleted successfully.')
-      await loadHistory()
+      setRecords((current) =>
+        current.filter((record) => record.batch_id !== item.batch_id),
+      )
+      setSelectedIds((current) => {
+        const next = new Set(current)
+        next.delete(item.batch_id)
+        return next
+      })
     } catch (err) {
       console.error('Failed to delete OCR history record:', err)
       setError(
@@ -246,6 +254,55 @@ export default function DataExtractionHistoryPage() {
       )
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  const handleDeleteSelected = async () => {
+    if (!canDeleteHistory || !selectedRecords.length) return
+
+    const targets = selectedRecords
+      .map((item) => ({
+        id: item?.type === 'batch' ? item?.batch_id : item?.upload_id,
+        record_type: item?.type === 'batch' ? 'batch' : 'upload',
+        historyId: item?.batch_id,
+      }))
+      .filter((item) => item.id)
+
+    if (!targets.length) {
+      setError('The selected history records cannot be deleted because an ID is missing.')
+      return
+    }
+
+    try {
+      setDeletingSelected(true)
+      setError('')
+      setNotice('')
+      await apiClient.delete('/ocr/history/bulk/', {
+        data: {
+          records: targets.map(({ id, record_type }) => ({ id, record_type })),
+        },
+      })
+
+      const deletedHistoryIds = new Set(targets.map((item) => item.historyId))
+      setRecords((current) =>
+        current.filter((record) => !deletedHistoryIds.has(record.batch_id)),
+      )
+      setSelectedIds((current) => {
+        const next = new Set(current)
+        deletedHistoryIds.forEach((id) => next.delete(id))
+        return next
+      })
+      setNotice(`✓ ${targets.length} OCR history record(s) deleted successfully.`)
+    } catch (err) {
+      console.error('Failed to delete selected OCR history records:', err)
+      setError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Unable to delete the selected OCR history records.',
+      )
+    } finally {
+      setDeletingSelected(false)
     }
   }
   const waitForBatchJob = async (jobId) => {
@@ -463,15 +520,28 @@ export default function DataExtractionHistoryPage() {
                 type="button"
                 intent="secondary"
                 onClick={toggleSelectAll}
-                disabled={working || !visibleSelectableRecords.length}
+                disabled={working || deletingId || deletingSelected || !visibleSelectableRecords.length}
               >
                 {allVisibleSelected ? 'Clear All' : 'Select All'}
               </Button>
 
+              {canDeleteHistory && selectedRecords.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleDeleteSelected}
+                  disabled={working || deletingId || deletingSelected}
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingSelected
+                    ? 'Deleting selected...'
+                    : `Delete Selected (${selectedRecords.length})`}
+                </button>
+              )}
+
               <Button
                 type="button"
                 onClick={runBatchAction}
-                disabled={working || !selectedDocumentIds.length}
+                disabled={working || deletingId || deletingSelected || !selectedDocumentIds.length}
                 isLoading={working}
               >
                 {allSelectedAreValidated ? 'Post to NetSuite' : 'Refresh'}
@@ -537,7 +607,7 @@ export default function DataExtractionHistoryPage() {
                             type="checkbox"
                             checked={selected}
                             onChange={() => toggleRecord(item.batch_id)}
-                            disabled={working || isPosted}
+                            disabled={working || deletingId || deletingSelected || isPosted}
                             aria-label={`Select ${item.filename || 'OCR record'}`}
                           />
                         </div>
@@ -607,7 +677,7 @@ export default function DataExtractionHistoryPage() {
                             <button
                               type="button"
                               onClick={() => handleDelete(item)}
-                              disabled={working || deletingId === item.batch_id}
+                              disabled={working || deletingId || deletingSelected}
                               aria-label={`Delete ${item.filename || 'OCR history record'}`}
                               title="Delete"
                               className="rounded-md p-2 text-[var(--color-negative)] transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import redis
+import uuid
 
 from django.conf import settings
 
@@ -249,6 +250,110 @@ def _build_upload_result(upload):
     }
 
 
+def _prepare_history_deletion(*, user, record_id, record_type):
+    """Load one visible history record and its files before deleting it."""
+
+    if record_type == "batch":
+        try:
+            batch = (
+                _visible_batch_queryset(user)
+                .prefetch_related("uploads__document__versions")
+                .get(pk=record_id)
+            )
+        except OCRBatch.DoesNotExist as exc:
+            raise NotFound("OCR history batch not found.") from exc
+
+        uploads = list(batch.uploads.all())
+        history_id = batch.id
+    elif record_type == "upload":
+        try:
+            upload = (
+                _visible_upload_queryset(user)
+                .prefetch_related("document__versions")
+                .get(pk=record_id)
+            )
+        except OCRUpload.DoesNotExist as exc:
+            raise NotFound("OCR history file not found.") from exc
+
+        uploads = [upload]
+        batch = upload.batch
+        history_id = upload.batch_id or upload.id
+    else:
+        raise ValueError("record_type must be 'upload' or 'batch'.")
+
+    document_ids = [
+        upload.document.id
+        for upload in uploads
+        if getattr(upload, "document", None) is not None
+    ]
+    if NetSuiteOCRPosting.objects.filter(
+        document_id__in=document_ids,
+        status="posted",
+    ).exists():
+        raise ValueError("Posted OCR history records cannot be deleted.")
+
+    stored_files = []
+    seen_files = set()
+
+    def remember_file(field_file):
+        if not field_file or not field_file.name:
+            return
+
+        file_key = (id(field_file.storage), field_file.name)
+        if file_key not in seen_files:
+            seen_files.add(file_key)
+            stored_files.append((field_file.storage, field_file.name))
+
+    for upload in uploads:
+        remember_file(upload.file)
+        document = getattr(upload, "document", None)
+        if document is not None:
+            for version in document.versions.all():
+                remember_file(version.original_document)
+                remember_file(version.processed_document)
+
+    return {
+        "record_id": record_id,
+        "record_type": record_type,
+        "history_id": history_id,
+        "batch": batch,
+        "uploads": uploads,
+        "stored_files": stored_files,
+    }
+
+
+def _delete_prepared_history_record(deletion):
+    """Delete one prepared history record inside the caller's transaction."""
+
+    for upload in deletion["uploads"]:
+        upload.delete()
+
+    batch = deletion["batch"]
+    if batch is not None:
+        if deletion["record_type"] == "batch":
+            batch.delete()
+        elif not OCRUpload.objects.filter(batch_id=batch.id).exists():
+            batch.delete()
+
+    def remove_stored_files():
+        for storage, name in deletion["stored_files"]:
+            try:
+                storage.delete(name)
+            except Exception:
+                logger.exception(
+                    "Failed to remove stored OCR file after history deletion: %s",
+                    name,
+                )
+
+    transaction.on_commit(remove_stored_files)
+
+    return {
+        "record_id": str(deletion["record_id"]),
+        "record_type": deletion["record_type"],
+        "history_id": str(deletion["history_id"]),
+    }
+
+
 class OCRHistoryUploadDeleteView(APIView):
     """Delete one OCR history file; only a company admin may do this."""
 
@@ -265,66 +370,88 @@ class OCRHistoryUploadDeleteView(APIView):
             request.query_params.get("record_type", "upload")
         ).strip().lower()
 
-        if record_type == "batch":
-            try:
-                batch = (
-                    _visible_batch_queryset(request.user)
-                    .prefetch_related("uploads__document__versions")
-                    .get(pk=upload_id)
-                )
-            except OCRBatch.DoesNotExist as exc:
-                raise NotFound("OCR history batch not found.") from exc
-            uploads = list(batch.uploads.all())
-            batch_id = batch.id
-        elif record_type == "upload":
-            try:
-                upload = _visible_upload_queryset(request.user).get(pk=upload_id)
-            except OCRUpload.DoesNotExist as exc:
-                raise NotFound("OCR history file not found.") from exc
-            uploads = [upload]
-            batch_id = upload.batch_id
-        else:
-            return Response(
-                {"detail": "record_type must be 'upload' or 'batch'."},
-                status=status.HTTP_400_BAD_REQUEST,
+        try:
+            deletion = _prepare_history_deletion(
+                user=request.user,
+                record_id=upload_id,
+                record_type=record_type,
             )
-
-        stored_files = []
-
-        def remember_file(field_file):
-            if field_file and field_file.name:
-                stored_files.append((field_file.storage, field_file.name))
-
-        for upload in uploads:
-            remember_file(upload.file)
-            document = getattr(upload, "document", None)
-            if document is not None:
-                for version in document.versions.all():
-                    remember_file(version.original_document)
-                    remember_file(version.processed_document)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
-            for upload in uploads:
-                upload.delete()
-
-            if batch_id:
-                OCRBatch.objects.filter(pk=batch_id).delete()
-
-            def remove_stored_files():
-                for storage, name in stored_files:
-                    try:
-                        storage.delete(name)
-                    except Exception:
-                        logger.exception(
-                            "Failed to remove stored OCR file after history deletion: %s",
-                            name,
-                        )
-
-            transaction.on_commit(remove_stored_files)
+            result = _delete_prepared_history_record(deletion)
 
         return success_response(
             message="OCR history record deleted successfully.",
-            data={"record_id": str(upload_id), "record_type": record_type},
+            data=result,
+        )
+
+
+class OCRHistoryBulkDeleteView(APIView):
+    """Synchronously delete selected OCR history records in one request."""
+
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        if not _is_company_admin(request.user):
+            return Response(
+                {"detail": "Only company admins can delete OCR history files."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        records = request.data.get("records") if isinstance(request.data, dict) else None
+        if not isinstance(records, list) or not records:
+            return Response(
+                {"detail": "records must be a non-empty list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(records) > 100:
+            return Response(
+                {"detail": "A maximum of 100 history records can be deleted at once."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        targets = []
+        seen_targets = set()
+        try:
+            for record in records:
+                if not isinstance(record, dict):
+                    raise ValueError("Each records entry must be an object.")
+
+                record_id = uuid.UUID(str(record.get("id", "")))
+                record_type = str(record.get("record_type", "")).strip().lower()
+                target_key = (str(record_id), record_type)
+                if target_key in seen_targets:
+                    continue
+
+                seen_targets.add(target_key)
+                targets.append(
+                    _prepare_history_deletion(
+                        user=request.user,
+                        record_id=record_id,
+                        record_type=record_type,
+                    )
+                )
+        except (TypeError, ValueError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        selected_upload_ids = set()
+        for target in targets:
+            upload_ids = {upload.id for upload in target["uploads"]}
+            if selected_upload_ids.intersection(upload_ids):
+                return Response(
+                    {"detail": "The same OCR file cannot be deleted more than once."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            selected_upload_ids.update(upload_ids)
+
+        with transaction.atomic():
+            deleted = [_delete_prepared_history_record(target) for target in targets]
+
+        return success_response(
+            message=f"{len(deleted)} OCR history record(s) deleted successfully.",
+            data={"deleted": deleted, "count": len(deleted)},
         )
 
 
