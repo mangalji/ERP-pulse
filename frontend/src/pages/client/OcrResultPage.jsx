@@ -8,6 +8,8 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
+import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandle.jsx'
+import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 
 const TOP_LEVEL_FIELDS = [
   { key: 'invoice_number', label: 'Invoice Number', type: 'text' },
@@ -497,6 +499,7 @@ export default function OcrResultPage() {
   const [requestedFieldsConfig, setRequestedFieldsConfig] = useState(null)
   const [connection, setConnection] = useState(null)
   const [validationResult, setValidationResult] = useState(null)
+  const { workspaceHeight, startResizing, resizeWithKeyboard } = useWorkspaceHeight()
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [validating, setValidating] = useState(false)
@@ -1218,9 +1221,12 @@ function getFileCategory(file) {
           </Card>
         ) : result ? (
           <>
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div
+              className="grid gap-4 lg:grid-cols-2"
+              style={{ '--ocr-workspace-height': `${workspaceHeight}px` }}
+            >
               {/* Left: preview */}
-              <Card className="flex h-[480px] min-h-0 max-h-[70vh] flex-col overflow-hidden">
+              <Card className="flex h-[480px] min-h-0 flex-col overflow-hidden lg:h-[var(--ocr-workspace-height)]">
                 <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
                   <div className="min-w-0">
                     <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
@@ -1247,11 +1253,11 @@ function getFileCategory(file) {
                     (previewIsPdf || previewIsImage) &&
                     remotePreviewUrl &&
                     (previewIsPdf ? (
-                      <div className="flex min-h-full w-full flex-col gap-2">
+                      <div className="flex h-full min-h-[340px] w-full flex-col gap-2">
                         <iframe
                           title={result.filename || 'OCR document'}
                           src={remotePreviewUrl}
-                          className="h-[340px] min-h-0 w-full rounded-lg border border-[var(--color-border)] bg-white"
+                          className="min-h-[340px] w-full flex-1 rounded-lg border border-[var(--color-border)] bg-white"
                         />
                         <a
                           href={remotePreviewUrl}
@@ -1266,7 +1272,7 @@ function getFileCategory(file) {
                       <img
                         src={remotePreviewUrl}
                         alt={result.filename || 'OCR document'}
-                        className="max-h-[340px] max-w-full rounded-lg object-contain shadow-sm"
+                        className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
                       />
                     ))}
 
@@ -1300,7 +1306,7 @@ function getFileCategory(file) {
               </Card>
 
               {/* Right: OCR review */}
-              <Card className="flex h-[480px] min-h-0 max-h-[70vh] flex-col overflow-hidden">
+              <Card className="flex h-[480px] min-h-0 flex-col overflow-hidden lg:h-[var(--ocr-workspace-height)]">
                 <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
                   <div className="min-w-0">
                     <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
@@ -1508,6 +1514,11 @@ function getFileCategory(file) {
                 </div>
               </Card>
             </div>
+
+            <WorkspaceResizeHandle
+              onPointerDown={startResizing}
+              onKeyDown={resizeWithKeyboard}
+            />
 
             {validationResult && (
               <Card className="border border-[var(--color-border)] shadow-none">

@@ -7,6 +7,8 @@ import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
 import { useToast, default as Toast } from '../../components/ui/Toast.jsx'
 import { aiIntegrationApi } from '../../services/aiIntegration.js'
+import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandle.jsx'
+import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 
 const OCR_PAGE_SESSION_KEY = 'ocr_page_session_state'
 
@@ -612,6 +614,7 @@ export default function OcrPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [connection, setConnection] = useState(null)
   const [validationResult, setValidationResult] = useState(null)
+  const { workspaceHeight, startResizing, resizeWithKeyboard } = useWorkspaceHeight()
   const [ocrMode, setOcrMode] = useState('single')
   const [ocrModes, setOcrModes] = useState({
     single: true,
@@ -2181,9 +2184,13 @@ useEffect(() => {
 
         {/* Result workspace */}
         {(selectedFiles.length > 0 || results.length > 0) && (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <>
+            <div
+              className="grid gap-4 lg:grid-cols-2"
+              style={{ '--ocr-workspace-height': `${workspaceHeight}px` }}
+            >
             {/* Left: preview */}
-            <Card className="flex h-[480px] min-h-0 max-h-[70vh] flex-col overflow-hidden">
+            <Card className="flex h-[480px] min-h-0 flex-col overflow-hidden lg:h-[var(--ocr-workspace-height)]">
               <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
                 <div className="min-w-0">
                   <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
@@ -2218,11 +2225,11 @@ useEffect(() => {
                   (isPdf(activeFile) || isImage(activeFile)) &&
                   activePreviewUrl && (
                     isPdf(activeFile) ? (
-                      <div className="flex min-h-full w-full flex-col gap-2">
+                      <div className="flex h-full min-h-[340px] w-full flex-col gap-2">
                         <iframe
                           title={activeFile.name}
                           src={activePreviewUrl}
-                          className="h-[340px] min-h-0 w-full rounded-lg border border-[var(--color-border)] bg-white"
+                          className="min-h-[340px] w-full flex-1 rounded-lg border border-[var(--color-border)] bg-white"
                         />
                         <a
                           href={activePreviewUrl}
@@ -2237,7 +2244,7 @@ useEffect(() => {
                       <img
                         src={activePreviewUrl}
                         alt={activeFile.name}
-                        className="max-h-[340px] max-w-full rounded-lg object-contain shadow-sm"
+                        className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
                       />
                     )
                   )}
@@ -2296,7 +2303,7 @@ useEffect(() => {
             </Card>
 
             {/* Right: OCR review */}
-            <Card className="flex h-[480px] min-h-0 max-h-[70vh] flex-col overflow-hidden">
+            <Card className="flex h-[480px] min-h-0 flex-col overflow-hidden lg:h-[var(--ocr-workspace-height)]">
               <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
                 <div className="min-w-0">
                   <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">OCR Review</p>
@@ -2539,7 +2546,12 @@ useEffect(() => {
                 </div>
               )}
             </Card>
-          </div>
+            </div>
+            <WorkspaceResizeHandle
+              onPointerDown={startResizing}
+              onKeyDown={resizeWithKeyboard}
+            />
+          </>
         )}
 
           {validationResult && (
