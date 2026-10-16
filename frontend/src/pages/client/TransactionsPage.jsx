@@ -7,19 +7,37 @@ const PAGE_SIZE = 20
 
 const EMPTY_FORM = {}
 
+const TRANSACTION_ROUTES = new Set(['/app/transaction', '/app/transactions'])
+
+function collectTransactionContexts(items, contexts = []) {
+  ;(items || []).forEach((item) => {
+    const queryParams = item?.query_params || {}
+    const transactionType = String(queryParams.transaction_type || '').trim()
+    const recordType = String(queryParams.record_type || '').trim()
+
+    if (TRANSACTION_ROUTES.has(item?.route) && transactionType) {
+      contexts.push({ transactionType, recordType })
+    }
+
+    collectTransactionContexts(item?.children, contexts)
+  })
+
+  return contexts
+}
+
 export default function TransactionsPage() {
   const [searchParams] = useSearchParams()
 
   const transactionType = searchParams.get('transaction_type') || ''
   const recordType = searchParams.get('record_type') || ''
 
-  const hasProductContext = Boolean(transactionType && recordType)
-
   const title = recordType || transactionType || 'Transactions'
 
   const [rows, setRows] = useState([])
   const [count, setCount] = useState(0)
   const [schema, setSchema] = useState({ fields: [] })
+  const [navigationItems, setNavigationItems] = useState([])
+  const [navigationLoading, setNavigationLoading] = useState(true)
   const [offset, setOffset] = useState(0)
 
   const [loading, setLoading] = useState(false)
@@ -78,6 +96,21 @@ useEffect(() => {
 }, [loadSchema])
 
   useEffect(() => {
+    const loadTransactionContexts = async () => {
+      try {
+        const menu = await clientApi.getNavigationMenu()
+        setNavigationItems(Array.isArray(menu) ? menu : [])
+      } catch {
+        setNavigationItems([])
+      } finally {
+        setNavigationLoading(false)
+      }
+    }
+
+    loadTransactionContexts()
+  }, [])
+
+  useEffect(() => {
     setOffset(0)
   }, [transactionType, recordType])
 
@@ -100,6 +133,11 @@ useEffect(() => {
         initialForm[field.name] = ''
       }
     })
+
+    // A Level-3 navigation item already identifies the transaction context.
+    // At higher levels, these remain empty so the user can choose them.
+    initialForm.transaction_type = transactionType
+    initialForm.record_type = recordType
     
     setForm(initialForm)
     setError('')
@@ -119,33 +157,61 @@ useEffect(() => {
     setForm((current) => ({
       ...current,
       [field]: value,
+      ...(field === 'transaction_type' && current.transaction_type !== value
+        ? { record_type: '' }
+        : {}),
     }))
   }
 
   const tableFields = schema.fields || []
+  const transactionContexts = collectTransactionContexts(navigationItems)
+  const transactionTypeOptions = [...new Set([
+    ...transactionContexts.map((context) => context.transactionType),
+    transactionType,
+  ].filter(Boolean))]
+  const selectedFormTransactionType = String(form.transaction_type || '').trim()
+  const recordTypeOptions = [...new Set([
+    ...transactionContexts
+      .filter((context) => context.transactionType === selectedFormTransactionType)
+      .map((context) => context.recordType),
+    selectedFormTransactionType === transactionType ? recordType : '',
+  ].filter(Boolean))]
 
   const formFields = tableFields.filter(
     (field) =>
       !field.read_only &&
-      !['company', 'transaction_type', 'record_type'].includes(field.name),
+      field.name !== 'company',
   )
 
   const handleCreate = async (event) => {
     event.preventDefault()
 
-    if (!transactionType || !recordType) {
+    const selectedTransactionType = String(
+      form.transaction_type || transactionType,
+    ).trim()
+    const selectedRecordType = String(
+      form.record_type || recordType,
+    ).trim()
+
+    if (!selectedTransactionType || !selectedRecordType) {
       setError('Transaction type and record type are required.')
       return
     }
+
+    const {
+      transaction_type: _transactionType,
+      record_type: _recordType,
+      ...transactionPayload
+    } = form
 
     setSaving(true)
     setError('')
 
     try {
       await clientApi.createTransaction({
-        transactionType,
-        recordType,
-        payload:form,
+        transactionType: selectedTransactionType,
+        recordType: selectedRecordType,
+        payload: transactionPayload,
       })
 
       setNewOpen(false)
@@ -188,15 +254,13 @@ useEffect(() => {
             <div className="text-sm text-[var(--color-muted)]">
               {count} record{count === 1 ? '' : 's'}
             </div>
-            {hasProductContext && (
-              <button
-                type="button"
-                onClick={openNewForm}
-                className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-              >
-                New
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={openNewForm}
+              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+            >
+              New
+            </button>
           </div>
         </div>
 
@@ -306,11 +370,13 @@ useEffect(() => {
               <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
                 <div>
                   <h2 className="text-lg font-semibold text-[var(--color-ink)]">
-                    New {recordType}
+                    New {recordType || 'Transaction'}
                   </h2>
 
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
-                    {transactionType} / {recordType}
+                    {transactionType && recordType
+                      ? `${transactionType} / ${recordType}`
+                      : 'Choose a transaction type and record type.'}
                   </p>
                 </div>
 
@@ -328,6 +394,41 @@ useEffect(() => {
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {formFields.map((field) => {
                     const value = form[field.name] ?? ''
+
+                    if (field.name === 'transaction_type' || field.name === 'record_type') {
+                      const isTransactionType = field.name === 'transaction_type'
+                      const options = isTransactionType
+                        ? transactionTypeOptions
+                        : recordTypeOptions
+                      const isDisabled = navigationLoading ||
+                        (!isTransactionType && !selectedFormTransactionType)
+
+                      return (
+                        <div key={field.name}>
+                          <label className="mb-1 block text-sm font-medium text-[var(--color-ink)]">
+                            {field.label}
+                          </label>
+                          <select
+                            value={value}
+                            onChange={(event) => updateField(field.name, event.target.value)}
+                            required={field.required}
+                            disabled={isDisabled}
+                            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <option value="">
+                              {navigationLoading
+                                ? 'Loading options…'
+                                : isTransactionType
+                                  ? 'Select transaction type'
+                                  : 'Select record type'}
+                            </option>
+                            {options.map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )
+                    }
                   
                     let inputType = 'text'
                   
