@@ -10,6 +10,7 @@ from uuid import UUID
 
 from ocr.ai.service import ai_configuration_service
 from ocr.models import OCRValidationResult
+from netsuite.validation_error_groups import build_validation_error_groups
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ accounting structures, field mappings, and NetSuite business rules.
 The document has already been validated against NetSuite. The supplied
 information contains the actual validation errors and supporting context.
 
-For every supplied error, provide ONLY these two things:
+For every supplied error group, provide ONLY these two things:
 
 1. likely_reasons
    - Give the most likely causes of the error.
@@ -112,7 +113,7 @@ For every supplied error, provide ONLY these two things:
 Important rules:
 
 - Preserve every supplied error_reference exactly.
-- Return exactly one diagnostic object for every supplied error.
+- Return exactly one diagnostic object for every supplied error group.
 - Do not return title, what_happened, or additional_checks fields.
 - Do not repeat the raw validation error verbatim.
 - Use simple language suitable for a non-technical business user.
@@ -181,12 +182,27 @@ def _build_validation_information(
             else []
         )
 
+        version_data = (
+            validation.version.reviewed_json
+            if isinstance(validation.version.reviewed_json, dict)
+            and validation.version.reviewed_json
+            else validation.version.normalized_json
+        )
+        line_items = (
+            version_data.get("line_items", [])
+            if isinstance(version_data, Mapping)
+            else []
+        )
+        error_groups = build_validation_error_groups(raw_errors, line_items)
         errors = []
 
-        for error_index, error in enumerate(
-            raw_errors[:MAX_ERRORS_PER_RESULT]
-        ):
-            reference = f"{validation.id}:{error_index}"
+        for group in error_groups[:MAX_ERRORS_PER_RESULT]:
+            error_index = group["representative_error_index"]
+            reference = f"{validation.id}:group:{error_index}"
+            error = dict(group["error"])
+            error["affected_lines"] = group["affected_lines"]
+            error["affected_count"] = group["affected_count"]
+            error["source_error_count"] = len(group["error_indexes"])
 
             expected_references.append(reference)
 
@@ -403,7 +419,7 @@ class NetSuiteDiagnosticsService:
                 connection_id=connection_uuid,
                 document__company=company,
             )
-            .select_related("document")
+            .select_related("document", "version")
         )
 
         found_ids = {

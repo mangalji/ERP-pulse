@@ -10,6 +10,7 @@ import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
 import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandle.jsx'
 import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
+import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
 
 const TOP_LEVEL_FIELDS = [
   { key: 'invoice_number', label: 'Invoice Number', type: 'text' },
@@ -528,6 +529,10 @@ export default function OcrResultPage() {
   const lineItems = useMemo(
     () => (Array.isArray(data?.line_items) ? data.line_items : []),
     [data?.line_items],
+  )
+  const validationErrorGroups = useMemo(
+    () => groupValidationErrors(validationResult?.errors, lineItems),
+    [lineItems, validationResult?.errors],
   )
 
   const configuredFields = useMemo(
@@ -1619,7 +1624,7 @@ function getFileCategory(file) {
                     </div>
                   ) : (
                     <>
-                      {(validationResult.errors || []).length > 0 ? (
+                      {validationErrorGroups.length > 0 ? (
                         <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
                           <div className="flex items-center justify-between gap-3">
                             <div>
@@ -1627,23 +1632,25 @@ function getFileCategory(file) {
                                 Validation Errors
                               </p>
                               <p className="mt-1 text-xs text-red-700">
-                                {validationResult.errors.length}{' '}
-                                {validationResult.errors.length === 1
-                                  ? 'issue'
-                                  : 'issues'}{' '}
-                                found
+                                {validationErrorGroups.length}{' '}
+                                {validationErrorGroups.length === 1
+                                  ? 'issue group'
+                                  : 'issue groups'}{' '}
+                                across {validationResult.errors.length} validation errors
                               </p>
                             </div>
                             <span className="rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-semibold text-red-800">
-                              {validationResult.errors.length}
+                              {validationErrorGroups.length}
                             </span>
                           </div>
 
                           <div className="mt-3 divide-y divide-red-200 rounded-md border border-red-200 bg-white">
-                            {validationResult.errors.map(
-                              (errorItem, errorIndex) => (
+                            {validationErrorGroups.map(
+                              (errorGroup) => {
+                                const errorItem = errorGroup.error
+                                return (
                                 <div
-                                  key={`${errorItem?.type || 'error'}-${errorIndex}`}
+                                  key={`${errorItem?.type || 'error'}-${errorGroup.representativeErrorIndex}`}
                                   className="px-3 py-3"
                                 >
                                   <div className="flex items-start gap-3">
@@ -1669,17 +1676,24 @@ function getFileCategory(file) {
                                           {errorItem.extracted_name}
                                         </p>
                                       )}
+                                      {errorGroup.affectedCount > 0 && (
+                                        <p className="mt-1 text-xs text-[var(--color-muted)]">
+                                          Affects {errorGroup.affectedCount} line {errorGroup.affectedCount === 1 ? 'item' : 'items'}
+                                          {formatAffectedLines(errorGroup.affectedLines) && ` · Lines ${formatAffectedLines(errorGroup.affectedLines)}`}
+                                        </p>
+                                      )}
 
                                       <AIDiagnosticGuidance
                                         diagnostic={aiDiagnosticsByReference.get(
-                                          `${validationResult?.validation_id}:${errorIndex}`,
+                                          `${validationResult?.validation_id}:group:${errorGroup.representativeErrorIndex}`,
                                         )}
                                         diagnosing={diagnosing}
                                       />
                                     </div>
                                   </div>
                                 </div>
-                              ),
+                                )
+                              },
                             )}
                           </div>
                         </div>

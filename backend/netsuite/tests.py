@@ -1,9 +1,119 @@
+from types import SimpleNamespace
+
 from django.test import SimpleTestCase
 
+from netsuite.diagnostics_service import _build_validation_information
 from netsuite.services import (
     NetSuiteVendorBillPostingService,
     _build_template_netsuite_mappings,
 )
+from netsuite.validation_error_groups import build_validation_error_groups
+
+
+class ValidationErrorGroupingTests(SimpleTestCase):
+    def test_groups_identical_line_errors_without_merging_source_rows(self):
+        line_items = [
+            {
+                "item": "6180 Professional Fees",
+                "quantity": 1,
+                "unit_price": 100,
+                "tax_amount": 18,
+            },
+            {
+                "item": "6180 Professional Fees",
+                "quantity": 1,
+                "unit_price": 100,
+                "tax_amount": 18,
+            },
+            {
+                "item": "6180 Professional Fees",
+                "quantity": 1,
+                "unit_price": 125,
+                "tax_amount": 22.5,
+            },
+        ]
+        errors = [
+            {
+                "type": "ITEM_NOT_FOUND",
+                "message": "Item does not exist.",
+                "extracted_name": "6180 Professional Fees",
+                "line_index": 1,
+            },
+            {
+                "type": "ITEM_NOT_FOUND",
+                "message": "Item does not exist.",
+                "extracted_name": "6180 Professional Fees",
+                "line_index": 2,
+            },
+            {
+                "type": "ITEM_NOT_FOUND",
+                "message": "Item does not exist.",
+                "extracted_name": "6180 Professional Fees",
+                "line_index": 3,
+            },
+        ]
+
+        groups = build_validation_error_groups(errors, line_items)
+
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0]["affected_lines"], [1, 2])
+        self.assertEqual(groups[0]["affected_count"], 2)
+        self.assertEqual(groups[0]["error_indexes"], [0, 1])
+        self.assertEqual(groups[1]["affected_lines"], [3])
+        self.assertEqual(len(line_items), 3)
+
+    def test_keeps_header_errors_separate_from_line_error_groups(self):
+        errors = [
+            {"type": "LOCATION_NOT_FOUND", "message": "Location missing."},
+            {"type": "ITEM_NOT_FOUND", "message": "Item missing.", "line_index": 1},
+        ]
+
+        groups = build_validation_error_groups(errors, [{"item": "Missing"}])
+
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0]["affected_count"], 0)
+        self.assertEqual(groups[1]["affected_lines"], [1])
+
+    def test_ai_diagnostics_receive_one_reference_per_error_group(self):
+        validation = SimpleNamespace(
+            id="validation-1",
+            document_id="document-1",
+            version=SimpleNamespace(
+                reviewed_json={
+                    "line_items": [
+                        {"item": "Service", "unit_price": 100},
+                        {"item": "Service", "unit_price": 100},
+                    ]
+                },
+                normalized_json={},
+            ),
+            errors=[
+                {
+                    "type": "ITEM_NOT_FOUND",
+                    "message": "Item does not exist.",
+                    "extracted_name": "Service",
+                    "line_index": 1,
+                },
+                {
+                    "type": "ITEM_NOT_FOUND",
+                    "message": "Item does not exist.",
+                    "extracted_name": "Service",
+                    "line_index": 2,
+                },
+            ],
+            items=[],
+            vendor_extracted_name="Vendor",
+            vendor_matched=True,
+            vendor_netsuite_id="12",
+        )
+
+        references, information = _build_validation_information([validation])
+
+        self.assertEqual(references, ["validation-1:group:0"])
+        self.assertEqual(len(information["validations"][0]["errors"]), 1)
+        diagnostic_error = information["validations"][0]["errors"][0]["error"]
+        self.assertEqual(diagnostic_error["affected_count"], 2)
+        self.assertEqual(diagnostic_error["affected_lines"], [1, 2])
 
 
 class TemplateDrivenVendorBillPayloadTests(SimpleTestCase):
