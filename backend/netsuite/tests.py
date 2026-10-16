@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from django.test import SimpleTestCase
 
 from netsuite.diagnostics_service import _build_validation_information
+from netsuite.oauth import netsuite_vendor_bill_url
 from netsuite.services import (
     NetSuiteVendorBillPostingService,
     _build_template_netsuite_mappings,
@@ -173,3 +174,17 @@ class TemplateDrivenVendorBillPayloadTests(SimpleTestCase):
         )
 
         self.assertEqual(value, 1250.5)
+
+
+class NetSuiteRecordUrlTests(SimpleTestCase):
+    def test_vendor_bill_url_uses_account_domain_and_internal_id(self):
+        url = netsuite_vendor_bill_url(
+            account_id="1234567_SB1",
+            record_id="23662",
+        )
+
+        self.assertEqual(
+            url,
+            "https://1234567-sb1.app.netsuite.com/"
+            "app/accounting/transactions/vendbill.nl?id=23662&whence=",
+        )

@@ -505,6 +505,7 @@ export default function OcrResultPage() {
   const [saving, setSaving] = useState(false)
   const [validating, setValidating] = useState(false)
   const [posting, setPosting] = useState(false)
+  const [postedRecord, setPostedRecord] = useState(null)
   const validationAbortControllerRef = useRef(null)
   const postingAbortControllerRef = useRef(null)
   const [viewMode, setViewMode] = useState('fields')
@@ -1082,7 +1083,7 @@ const setField = useCallback((key, value) => {
       return
     }
 
-    await netsuiteApi.postOCRVendorBill(
+    const postingResult = await netsuiteApi.postOCRVendorBill(
       result.document_id,
       activeConnectionId,
       {
@@ -1093,6 +1094,11 @@ const setField = useCallback((key, value) => {
     if (controller.signal.aborted) {
       return
     }
+
+    setPostedRecord({
+      internalId: postingResult?.netsuite_record_id || null,
+      url: postingResult?.netsuite_record_url || null,
+    })
 
     addToast(
       'Vendor Bill posted to NetSuite.',
@@ -1226,6 +1232,28 @@ function getFileCategory(file) {
           </Card>
         ) : result ? (
           <>
+            {postedRecord?.internalId && (
+              <Card className="flex flex-wrap items-center justify-between gap-4 border border-emerald-200 bg-emerald-50 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-emerald-900">
+                    Vendor Bill posted to NetSuite
+                  </p>
+                  <p className="mt-1 text-sm text-emerald-800">
+                    Internal ID: <span className="font-mono font-semibold">{postedRecord.internalId}</span>
+                  </p>
+                </div>
+                {postedRecord.url && (
+                  <Button
+                    type="button"
+                    intent="secondary"
+                    onClick={() => window.open(postedRecord.url, '_blank', 'noopener,noreferrer')}
+                  >
+                    View in NetSuite
+                  </Button>
+                )}
+              </Card>
+            )}
+
             <div
               className="grid gap-4 lg:grid-cols-2"
               style={{ '--ocr-workspace-height': `${workspaceHeight}px` }}

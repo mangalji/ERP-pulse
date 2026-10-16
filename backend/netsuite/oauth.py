@@ -45,6 +45,15 @@ def netsuite_account_domain(account_id: str) -> str:
     return account_id.lower().replace('_', '-')
 
 
+def netsuite_vendor_bill_url(*, account_id: str, record_id: str) -> str:
+    """Return the browser URL for a Vendor Bill created through SuiteTalk."""
+    query = urlencode({"id": str(record_id), "whence": ""})
+    return (
+        f"https://{netsuite_account_domain(account_id)}.app.netsuite.com"
+        f"/app/accounting/transactions/vendbill.nl?{query}"
+    )
+
+
 def build_authorization_url(*, user_id: str, connection_id: str, account_id: str, client_id: str,post_connect_redirect_url: str | None = None) -> str:
     """
     Build the NetSuite OAuth 2.0 authorize URL for a given AGSuite ERP user.

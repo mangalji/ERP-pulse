@@ -17,6 +17,7 @@ export default function ConnectionCard({ connection, isCurrent = false, onUse, o
   const getEmployeeId = (item) =>
     item?.employee_id ||
     item?.employee?.id ||
+    item?.employee ||
     item?.id
 
   const getEmployeeName = (item) => {

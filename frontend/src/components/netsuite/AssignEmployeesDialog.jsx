@@ -15,6 +15,7 @@ export default function AssignEmployeesDialog({ connectionId, employees=[], assi
   return (
     item?.employee_id ||
     item?.employee?.id ||
+    item?.employee ||
     item?.id
   )
 }
@@ -22,11 +23,23 @@ export default function AssignEmployeesDialog({ connectionId, employees=[], assi
 const assignedIds = new Set(
   assignedEmployees
     .map(getAssignedEmployeeId)
-    .filter(Boolean),
+    .filter(Boolean)
+    .map((id) => String(id)),
 )
 
+  const isCompanyAdmin = (employee) =>
+    (employee.roles || []).some((role) => {
+      const name = typeof role === 'string'
+        ? role
+        : role?.role__name || role?.name || ''
+
+      return ['company admin', 'company_admin'].includes(
+        String(name).trim().toLowerCase(),
+      )
+    })
+
   const toggle = (empId) => {
-    if (assignedIds.has(empId)){
+    if (assignedIds.has(String(empId))){
       return
     }
     setSelected((prev) =>
@@ -56,11 +69,17 @@ const assignedIds = new Set(
     }
   }
 
-  const filtered = employees.filter((e) =>
-    (e.email || '').toLowerCase().includes(search.toLowerCase()) ||
-    (e.first_name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (e.last_name || '').toLowerCase().includes(search.toLowerCase())
-  )
+  const normalizedSearch = search.trim().toLowerCase()
+  const filtered = employees.filter((employee) => {
+    if (assignedIds.has(String(employee.id))) return false
+    if (isCompanyAdmin(employee)) return false
+
+    return (
+      (employee.email || '').toLowerCase().includes(normalizedSearch) ||
+      (employee.first_name || '').toLowerCase().includes(normalizedSearch) ||
+      (employee.last_name || '').toLowerCase().includes(normalizedSearch)
+    )
+  })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -74,7 +93,7 @@ const assignedIds = new Set(
         </div>
         <Input placeholder="Search employees..." value={search} onChange={(e) => setSearch(e.target.value)} className="mb-4" />
         <div className="flex max-h-80 flex-col gap-2 overflow-y-auto">
-          {filtered.length === 0 && <p className="text-sm text-[var(--color-muted)]">No employees found.</p>}
+          {filtered.length === 0 && <p className="text-sm text-[var(--color-muted)]">No unassigned employees found.</p>}
           {filtered.map((emp) => {
             const empId = emp.id
             const isSelected = selected.includes(empId)

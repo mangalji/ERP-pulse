@@ -25,6 +25,7 @@ from common.common_utils import success_response
 from rest_framework.response import Response
 from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionTemplate, OCRValidationResult
 from netsuite.models import NetSuiteOCRPosting
+from netsuite.oauth import netsuite_vendor_bill_url
 from ocr.serializers import (
     DocumentHistorySerializer,
     DocumentVersionSerializer,
@@ -628,6 +629,7 @@ class OCRHistoryListView(APIView):
         if all_document_ids and all_version_ids:
             postings = (
                 NetSuiteOCRPosting.objects
+                .select_related("connection")
                 .filter(
                     document_id__in=all_document_ids,
                     version_id__in=all_version_ids,
@@ -713,6 +715,23 @@ class OCRHistoryListView(APIView):
                 validation_ids.append(str(validation.id))
                 validation_dates.append(validation.created_at)
 
+            netsuite_records = [
+                {
+                    "document_id": str(posting.document_id),
+                    "internal_id": posting.netsuite_record_id,
+                    "url": netsuite_vendor_bill_url(
+                        account_id=posting.connection.netsuite_account_id,
+                        record_id=posting.netsuite_record_id,
+                    ),
+                }
+                for posting in postings
+                if (
+                    posting is not None
+                    and posting.status == "posted"
+                    and posting.netsuite_record_id
+                )
+            ]
+
             if is_multiple:
                 filename = f"Batch — {total_documents} files"
                 record_type = "batch"
@@ -751,6 +770,7 @@ class OCRHistoryListView(APIView):
                     "validation_updated_at": max(validation_dates) if validation_dates else None,
                     "validated_count": validated_count,
                     "posted_count": posted_count,
+                    "netsuite_records": netsuite_records,
                 }
             )
 

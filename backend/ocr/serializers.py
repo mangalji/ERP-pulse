@@ -114,6 +114,11 @@ class OCRHistoryEntrySerializer(serializers.Serializer):
     validation_errors = serializers.ListField(allow_null=True, required=False)
     validation_id = serializers.UUIDField(allow_null=True, required=False)
     validation_updated_at = serializers.DateTimeField(allow_null=True, required=False)
+    netsuite_records = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        default=list,
+    )
 
 
 

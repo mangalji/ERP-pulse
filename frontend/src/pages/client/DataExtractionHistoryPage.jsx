@@ -627,8 +627,8 @@ export default function DataExtractionHistoryPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1100px]">
-                <div className="grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+              <div className="min-w-[1240px]">
+                <div className="grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_140px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   <div />
                   <div>History #</div>
                   <div>File / Batch</div>
@@ -637,6 +637,7 @@ export default function DataExtractionHistoryPage() {
                   <div>Created By</div>
                   <div>Created</div>
                   <div>Status</div>
+                  <div>NetSuite Bill</div>
                   <div className="text-center">{canDeleteHistory ? 'Action' : ''}</div>
                 </div>
 
@@ -644,11 +645,14 @@ export default function DataExtractionHistoryPage() {
                   {records.map((item) => {
                     const selected = selectedIds.has(item.batch_id)
                     const isPosted = item.validation_status === 'POSTED'
+                    const netsuiteRecords = Array.isArray(item.netsuite_records)
+                      ? item.netsuite_records
+                      : []
 
                     return (
                       <div
                         key={item.batch_id}
-                        className={`grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
+                        className={`grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_140px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
                       >
                         <div>
                           <input
@@ -722,6 +726,25 @@ export default function DataExtractionHistoryPage() {
                               View Result
                             </Button>
                           )}
+                        </div>
+
+                        <div className="flex max-h-24 flex-col gap-2 overflow-y-auto">
+                          {netsuiteRecords.length ? netsuiteRecords.map((record) => (
+                            <div key={record.document_id} className="flex items-center justify-between gap-2">
+                              <span className="font-mono text-xs text-[var(--color-ink)]" title={`NetSuite Internal ID ${record.internal_id}`}>
+                                #{record.internal_id}
+                              </span>
+                              {record.url && (
+                                <button
+                                  type="button"
+                                  onClick={() => window.open(record.url, '_blank', 'noopener,noreferrer')}
+                                  className="rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                                >
+                                  View
+                                </button>
+                              )}
+                            </div>
+                          )) : '--'}
                         </div>
 
                         <div className="flex items-center justify-center">

@@ -10,6 +10,7 @@ import ErrorState from '../../components/ui/ErrorState.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { clientApi } from '../../services/client.js'
+import { useAuth } from '../../contexts/AuthContext.jsx'
 import {
   COUNTRY_OPTIONS,
   NAME_MAX_LENGTH,
@@ -23,6 +24,7 @@ import {
 } from '../../utils/formValidation.js'
 
 export default function EmployeesPage() {
+  const { user } = useAuth()
   const { toasts, addToast, removeToast } = useToast()
   const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
@@ -694,6 +696,7 @@ function hasEmployeePassword(employee) {
                     <th className="pb-2 pr-4 font-medium">Name</th>
                     <th className="pb-2 pr-4 font-medium">Email</th>
                     <th className="pb-2 pr-4 font-medium">Role</th>
+                    <th className="pb-2 pr-4 font-medium">Designation</th>
                     <th className="pb-2 pr-4 font-medium">Department</th>
                     <th className="pb-2 pr-4 font-medium">Status</th>
                     <th className="pb-2 pr-4 font-medium">Invitation</th>
@@ -708,6 +711,7 @@ function hasEmployeePassword(employee) {
                       </td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.email}</td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{getRoleName(employee)}</td>
+                      <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.designation || '—'}</td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.department || '—'}</td>
                       <td className="py-3 pr-4">
                         <Badge tone={!hasEmployeePassword(employee) ? 'neutral' : employee.is_active ? 'positive' : 'neutral'}>
@@ -744,9 +748,11 @@ function hasEmployeePassword(employee) {
                               Resend Invitation
                             </button>
                           )}
-                          <Button size="sm" intent="secondary" onClick={() => handleToggleActive(employee)}>
-                            {employee.is_active ? 'Deactivate' : 'Activate'}
-                          </Button>
+                          {String(employee.id) !== String(user?.id) && (
+                            <Button size="sm" intent="secondary" onClick={() => handleToggleActive(employee)}>
+                              {employee.is_active ? 'Deactivate' : 'Activate'}
+                            </Button>
+                          )}
                         </div>
                         ):(
                           <span className="text-xs text-[var(--color-muted)]">

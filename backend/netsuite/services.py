@@ -30,7 +30,11 @@ from netsuite.exceptions import (
     NetSuiteTokenExchangeException,
 )
 from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteCustomField, NetSuiteReferenceRecord, NetSuiteFieldCatalogue
-from netsuite.oauth import build_authorization_url, resolve_user_id_from_state
+from netsuite.oauth import (
+    build_authorization_url,
+    netsuite_vendor_bill_url,
+    resolve_user_id_from_state,
+)
 from netsuite.repositories import NetSuiteConnectionRepository
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
@@ -1666,6 +1670,10 @@ class NetSuiteVendorBillPostingService:
             return {
                 "posting_id": str(existing.id),
                 "netsuite_record_id": existing.netsuite_record_id,
+                "netsuite_record_url": netsuite_vendor_bill_url(
+                    account_id=existing.connection.netsuite_account_id,
+                    record_id=existing.netsuite_record_id,
+                ),
                 "already_posted": True,
             }
 
@@ -2133,6 +2141,10 @@ class NetSuiteVendorBillPostingService:
             return {
                 "posting_id": str(posting.id),
                 "netsuite_record_id": str(record_id),
+                "netsuite_record_url": netsuite_vendor_bill_url(
+                    account_id=connection.netsuite_account_id,
+                    record_id=str(record_id),
+                ),
                 "already_posted": False,
             }
 
