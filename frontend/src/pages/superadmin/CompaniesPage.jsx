@@ -672,6 +672,19 @@ export default function CompaniesPage() {
           >
             Restore
           </button>
+          <button
+            onClick={() =>
+              setConfirm({
+                action: () =>
+                  superadminApi.permanentlyDeleteCompany(row.id),
+                company: row,
+                label: 'Permanently Delete',
+              })
+            }
+            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-negative)] hover:bg-[var(--color-negative-soft)]"
+          >
+            Permanently Delete
+          </button>
         </div>
       ),
     },

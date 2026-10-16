@@ -914,6 +914,7 @@ export default function OcrPage() {
   const [saving, setSaving] = useState(false)
   const [validating, setValidating] = useState(false)
   const [posting, setPosting] = useState(false)
+  const [postedRecord, setPostedRecord] = useState(null)
   const validationAbortControllerRef = useRef(null)
   const postingAbortControllerRef = useRef(null)
   const validationInFlightRef = useRef(false)
@@ -1063,6 +1064,9 @@ export default function OcrPage() {
       setValidationResult(
         interruptedAction ? null : stored?.validationResult || null,
       )
+      setPostedRecord(
+        interruptedAction ? null : stored?.postedRecord || null,
+      )
 
       setEditing(
         stored?.editing === true,
@@ -1186,6 +1190,7 @@ useEffect(() => {
       results,
       activeIndex,
       validationResult,
+      postedRecord,
       editing,
       validating,
       posting,
@@ -1213,6 +1218,7 @@ useEffect(() => {
     results,
     activeIndex,
     validationResult,
+    postedRecord,
     editing,
     validating,
     posting,
@@ -1694,7 +1700,7 @@ useEffect(() => {
       return
     }
 
-    await netsuiteApi.postOCRVendorBill(
+    const postingResult = await netsuiteApi.postOCRVendorBill(
       activeResult.document_id,
       activeConnectionId,
       {
@@ -1705,6 +1711,14 @@ useEffect(() => {
     if (controller.signal.aborted) {
       return
     }
+
+    setPostedRecord({
+      documentId: activeResult.document_id,
+      internalId: postingResult?.netsuite_record_id
+        ? String(postingResult.netsuite_record_id)
+        : null,
+      url: postingResult?.netsuite_record_url || '',
+    })
 
     addToast(
       'Vendor Bill posted to NetSuite.',
@@ -2465,6 +2479,7 @@ useEffect(() => {
       setProcessing(true)
       setResults([])
       setActiveIndex(0)
+      setPostedRecord(null)
 
       const formData = new FormData()
 
@@ -3414,6 +3429,24 @@ const goNext = () => {
                     <p className="mt-1 text-sm text-emerald-800">
                       The OCR data has been successfully validated against NetSuite and is ready to post.
                     </p>
+                    {postedRecord?.internalId &&
+                      postedRecord.documentId === activeResult?.document_id && (
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-emerald-200 pt-4">
+                        <p className="text-sm text-emerald-800">
+                          Posted to NetSuite · Internal ID:{' '}
+                          <span className="font-mono font-semibold">{postedRecord.internalId}</span>
+                        </p>
+                        {postedRecord.url && (
+                          <Button
+                            type="button"
+                            intent="secondary"
+                            onClick={() => window.open(postedRecord.url, '_blank', 'noopener,noreferrer')}
+                          >
+                            View in NetSuite
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <>

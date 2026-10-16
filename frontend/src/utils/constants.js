@@ -58,6 +58,7 @@ export const SUPERADMIN_ENDPOINTS = {
   companySuspend: (id) => `/superadmin/companies/${id}/suspend/`,
   companyActivate: (id) => `/superadmin/companies/${id}/activate/`,
   companySoftDelete: (id) => `/superadmin/companies/${id}/soft_delete/`,
+  companyPermanentlyDelete: (id) => `/superadmin/companies/${id}/permanently-delete/`,
   companyRestore: (id) => `/superadmin/companies/${id}/restore/`,
   plans: '/superadmin/plans/',
   employees: '/superadmin/employees/',

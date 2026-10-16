@@ -403,25 +403,23 @@ class SuperAdminService:
 
         return user
 
-    def activate_employee(self, *, employee_id):
+    def activate_employee(self, *, employee_id, acting_user=None):
         user = get_object_or_404(
             User.objects.select_related('company'),
             pk=employee_id,
         )
 
         if user.company:
-            if user.company.is_deleted:
-                raise ValueError(
-                    "This employee's company no longer exists."
-                )
+            # Keep the platform endpoint consistent with the company-admin
+            # endpoint: a company user cannot be activated until invitation
+            # setup has created a usable password.
+            from tenancy.services import ClientPortalService
 
-            if company_lifecycle_service.get_effective_status(
-                company=user.company
-            ) == Company.Status.SUSPENDED:
-                raise ValueError(
-                    "This company's account is currently suspended. "
-                    "Employee operations are unavailable."
-                )
+            return ClientPortalService().activate_employee(
+                company=user.company,
+                employee_id=user.id,
+                acting_user=acting_user,
+            )
 
         user.is_active = True
         user.save(update_fields=['is_active'])

@@ -225,6 +225,23 @@ class CompanyViewSet(viewsets.ModelViewSet):
             },
         )
 
+    @action(detail=True, methods=['post'], url_path='permanently-delete')
+    def permanently_delete(self, request, pk=None):
+        """Immediately hard-delete a company already in the recovery bin."""
+        company = self.get_object()
+        try:
+            result = superadmin_service.permanently_delete_company(
+                company_id=company.id,
+                deleted_by=request.user,
+            )
+        except ValueError as exc:
+            raise ValidationError({'detail': str(exc)})
+
+        return success_response(
+            message='Company permanently deleted successfully.',
+            data=result,
+        )
+
     @action(
         detail=True,
         methods=['post'],
@@ -593,7 +610,10 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         try:
-            employee = superadmin_service.activate_employee(employee_id=pk)
+            employee = superadmin_service.activate_employee(
+                employee_id=pk,
+                acting_user=request.user,
+            )
         except ValueError as exc:
             return Response(
                 {'detail': str(exc)},

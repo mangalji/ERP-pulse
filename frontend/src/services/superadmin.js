@@ -18,6 +18,7 @@ export const superadminApi = {
   suspendCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companySuspend(id)).then(unwrap),
   activateCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyActivate(id)).then(unwrap),
   softDeleteCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companySoftDelete(id)).then(unwrap),
+  permanentlyDeleteCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPermanentlyDelete(id)).then(unwrap),
   restoreCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyRestore(id)).then(unwrap),
   permanentlyDeletedCompanies: (params) => apiClient.get(`${SUPERADMIN_ENDPOINTS.companies}permanently-deleted/`,{params}).then(unwrap),
 
