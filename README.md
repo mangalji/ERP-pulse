@@ -78,8 +78,10 @@ Company (tenant)
 ```
 
 - **Super Admin** manages companies, plans, employees and platform settings.
+- **Company Admin** manages that company's admins, employees, invitations, connections and navigation.
 - **Company (tenant)** owns all of its data; every tenant-scoped query is filtered by company.
-- **Employee** works with the connections an admin assigned; secrets stay server-side.
+- **Employees** work with the connections an admin assigned; Company Admins have company-wide access and
+  do not require a connection assignment. Secrets stay server-side.
 
 ---
 
@@ -119,7 +121,9 @@ Company (tenant)
 - Requests for suspended or deleted companies are rejected
 
 ### Invitations and subscriptions
-- UUID invitation tokens with expiry, resend and a public acceptance page
+- Super Admin and Company Admin use the same invitation flow for their respective users
+- UUID invitation tokens with expiry, resend and a public acceptance page; pending or expired
+  invitations leave the user inactive until password setup is completed
 - Plans and company subscriptions managed from the Super Admin portal; client-side subscription page
 
 ### NetSuite integration
@@ -130,6 +134,8 @@ Company (tenant)
 - Validation of extracted documents against NetSuite reference data and **Vendor Bill posting**
 - **Batch validate / post** runs as a background job with live progress; it resumes after a crash and
   never re-posts documents that already finished
+- A successful Vendor Bill post returns its NetSuite internal ID and a direct **View in NetSuite** link.
+  The browser URL is generated server-side from the connected NetSuite account ID and record ID.
 
 ### OCR and data extraction
 - Upload a single file, several files, or a ZIP; PDFs and images are normalised into page images
@@ -138,13 +144,21 @@ Company (tenant)
 - AI providers: **Google Gemini**, **OpenAI** and **Anthropic**, configured per company
   (API key stored encrypted); Gemini calls are rate-limited (concurrency + requests per minute)
 - Review screen: extracted data is a draft until a user reviews and saves it
-- History of batches, documents and document versions
+- Save & Validate calculates line-item totals and taxes from the reviewed data before NetSuite posting
+- Repeated unmatched line items with identical line-level data are grouped for validation diagnostics,
+  so users receive one resolution instead of duplicate messages and AI diagnostics use fewer tokens
+- Validation errors and AI diagnostics are stored with the document version. History reopens the
+  workflow at its saved state: not validated, validated, or posted (including the NetSuite record link)
+- History of batches, documents and document versions; every history row has a permanent sequential
+  history number that is never reused after deletion
 - Failures carry a stable `failure_code` and a user-safe message; technical detail goes to the logs
 
 ### Platform
 - Admin-configurable navigation tabs and categories
+- Navigation changes are reflected in the active client session without requiring a browser refresh
 - Request monitoring, error log, API usage, system-health page
-- Super Admin portal and client portal in the same React app
+- Super Admin portal and client portal in the same React app; a deleted company can be permanently
+  removed from the Super Admin's soft-deleted list when immediate removal is required
 
 ---
 
@@ -395,11 +409,23 @@ a one-line warning with the reason. A traceback is written only for genuinely un
 
 ## Testing
 
-The previous backend tests were removed while a new suite is being written, so there is currently no
-automated backend test suite in the repository. Planned coverage: OCR engine and failure handling,
-Redis-optional fallbacks, background execution and recovery, storage backends, and NetSuite batch jobs.
-Frontend linting: `npm run lint`. Smoke test after a deploy: check `/api/v1/monitoring/health/`, upload one
-file, upload several files, and run a NetSuite batch validate.
+Run backend checks and tests from `backend/`:
+
+```powershell
+python manage.py check
+python manage.py test
+```
+
+Run frontend checks from `frontend/`:
+
+```powershell
+npm run lint
+npm run build
+```
+
+Smoke test after a deploy: check `/api/v1/monitoring/health/`, complete login OTP verification, invite and
+accept a company user, upload one file, upload several files, validate them, and post one validated Vendor
+Bill to NetSuite. Confirm that its internal ID and **View in NetSuite** link are returned.
 
 ---
 
@@ -414,9 +440,9 @@ file, upload several files, and run a NetSuite batch validate.
 
 **Implemented**: custom user + JWT + email OTP; multi-tenancy with company lifecycle; invitations;
 subscriptions and plans; Super Admin and client portals; NetSuite OAuth, connections, REST + SuiteQL,
-field catalogue, custom fields; OCR extraction with templates, history and versions; per-company AI
-providers; Vendor Bill posting; NetSuite batch jobs; optional Redis / Celery with PostgreSQL fallbacks;
-storage backends (local / PostgreSQL / S3); monitoring and health.
+field catalogue, custom fields; OCR extraction with templates, history and versions; saved validation and
+AI diagnostics; Vendor Bill posting with NetSuite record links; NetSuite batch jobs; optional Redis / Celery
+with PostgreSQL fallbacks; storage backends (local / PostgreSQL / S3); monitoring and health.
 
 **Active work**: production hardening on Catalyst, a new automated test suite, connection reconnect flow
 when refresh tokens expire.
