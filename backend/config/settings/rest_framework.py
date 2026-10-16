@@ -31,6 +31,12 @@ REST_FRAMEWORK = {
         "common.exception_handler.standard_exception_handler"
     ),
 
+    "NUM_PROXIES": config(
+        "THROTTLE_NUM_PROXIES",
+        default=1,
+        cast=int,
+    ),
+
     # Throttling
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
@@ -49,9 +55,29 @@ REST_FRAMEWORK = {
             default="1000/min",
         ),
 
-        "login_otp": config(
-            "THROTTLE_LOGIN_OTP",
+        "login_password_ip": config(
+            "THROTTLE_LOGIN_PASSWORD_IP",
+            default="10/min",
+        ),
+        "login_password_email": config(
+            "THROTTLE_LOGIN_PASSWORD_EMAIL",
+            default="10/hour",
+        ),
+        "login_verify_ip": config(
+            "THROTTLE_LOGIN_VERIFY_IP",
+            default="10/min",
+        ),
+        "login_verify_email": config(
+            "THROTTLE_LOGIN_VERIFY_EMAIL",
+            default="5/hour",
+        ),
+        "login_resend_ip": config(
+            "THROTTLE_LOGIN_RESEND_IP",
             default="5/min",
+        ),
+        "login_resend_email": config(
+            "THROTTLE_LOGIN_RESEND_EMAIL",
+            default="5/hour",
         ),
 
         "register_otp": config(

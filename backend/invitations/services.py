@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import timedelta
 
 from django.conf import settings
@@ -34,6 +35,143 @@ class InvitationService:
         if user is not None and getattr(user, 'is_authenticated', False):
             return user
         return None
+
+    def create_company_user_and_invite(
+        self,
+        *,
+        company,
+        acting_user,
+        email,
+        first_name,
+        last_name,
+        country,
+        gender,
+        role_id,
+        mobile_number=None,
+        designation='',
+        department='',
+        request=None,
+    ):
+        """
+        Create one pending company user and its invitation.
+
+        Both platform administrators and company administrators use this
+        method.  The caller decides *which* company is in scope; this method
+        owns the identical user, role, invitation, email and audit flow.
+        """
+        company_lifecycle_service.ensure_operational(company=company)
+
+        normalized_email = (email or '').lower().strip()
+        if not normalized_email:
+            raise ValueError('Email is required.')
+        if len(normalized_email) > 40:
+            raise ValueError('Email must not exceed 40 characters.')
+        if User.objects.filter(email__iexact=normalized_email).exists():
+            raise ValueError('A user with this email already exists.')
+
+        first_name = (first_name or '').strip()
+        last_name = (last_name or '').strip()
+        if not first_name:
+            raise ValueError('First name is required.')
+        if not last_name:
+            raise ValueError('Last name is required.')
+        if len(first_name) > 20:
+            raise ValueError('First name must not exceed 20 characters.')
+        if len(last_name) > 20:
+            raise ValueError('Last name must not exceed 20 characters.')
+
+        name_pattern = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$")
+        if not name_pattern.fullmatch(first_name):
+            raise ValueError(
+                'First name may contain letters, spaces, hyphens, and apostrophes only.'
+            )
+        if not name_pattern.fullmatch(last_name):
+            raise ValueError(
+                'Last name may contain letters, spaces, hyphens, and apostrophes only.'
+            )
+
+        country = (country or '').strip().upper()
+        if not country:
+            raise ValueError('Country is required.')
+        if gender not in dict(User._meta.get_field('gender').choices):
+            raise ValueError('Invalid gender selected.')
+
+        if not role_id:
+            raise ValueError('Role is required.')
+        role = Role.objects.filter(pk=role_id).first()
+        if role is None:
+            raise ValueError('Role not found.')
+        if role.company_id is not None and role.company_id != company.id:
+            raise ValueError('Role does not belong to this company.')
+        if role.company_id is None and role.name.strip().lower() == 'super admin':
+            raise ValueError('The Super Admin role cannot be assigned to a company user.')
+
+        normalized_phone = None
+        phone_country_code = ''
+        if mobile_number:
+            try:
+                normalized = normalize_phone(phone=mobile_number, country=country)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            normalized_phone = normalized.number
+            country = normalized.country_code
+            phone_country_code = normalized.dial_code
+            if User.objects.filter(mobile_number=normalized_phone).exists():
+                raise ValueError('A user with this mobile number already exists.')
+
+        with transaction.atomic():
+            user = User(
+                email=normalized_email,
+                first_name=first_name,
+                last_name=last_name,
+                mobile_number=normalized_phone,
+                country=country,
+                phone_country_code=phone_country_code,
+                gender=gender,
+                designation=(designation or '').strip(),
+                department=(department or '').strip(),
+                company=company,
+                role=role,
+                is_active=False,
+                is_email_verified=False,
+            )
+            user.set_unusable_password()
+            user.save()
+
+            invitation = self.create_invitation(
+                email=user.email,
+                company_id=company.id,
+                role_id=role.id,
+                created_by=acting_user,
+                request=request,
+                send_email=False,
+            )
+
+            audit_service.log(
+                module=AuditModule.EMPLOYEE,
+                action=AuditAction.CREATE,
+                entity='User',
+                entity_id=str(user.id),
+                company=company,
+                user=acting_user,
+                new_value={
+                    'event': 'created',
+                    'employee_name': user.get_full_name(),
+                    'email': user.email,
+                    'role_id': str(role.id),
+                },
+            )
+
+        _, invitation_email_sent = self.send_invitation(
+            invitation_id=invitation.id,
+            request=request,
+            return_delivery_status=True,
+        )
+        return {
+            'user': user,
+            'invitation': invitation,
+            'invitation_email_sent': invitation_email_sent,
+        }
 
     def create_invitation(self, *, email, company_id, role_id=None, created_by=None, request=None, send_email=True):
         """
@@ -127,30 +265,51 @@ class InvitationService:
 
     def resend_invitation(self, *, invitation_id, request=None):
         """
-        Resend an invitation and extend its expiry.
+        Resend an invitation. 
+    
+        A still-valid pending invitation keeps its existing token and gets a
+        fresh 24-hour expiry. An expired invitation receives a new Invitation
+        row and token, so the old expired link can never become valid again.
         """
+
         invitation = Invitation.objects.select_related('company', 'role').get(pk=invitation_id)
 
-        if invitation.status != InvitationStatus.PENDING:
+        if invitation.status not in {
+            InvitationStatus.PENDING, InvitationStatus.EXPIRED
+        }:
             raise ValueError('Only pending invitations can be resent.')
 
-        invitation.expires_at = timezone.now() + timedelta(hours=24)
-        invitation.save(update_fields=['expires_at'])
+        if invitation.status == InvitationStatus.PENDING and not invitation.is_expired():
+            invitation.expires_at = timezone.now() + timedelta(hours=24)
+            invitation.save(update_fields=["expires_at"])
 
-        self._send_invitation_email(invitation)
+            self._send_invitation_email(invitation)
 
-        audit_service.log(
-            module=AuditModule.INVITATION,
-            action=AuditAction.SEND,
-            entity='Invitation',
-            entity_id=str(invitation.id),
-            company=invitation.company,
-            user=self._audit_user(request),
-            old_value={'action': 'resent'},
-            new_value={'expires_at': invitation.expires_at.isoformat()},
+            audit_service.log(
+                module=AuditModule.INVITATION,
+                action=AuditAction.SEND,
+                entity='Invitation',
+                entity_id=str(invitation.id),
+                company=invitation.company,
+                user=self._audit_user(request),
+                old_value={'action': 'resent'},
+                new_value={'expires_at': invitation.expires_at.isoformat()},
+            )
+
+            return invitation
+
+        if invitation.status == InvitationStatus.PENDING:
+            invitation.status = InvitationStatus.EXPIRED
+            invitation.save(update_fields=['status'])
+
+        return self.create_invitation(
+            email=invitation.email,
+            company_id=invitation.company_id,
+            role_id=invitation.role_id,
+            created_by=self._audit_user(request) or invitation.created_by,
+            request=request,
+            send_email=True,
         )
-
-        return invitation
 
     def validate_token(self, token):
         """
@@ -401,16 +560,8 @@ class InvitationService:
         if settings.DEBUG and is_local_frontend:
             logger.info(
                 "Invitation Link: %s, email: %s, company:%s, expires at: %s",
-                invitation_link,invitation.email,invitation.company.name,invitation.expirest_at,
+                invitation_link,invitation.email,invitation.company.name,invitation.expires_at,
             )
-        # print("\n" + "=" * 70)
-        # print("              AGSUITE INVITATION")
-        # print("=" * 70)
-        # print(f"Email:            {invitation.email}")
-        # print(f"Company:          {invitation.company.name}")
-        # print(f"Invitation Link:  {invitation_link}")
-        # print(f"Expires At:       {invitation.expires_at}")
-        # print("=" * 70 + "\n")
 
         subject = f"You've been invited to join {invitation.company.name}"
         message = (

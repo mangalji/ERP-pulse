@@ -43,106 +43,39 @@ class ClientPortalService:
             company=company,
         )
 
-    @transaction.atomic
-    def create_employee(self, *, company, acting_user, **data):
-        self._ensure_company_operational(company=company)
-        email = (data.get('email') or '').lower().strip()
-        if not email:
-            raise ValueError('Email is required.')
-        if User.objects.filter(email__iexact=email).exists():
-            raise ValueError('A user with this email already exists.')
+    def create_employee(self, *, company, acting_user, request=None, **data):
+        """Create a company user through the shared invitation flow."""
+        from invitations.services import invitation_service
 
-        first_name = (data.get('first_name') or '').strip()
-        last_name = (data.get('last_name') or '').strip()
-        if not first_name:
-            raise ValueError('First name is required.')
-        if not last_name:
-            raise ValueError('Last name is required.')
-
-        country = (data.get('country') or '').strip().upper()
-        if not country:
-            raise ValueError('Country is required.')
-
-        gender = data.get('gender')
-        if gender not in dict(Gender.choices):
-            raise ValueError('Invalid gender selected.')
-
-        mobile_number = data.get('mobile_number')
-        normalized_phone = None
-        phone_country_code = ''
-        if mobile_number:
-            try:
-                normalized = normalize_phone(
-                    phone=mobile_number,
-                    country=country,
-                )
-            except ValueError as exc:
-                raise ValueError(str(exc)) from exc
-            normalized_phone = normalized.number
-            country = normalized.country_code
-            phone_country_code = normalized.dial_code
-
-            if User.objects.filter(mobile_number=normalized_phone).exists():
-                raise ValueError('A user with this mobile number already exists.')
-
-        role_id = data.get('role_id')
-        role = self._validate_role(
+        result = invitation_service.create_company_user_and_invite(
             company=company,
-            role_id=role_id,
-        )
-
-        employee = User.objects.create(
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            mobile_number=normalized_phone,
-            country=country,
-            phone_country_code=phone_country_code,
-            gender=gender,
+            acting_user=acting_user,
+            email=data.get('email'),
+            first_name=data.get('first_name'),
+            last_name=data.get('last_name'),
+            mobile_number=data.get('mobile_number'),
+            country=data.get('country'),
+            gender=data.get('gender'),
+            role_id=data.get('role_id'),
             designation=data.get('designation', ''),
             department=data.get('department', ''),
-            company=company,
-            role=role,
-            is_active=False,
-            is_email_verified=False,
+            request=request,
         )
-
-        employee.set_unusable_password()
-        employee.save(update_fields=['password'])
-        from invitations.services import invitation_service
-        invitation = invitation_service.create_invitation(
-            email=email.lower().strip(),
-            company_id=company.id,
-            role_id=role.id,
-            created_by=acting_user,
-        )
-
-        audit_service.log(
-            module=AuditModule.EMPLOYEE,
-            action=AuditAction.CREATE,
-            entity='User',
-            entity_id=str(employee.id),
-            company=company,
-            user=acting_user,
-            new_value={
-                        'event':'created',
-                        'employee_name': f'{employee.first_name} {employee.last_name}'.strip(),
-                        'email': employee.email, 
-                        'role_id': str(role_id) if role_id else None,
-                        },
-        )
-        return employee
+        return result['user']
 
     def resend_employee_invitation(self, *, company, employee_id, acting_user):
         self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
+        
         invitation = Invitation.objects.filter(
             email=employee.email,
             company=company,
-            status=InvitationStatus.PENDING,
-        ).order_by('-created_at').first()
+            # status=InvitationStatus.PENDING,
+        ).filter(Q(status=InvitationStatus.PENDING) | Q(status=InvitationStatus.EXPIRED)).order_by('-created_at').first()
+        
         if not invitation:
             raise ValueError('No pending invitation found for this employee.')
+        
         from invitations.services import invitation_service
         invitation_service.resend_invitation(invitation_id=invitation.id)
         return employee

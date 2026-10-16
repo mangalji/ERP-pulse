@@ -34,7 +34,15 @@ from accounts.serializers import (
 )
 from common.pagination import paginated_response
 from common.common_utils import success_response
-from common.throttles import LoginOTPThrottle, RegisterOTPThrottle
+from common.throttles import (
+    LoginPasswordEmailThrottle,
+    LoginPasswordIPThrottle,
+    LoginResendEmailThrottle,
+    LoginResendIPThrottle,
+    LoginVerifyEmailThrottle,
+    LoginVerifyIPThrottle,
+    RegisterOTPThrottle,
+)
 from common.authentication import (
     set_auth_cookies, clear_auth_cookies, enforce_cookie_csrf,
     CheckedTokenRefreshSerializer,
@@ -81,7 +89,7 @@ class LoginView(APIView):
     """
 
     permission_classes = [AllowAny]
-    throttle_classes = [LoginOTPThrottle]
+    throttle_classes = [LoginPasswordIPThrottle,LoginPasswordEmailThrottle]
 
     def post(self, request):
         enforce_cookie_csrf(request)
@@ -115,7 +123,7 @@ class VerifyLoginOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
-    throttle_classes = [LoginOTPThrottle]
+    throttle_classes = [LoginVerifyEmailThrottle,LoginVerifyIPThrottle]
 
     def post(self, request):
         enforce_cookie_csrf(request)
@@ -141,7 +149,7 @@ class VerifyLoginOTPView(APIView):
             message='Login successful.',
             data={
                 'access': str(refresh.access_token),
-                'refresh': str(refresh),
+                # 'refresh': str(refresh),
                 'user': UserSerializer(user).data,
             },
         )
@@ -161,9 +169,10 @@ class ResendLoginOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
-    throttle_classes = [LoginOTPThrottle]
+    throttle_classes = [LoginResendEmailThrottle,LoginResendIPThrottle]
 
     def post(self, request):
+        enforce_cookie_csrf(request)
         serializer = ResendLoginOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = authentication_service.resend_login_otp(**serializer.validated_data)
@@ -209,7 +218,9 @@ class TokenRefreshView(BaseTokenRefreshView):
 
         response = success_response(
             message='Token refreshed successfully.',
-            data=serializer.validated_data,
+            data={
+                'access': serializer.validated_data['access'],
+            },
         )
 
         # Set fresh httpOnly cookies for the new tokens.

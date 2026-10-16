@@ -22,6 +22,7 @@ from .serializers import (
     InvitationValidateSerializer,
     RequestInvitationOTPSerializer,
 )
+from django.db.models import Q
 from .services import invitation_service
 
 
@@ -269,7 +270,10 @@ class InvitationViewSet(viewsets.ViewSet):
         
         invitation = Invitation.objects.filter(
             email__iexact=email,
-            status=InvitationStatus.PENDING,
+            # status=InvitationStatus.PENDING,
+        ).filter(
+            Q(status=InvitationStatus.PENDING)
+            | Q(status=InvitationStatus.EXPIRED)
         ).order_by('-created_at').first()
         
         if not invitation:

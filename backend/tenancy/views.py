@@ -129,6 +129,7 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
             employee = client_portal_service.create_employee(
                 company=company,
                 acting_user=request.user,
+                request=request,
                 **serializer.validated_data,
             )
         except ValueError as exc:

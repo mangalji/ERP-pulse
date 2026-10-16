@@ -7,15 +7,19 @@ User = get_user_model()
 class IsSuperAdmin(permissions.BasePermission):
     """
     Allows access only to super admin users.
-    Super admin is defined as either:
+    Super admin is defined as any of:
     1. A Django superuser (is_superuser=True)
-    2. A user with the global 'super_admin' role (company=None)
+    2. A delegated internal staff user (is_staff=True)
+    3. A user with the global 'super_admin' role (company=None)
     """
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        if getattr(request.user, 'is_superuser', False):
+        if (
+            getattr(request.user, 'is_superuser', False)
+            or getattr(request.user, 'is_staff', False)
+        ):
             return True
 
         return (

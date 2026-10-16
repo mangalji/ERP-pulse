@@ -202,135 +202,39 @@ class SuperAdminService:
             "deleted": deleted,
         }
 
-    def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None,mobile_number=None, country=None, gender=None):
-        """Create a pending company user and send the existing invitation flow."""
-
-
-        normalized_email = email.lower().strip()
-
-        if User.objects.filter(email__iexact=normalized_email).exists():
-            raise ValueError("A user with this email already exists.")
-
-        first_name = (first_name or '').strip()
-        last_name = (last_name or '').strip()
-
-        if len(normalized_email) > 40:
-            raise ValueError("Email must not exceed 40 characters.")
-        
-        if len(first_name) > 20:
-            raise ValueError("First name must not exceed 20 characters.")
-        
-        if len(last_name) > 20:
-            raise ValueError("Last name must not exceed 20 characters.")
-        
-        name_pattern = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$")
-        
-        if not name_pattern.fullmatch(first_name):
-            raise ValueError(
-                "First name may contain letters, spaces, hyphens, and apostrophes only."
-            )
-        
-        if not name_pattern.fullmatch(last_name):
-            raise ValueError(
-                "Last name may contain letters, spaces, hyphens, and apostrophes only."
-            )
-
-        if not first_name:
-            raise ValueError("First name is required.")
-        if not last_name:
-            raise ValueError("Last name is required.")
-
-        if not country:
-            raise ValueError("Country is required.")
-        if gender not in dict(Gender.choices):
-            raise ValueError("Invalid gender selected.")  
-
-        normalized_phone = None
-        phone_country_code = ''
-        if mobile_number:
-            try:
-                normalized = normalize_phone(
-                    phone=mobile_number,
-                    country=country,
-                )
-            except ValueError as exc:
-                raise ValueError(str(exc)) from exc
-            normalized_phone = normalized.number
-            country = normalized.country_code
-            phone_country_code = normalized.dial_code  
-
-            if User.objects.filter(mobile_number=normalized_phone).exists():
-                raise ValueError("A user with this mobile number already exists.")
-
+    def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None, mobile_number=None, country=None, gender=None):
+        """Create a client-company user through the shared invitation flow."""
         if not company_id:
-            raise ValueError("company_id is required.")
+            raise ValueError('company_id is required.')
         company = Company.objects.filter(pk=company_id).first()
-        if not company:
-            raise ValueError("Company not found.")
-        if company.is_deleted:
-            raise ValueError(
-                "This company no longer exists."
-            )
-        if company_lifecycle_service.get_effective_status(
-            company=company
-        ) == Company.Status.SUSPENDED:
-            raise ValueError(
-                "This company's account is currently suspended. "
-                "New employee invitations are unavailable."
-            )
+        if company is None or company.is_deleted:
+            raise ValueError('Company not found.')
 
         role_name = {
-            "admin": "Company Admin",
-            "employee": "Employee",
+            'admin': 'Company Admin',
+            'employee': 'Employee',
         }.get(role)
         if not role_name:
-            raise ValueError("Invalid role selected.")
-
+            raise ValueError('Invalid role selected.')
         selected_role = Role.objects.filter(
             name__iexact=role_name,
             company__isnull=True,
         ).first()
-        if not selected_role:
+        if selected_role is None:
             raise ValueError(f"Required role '{role_name}' is not configured.")
 
-        # User, RBAC assignment, and invitation must succeed or fail together.
-        with transaction.atomic():
-            user = User(
-                email=normalized_email,
-                first_name=first_name,
-                last_name=last_name,
-                mobile_number=normalized_phone,
-                country=country.strip().upper(),
-                phone_country_code=phone_country_code,
-                gender=gender,
-                company=company,
-                role=selected_role,
-                is_active=False,
-                is_email_verified=False,
-            )
-            user.set_unusable_password()
-            user.save()
-            invitation = invitation_service.create_invitation(
-                email=normalized_email,
-                company_id=company.id,
-                role_id=selected_role.id,
-                created_by=acting_user,
-                request=request,
-                send_email=False,
-            )
-
-        # Delivery happens after the database transaction commits. A failed
-        # delivery leaves the pending user and invitation available to resend.
-        _, invitation_email_sent = invitation_service.send_invitation(
-            invitation_id=invitation.id,
+        return invitation_service.create_company_user_and_invite(
+            company=company,
+            acting_user=acting_user,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            mobile_number=mobile_number,
+            country=country,
+            gender=gender,
+            role_id=selected_role.id,
             request=request,
-            return_delivery_status=True,
         )
-        return {
-            "user": user,
-            "invitation": invitation,
-            "invitation_email_sent": invitation_email_sent,
-        }
 
     def resend_employee_invitation(self, *, employee_id, acting_user, request=None):
         employee = User.objects.filter(pk=employee_id).select_related('company').first()
@@ -366,7 +270,11 @@ class SuperAdminService:
             .filter(
                 email__iexact=employee.email,
                 company=employee.company,
-                status=InvitationStatus.PENDING,
+                # status=InvitationStatus.PENDING,
+            )
+            .filter(
+                Q(status=InvitationStatus.PENDING)
+                | Q(status=InvitationStatus.EXPIRED)
             )
             .order_by('-created_at')
             .first()

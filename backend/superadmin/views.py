@@ -130,21 +130,15 @@ class CompanyViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {'detail': 'A deleted company must be restored before activation.'}
             )
-        previous_reason = company.suspension_reason
+        # previous_reason = company.suspension_reason
         company.suspension_reason = CompanySuspensionReason.NONE
         effective_status = company_lifecycle_service.get_effective_status(
             company=company
             )
         if effective_status != Company.Status.ACTIVE:
             company.status = Company.Status.SUSPENDED
-            company.suspension_reason = (
-                previous_reason
-                if previous_reason in {
-                    CompanySuspensionReason.MANUAL,
-                    CompanySuspensionReason.PLAN,
-                }
-                else CompanySuspensionReason.PLAN
-            )
+            company.suspension_reason = CompanySuspensionReason.PLAN
+            
         company.save(update_fields=['status','suspension_reason'])
         raise ValidationError(
             {
@@ -547,6 +541,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 # role_ids=role_ids,
                 role=role,
                 acting_user=request.user,
+                request=request,
                 mobile_number=mobile_number,
                 country=country,
                 gender=gender,

@@ -7,7 +7,6 @@ import SectionCard from '../../components/superadmin/SectionCard.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
 import Button from '../../components/ui/Button.jsx'
 import { superadminApi } from '../../services/superadmin.js'
-import { formatDate } from '../../utils/formatDate.js'
 
 const statIcons = {
   companies: (
@@ -52,14 +51,6 @@ const statIcons = {
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   ),
-  modules: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="3" width="7" height="7" rx="1.5" />
-      <rect x="3" y="14" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
-    </svg>
-  ),
 }
 
 export default function DashboardPage() {
@@ -94,7 +85,6 @@ export default function DashboardPage() {
       { id: 'agsuite', label: 'AGSuite Employees', value: summary.total_agsuite_employees, icon: statIcons.agsuite },
       { id: 'client', label: 'Client Employees', value: summary.total_client_employees, icon: statIcons.client },
       { id: 'plans', label: 'Plans', value: summary.total_plans, icon: statIcons.plans },
-      { id: 'modules', label: 'Modules', value: summary.total_modules, icon: statIcons.modules },
     ]
   }, [summary])
 
@@ -103,7 +93,7 @@ export default function DashboardPage() {
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Platform Overview"
-          subtitle="A high-level view of companies, users, plans, and modules across AGSuite."
+          subtitle="A high-level view of companies, users, and plans across AGSuite."
           actions={
             <Button intent="secondary" onClick={() => navigate('/admin/companies')}>
               View Companies
@@ -122,7 +112,7 @@ export default function DashboardPage() {
           <>
             {loading ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {Array.from({ length: 9 }).map((_, i) => (
+                {Array.from({ length: 6 }).map((_, i) => (
                   <Skeleton key={i} className="h-28 w-full" />
                 ))}
               </div>
