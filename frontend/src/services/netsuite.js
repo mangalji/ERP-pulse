@@ -64,6 +64,31 @@ export const netsuiteApi = {
   getBatchJobStatus: (jobId) =>
   apiClient.get(`/netsuite/ocr/batch/jobs/${jobId}/`).then(unwrap),
 
+  // Poll a batch job until it finishes. ``onProgress`` receives every status
+  // payload so callers can show per-file results as they arrive.
+  waitForBatchJob: async (
+    jobId,
+    { onProgress, intervalMs = 1500, maxAttempts = 400 } = {},
+  ) => {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const response = await apiClient
+        .get(`/netsuite/ocr/batch/jobs/${jobId}/`)
+        .then(unwrap)
+      const job = response?.data ?? response ?? {}
+
+      if (typeof onProgress === 'function') onProgress(job)
+
+      if (['SUCCESS', 'FAILURE', 'REVOKED'].includes(String(job?.status || '').toUpperCase())) {
+        return job
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    }
+
+    throw new Error('NetSuite batch job timed out.')
+  },
+
+
   postOCRVendorBill: (documentId, connectionId, config={}) => 
     apiClient.post('/netsuite/ocr/post-vendor-bill/',{document_id:documentId, connection_id:connectionId},config).then(unwrap),
   batchPostDocuments: (documentIds, connectionId) =>

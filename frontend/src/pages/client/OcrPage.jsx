@@ -10,6 +10,7 @@ import { aiIntegrationApi } from '../../services/aiIntegration.js'
 import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandle.jsx'
 import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
+import { isNetSuiteReauthJob } from '../../utils/netsuiteErrors.js'
 
 const OCR_PAGE_SESSION_KEY = 'ocr_page_session_state'
 
@@ -433,6 +434,292 @@ function normalizeEditedData(data, configuredFields) {
   return next
 }
 
+// ---------------------------------------------------------------------------
+// Multiple-file (batch) mode helpers
+// ---------------------------------------------------------------------------
+
+function isBatchFileEligible(result) {
+  return Boolean(result && (result.document_id || result.upload_id) && result.data)
+}
+
+// A file is ready to post only when its latest validation succeeded and it has
+// no unsaved edits made after that validation.
+function isBatchFileValidated(result) {
+  return (
+    String(result?.batch_validation?.status || '').toUpperCase() === 'VALIDATED' &&
+    !result?.draft_data
+  )
+}
+
+function isBatchFilePosted(result) {
+  return ['POSTED', 'ALREADY_POSTED'].includes(
+    String(result?.batch_posting?.status || '').toUpperCase(),
+  )
+}
+
+function fileDataSignature(data) {
+  try {
+    return JSON.stringify(data ?? null)
+  } catch {
+    return ''
+  }
+}
+
+function toBatchValidationEntry(jobResult) {
+  return {
+    status: String(
+      jobResult?.status || (jobResult?.error ? 'FAILED' : 'VALIDATION_FAILED'),
+    ).toUpperCase(),
+    validation_id: jobResult?.validation_id || null,
+    errors: Array.isArray(jobResult?.errors) ? jobResult.errors : [],
+    vendor: jobResult?.vendor || null,
+    items: Array.isArray(jobResult?.items) ? jobResult.items : [],
+    summary: jobResult?.summary || null,
+    error: jobResult?.error || null,
+    code: jobResult?.code || null,
+  }
+}
+
+function toBatchPostingEntry(jobResult) {
+  return {
+    status: String(jobResult?.status || 'FAILED').toUpperCase(),
+    netsuite_record_id: jobResult?.netsuite_record_id || null,
+    netsuite_record_url: jobResult?.netsuite_record_url || null,
+    error: jobResult?.error || null,
+    code: jobResult?.code || null,
+  }
+}
+
+// One file's validation/posting outcome, in the same layout as the
+// single-file "NetSuite Validation" card.
+function BatchFileResultCard({
+  index,
+  result,
+  isActive,
+  onSelect,
+  aiDiagnosticsByReference,
+  diagnosing,
+}) {
+  const validation = result?.batch_validation || null
+  const posting = result?.batch_posting || null
+  const validationStatus = String(validation?.status || '').toUpperCase()
+  const validated = validationStatus === 'VALIDATED'
+  const posted = isBatchFilePosted(result)
+  const postFailed = Boolean(posting) && !posted
+  const hasUnsavedChanges = Boolean(result?.draft_data)
+
+  const savedData = cloneData(result?.data)
+  const lineItems = Array.isArray(savedData.line_items) ? savedData.line_items : []
+  const errors = Array.isArray(validation?.errors) ? validation.errors : []
+  const errorGroups = validation && !validated ? groupValidationErrors(errors, lineItems) : []
+  const items = Array.isArray(validation?.items) ? validation.items : []
+  const matchedItems = items.filter((item) => item?.matched).length
+
+  let badgeText = 'NOT VALIDATED'
+  let badgeClass = 'bg-slate-100 text-slate-700'
+  if (posted) {
+    badgeText = '✓ POSTED TO NETSUITE'
+    badgeClass = 'bg-emerald-100 text-emerald-700'
+  } else if (validationStatus === 'SAVE_FAILED') {
+    badgeText = '✕ SAVE FAILED'
+    badgeClass = 'bg-red-100 text-red-700'
+  } else if (validated) {
+    badgeText = '✓ VALIDATION SUCCESSFUL'
+    badgeClass = 'bg-emerald-100 text-emerald-700'
+  } else if (validation) {
+    badgeText = '✕ VALIDATION FAILED'
+    badgeClass = 'bg-red-100 text-red-700'
+  }
+
+  return (
+    <Card
+      className={`border shadow-none ${
+        isActive ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'
+      }`}
+    >
+      <details open={Boolean(validation) && (!validated || postFailed)}>
+        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 p-4">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-[var(--color-ink)]">
+              {index + 1}. {result?.filename || 'OCR file'}
+            </p>
+            {validation && validationStatus !== 'SAVE_FAILED' && (
+              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                Vendor {validation.vendor?.matched ? '✓ found' : '✕ not found'} ·{' '}
+                {matchedItems}/{items.length} items matched
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {hasUnsavedChanges && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                Unsaved changes
+              </span>
+            )}
+            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClass}`}>
+              {badgeText}
+            </span>
+          </div>
+        </summary>
+
+        {validation && (
+          <div className="border-t border-[var(--color-border)] p-4">
+            {validationStatus !== 'SAVE_FAILED' && (
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <p className="text-xs text-[var(--color-muted)]">Vendor</p>
+                  <p className="mt-1 font-medium text-[var(--color-ink)]">
+                    {validation.vendor?.matched ? '✓ Found in NetSuite' : '✕ Not found in NetSuite'}
+                  </p>
+                  {validation.vendor?.extracted_name && (
+                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                      {validation.vendor.extracted_name}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-[var(--color-border)] p-4">
+                  <p className="text-xs text-[var(--color-muted)]">Items</p>
+                  <p className="mt-1 font-medium text-[var(--color-ink)]">
+                    {matchedItems}/{items.length} matched
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {validation.summary && (
+              <p className="mt-3 text-xs text-[var(--color-muted)]">
+                {Number(validation.summary.source_rows || 0)} source rows ·{' '}
+                {Number(validation.summary.unique_netsuite_items || 0)} unique NetSuite items ·{' '}
+                {Number(validation.summary.matched_rows || 0)} matched ·{' '}
+                {Number(validation.summary.unmatched_rows || 0)} unmatched
+              </p>
+            )}
+
+            {validated ? (
+              <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-sm font-semibold text-emerald-900">Validation successful</p>
+                <p className="mt-1 text-sm text-emerald-800">
+                  This file has been validated against NetSuite and is ready to post.
+                </p>
+              </div>
+            ) : (
+              <>
+                {validation.error && (
+                  <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
+                    <p className="text-sm font-semibold text-red-900">
+                      {validationStatus === 'SAVE_FAILED' ? 'Could not save this file' : 'Validation could not be completed'}
+                    </p>
+                    <p className="mt-1 text-sm text-red-800">{validation.error}</p>
+                  </div>
+                )}
+
+                {errorGroups.length > 0 && (
+                  <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
+                    <p className="text-sm font-semibold text-red-900">Validation Errors</p>
+                    <p className="mt-1 text-xs text-red-700">
+                      {errorGroups.length} {errorGroups.length === 1 ? 'issue group' : 'issue groups'}{' '}
+                      across {errors.length} validation errors
+                    </p>
+
+                    <div className="mt-3 divide-y divide-red-200 rounded-md border border-red-200 bg-white">
+                      {errorGroups.map((errorGroup) => {
+                        const errorItem = errorGroup.error
+                        return (
+                          <div
+                            key={`${errorItem?.type || 'error'}-${errorGroup.representativeErrorIndex}`}
+                            className="px-3 py-3"
+                          >
+                            <div className="flex items-start gap-3">
+                              <span className="mt-0.5 shrink-0 text-red-600">✕</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-medium text-red-900">
+                                    {errorItem?.message || 'Validation error'}
+                                  </p>
+                                  {errorItem?.type && (
+                                    <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800">
+                                      {String(errorItem.type)}
+                                    </span>
+                                  )}
+                                </div>
+                                {errorItem?.extracted_name && (
+                                  <p className="mt-1 text-xs text-[var(--color-muted)]">
+                                    Affected value: {errorItem.extracted_name}
+                                  </p>
+                                )}
+                                {errorGroup.affectedCount > 0 && (
+                                  <p className="mt-1 text-xs text-[var(--color-muted)]">
+                                    Affects {errorGroup.affectedCount} line {errorGroup.affectedCount === 1 ? 'item' : 'items'}
+                                    {formatAffectedLines(errorGroup.affectedLines) && ` · Lines ${formatAffectedLines(errorGroup.affectedLines)}`}
+                                  </p>
+                                )}
+                                <AIDiagnosticGuidance
+                                  diagnostic={aiDiagnosticsByReference.get(
+                                    `${validation.validation_id}:group:${errorGroup.representativeErrorIndex}`,
+                                  )}
+                                  diagnosing={diagnosing}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {!validation.error && errorGroups.length === 0 && (
+                  <p className="mt-5 text-sm text-[var(--color-muted)]">
+                    NetSuite validation failed, but no detailed validation errors were returned.
+                  </p>
+                )}
+
+                <div className="mt-4 flex justify-end">
+                  <Button type="button" intent="secondary" onClick={() => onSelect(index)}>
+                    Open this file to edit
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {posted && (
+              <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-sm font-semibold text-emerald-900">
+                  Vendor Bill {posting.status === 'ALREADY_POSTED' ? 'already exists' : 'created'} in NetSuite
+                  {posting.netsuite_record_id ? ` (#${posting.netsuite_record_id})` : ''}
+                </p>
+                {posting.netsuite_record_url && (
+                  <a
+                    href={posting.netsuite_record_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-block text-sm font-medium text-emerald-800 underline"
+                  >
+                    View in NetSuite
+                  </a>
+                )}
+              </div>
+            )}
+
+            {postFailed && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4">
+                <p className="text-sm font-semibold text-red-900">Posting to NetSuite failed</p>
+                <p className="mt-1 text-sm text-red-800">
+                  {posting.error || 'No error detail was returned.'}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </details>
+    </Card>
+  )
+}
+
+
+
 const FieldInput =  memo(function FieldInput({ field, value, editable, onChange }) {
 
   const displayValue = toInputValue(value)
@@ -636,6 +923,7 @@ export default function OcrPage() {
   const [aiDiagnostics, setAiDiagnostics] = useState([])
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagnosticError, setDiagnosticError] = useState('')
+  const [batchProgress, setBatchProgress] = useState('')
 
   const [ocrStateReady, setOcrStateReady] = useState(false)
   const restoredSessionStateRef = useRef(false)
@@ -651,6 +939,24 @@ export default function OcrPage() {
   )
 
   const activeResult = results[activeIndex] ?? null
+
+  const isBatchMode = ocrMode === 'multiple'
+  const batchEligibleResults = useMemo(
+    () => results.filter(isBatchFileEligible),
+    [results],
+  )
+  const batchValidatedCount = batchEligibleResults.filter(isBatchFileValidated).length
+  const batchPostedCount = batchEligibleResults.filter(isBatchFilePosted).length
+  const batchExcludedCount = results.length - batchEligibleResults.length
+  const allBatchValidated =
+    batchEligibleResults.length > 0 &&
+    batchValidatedCount === batchEligibleResults.length
+  const allBatchPosted =
+    batchEligibleResults.length > 0 &&
+    batchPostedCount === batchEligibleResults.length
+  const batchHasActivity = results.some(
+    (item) => item?.batch_validation || item?.batch_posting,
+  )
 
   const activeTemplateConfig =
     activeResult?.requested_fields || activeResult?.fields_config || selectedTemplate?.fields_config || null
@@ -729,9 +1035,17 @@ export default function OcrPage() {
         setOcrMode(
           stored?.ocrMode || 'single',
         )
+        const storedActionInterrupted =
+          stored?.actionInterrupted === true ||
+          stored?.validating === true ||
+          stored?.posting === true
         setResults(
           Array.isArray(stored?.results)
-            ? stored.results
+            ? stored.results.map((item) =>
+                storedActionInterrupted
+                  ? { ...item, batch_validation: undefined, batch_posting: undefined }
+                  : item,
+              )
             : [],
         )
         setActiveIndex(
@@ -785,23 +1099,28 @@ export default function OcrPage() {
           : '',
       )
 
-      const storedSelectedFileCount = Array.isArray(stored?.selectedFiles)
-        ? stored.selectedFiles.filter((item) => item?.filename).length
-        : 0
-
-      // Browser File objects cannot be reconstructed from sessionStorage metadata.
-      // Keep persisted OCR results, but require source files to be selected again.
+      // Source files are cleared after refresh.
+      // Existing OCR results and other page state remain unchanged.
       setSelectedFiles([])
+      setError('')
+
+      // const storedSelectedFileCount = Array.isArray(stored?.selectedFiles)
+      //   ? stored.selectedFiles.filter((item) => item?.filename).length
+      //   : 0
+
+      // // Browser File objects cannot be reconstructed from sessionStorage metadata.
+      // // Keep persisted OCR results, but require source files to be selected again.
+      // setSelectedFiles([])
 
       const restoredResults = Array.isArray(stored?.results)
         ? stored.results
         : []
 
-      if (storedSelectedFileCount > 0 && restoredResults.length === 0) {
-        setError(
-          'Your selected source files cannot be restored after a page refresh. Please select them again before extraction.',
-        )
-      }
+      // if (storedSelectedFileCount > 0 && restoredResults.length === 0) {
+      //   setError(
+      //     'Your selected source files cannot be restored after a page refresh. Please select them again before extraction.',
+      //   )
+      // }
 
       if (interruptedAction) {
         setValidationResult(null)
@@ -925,7 +1244,7 @@ useEffect(() => {
     setEditing(false)
     setSaving(false)
     setViewMode('fields')
-    setData(cloneData(activeResult?.data))
+    setData(cloneData((ocrMode === 'multiple' && activeResult?.draft_data) || activeResult?.data))
     setValidationResult(null)
     setAiDiagnostics([])
     setDiagnosing(false)
@@ -1424,6 +1743,392 @@ useEffect(() => {
     }
   }
 }
+
+  // Multiple mode: keep unsaved edits per file so switching files does not
+  // lose them and "Save & Validate" can save every edited file at once.
+  useEffect(() => {
+    if (ocrMode !== 'multiple' || !editing || !activeResult) return
+
+    const dirty =
+      fileDataSignature(data) !== fileDataSignature(cloneData(activeResult.data))
+
+    setResults((current) =>
+      current.map((item, index) => {
+        if (index !== activeIndex) return item
+        if (dirty) {
+          return fileDataSignature(item.draft_data) === fileDataSignature(data)
+            ? item
+            : { ...item, draft_data: cloneData(data) }
+        }
+        return item.draft_data ? { ...item, draft_data: undefined } : item
+      }),
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, editing, ocrMode, activeIndex])
+
+  // -------------------------------------------------------------------------
+  // Multiple-file mode: save + validate every file in one action, then post the
+  // whole batch (one Vendor Bill per file) once every file is validated.
+  // -------------------------------------------------------------------------
+  const patchResultByIndex = useCallback((index, patch) => {
+    setResults((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    )
+  }, [])
+
+  const applyBatchValidationResults = useCallback((jobResults) => {
+    const entries = new Map()
+    ;(Array.isArray(jobResults) ? jobResults : []).forEach((jobResult) => {
+      if (jobResult?.document_id) {
+        entries.set(String(jobResult.document_id), toBatchValidationEntry(jobResult))
+      }
+    })
+    if (!entries.size) return entries
+
+    setResults((current) =>
+      current.map((item) => {
+        const entry = entries.get(String(item?.document_id))
+        if (!entry) return item
+        return { ...item, batch_validation: entry, batch_posting: undefined }
+      }),
+    )
+    return entries
+  }, [])
+
+  const applyBatchPostResults = useCallback((jobResults) => {
+    const entries = new Map()
+    ;(Array.isArray(jobResults) ? jobResults : []).forEach((jobResult) => {
+      if (jobResult?.document_id) {
+        entries.set(String(jobResult.document_id), toBatchPostingEntry(jobResult))
+      }
+    })
+    if (!entries.size) return entries
+
+    setResults((current) =>
+      current.map((item) => {
+        const entry = entries.get(String(item?.document_id))
+        return entry ? { ...item, batch_posting: entry } : item
+      }),
+    )
+    return entries
+  }, [])
+
+  // One AI diagnostics call for every failed file; references are namespaced
+  // by validation id, so a single list serves all per-file cards.
+  const requestBatchDiagnostics = useCallback(
+    async (validationIds) => {
+      if (!connectionId || !validationIds?.length) return
+
+      setDiagnosing(true)
+      setDiagnosticError('')
+
+      try {
+        const diagnostics = []
+        
+        for(let start=0;start < validationIds.length;start += 50){
+          const validationIdBatch = validationIds.slice(start,start+50).map(String)
+          
+          const response = await aiIntegrationApi.diagnoseNetSuiteValidation({
+            validation_ids: validationIdBatch,
+            connection_id: connectionId,
+          })
+          if (Array.isArray(response?.diagnostics)){
+            diagnostics.push(...response.diagnostics)
+          }
+        }
+        setAiDiagnostics(diagnostics)
+      } catch (err) {
+        console.error('NetSuite resolution guidance failed:', err)
+        setAiDiagnostics([])
+        setDiagnosticError(
+          err?.response?.data?.detail ||
+            'We could not prepare AI resolution guidance right now. Please try again.',
+        )
+      } finally {
+        setDiagnosing(false)
+      }
+    },
+    [connectionId],
+  )
+
+  const handleBatchSaveAndValidate = async () => {
+    if (validationInFlightRef.current || postingInFlightRef.current) return
+
+    if (!connectionId) {
+      addToast('A NetSuite connection is required before validation.', 'error')
+      return
+    }
+
+    const targets = results
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => isBatchFileEligible(item))
+
+    if (!targets.length) {
+      addToast('There are no extracted files to validate.', 'error')
+      return
+    }
+
+    // Files already validated (and not edited since) are not re-run.
+    const pending = targets.filter(({ item }) => !isBatchFileValidated(item))
+    if (!pending.length) {
+      addToast('All files are already validated. You can post the batch to NetSuite.', 'success')
+      return
+    }
+
+    validationInFlightRef.current = true
+    setEditing(false)
+    setAiDiagnostics([])
+    setDiagnosticError('')
+    setValidating(true)
+    setSaving(true)
+
+    const documentIds = []
+    let saveFailures = 0
+
+    try {
+      // 1) Save every file that is new or edited.
+      for (let position = 0; position < pending.length; position += 1) {
+        const { item, index } = pending[position]
+        const needsSave = !item.batch_validation || Boolean(item.draft_data)
+
+        if (!needsSave) {
+          documentIds.push(String(item.document_id))
+          continue
+        }
+
+        setBatchProgress(
+          `Saving ${position + 1}/${pending.length}: ${item.filename || 'file'}`,
+        )
+
+        try {
+          const sourceData = index === activeIndex ? data : (item.draft_data ?? item.data)
+          const fields = resolveConfiguredFields(
+            item.requested_fields || item.fields_config || selectedTemplate?.fields_config || null,
+            sourceData,
+          )
+          const payload = { data: normalizeEditedData(sourceData, fields) }
+          if (item.document_id) {
+            payload.document_id = item.document_id
+          } else {
+            payload.upload_id = item.upload_id
+          }
+
+          const response = await apiClient.post('/ocr/review/save/', payload)
+          const responseData = response?.data?.data ?? response?.data ?? {}
+          const documentId = responseData?.document_id || item.document_id || null
+
+          patchResultByIndex(index, {
+            document_id: documentId,
+            upload_id: responseData?.upload_id || item.upload_id || null,
+            version_id: responseData?.version_id || item.version_id || null,
+            version_number: responseData?.version_number || item.version_number || null,
+            status: responseData?.status || 'APPROVED',
+            data: responseData?.data || payload.data,
+            draft_data: undefined,
+          })
+
+          if (documentId) documentIds.push(String(documentId))
+        } catch (err) {
+          console.error('Failed to save OCR result:', err)
+          saveFailures += 1
+          patchResultByIndex(index, {
+            batch_validation: {
+              status: 'SAVE_FAILED',
+              errors: [],
+              items: [],
+              error:
+                err?.response?.data?.detail ||
+                err?.response?.data?.error ||
+                err?.message ||
+                'Failed to save OCR result.',
+            },
+            batch_posting: undefined,
+          })
+        }
+      }
+
+      setSaving(false)
+
+      if (!documentIds.length) {
+        addToast('No files could be saved, so validation was skipped.', 'error')
+        return
+      }
+
+      // 2) Validate all saved files as one NetSuite batch job; results are
+      // shown file by file as the job progresses.
+      setBatchProgress(`Validating 0/${documentIds.length}...`)
+      const queued = await netsuiteApi.validateBatchDocuments(documentIds, connectionId)
+      if (!queued?.job_id) {
+        throw new Error('NetSuite batch validation did not return a job ID.')
+      }
+
+      const job = await netsuiteApi.waitForBatchJob(queued.job_id, {
+        onProgress: (progress) => {
+          applyBatchValidationResults(progress?.results)
+          setBatchProgress(
+            `Validating ${progress?.completed ?? 0}/${progress?.total ?? documentIds.length}...`,
+          )
+        },
+      })
+
+      if (isNetSuiteReauthJob(job)) {
+        addToast(
+          'NetSuite connection needs reconnecting. Ask a Company Admin to reconnect it, then retry.',
+          'error',
+        )
+      }
+
+      let entries = applyBatchValidationResults(job?.results)
+      if (!entries.size) {
+        const reason = job?.error || 'No validation result was returned.'
+        entries = applyBatchValidationResults(
+          documentIds.map((documentId) => ({
+            document_id: documentId,
+            status: 'FAILED',
+            error: reason,
+          })),
+        )
+      }
+
+      // 3) AI guidance for every file that failed validation.
+      const failedValidationIds = [...entries.values()]
+        .filter((entry) => entry.status !== 'VALIDATED' && entry.validation_id && entry.errors.length)
+        .map((entry) => entry.validation_id)
+
+      if (failedValidationIds.length) {
+        setBatchProgress('Preparing AI guidance for failed files...')
+        await requestBatchDiagnostics(failedValidationIds)
+      }
+
+      const validatedCount = [...entries.values()].filter(
+        (entry) => entry.status === 'VALIDATED',
+      ).length
+
+      if (validatedCount === documentIds.length && saveFailures === 0) {
+        addToast(
+          `All ${documentIds.length} files validated successfully. You can now post the batch to NetSuite.`,
+          'success',
+        )
+      } else {
+        addToast(
+          `${validatedCount} of ${documentIds.length + saveFailures} files validated. Review the issues below, correct the data, and validate again.`,
+          'error',
+        )
+      }
+    } catch (err) {
+      console.error('Batch Save & Validate failed:', err)
+      addToast(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Could not validate the batch. Please try again.',
+        'error',
+      )
+    } finally {
+      validationInFlightRef.current = false
+      setSaving(false)
+      setValidating(false)
+      setBatchProgress('')
+    }
+  }
+
+  const handleBatchPost = async () => {
+    if (editing || saving || validating || posting || diagnosing) {
+      addToast('Wait for the current action to finish before posting.', 'error')
+      return
+    }
+
+    const eligible = results.filter(isBatchFileEligible)
+    if (!eligible.length || !eligible.every(isBatchFileValidated)) {
+      addToast(
+        'Every file must be validated successfully before the batch can be posted to NetSuite.',
+        'error',
+      )
+      return
+    }
+
+    // On a retry after a partial failure, files already posted are skipped.
+    const toPost = eligible.filter((item) => !isBatchFilePosted(item))
+    if (!toPost.length) {
+      addToast('All files in this batch are already posted to NetSuite.', 'success')
+      return
+    }
+
+    postingInFlightRef.current = true
+    setPosting(true)
+    setBatchProgress(`Posting 0/${toPost.length}...`)
+
+    try {
+      const connectionData = await loadNetSuiteConnection()
+      const activeConnectionId = connectionData?.id || connectionId
+
+      if (!activeConnectionId) {
+        addToast('A NetSuite connection is required before posting.', 'error')
+        return
+      }
+
+      const documentIds = toPost.map((item) => String(item.document_id))
+      const queued = await netsuiteApi.batchPostDocuments(documentIds, activeConnectionId)
+      if (!queued?.job_id) {
+        throw new Error('NetSuite batch posting did not return a job ID.')
+      }
+
+      const job = await netsuiteApi.waitForBatchJob(queued.job_id, {
+        onProgress: (progress) => {
+          applyBatchPostResults(progress?.results)
+          setBatchProgress(
+            `Posting ${progress?.completed ?? 0}/${progress?.total ?? documentIds.length}...`,
+          )
+        },
+      })
+
+      if (isNetSuiteReauthJob(job)) {
+        addToast(
+          'NetSuite connection needs reconnecting. Ask a Company Admin to reconnect it, then retry.',
+          'error',
+        )
+      }
+
+      let entries = applyBatchPostResults(job?.results)
+      if (!entries.size) {
+        const reason = job?.error || 'No posting result was returned.'
+        entries = applyBatchPostResults(
+          documentIds.map((documentId) => ({
+            document_id: documentId,
+            status: 'FAILED',
+            error: reason,
+          })),
+        )
+      }
+
+      const postedCount = [...entries.values()].filter((entry) =>
+        ['POSTED', 'ALREADY_POSTED'].includes(entry.status),
+      ).length
+
+      addToast(
+        postedCount === documentIds.length
+          ? `${postedCount} Vendor Bills posted to NetSuite.`
+          : `${postedCount} of ${documentIds.length} Vendor Bills posted. Check the failed files below and retry.`,
+        postedCount === documentIds.length ? 'success' : 'error',
+      )
+    } catch (err) {
+      console.error('Batch post to NetSuite failed:', err)
+      addToast(
+        err?.response?.data?.detail ||
+          err?.response?.data?.error ||
+          err?.message ||
+          'Failed to post the batch to NetSuite.',
+        'error',
+      )
+    } finally {
+      postingInFlightRef.current = false
+      setPosting(false)
+      setBatchProgress('')
+    }
+  }
+
   
   const loadNetSuiteConnection = useCallback(async () => {
   if (connection) return connection
@@ -1439,6 +2144,7 @@ useEffect(() => {
     return null
   }
 }, [connection])
+
 useEffect(() => {
   loadNetSuiteConnection()
 }, [loadNetSuiteConnection])
@@ -1974,24 +2680,27 @@ useEffect(() => {
     }
   }, [activeResult?.preview_url])
 
-  const canSlide = results.length > 1
+  const canSlide = (results.length > 0 ? results.length : selectedFiles.length) > 1
 
-  const goPrevious = () => {
-    if (!results.length) return
+const goPrevious = () => {
+  const itemCount = results.length || selectedFiles.length
 
-    setActiveIndex((current) =>
-      current <= 0 ? results.length - 1 : current - 1,
-    )
-  }
+  if (itemCount <= 1) return
 
-  const goNext = () => {
-    if (!results.length) return
+  setActiveIndex((current) =>
+    current <= 0 ? itemCount - 1 : current - 1,
+  )
+}
 
-    setActiveIndex((current) =>
-      current >= results.length - 1 ? 0 : current + 1,
-    )
-  }
+const goNext = () => {
+  const itemCount = results.length || selectedFiles.length
 
+  if (itemCount <= 1) return
+
+  setActiveIndex((current) =>
+    current >= itemCount - 1 ? 0 : current + 1,
+  )
+}
   const statusLabel = (status) => {
     if (!status) return 'Unknown'
     return String(status).replaceAll('_', ' ')
@@ -2494,10 +3203,17 @@ useEffect(() => {
               const action = event.target.value
             
               if (action === 'save_validate') {
-                await handleSaveAndValidate()
-              }
-            
-              if (action === 'post') {
+                await (isBatchMode ? handleBatchSaveAndValidate() : handleSaveAndValidate())
+              
+              // if (action === 'post' && isBatchMode) {
+              //   await handleBatchPost()
+              //   event.target.value = ''
+              //   return
+              // }
+            } else if (action === 'post') {
+                if (isBatchMode) {
+                  await handleBatchPost()
+                } else{
                 if (
                   String(validationResult?.status || '').toUpperCase() !== 'VALIDATED'
                 ){
@@ -2510,15 +3226,16 @@ useEffect(() => {
                   }
                 await handlePost()
               }
+            }
             
               event.target.value = ''
             }}
           >
             <option value="">
               {validating
-                ? 'Validating...'
-                : posting
-                  ? 'Posting...'
+               ? (batchProgress || 'Validating...')
+              : posting
+                ? (batchProgress || 'Posting...')
                   : saving
                     ? 'Saving...'
                     : 'Actions'}
@@ -2530,7 +3247,7 @@ useEffect(() => {
                 !activeResult?.document_id
               }
             >
-              Save & Validate
+              {isBatchMode ? 'Save & Validate All' : 'Save & Validate'}
             </option>
 
             <option
@@ -2540,10 +3257,12 @@ useEffect(() => {
                 saving ||
                 validating ||
                 posting ||
-                String(validationResult?.status || '').toUpperCase() !== 'VALIDATED'
+                (isBatchMode
+                  ? !allBatchValidated || allBatchPosted
+                  : String(validationResult?.status || '').toUpperCase() !== 'VALIDATED')
                 }
             >
-              Post to NetSuite
+              {isBatchMode ? 'Post Batch to NetSuite' : 'Post to NetSuite'}
             </option>
           </select>
         </div>
@@ -2559,7 +3278,73 @@ useEffect(() => {
           </>
         )}
 
-          {validationResult && (
+            {isBatchMode && (batchHasActivity || batchProgress) && (
+            <>
+              <Card className="border border-[var(--color-border)] shadow-none">
+                <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-[var(--color-ink)]">
+                      Batch NetSuite Validation
+                    </h2>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {batchValidatedCount}/{batchEligibleResults.length} files validated
+                      {batchPostedCount > 0 && ` · ${batchPostedCount} posted`}
+                      {batchExcludedCount > 0 && ` · ${batchExcludedCount} excluded (extraction failed)`}
+                    </p>
+                    {batchProgress && (
+                      <p className="mt-1 text-xs font-medium text-[var(--color-primary)]">
+                        {batchProgress}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      intent="secondary"
+                      onClick={handleBatchSaveAndValidate}
+                      disabled={saving || validating || posting || diagnosing}
+                    >
+                      Save &amp; Validate All
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={handleBatchPost}
+                      disabled={
+                        !allBatchValidated ||
+                        allBatchPosted ||
+                        saving ||
+                        validating ||
+                        posting ||
+                        diagnosing
+                      }
+                    >
+                      Post Batch to NetSuite
+                    </Button>
+                  </div>
+                </div>
+                {diagnosticError && (
+                  <p className="px-4 pb-4 text-xs text-amber-700">{diagnosticError}</p>
+                )}
+              </Card>
+
+              {results.map((result, index) =>
+                isBatchFileEligible(result) && (result.batch_validation || result.batch_posting) ? (
+                  <BatchFileResultCard
+                    key={result.document_id || result.upload_id || index}
+                    index={index}
+                    result={result}
+                    isActive={index === activeIndex}
+                    onSelect={setActiveIndex}
+                    aiDiagnosticsByReference={aiDiagnosticsByReference}
+                    diagnosing={diagnosing}
+                  />
+                ) : null,
+              )}
+            </>
+          )}
+
+          {validationResult && !isBatchMode && (
             <Card className="border border-[var(--color-border)] shadow-none">
               <div className="border-b border-[var(--color-border)] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">

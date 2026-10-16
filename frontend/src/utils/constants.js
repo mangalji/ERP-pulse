@@ -72,7 +72,6 @@ export const SUPERADMIN_ENDPOINTS = {
 }
 
 export const INVITATION_ENDPOINTS = {
-  create: '/invitations/create/',
   list: '/invitations/list/',
   detail: (id) => `/invitations/${id}/detail/`,
   validate: '/invitations/validate/',
@@ -81,5 +80,4 @@ export const INVITATION_ENDPOINTS = {
   accept: '/invitations/accept/',
   send: (id) => `/invitations/${id}/send/`,
   resend: (id) => `/invitations/${id}/resend/`,
-  publicResend: '/invitations/public-resend/',
 }
