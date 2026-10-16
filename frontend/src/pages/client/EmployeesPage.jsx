@@ -210,10 +210,16 @@ function hasEmployeePassword(employee) {
     }
   }
 
-  const handleResendInvitation = async (employee) => {
+  const handleResendInvitation = async (employee, isNewInvitation = false) => {
     try {
       await clientApi.resendEmployeeInvitation(employee.id)
-      addToast('Invitation resent successfully', 'success')
+      addToast(
+        isNewInvitation
+          ? 'Invitation sent successfully'
+          : 'Invitation resent successfully',
+        'success'
+      )
+      loadEmployees()
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to resend invitation', 'error')
     }
@@ -704,7 +710,16 @@ function hasEmployeePassword(employee) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((employee) => (
+                  {filtered.map((employee) => {
+                    const invitationStatus = String(employee.invitation_status || '').toUpperCase()
+                    const hasPassword = hasEmployeePassword(employee)
+                    const isAccountActive = Boolean(employee.is_active) && hasPassword
+                    const canSendInvitation =
+                      !hasPassword &&
+                      ['PENDING', 'EXPIRED', 'NONE'].includes(invitationStatus)
+                    const isNewInvitation = invitationStatus === 'NONE'
+
+                    return (
                     <tr key={employee.id} className="border-b border-[var(--color-border)] last:border-0">
                       <td className="py-3 pr-4 font-medium text-[var(--color-ink)]">
                         {employee.full_name || `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || '—'}
@@ -714,8 +729,8 @@ function hasEmployeePassword(employee) {
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.designation || '—'}</td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)]">{employee.department || '—'}</td>
                       <td className="py-3 pr-4">
-                        <Badge tone={!hasEmployeePassword(employee) ? 'neutral' : employee.is_active ? 'positive' : 'neutral'}>
-                          {!hasEmployeePassword(employee) ? 'neutral' : employee.is_active ? 'Active' : 'Inactive'}
+                        <Badge tone={isAccountActive ? 'positive' : 'neutral'}>
+                          {isAccountActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </td>
                       <td className="py-3 pr-4 text-[var(--color-ink-soft)] capitalize">
@@ -724,7 +739,7 @@ function hasEmployeePassword(employee) {
                           : '—'}
                       </td>
                       <td className="py-3">
-                        {hasEmployeePassword(employee) ? (
+                        {hasPassword ? (
                         <div className="flex flex-wrap items-center gap-1">
                           <button
                             onClick={() => handleView(employee)}
@@ -740,7 +755,7 @@ function hasEmployeePassword(employee) {
                           >
                             Edit
                           </button>
-                          {!employee.is_active && (
+                          {canSendInvitation && (
                             <button
                               onClick={() => handleResendInvitation(employee)}
                               className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
@@ -754,14 +769,22 @@ function hasEmployeePassword(employee) {
                             </Button>
                           )}
                         </div>
-                        ):(
+                        ) : canSendInvitation ? (
+                          <button
+                            onClick={() => handleResendInvitation(employee, isNewInvitation)}
+                            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                          >
+                            {isNewInvitation ? 'Send Invitation' : 'Resend Invitation'}
+                          </button>
+                        ) : (
                           <span className="text-xs text-[var(--color-muted)]">
-                             Awaiting password setup
+                            Awaiting password setup
                           </span>
                         )}
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

@@ -101,6 +101,15 @@ export default function ClientLayout({ title, breadcrumb, children }) {
     }
 
     loadNavigationMenu()
+
+    const reloadNavigationMenu = () => {
+      loadNavigationMenu()
+    }
+
+    window.addEventListener('client-navigation-menu-updated', reloadNavigationMenu)
+    return () => {
+      window.removeEventListener('client-navigation-menu-updated', reloadNavigationMenu)
+    }
   }, [user?.id])
 
   useEffect(() => {

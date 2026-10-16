@@ -19,9 +19,11 @@ import { dashboardApi } from './dashboard.js'
 
 const MENU_TTL_MS = 2 * 60 * 1000
 let menuCache = null // { key, at, promise}
+export const NAVIGATION_MENU_UPDATED_EVENT = 'client-navigation-menu-updated'
 
 const invalidateMenu = (result) => {
   menuCache = null
+  window.dispatchEvent(new Event(NAVIGATION_MENU_UPDATED_EVENT))
   return result
 }
 

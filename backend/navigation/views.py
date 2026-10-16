@@ -24,7 +24,7 @@ class CanReadOrManageGlobalNavigation(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return bool(user and user.is_authenticated and (
-            request.method in ('GET', 'HEAD', 'OPTIONS') or user.is_superuser
+            request.method in ('GET', 'HEAD', 'OPTIONS') or _is_company_admin(user)
         ))
 
 
