@@ -503,6 +503,9 @@ class OCRValidationResult(models.Model):
 
     items = models.JSONField(default=list, blank=True)
     errors = models.JSONField(default=list, blank=True)
+    # AI resolution guidance is generated after validation. Persist it with the
+    # validation result so a saved OCR document can resume at the same stage.
+    ai_diagnostics = models.JSONField(default=list, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

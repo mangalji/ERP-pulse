@@ -67,6 +67,8 @@ class DocumentHistorySerializer(serializers.Serializer):
     overall_confidence = serializers.FloatField(allow_null=True)
     processing_metadata = serializers.JSONField()
     requested_fields = serializers.JSONField(allow_null=True)
+    validation = serializers.JSONField(allow_null=True, required=False)
+    posting = serializers.JSONField(allow_null=True, required=False)
     versions = DocumentVersionSerializer(many=True)
 
 

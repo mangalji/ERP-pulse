@@ -833,6 +833,64 @@ class DocumentHistoryView(APIView):
         versions = list(
             document.versions.all().order_by("version_number")
         )
+        latest_version = versions[-1] if versions else None
+
+        validation_payload = None
+        posting_payload = None
+        if latest_version is not None:
+            validation = (
+                OCRValidationResult.objects.filter(
+                    document=document,
+                    version=latest_version,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if validation is not None:
+                items = validation.items if isinstance(validation.items, list) else []
+                matched_rows = sum(1 for item in items if item.get("matched"))
+                unique_netsuite_items = {
+                    str(item.get("netsuite_id"))
+                    for item in items
+                    if item.get("netsuite_id") not in (None, "")
+                }
+                validation_payload = {
+                    "validation_id": str(validation.id),
+                    "status": validation.status,
+                    "vendor": {
+                        "extracted_name": validation.vendor_extracted_name,
+                        "matched": validation.vendor_matched,
+                        "netsuite_id": validation.vendor_netsuite_id,
+                    },
+                    "items": items,
+                    "errors": validation.errors,
+                    "ai_diagnostics": validation.ai_diagnostics,
+                    "summary": {
+                        "source_rows": len(items),
+                        "matched_rows": matched_rows,
+                        "unique_netsuite_items": len(unique_netsuite_items),
+                        "unmatched_rows": len(items) - matched_rows,
+                    },
+                }
+
+            posting = (
+                NetSuiteOCRPosting.objects.select_related("connection")
+                .filter(document=document, version=latest_version)
+                .first()
+            )
+            if posting is not None:
+                record_url = None
+                if posting.status == "posted" and posting.netsuite_record_id:
+                    record_url = netsuite_vendor_bill_url(
+                        account_id=posting.connection.netsuite_account_id,
+                        record_id=posting.netsuite_record_id,
+                    )
+                posting_payload = {
+                    "status": posting.status,
+                    "netsuite_record_id": posting.netsuite_record_id,
+                    "netsuite_record_url": record_url,
+                    "error_message": posting.error_message,
+                }
         serializer = DocumentHistorySerializer(
             {
                 "id": document.id,
@@ -848,6 +906,8 @@ class DocumentHistoryView(APIView):
                     if document.upload_id
                     else None
                 ),
+                "validation": validation_payload,
+                "posting": posting_payload,
                 "versions": versions,
             }
         )

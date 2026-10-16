@@ -689,6 +689,25 @@ export default function OcrResultPage() {
 
         setResult(loadedResult)
         setData(cloneData(reviewedData))
+
+        const savedValidation = payload?.validation || null
+        setValidationResult(savedValidation)
+        setAiDiagnostics(
+          Array.isArray(savedValidation?.ai_diagnostics)
+            ? savedValidation.ai_diagnostics
+            : [],
+        )
+        setDiagnosticError('')
+
+        const savedPosting = payload?.posting || null
+        setPostedRecord(
+          savedPosting?.status === 'posted' && savedPosting?.netsuite_record_id
+            ? {
+                internalId: String(savedPosting.netsuite_record_id),
+                url: savedPosting.netsuite_record_url || '',
+              }
+            : null,
+        )
       } catch (err) {
         console.error('Failed to load saved OCR result:', err)
         setError(

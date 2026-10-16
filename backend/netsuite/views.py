@@ -42,7 +42,7 @@ from netsuite.services import (
     NetSuiteFieldMappingService,
 )
 from netsuite.oauth import resolve_post_connect_redirect_url_from_state
-from ocr.models import OCRDocument
+from ocr.models import OCRDocument, OCRValidationResult
 from netsuite.jobs import create_job, dispatch_job, recover_jobs
 from netsuite.tasks import BATCH_MAX_DOCUMENTS
 logger = logging.getLogger(__name__)
@@ -781,6 +781,22 @@ class NetSuiteValidationDiagnosticsView(APIView):
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+        diagnostics_by_validation_id = {
+            str(validation_id): [] for validation_id in validation_ids
+        }
+        for diagnostic in result.get("diagnostics", []):
+            reference = str(diagnostic.get("error_reference") or "")
+            validation_id, separator, _ = reference.partition(":group:")
+            if separator and validation_id in diagnostics_by_validation_id:
+                diagnostics_by_validation_id[validation_id].append(diagnostic)
+
+        for validation_id, diagnostics in diagnostics_by_validation_id.items():
+            OCRValidationResult.objects.filter(
+                id=validation_id,
+                document__company=company,
+                connection_id=connection_id,
+            ).update(ai_diagnostics=diagnostics)
 
         return success_response(
             message=(
