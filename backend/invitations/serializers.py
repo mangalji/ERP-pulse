@@ -56,29 +56,6 @@ class InvitationSerializer(serializers.ModelSerializer):
         )
 
 
-class CreateInvitationSerializer(serializers.Serializer):
-    email = serializers.EmailField(max_length=100)
-    company_id = serializers.UUIDField()
-    role_id = serializers.UUIDField(
-        required=False,
-        allow_null=True,
-    )
-
-    def validate_company_id(self, value):
-        from tenancy.models import Company
-
-        if not Company.objects.filter(pk=value).exists():
-            raise serializers.ValidationError("Company not found.")
-        return value
-
-    def validate_role_id(self, value):
-        from rbac.models import Role
-
-        if value is not None and not Role.objects.filter(pk=value).exists():
-            raise serializers.ValidationError("Role not found.")
-        return value
-
-
 class RequestInvitationOTPSerializer(serializers.Serializer):
     """
     First invitation-setup step.

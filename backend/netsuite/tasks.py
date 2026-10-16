@@ -170,6 +170,14 @@ def _run_netsuite_batch(
                         "status": service_result.get("status", "VALIDATION_FAILED"),
                         "validation_id": service_result.get("validation_id"),
                         "errors": service_result.get("errors", []),
+                        # Additive: same detail the single-document validate
+                        # endpoint returns, so the OCR page can render a
+                        # per-file result in the single-file format.
+                        "vendor": service_result.get("vendor"),
+                        "items": service_result.get("items", []),
+                        "summary": service_result.get("summary"),
+                        "subsidiary": service_result.get("subsidiary"),
+                        "location": service_result.get("location"),
                     }
                 )
             else:
@@ -188,6 +196,9 @@ def _run_netsuite_batch(
                         "posting_id": service_result.get("posting_id"),
                         "netsuite_record_id": service_result.get(
                             "netsuite_record_id"
+                        ),
+                        "netsuite_record_url": service_result.get(
+                             "netsuite_record_url"
                         ),
                         "already_posted": bool(
                             service_result.get("already_posted")

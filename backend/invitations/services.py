@@ -367,6 +367,9 @@ class InvitationService:
         The shared OTPService enforces the resend cooldown.
         """
         invitation = self.validate_token(token)
+        company_lifecycle_service.ensure_operational(
+            company=invitation.company
+        )
     
         try:
             user = User.objects.get(

@@ -219,7 +219,10 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
         company = self._company(request)
         try:
             employee = client_portal_service.resend_employee_invitation(
-                company=company, employee_id=pk, acting_user=request.user,
+                company=company,
+                employee_id=pk,
+                acting_user=request.user,
+                request=request,
             )
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)

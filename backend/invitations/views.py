@@ -13,16 +13,14 @@ from rest_framework.response import Response
 from common.throttles import RegisterOTPThrottle
 from common.pagination import paginated_response
 from common.common_utils import success_response
-from .models import Invitation, InvitationStatus
+from .models import Invitation
 from .permissions import IsSuperAdmin
 from .serializers import (
     AcceptInvitationSerializer,
-    CreateInvitationSerializer,
     InvitationSerializer,
     InvitationValidateSerializer,
     RequestInvitationOTPSerializer,
 )
-from django.db.models import Q
 from .services import invitation_service
 
 
@@ -32,39 +30,16 @@ class InvitationViewSet(viewsets.ViewSet):
     """
 
     def get_permissions(self):
-        if self.action in ['validate', 'request_otp', 'accept', 'resend_public']:
+        if self.action in ['validate', 'request_otp', 'accept']:
             return [AllowAny()]
-        if self.action in ['create_invitation', 'send', 'resend', 'list_invitations', 'retrieve_invitation']:
+        if self.action in ['send', 'resend', 'list_invitations', 'retrieve_invitation']:
             return [IsSuperAdmin()]
         return [IsAuthenticated()]
 
     def get_throttles(self):
-        if self.action in ['create_invitation', 'request_otp' ,'accept', 'validate', 'resend_public']:
+        if self.action in ['request_otp', 'accept', 'validate']:
             return [RegisterOTPThrottle()]
         return super().get_throttles()
-
-    @action(detail=False, methods=['post'], url_path='create')
-    def create_invitation(self, request):
-        """
-        POST /api/v1/invitations/create/ — super admin creates invitation.
-        """
-        serializer = CreateInvitationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        invitation = invitation_service.create_invitation(
-            email=serializer.validated_data['email'],
-            company_id=serializer.validated_data['company_id'],
-            role_id=serializer.validated_data.get('role_id'),
-            created_by=request.user,
-            # expires_in_days=serializer.validated_data.get('expires_in_days', 7),
-            request=request,
-        )
-
-        return success_response(
-            message='Invitation created and sent successfully.',
-            data=InvitationSerializer(invitation).data,
-            status_code=status.HTTP_201_CREATED,
-        )
 
     @action(detail=False, methods=['get'], url_path='list')
     def list_invitations(self, request):
@@ -172,7 +147,6 @@ class InvitationViewSet(viewsets.ViewSet):
                 {'detail': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
     @action(detail=False, methods=['post'], url_path='request-otp')
     def request_otp(self,request):
         """
@@ -214,15 +188,21 @@ class InvitationViewSet(viewsets.ViewSet):
         POST /api/v1/invitations/resend-otp/
 
         Resend the invitation-specific OTP.
-        This is intentionally separate from public-resend, which resends
-        the invitation link itself.
+        Invitation links themselves can be resent only by an authenticated
+        company or platform administrator.
         """
         serializer = InvitationValidateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = invitation_service.resend_invitation_otp(
-            token=serializer.validated_data['token'],
-        )
+        try:
+            user = invitation_service.resend_invitation_otp(
+                token=serializer.validated_data['token'],
+            )
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return success_response(
             message='A new OTP has been sent successfully. Please check your email.',
@@ -249,47 +229,6 @@ class InvitationViewSet(viewsets.ViewSet):
             return success_response(
                 message='Invitation accepted successfully. You can now log in.',
                 data={'email': user.email},
-            )
-        except ValueError as exc:
-            return Response(
-                {'detail': str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-    @action(detail=False, methods=['post'], url_path='public-resend')
-    def resend_public(self, request):
-        """
-        POST /api/v1/invitations/public-resend/ — public resend by email.
-        """
-        email = request.data.get('email')
-        if not email:
-            return Response(
-                {'detail': 'email is required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        
-        invitation = Invitation.objects.filter(
-            email__iexact=email,
-            # status=InvitationStatus.PENDING,
-        ).filter(
-            Q(status=InvitationStatus.PENDING)
-            | Q(status=InvitationStatus.EXPIRED)
-        ).order_by('-created_at').first()
-        
-        if not invitation:
-            return Response(
-                {'detail': 'No pending invitation found for this email.'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        
-        try:
-            invitation = invitation_service.resend_invitation(
-                invitation_id=invitation.id,
-                request=request,
-            )
-            return success_response(
-                message='Invitation resent successfully.',
-                data=InvitationSerializer(invitation).data,
             )
         except ValueError as exc:
             return Response(
