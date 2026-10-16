@@ -118,6 +118,8 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 
+print("DEBUG CORS_ALLOWED_ORIGINS:", repr(CORS_ALLOWED_ORIGINS))
+
 # Required for httpOnly cookie-based JWT auth -- without this, the browser
 # won't attach the access_token/refresh_token cookies on cross-origin
 # requests (e.g. frontend on port 5173 calling backend on port 8000).

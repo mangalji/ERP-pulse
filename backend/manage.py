@@ -6,12 +6,7 @@ import sys
 
 
 def main():
-    # """Run administrative tasks."""
-    # debug = os.environ.get("DJANGO_DEBUG","True") in ("True","1","yes","on")
-    # os.environ.setdefault(
-    #     'DJANGO_SETTINGS_MODULE', 
-    #     'config.settings.local' if debug else "config.settings.production",
-    #     )
+
     """Run administrative tasks."""
     # Respect an explicitly configured settings module (e.g. Catalyst).
     # Otherwise select local/production from DJANGO_DEBUG or DEBUG.
