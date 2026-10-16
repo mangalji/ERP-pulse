@@ -2380,6 +2380,7 @@ class NetSuiteFieldMappingService:
             headers=headers,
             timeout=self.METADATA_TIMEOUT_SECONDS,
         )
+        print(response)
 
         # Some NetSuite environments expose the selected-record catalog form
         # more readily than the record-specific resource. Fall back to it.
@@ -2393,6 +2394,9 @@ class NetSuiteFieldMappingService:
 
         response.raise_for_status()
         payload = response.json()
+        # with open("data.txt", "a", encoding="utf-8") as file:
+        #     file.write(json.dumps(payload, indent=4) + "\n")
+                # print("payload: ",payload)
         if not isinstance(payload, dict):
             raise ValueError("NetSuite metadata catalogue returned an invalid response.")
         return payload
@@ -2413,13 +2417,21 @@ class NetSuiteFieldMappingService:
     def _normalise_datatype(schema):
         if not isinstance(schema, dict):
             return "text"
+        # for schemas in schema:
+        #     print("schema: ", schema)
         value = str(
             schema.get("type")
             or schema.get("datatype")
             or schema.get("dataType")
             or "text"
         ).lower()
+        # for values in value:
+        #     print("value: ",value)
+        
         fmt = str(schema.get("format") or "").lower()
+        # for fmts in fmt:
+        #     print("fmt: ",fmt)
+        
         if value in {"integer", "number", "decimal"}:
             if "currency" in fmt:
                 return "currency"
@@ -2431,6 +2443,54 @@ class NetSuiteFieldMappingService:
         if value in {"reference", "select", "object"}:
             return "select"
         return "text"
+
+    @staticmethod
+    def _is_reference_value_schema(schema):
+        """Return whether an object schema represents one selectable field.
+
+        NetSuite represents select/reference fields as objects containing their
+        identifier and display-name properties.  Those objects are leaves in a
+        transaction sublist, not nested sublists to walk.
+        """
+        if not isinstance(schema, dict):
+            return False
+
+        properties = schema.get("properties")
+        if str(schema.get("type") or "").lower() != "object" or not isinstance(properties, dict):
+            return False
+
+        return bool(properties) and set(properties).issubset(
+            {"id", "refName", "externalId", "links"}
+        )
+
+    @staticmethod
+    def _is_sublist_schema(schema):
+        """Return whether a root metadata property is a transaction sublist.
+
+        NetSuite represents transaction sublists as an object whose ``items``
+        property is an array of line objects.  Vendor Bills commonly expose
+        ``item`` and ``expense``, but account features and customisations add
+        others (for example, landed costs and accounting-book details).
+        """
+        if not isinstance(schema, dict):
+            return False
+
+        properties = schema.get("properties")
+        items = (
+            properties.get("items")
+            if isinstance(properties, dict)
+            else schema
+        )
+        if not isinstance(items, dict):
+            return False
+
+        line_schema = items.get("items")
+        return (
+            str(items.get("type") or "").lower() == "array"
+            and isinstance(line_schema, dict)
+            and isinstance(line_schema.get("properties"), dict)
+            and bool(line_schema.get("properties"))
+        )
 
     @staticmethod
     def _reference_type(schema):
@@ -2629,7 +2689,10 @@ class NetSuiteFieldMappingService:
                     )
 
                     if (
-                        isinstance(nested_properties, dict)
+                        (
+                            isinstance(nested_properties, dict)
+                            and not cls._is_reference_value_schema(nested_schema)
+                        )
                         or isinstance(nested_items, dict)
                     ):
                         walk_sublist_schema(
@@ -2669,12 +2732,11 @@ class NetSuiteFieldMappingService:
         for field_id, field_schema in properties.items():
             lower_id = str(field_id).lower()
 
-            # Vendor Bill Item / Expense sublists.
-            if lower_id in {
-                "item",
-                "items",
-                "expense",
-            }:
+            # Every metadata-defined Vendor Bill sublist.  ``item`` and
+            # ``expense`` are the common cases, but this intentionally keeps
+            # feature-specific and customisation-specific sublists available
+            # in the field-mapping catalogue too.
+            if cls._is_sublist_schema(field_schema):
                 sublist_id = (
                     "item"
                     if lower_id == "items"

@@ -151,3 +151,4 @@ docker-images-package/
 commands_for_inspection.txt
 env_var_prod_catalyst.yaml
 qa_audit
+backend/data.py

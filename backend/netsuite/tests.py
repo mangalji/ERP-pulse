@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 from netsuite.diagnostics_service import _build_validation_information
 from netsuite.oauth import netsuite_vendor_bill_url
 from netsuite.services import (
+    NetSuiteFieldMappingService,
     NetSuiteVendorBillPostingService,
     _build_template_netsuite_mappings,
 )
@@ -187,4 +188,111 @@ class NetSuiteRecordUrlTests(SimpleTestCase):
             url,
             "https://1234567-sb1.app.netsuite.com/"
             "app/accounting/transactions/vendbill.nl?id=23662&whence=",
+        )
+
+
+class NetSuiteFieldCatalogueTests(SimpleTestCase):
+    def test_includes_feature_specific_sublist_fields(self):
+        raw_metadata = {
+            "properties": {
+                "landedCosts": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "category": {"type": "string"},
+                                    "amount": {"type": "number"},
+                                },
+                            },
+                        },
+                    },
+                },
+                "custbody_reference_transaction": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "refName": {"type": "string"},
+                    },
+                },
+                "customLineList": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "customLineValue": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        }
+
+        catalogue = NetSuiteFieldMappingService._normalise_metadata(
+            raw_metadata,
+            "vendorBill",
+        )
+
+        self.assertEqual(
+            [field["field_id"] for field in catalogue["line_fields"]],
+            ["category", "amount", "customLineValue"],
+        )
+        self.assertEqual(
+            [field["sublist_id"] for field in catalogue["line_fields"]],
+            ["landedcosts", "landedcosts", "customlinelist"],
+        )
+        self.assertEqual(
+            [field["field_id"] for field in catalogue["body_fields"]],
+            ["custbody_reference_transaction"],
+        )
+
+    def test_keeps_reference_object_custom_column_field(self):
+        raw_metadata = {
+            "properties": {
+                "item": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "custcol_agtax_gst_sac_code": {
+                                        "title": "GST SAC Code",
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "refName": {"type": "string"},
+                                            "externalId": {"type": "string"},
+                                            "links": {"type": "array"},
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+
+        catalogue = NetSuiteFieldMappingService._normalise_metadata(
+            raw_metadata,
+            "vendorBill",
+        )
+
+        self.assertEqual(
+            catalogue["line_fields"],
+            [
+                {
+                    "field_id": "custcol_agtax_gst_sac_code",
+                    "label": "GST SAC Code",
+                    "datatype": "select",
+                    "scope": "column",
+                    "is_required": False,
+                    "is_custom": True,
+                    "reference_type": None,
+                    "sublist_id": "item",
+                },
+            ],
         )
