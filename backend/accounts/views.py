@@ -34,6 +34,7 @@ from accounts.serializers import (
 )
 from common.pagination import paginated_response
 from common.common_utils import success_response
+from common.lazy_housekeeping import trigger_lazy_daily_housekeeping
 from common.throttles import (
     LoginPasswordEmailThrottle,
     LoginPasswordIPThrottle,
@@ -57,6 +58,10 @@ class CSRFTokenView(APIView):
     def get(self, request):
         response = success_response(message='CSRF token issued.', data={'csrf_token': get_token(request)})
         response['Cache-Control'] = 'no-store'
+        # Starts non-blocking best-effort maintenance at most once daily.
+        # A cache/task failure is isolated inside the helper and cannot affect
+        # the public login bootstrap response.
+        trigger_lazy_daily_housekeeping()
         return response
 
 from accounts.models import OTP
