@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -423,7 +423,7 @@ function normalizeNetSuiteFieldCatalogue(payload) {
 }
 
 function NetSuiteFieldCombobox({
-  field,
+  field: _field,
   options,
   loading,
   value,
@@ -993,8 +993,13 @@ const handleRefreshNetSuiteFields = async () => {
     }
   }
 
+  // Catalogues are intentionally loaded once when this editor mounts. They
+  // do not depend on route params or changing input state; refresh is an
+  // explicit user action.
+  const initialLoadPageRef = useRef(loadPage)
+
   useEffect(() => {
-    loadPage()
+    void initialLoadPageRef.current()
   }, [])
 
   const createDefaultFields = (availableFields=sortedNetSuiteFields) =>

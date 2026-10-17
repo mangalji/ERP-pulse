@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
@@ -34,11 +34,7 @@ export default function CompanySubscriptionPage() {
   const [discountValue, setDiscountValue] = useState('')
   const [effectivePrice, setEffectivePrice] = useState(0)
 
-  useEffect(() => {
-    loadData()
-  }, [id])
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
 
     try {
@@ -68,7 +64,11 @@ export default function CompanySubscriptionPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [addToast, id])
+
+  useEffect(() => {
+    void loadData()
+  }, [loadData])
 
   const currentPlan = company?.current_plan || null
 

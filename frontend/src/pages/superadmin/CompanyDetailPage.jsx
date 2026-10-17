@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
@@ -49,7 +49,7 @@ export default function CompanyDetailPage() {
     country: '',
   })
 
-  const loadCompany = async () => {
+  const loadCompany = useCallback(async () => {
     setLoading(true)
     setError('')
 
@@ -66,11 +66,11 @@ export default function CompanyDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [id])
 
   useEffect(() => {
-    loadCompany()
-  }, [id])
+    void loadCompany()
+  }, [loadCompany])
 
   const runAction = async (action) => {
     setConfirm(null)

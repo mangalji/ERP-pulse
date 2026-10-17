@@ -83,13 +83,19 @@ class HealthCheckView(APIView):
         else:
             overall = "degraded"
 
+        data = {
+            "status": overall,
+            "checked_at": timezone.now(),
+        }
+        # Render and uptime monitors need only a coarse status. The
+        # dependency breakdown can reveal operational configuration, so it is
+        # intentionally available only to platform staff using the same URL.
+        if request.user and request.user.is_authenticated and request.user.is_staff:
+            data["checks"] = checks
+
         return success_response(
             message="Health check complete.",
-            data={
-                "status": overall,
-                "checked_at": timezone.now(),
-                "checks": checks,
-            },
+            data=data,
         )
 
     def _check_database(self):

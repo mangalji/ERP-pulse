@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -17,11 +17,7 @@ export default function ClientSubscriptionPage() {
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [subData, usageData, txData] = await Promise.all([
@@ -37,7 +33,11 @@ export default function ClientSubscriptionPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [addToast])
+
+  useEffect(() => {
+    void loadData()
+  }, [loadData])
 
   if (loading) {
     return (

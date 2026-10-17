@@ -26,45 +26,13 @@ export default function ProfilePage() {
     }
   }, [user])
 
-  const handleSendOtp = async () => {
-    setLocalError('')
-    setOtpLoading(true)
-    try {
-      await profileSendOtp()
-      setOtpSent(true)
-      setStep('otp')
-      addToast('Verification code sent to your email', 'success')
-    } catch (err) {
-      setLocalError(err.payload?.message || err.message || 'Failed to send verification code')
-    } finally {
-      setOtpLoading(false)
-    }
-  }
-
-  const handleVerifyOtp = async (event) => {
-    event.preventDefault()
-    setLocalError('')
-    setIsSubmitting(true)
-    try {
-      await profileUpdate(otpCode, { firstName, lastName, mobileNumber, profilePic })
-      setStep('form')
-      setOtpSent(false)
-      setOtpCode('')
-      addToast('Profile updated successfully', 'success')
-    } catch (err) {
-      setLocalError(err.payload?.message || err.message || 'Failed to update profile')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   const handleFormSubmit = async (event) => {
     event.preventDefault()
     setLocalError('')
     setIsSubmitting(true)
 
     try {
-      await profilesUpdate({
+      await profileUpdate({
         firstName,
         lastName,
         mobileNumber,
@@ -91,7 +59,7 @@ export default function ProfilePage() {
             Your Profile
           </h1>
           <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Update your personal details. Changes require email verification.
+            Update your personal details.
           </p>
         </div>
 

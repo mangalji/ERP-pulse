@@ -20,7 +20,6 @@ from common.contact_validation import normalize_phone
 from accounts.models import User, Gender
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
-from invitations.models import Invitation, InvitationStatus
 from rbac.models import Role
 from tenancy.models import Company, CompanySuspensionReason
 
@@ -66,47 +65,14 @@ class ClientPortalService:
     def resend_employee_invitation(
         self, *, company, employee_id, acting_user, request=None
     ):
-        self._ensure_company_operational(company=company)
         employee = self.get_employee(company=company, employee_id=employee_id)
-
-        # Pending account setup and an active account are mutually exclusive.
-        # Repair legacy records before sending their invitation.
-        if employee.is_active and not employee.has_usable_password():
-            employee.is_active = False
-            employee.save(update_fields=['is_active'])
-        
-        invitation = Invitation.objects.filter(
-            email=employee.email,
-            company=company,
-            # status=InvitationStatus.PENDING,
-        ).filter(Q(status=InvitationStatus.PENDING) | Q(status=InvitationStatus.EXPIRED)).order_by('-created_at').first()
-
         from invitations.services import invitation_service
-
-        if invitation:
-            invitation_service.resend_invitation(
-                invitation_id=invitation.id,
-                request=request,
-            )
-            return employee
-
-        # A legacy user may exist without any invitation record. It can enter
-        # the normal onboarding flow only while it is still inactive and has
-        # not set a password. Never create another invitation for an account
-        # that was already accepted and later deactivated.
-        if employee.is_active or employee.has_usable_password():
-            raise ValueError('This employee already completed account setup.')
-        if not employee.role_id:
-            raise ValueError('This employee has no role configured for an invitation.')
-
-        invitation_service.create_invitation(
-            email=employee.email,
-            company_id=company.id,
-            role_id=employee.role_id,
-            created_by=acting_user,
+        result = invitation_service.resend_user_invitation(
+            user=employee,
+            acting_user=acting_user,
             request=request,
         )
-        return employee
+        return result['user']
 
     def list_employees(self, *, company, search=None, status=None):
         self._ensure_company_operational(company=company)

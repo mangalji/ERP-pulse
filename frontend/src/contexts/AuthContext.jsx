@@ -179,12 +179,13 @@ export function AuthProvider({ children }) {
       connectNetSuite,
       disconnectNetSuite,
     }),
-    [user, isLoading, clientContextLoading, error, netSuiteConnected],
+    [user, isSuperAdmin, isLoading, clientContextLoading, error, netSuiteConnected],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
+// oxlint-disable-next-line react/only-export-components -- this hook is the public context consumer.
 export function useAuth() {
   const context = useContext(AuthContext)
   if (!context) throw new Error('useAuth must be used within an AuthProvider')

@@ -95,11 +95,7 @@ class LoginView(APIView):
         enforce_cookie_csrf(request)
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            user = authentication_service.login(**serializer.validated_data)
-        except Exception as e:
-            import traceback
-            raise
+        user = authentication_service.login(**serializer.validated_data)
         return success_response(
             message='OTP sent to your registered email. Please verify to continue.',
             data={'email': user.email, 'challenge': password_verified_login_challenge.issue(user)},

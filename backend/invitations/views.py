@@ -90,7 +90,13 @@ class InvitationViewSet(viewsets.ViewSet):
         """
         GET /api/v1/invitations/{id}/detail/ — super admin retrieves invitation.
         """
-        invitation = invitation_service.get_invitation(request_id=pk)
+        try:
+            invitation = invitation_service.get_invitation(request_id=pk)
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         return success_response(
             message='Invitation fetched successfully.',
             data=InvitationSerializer(invitation).data,
@@ -101,10 +107,16 @@ class InvitationViewSet(viewsets.ViewSet):
         """
         POST /api/v1/invitations/{id}/send/ — resend invitation email.
         """
-        invitation = invitation_service.send_invitation(
-            invitation_id=pk,
-            request=request,
-        )
+        try:
+            invitation = invitation_service.send_invitation(
+                invitation_id=pk,
+                request=request,
+            )
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return success_response(
             message='Invitation sent successfully.',
             data=InvitationSerializer(invitation).data,
@@ -115,10 +127,16 @@ class InvitationViewSet(viewsets.ViewSet):
         """
         POST /api/v1/invitations/{id}/resend/ — resend with extended expiry.
         """
-        invitation = invitation_service.resend_invitation(
-            invitation_id=pk,
-            request=request,
-        )
+        try:
+            invitation = invitation_service.resend_invitation(
+                invitation_id=pk,
+                request=request,
+            )
+        except ValueError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return success_response(
             message='Invitation resent successfully.',
             data=InvitationSerializer(invitation).data,

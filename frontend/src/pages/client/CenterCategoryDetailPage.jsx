@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
@@ -29,7 +29,7 @@ export default function CenterCategoryDetailPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     setError('')
 
@@ -49,11 +49,11 @@ export default function CenterCategoryDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [categoryId])
 
   useEffect(() => {
-    load()
-  }, [categoryId])
+    void load()
+  }, [load])
 
   const resetForm = () => {
     setShowForm(false)

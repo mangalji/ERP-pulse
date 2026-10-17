@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -10,7 +10,6 @@ import { netsuiteApi } from '../../services/netsuite.js'
 import { clientApi } from '../../services/client.js'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { isCompanyAdminUser } from '../../utils/netsuiteErrors.js'
-import { API_BASE, NETSUITE_ENDPOINTS } from '../../utils/constants.js'
 
 export default function NetSuiteIntegrationsPage() {
   const { toasts, addToast, removeToast } = useToast()
@@ -24,13 +23,7 @@ export default function NetSuiteIntegrationsPage() {
   const [editingId, setEditingId] = useState(null)
   const [assigningId, setAssigningId] = useState(null)
   const [companyEmployees, setCompanyEmployees] = useState([])
-  const netsuiteRedirectUri = `${API_BASE}${NETSUITE_ENDPOINTS.callback}`
-
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [connData, empData, currentData] = await Promise.all([
@@ -55,7 +48,11 @@ export default function NetSuiteIntegrationsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [addToast])
+
+  useEffect(() => {
+    void loadData()
+  }, [loadData])
 
   const handleCreate = async (formData) => {
     setSaving(true)

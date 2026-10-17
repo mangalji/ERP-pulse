@@ -11,9 +11,15 @@ class HealthCheckViewTests(APITestCase):
         response = self.client.get(reverse('monitoring-health'))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn(response.data['data']['status'], ('healthy', 'degraded', 'down'))
-        self.assertIn('database', response.data['data']['checks'])
+        self.assertNotIn('checks', response.data['data'])
 
-    def test_health_check_reports_database_ok(self):
+    def test_health_check_reports_details_to_staff(self):
+        staff_user = User.objects.create_user(
+            email='health-admin@example.com', password='StrongPass123!',
+            first_name='Health', last_name='Admin', mobile_number='+15550000004',
+            is_active=True, is_staff=True,
+        )
+        self.client.force_authenticate(user=staff_user)
         response = self.client.get(reverse('monitoring-health'))
         self.assertTrue(response.data['data']['checks']['database']['ok'])
 

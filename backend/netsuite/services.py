@@ -2380,8 +2380,6 @@ class NetSuiteFieldMappingService:
             headers=headers,
             timeout=self.METADATA_TIMEOUT_SECONDS,
         )
-        print(response)
-
         # Some NetSuite environments expose the selected-record catalog form
         # more readily than the record-specific resource. Fall back to it.
         if response.status_code == 404:
@@ -2394,9 +2392,6 @@ class NetSuiteFieldMappingService:
 
         response.raise_for_status()
         payload = response.json()
-        # with open("data.txt", "a", encoding="utf-8") as file:
-        #     file.write(json.dumps(payload, indent=4) + "\n")
-                # print("payload: ",payload)
         if not isinstance(payload, dict):
             raise ValueError("NetSuite metadata catalogue returned an invalid response.")
         return payload

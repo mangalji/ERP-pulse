@@ -18,8 +18,6 @@ const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$/
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const REPEATED_CHARACTER_REGEX = /(.)\1{4,}/u
 const ALL_SAME_CHARACTER_REGEX = /^(.)\1*$/u
-const PHONE_LONG_REPEAT_REGEX = /(\d)\1{5,}/
-
 export function validateName(value, label = 'Name') {
   const valueTrimmed = value.trim()
 

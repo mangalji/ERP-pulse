@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
-import apiClient, { unwrap } from '../../services/apiClient.js'
+import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
@@ -170,19 +170,6 @@ export default function DataExtractionHistoryPage() {
             : item?.document_id
               ? [item.document_id]
               : [],
-        ),
-      ),
-    ],
-    [selectedRecords],
-  )
-
-  const selectedUnvalidatedDocumentIds = useMemo(
-    () => [
-      ...new Set(
-        selectedRecords.flatMap((item) =>
-          Array.isArray(item?.unvalidated_document_ids)
-            ? item.unvalidated_document_ids
-            : [],
         ),
       ),
     ],

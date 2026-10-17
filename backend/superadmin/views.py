@@ -26,6 +26,7 @@ from superadmin.services import SuperAdminService
 from tenancy.models import Company, CompanyDeletionHistory, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
 from subscriptions.services import subscription_service
+from invitations.models import Invitation
 
 User = get_user_model()
 superadmin_service = SuperAdminService()
@@ -522,11 +523,25 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 },status=status.HTTP_400_BAD_REQUEST,
             )
         count = queryset.count()
-        page = queryset[offset:offset + limit]
+        page = list(queryset[offset:offset + limit])
+        latest_invitation_by_email = {}
+        if page:
+            for invitation in (
+                Invitation.objects.filter(
+                    company__in=[employee.company for employee in page if employee.company_id],
+                    email__in=[employee.email for employee in page],
+                )
+                .order_by('-created_at')
+            ):
+                latest_invitation_by_email.setdefault(invitation.email, invitation)
             
         return paginated_response(
             message='Employees fetched successfully.',
-            results=SuperAdminEmployeeSerializer(page, many=True).data,
+            results=SuperAdminEmployeeSerializer(
+                page,
+                many=True,
+                context={'latest_invitation_by_email': latest_invitation_by_email},
+            ).data,
             count=count,
             request=request,
             offset=offset,

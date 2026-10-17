@@ -25,6 +25,7 @@ export default function Toast({ toasts, removeToast }) {
   )
 }
 
+// oxlint-disable-next-line react/only-export-components -- this hook belongs with its Toast renderer.
 export function useToast() {
   const [toasts, setToasts] = useState([])
 

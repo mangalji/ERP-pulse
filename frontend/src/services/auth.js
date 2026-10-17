@@ -38,27 +38,23 @@ profileUpdate: ({ firstName, lastName, mobileNumber, profilePic } = {}) => {
   const body = hasFile ? new FormData() : {}
 
   if (firstName !== undefined) {
-    hasFile
-      ? body.append('first_name', firstName)
-      : body.first_name = firstName
+    if (hasFile) body.append('first_name', firstName)
+    else body.first_name = firstName
   }
 
   if (lastName !== undefined) {
-    hasFile
-      ? body.append('last_name', lastName)
-      : body.last_name = lastName
+    if (hasFile) body.append('last_name', lastName)
+    else body.last_name = lastName
   }
 
   if (mobileNumber !== undefined) {
-    hasFile
-      ? body.append('mobile_number', mobileNumber)
-      : body.mobile_number = mobileNumber
+    if (hasFile) body.append('mobile_number', mobileNumber)
+    else body.mobile_number = mobileNumber
   }
 
   if (profilePic !== undefined && profilePic !== null) {
-    hasFile
-      ? body.append('profile_pic', profilePic)
-      : body.profile_pic = profilePic
+    if (hasFile) body.append('profile_pic', profilePic)
+    else body.profile_pic = profilePic
   }
 
   return apiClient.post(AUTH_ENDPOINTS.profileUpdate, body).then(unwrap)

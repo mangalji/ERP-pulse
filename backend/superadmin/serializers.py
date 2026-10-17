@@ -8,7 +8,7 @@ from .models import (
 from tenancy.models import Company
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from invitations.models import Invitation, InvitationStatus
+from invitations.status import get_user_invitation_status
 
 User = get_user_model()
 
@@ -285,26 +285,12 @@ class SuperAdminEmployeeSerializer(serializers.ModelSerializer):
         return obj.role.name if obj.role_id else None
 
     def get_invitation_status(self, obj):
-        invitation = Invitation.objects.filter(email__iexact=obj.email,company=obj.company).order_by("-created_at").first()
-        
-        if not invitation:
-            return "ACTIVE" if obj.is_active else "INACTIVE"
-
-        if invitation.status == InvitationStatus.PENDING:
-            if invitation.is_expired():
-                return "EXPIRED"
-            return "PENDING"
-
-        if invitation.status == InvitationStatus.ACCEPTED:
-            return "ACTIVE" if obj.is_active else "INACTIVE"
-
-        if invitation.status == InvitationStatus.EXPIRED:
-            return "EXPIRED"
-
-        if invitation.status == InvitationStatus.CANCELLED:
-            return "CANCELLED"
-
-        return "INACTIVE"
+        return get_user_invitation_status(
+            obj,
+            latest_invitation_by_email=self.context.get(
+                'latest_invitation_by_email'
+            ),
+        )
 
 
 class TransactionSerializer(serializers.ModelSerializer):

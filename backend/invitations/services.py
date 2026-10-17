@@ -30,6 +30,15 @@ class InvitationService:
         self.otp_service=OTPService()
 
     @staticmethod
+    def _get_invitation_or_error(invitation_id):
+        try:
+            return Invitation.objects.select_related('company', 'role').get(
+                pk=invitation_id
+            )
+        except Invitation.DoesNotExist as exc:
+            raise ValueError('Invitation not found.') from exc
+
+    @staticmethod
     def _audit_user(request=None):
         user = getattr(request, 'user', None) if request else None
         if user is not None and getattr(user, 'is_authenticated', False):
@@ -232,11 +241,61 @@ class InvitationService:
             self._send_invitation_email(invitation)
         return invitation
 
+    def resend_user_invitation(self, *, user, acting_user, request=None):
+        """Resend or repair onboarding for one company user.
+
+        Company-admin and superadmin employee flows use this single path so
+        pending, expired, and legacy invitation records behave identically.
+        """
+        company = getattr(user, 'company', None)
+        if company is None:
+            raise ValueError('Only company users can receive invitations.')
+
+        company_lifecycle_service.ensure_operational(company=company)
+
+        # A pending account cannot be active before it has a password. Repair
+        # records created by older flows before deciding whether to resend.
+        if user.is_active and not user.has_usable_password():
+            user.is_active = False
+            user.save(update_fields=['is_active'])
+
+        invitation = (
+            Invitation.objects.filter(
+                email__iexact=user.email,
+                company=company,
+                status__in=[InvitationStatus.PENDING, InvitationStatus.EXPIRED],
+            )
+            .order_by('-created_at')
+            .first()
+        )
+        if invitation is not None:
+            invitation = self.resend_invitation(
+                invitation_id=invitation.id,
+                request=request,
+            )
+            return {'user': user, 'invitation': invitation}
+
+        # Do not invite a user who has already finished setup, including one
+        # who was later deactivated by an administrator.
+        if user.is_active or user.has_usable_password():
+            raise ValueError('This employee already completed account setup.')
+        if not user.role_id:
+            raise ValueError('This employee has no role configured for an invitation.')
+
+        invitation = self.create_invitation(
+            email=user.email,
+            company_id=company.id,
+            role_id=user.role_id,
+            created_by=acting_user,
+            request=request,
+        )
+        return {'user': user, 'invitation': invitation}
+
     def send_invitation(self, *, invitation_id, request=None, return_delivery_status=False):
         """
         Resend an existing invitation email.
         """
-        invitation = Invitation.objects.select_related('company', 'role').get(pk=invitation_id)
+        invitation = self._get_invitation_or_error(invitation_id)
 
         if invitation.status != InvitationStatus.PENDING:
             raise ValueError('Only pending invitations can be sent.')
@@ -272,7 +331,7 @@ class InvitationService:
         row and token, so the old expired link can never become valid again.
         """
 
-        invitation = Invitation.objects.select_related('company', 'role').get(pk=invitation_id)
+        invitation = self._get_invitation_or_error(invitation_id)
 
         if invitation.status not in {
             InvitationStatus.PENDING, InvitationStatus.EXPIRED
@@ -546,7 +605,12 @@ class InvitationService:
         return count
 
     def get_invitation(self, *, request_id):
-        return Invitation.objects.select_related('company', 'role', 'created_by').get(pk=request_id)
+        try:
+            return Invitation.objects.select_related(
+                'company', 'role', 'created_by'
+            ).get(pk=request_id)
+        except Invitation.DoesNotExist as exc:
+            raise ValueError('Invitation not found.') from exc
 
     def _send_invitation_email(self, invitation):
         """

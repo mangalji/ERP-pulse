@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
@@ -20,7 +20,7 @@ export default function CenterTabDetailPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
@@ -33,9 +33,9 @@ export default function CenterTabDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [tabId])
 
-  useEffect(() => { load() }, [tabId])
+  useEffect(() => { void load() }, [load])
 
   const reset = () => {
     setEditingId(null)

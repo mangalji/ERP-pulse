@@ -11,7 +11,7 @@ export default function OtpVerificationPage() {
   const { verifyLogin, resendLoginOtp } = useAuth()
   const purpose = location.state?.purpose ?? 'login'
   const emailFromState = location.state?.email ?? ''
-  const [email, setEmail] = useState(emailFromState)
+  const [email] = useState(emailFromState)
   const [code, setCode] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [localError, setLocalError] = useState('')

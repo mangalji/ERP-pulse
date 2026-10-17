@@ -9,7 +9,7 @@ no new database fields are invented. Only exposes fields already present on Comp
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from common.contact_validation import normalize_phone
-from invitations.models import Invitation, InvitationStatus
+from invitations.status import get_user_invitation_status
 from rbac.models import Role
 from accounts.models import Gender
 from tenancy.models import Company
@@ -128,26 +128,12 @@ class CompanyEmployeeSerializer(serializers.ModelSerializer):
             return obj.has_usable_password()
     
     def get_invitation_status(self, obj):
-        
-        # List views pass the latest invitation per email in the serializer
-        # context (one query for the whole page instead of one per employee).
-        
-        latest = self.context.get('latest_invitation_by_email')
-        if latest is not None:
-            invitation = latest.get(obj.email)
-        else:
-            invitation = Invitation.objects.filter(
-                email=obj.email,
-                company=obj.company,
-            ).order_by('-created_at').first()
-
-        if not invitation:
-            return 'NONE'
-        if invitation.status == InvitationStatus.ACCEPTED:
-            return 'ACCEPTED'
-        if invitation.is_expired():
-            return 'EXPIRED'
-        return invitation.status
+        return get_user_invitation_status(
+            obj,
+            latest_invitation_by_email=self.context.get(
+                'latest_invitation_by_email'
+            ),
+        )
 
 
 class CreateEmployeeSerializer(serializers.Serializer):

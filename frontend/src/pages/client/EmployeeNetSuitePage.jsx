@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Badge from '../../components/ui/Badge.jsx'
@@ -14,11 +14,7 @@ export default function EmployeeNetSuitePage() {
   const [loading, setLoading] = useState(true)
   const [switchingId, setSwitchingId] = useState(null)
 
-  useEffect(() => {
-    loadConnection()
-  }, [])
-
-  const loadConnection = async () => {
+  const loadConnection = useCallback(async () => {
     setLoading(true)
     try {
       const data = await netsuiteApi.getMyConnections()
@@ -48,7 +44,11 @@ export default function EmployeeNetSuitePage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [addToast])
+
+  useEffect(() => {
+    void loadConnection()
+  }, [loadConnection])
 
   const handleUse = async (connectionId) => {
     if (!connectionId || connectionId === currentConnectionId) {

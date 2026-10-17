@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
@@ -20,22 +20,22 @@ export default function CenterTabsPage() {
   const [message, setMessage] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
 
-  const loadTabs = async (nextPage = page) => {
+  const loadTabs = useCallback(async (nextPage = page) => {
     setLoading(true)
     setError('')
     try {
       const result = await clientApi.getCenterTabs(nextPage)
       setTabs(result?.results || [])
-      setPagination(result?.pagination || pagination)
+      setPagination((current) => result?.pagination || current)
     } catch (err) {
       setError(err?.payload?.message || err?.message || 'Unable to load Center Tabs.')
       setTabs([])
     } finally {
       setLoading(false)
     }
-  }
+  }, [page])
 
-  useEffect(() => { loadTabs(page) }, [page])
+  useEffect(() => { void loadTabs(page) }, [page, loadTabs])
 
   const resetForm = () => {
     setForm(EMPTY_FORM)

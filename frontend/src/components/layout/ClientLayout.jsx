@@ -9,7 +9,7 @@ import { clientApi } from '../../services/client.js'
  * Desktop keeps the original hover navigation.
  * Compact screens use a measured one-line nav with overflow in a More menu.
  */
-export default function ClientLayout({ title, breadcrumb, children }) {
+export default function ClientLayout({ children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -28,7 +28,6 @@ export default function ClientLayout({ title, breadcrumb, children }) {
   const navRef = useRef(null)
   const measureNavRef = useRef(null)
   const moreButtonRef = useRef(null)
-  const moreMenuRef = useRef(null)
   const compactMenuRef = useRef(null)
   const compactTriggerRefs = useRef(new Map())
   const resizeObserverRef = useRef(null)

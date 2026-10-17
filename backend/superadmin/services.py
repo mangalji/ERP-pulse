@@ -10,7 +10,6 @@ from django.utils import timezone
 from common.contact_validation import normalize_phone
 from django.utils.crypto import get_random_string
 from accounts.models import User, Gender
-from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
 from rbac.models import Role
 from superadmin.models import (
@@ -144,18 +143,13 @@ class SuperAdminService:
         if company is None:
             return
 
-        if company.is_deleted:
-            raise ValueError(
-                "This employee's company no longer exists."
-            )
-
-        if company_lifecycle_service.get_effective_status(
-            company=company
-        ) == Company.Status.SUSPENDED:
+        try:
+            company_lifecycle_service.ensure_operational(company=company)
+        except ValueError as exc:
             raise ValueError(
                 "This company's account is currently suspended. "
                 "Employee operations are unavailable."
-            )
+            ) from exc
 
 
     @transaction.atomic
@@ -237,58 +231,16 @@ class SuperAdminService:
         )
 
     def resend_employee_invitation(self, *, employee_id, acting_user, request=None):
-        employee = User.objects.filter(pk=employee_id).select_related('company').first()
-    
-        if not employee:
-            raise ValueError("Employee not found.")
-
-        if employee.company and employee.company.is_deleted:
-            raise ValueError(
-                "This employee's company no longer exists."
-            )
-        if(
-            employee.company
-            and company_lifecycle_service.get_effective_status(
-                company=employee.company
-            ) == Company.Status.SUSPENDED
-        ):
-            raise ValueError(
-                "This company's account is currently suspended. "
-                "Invitation operations are unavailable."
-            )
-
-        if company_lifecycle_service.get_effective_status(
-            company=employee.company
-        ) == Company.Status.SUSPENDED:
-            raise ValueError(
-                "This company's account is currently suspended. "
-                "Invitation operations are unavailable."
-            )
-    
-        invitation = (
-            Invitation.objects
-            .filter(
-                email__iexact=employee.email,
-                company=employee.company,
-                # status=InvitationStatus.PENDING,
-            )
-            .filter(
-                Q(status=InvitationStatus.PENDING)
-                | Q(status=InvitationStatus.EXPIRED)
-            )
-            .order_by('-created_at')
-            .first()
+        employee = get_object_or_404(
+            User.objects.select_related('company', 'role'),
+            pk=employee_id,
         )
-    
-        if not invitation:
-            raise ValueError("No pending invitation found for this user.")
-    
-        invitation_service.resend_invitation(
-            invitation_id=invitation.id,
+        result = invitation_service.resend_user_invitation(
+            user=employee,
+            acting_user=acting_user,
             request=request,
         )
-    
-        return invitation
+        return result['invitation']
 
     def update_employee(self, *, employee_id, **data):
         user = get_object_or_404(User, pk=employee_id)
