@@ -49,6 +49,7 @@ from common.authentication import (
     CheckedTokenRefreshSerializer,
 )
 from django.middleware.csrf import get_token
+from django.http import FileResponse, Http404
 
 
 class CSRFTokenView(APIView):
@@ -64,7 +65,7 @@ class CSRFTokenView(APIView):
         trigger_lazy_daily_housekeeping()
         return response
 
-from accounts.models import OTP
+from accounts.models import OTP, User
 from accounts import password_verified_login_challenge
 from audit.models import AuditAction, AuditModule, AuditLog
 from audit.services import audit_service
@@ -284,6 +285,27 @@ class MeView(APIView):
             message='User fetched successfully.',
             data=UserSerializer(request.user).data,
         )
+
+
+class ProfilePictureView(APIView):
+    """Serve an active user's uploaded profile picture."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id, is_active=True)
+        except User.DoesNotExist as exc:
+            raise Http404 from exc
+
+        if not user.profile_pic:
+            raise Http404
+
+        try:
+            return FileResponse(user.profile_pic.open('rb'), content_type='image/*')
+        except (FileNotFoundError, OSError) as exc:
+            raise Http404 from exc
 
 
 class LoginHistoryView(APIView):

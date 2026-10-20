@@ -4,11 +4,12 @@ import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import SectionCard from '../../components/superadmin/SectionCard.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Button from '../../components/ui/Button.jsx'
+import ProfilePhotoPicker from '../../components/ui/ProfilePhotoPicker.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 
 export default function SettingsPage() {
   const { user, profileUpdate } = useAuth()
-  const [form, setForm] = useState({ firstName: '', lastName: '', mobileNumber: '' })
+  const [form, setForm] = useState({ firstName: '', lastName: '', mobileNumber: '', profilePic: null })
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -18,6 +19,7 @@ export default function SettingsPage() {
       firstName: user?.first_name || '',
       lastName: user?.last_name || '',
       mobileNumber: user?.mobile_number || '',
+      profilePic: null,
     })
   }, [user])
 
@@ -78,6 +80,12 @@ export default function SettingsPage() {
               onChange={updateField('mobileNumber')}
               placeholder="+919876543210"
               maxLength={16}
+            />
+            <ProfilePhotoPicker
+              id="superadmin-profile-picture"
+              profilePicture={user?.profile_pic}
+              initials={`${form.firstName?.[0] || ''}${form.lastName?.[0] || ''}`.toUpperCase() || 'U'}
+              onChange={(profilePic) => setForm((current) => ({ ...current, profilePic }))}
             />
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input

@@ -12,6 +12,7 @@ from accounts.views import (
     ResetPasswordView,
     ProfileUpdateSendOTPView,
     ProfileUpdateView,
+    ProfilePictureView,
     health
 )
 
@@ -43,5 +44,6 @@ urlpatterns = [
     path("forgot-password/reset/", ResetPasswordView.as_view(), name="reset-password"),
     path("profile/send-otp/", ProfileUpdateSendOTPView.as_view(), name="profile-send-otp"),
     path("profile/update/", ProfileUpdateView.as_view(), name="profile-update"),
+    path("profile-picture/<uuid:user_id>/", ProfilePictureView.as_view(), name="profile-picture"),
     path("health/",health,name="health"),
 ]

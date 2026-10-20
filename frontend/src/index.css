@@ -40,6 +40,49 @@
   --color-negative-soft: #fdecec;
 }
 
+:root[data-theme="dark"] {
+  --color-canvas: #12141c;
+  --color-surface: #1a1d27;
+  --color-ink: #f4f5fb;
+  --color-ink-soft: #c4c8d6;
+  --color-muted: #a0a7b8;
+  --color-border: #343949;
+
+  --color-primary: #818cf8;
+  --color-primary-dark: #c7d2fe;
+  --color-primary-soft: #292b5c;
+
+  --color-sidebar: #0d0e24;
+  --color-sidebar-soft: #24265a;
+  --color-sidebar-ink: #d9d8ee;
+
+  --color-netsuite: #fbbf24;
+  --color-netsuite-soft: #453212;
+
+  --color-positive: #34d399;
+  --color-positive-soft: #123b32;
+  --color-negative: #fb7185;
+  --color-negative-soft: #4a1f2a;
+}
+
+/* A few older screens still use Tailwind's fixed neutral surface utilities.
+   Keep those surfaces readable whenever the authenticated layouts are dark. */
+:root[data-theme="dark"] .bg-white,
+:root[data-theme="dark"] .bg-slate-50 {
+  background-color: var(--color-surface) !important;
+}
+
+:root[data-theme="dark"] .border-slate-200 {
+  border-color: var(--color-border) !important;
+}
+
+:root[data-theme="dark"] .text-slate-800,
+:root[data-theme="dark"] .text-slate-700,
+:root[data-theme="dark"] .text-slate-500,
+:root[data-theme="dark"] .text-gray-700 {
+  color: var(--color-ink-soft) !important;
+}
+
 body {
   font-family: var(--font-body);
   background-color: var(--color-canvas);

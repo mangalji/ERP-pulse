@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
+import ThemeToggle from './ThemeToggle.jsx'
+import ProfileAvatar from '../ui/ProfileAvatar.jsx'
 
 const NAV_ITEMS = [
   { to: '/admin', label: 'Dashboard', icon: DashboardIcon, end: true },
@@ -159,6 +161,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
           </div>
 
           <div className="flex items-center gap-3">
+            <ThemeToggle />
             {/* User menu */}
             <div className="relative" ref={userMenuRef}>
               <button
@@ -166,9 +169,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
                 className="flex items-center gap-2 rounded-full bg-[var(--color-primary-soft)] px-2 py-1 pr-1 text-sm font-semibold text-[var(--color-primary-dark)] hover:bg-[var(--color-primary-soft)] transition-colors"
                 aria-label="User menu"
               >
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-primary)] text-xs font-bold text-white">
-                  {initials}
-                </span>
+                <ProfileAvatar profilePicture={user?.profile_pic} initials={initials} className="h-7 w-7" />
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3 w-3">
                   <path d="M6 9l6 6 6-6" />
                 </svg>
