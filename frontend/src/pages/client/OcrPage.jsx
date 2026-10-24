@@ -2808,6 +2808,10 @@ const goNext = () => {
                   Choose Files
                 </Button>
 
+                <Button type="button">
+                  Email
+                </Button>
+
                 {!!selectedFiles.length && (
                   <>
                     <Button
