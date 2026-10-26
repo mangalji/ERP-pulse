@@ -24,7 +24,7 @@ LOCAL_APPS = [
     "core",
     "tenancy",
     "rbac.apps.RbacConfig",
-    "audit",
+    "audit.apps.AuditConfig",
     "common",
     "accounts",
     "netsuite",
@@ -37,6 +37,7 @@ LOCAL_APPS = [
     "subscriptions",
     'django_extensions',
     'navigation',
+    "mail_integration.apps.MailIntegrationConfig",
 ]
 
 INSTALLED_APPS = (

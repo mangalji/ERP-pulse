@@ -1,6 +1,6 @@
 from accounts.models import User
 from django.db import transaction
-from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteReferenceRecord, NetSuiteOCRPosting
+from netsuite.models import EmployeeConnection, NetSuiteConnection, NetSuiteReferenceRecord, NetSuiteOCRPosting, blocking_ocr_postings
 
 class NetSuiteConnectionRepository:
     """
@@ -505,7 +505,7 @@ class NetSuiteConnectionRepository:
         latest = locked.versions.order_by('-version_number').first()
         if latest is None or latest.pk != version.pk:
             raise ValueError('Document changed. Validate its latest version before posting.')
-        if NetSuiteOCRPosting.objects.filter(document=locked).exists():
+        if blocking_ocr_postings(NetSuiteOCRPosting.objects.filter(document=locked)).exists():
             raise ValueError(
                 'This document already has a posting attempt. Reconcile its NetSuite '
                 'result before any retry; a new version is not a new bill.'

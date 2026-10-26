@@ -92,3 +92,18 @@ class AuditLog(models.Model):
 
     def __str__(self) -> str:
         return f'{self.action} {self.entity} ({self.entity_id})'
+
+
+class Notification(models.Model):
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='notifications')
+    message = models.CharField(max_length=500)
+    activity_type = models.CharField(max_length=12, choices=[('manual', 'Manual'), ('automated', 'Automated')], null=True, blank=True)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='notification_activities')
+    link = models.CharField(max_length=500, blank=True, default='')
+    is_read = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        indexes = [models.Index(fields=['recipient', 'company', '-created_at'], name='notif_user_company_recent')]

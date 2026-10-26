@@ -1706,12 +1706,16 @@ class NetSuiteVendorBillPostingService:
         # mappings from the separate Field Mapping screen and must not override
         # the user's selected template.
         upload = getattr(document, "upload", None)
-        batch = getattr(upload, "batch", None) if upload else None
-
-        requested_fields = (
-            getattr(batch, "requested_fields_json", None)
-            if batch else None
+        # Email-originated documents are created directly under OCRBatch and
+        # intentionally have no OCRUpload.  Upload-based documents keep their
+        # existing relationship, so both sources use the same template snapshot.
+        batch = getattr(document, "batch", None) or (
+            getattr(upload, "batch", None) if upload else None
         )
+
+        requested_fields = validation.mapping_snapshot
+        if requested_fields is None:
+            requested_fields = getattr(batch, "requested_fields_json", None) if batch else None
         template_mappings = _build_template_netsuite_mappings(
             requested_fields,
             connection=connection,
@@ -3804,18 +3808,46 @@ class NetSuiteValidationService:
         
         # Template-based NetSuite mapping
         upload = getattr(document, "upload", None)
-        batch = getattr(upload, "batch", None) if upload else None
+        # Email-originated documents have a direct batch relation rather than
+        # an OCRUpload.  Resolve it first so posting uses the same template
+        # mapping that was snapshotted during extraction.
+        batch = getattr(document, "batch", None) or (
+            getattr(upload, "batch", None) if upload else None
+        )
 
-        requested_fields = (
-            getattr(batch, "requested_fields_json", None)
-            if batch
-            else None
-        )
-        template_mappings = _build_template_netsuite_mappings(
-            requested_fields,
-            connection=connection,
-            record_type="vendorBill",
-        )
+        requested_fields = getattr(batch, "requested_fields_json", None) if batch else None
+        if batch:
+            from ocr.models import OCRExtractionTemplate
+            template_id = batch.extraction_template_id
+            # Existing email batches predate the direct template link. Their
+            # integration is the only available reference to a saved template.
+            if not template_id and batch.source_type == "EMAIL" and batch.email_integration_id:
+                template_id = batch.email_integration.ocr_template_id
+            if template_id:
+                template = OCRExtractionTemplate.objects.filter(pk=template_id, company_id=document.company_id).first()
+                if template:
+                    requested_fields = template.fields_config
+        try:
+            template_mappings = _build_template_netsuite_mappings(
+                requested_fields,
+                connection=connection,
+                record_type="vendorBill",
+            )
+        except ValueError as exc:
+            errors = [{"type": "TEMPLATE_MAPPING_ERROR", "message": str(exc)}]
+            validation = OCRValidationResult.objects.create(
+                document=document, version=version, connection=connection,
+                status=ValidationStatus.VALIDATION_FAILED, items=[], errors=errors,
+                mapping_snapshot=requested_fields,
+            )
+            return {
+                "validation_id": str(validation.id),
+                "status": ValidationStatus.VALIDATION_FAILED,
+                "vendor": {"extracted_name": "", "matched": False, "netsuite_id": None},
+                "items": [], "errors": errors,
+                "summary": {"source_rows": 0, "matched_rows": 0,
+                            "unique_netsuite_items": 0, "unmatched_rows": 0},
+            }
 
         # The shared builder is the single source of truth for validation and posting.
         # It already validates the template JSON and returns enriched mapping dictionaries.
@@ -4236,6 +4268,7 @@ class NetSuiteValidationService:
             
             items=item_results,
             errors=errors,
+            mapping_snapshot=requested_fields,
         )
 
         return {

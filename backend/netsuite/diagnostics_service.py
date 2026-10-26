@@ -362,6 +362,19 @@ def _normalize_diagnostics(
 
 
 class NetSuiteDiagnosticsService:
+    def diagnose_and_persist(self, *, company, connection_id, validation_ids):
+        result = self.diagnose(company=company, connection_id=connection_id, validation_ids=validation_ids)
+        grouped = {str(validation_id): [] for validation_id in validation_ids}
+        for diagnostic in result.get("diagnostics", []):
+            validation_id, separator, _ = str(diagnostic.get("error_reference") or "").partition(":group:")
+            if separator and validation_id in grouped:
+                grouped[validation_id].append(diagnostic)
+        for validation_id, diagnostics in grouped.items():
+            OCRValidationResult.objects.filter(
+                id=validation_id, document__company=company, connection_id=connection_id,
+            ).update(ai_diagnostics=diagnostics)
+        return result
+
 
     def diagnose(
         self,

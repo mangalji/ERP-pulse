@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
@@ -12,6 +13,7 @@ import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
 import { isNetSuiteReauthJob } from '../../utils/netsuiteErrors.js'
 import { getPreviewErrorMessage } from '../../utils/ocrPreviewError.js'
+import { preventOcrNumberStep, blurOcrNumberOnWheel } from '../../utils/ocrNumericInput.js'
 
 const OCR_PAGE_SESSION_KEY = 'ocr_page_session_state'
 
@@ -745,6 +747,9 @@ const FieldInput =  memo(function FieldInput({ field, value, editable, onChange 
       type={field.type}
       value={displayValue}
       step={field.type === 'number' ? 'any' : undefined}
+      className={field.type === 'number' ? 'ocr-number-input' : ''}
+      onKeyDown={field.type === 'number' ? preventOcrNumberStep : undefined}
+      onWheel={field.type === 'number' ? blurOcrNumberOnWheel : undefined}
       onChange={(event) => onChange(field.key, event.target.value)}
     />
   )
@@ -838,6 +843,7 @@ function getFileCategory(file) {
 }
 
 export default function OcrPage() {
+  const navigate = useNavigate()
 
   const clearSelectedFilesAfterExtraction = useCallback(() => {
     setSelectedFiles((current) => {
@@ -2808,7 +2814,7 @@ const goNext = () => {
                   Choose Files
                 </Button>
 
-                <Button type="button">
+                <Button type="button" onClick={() => navigate('/app/integrations/email')}>
                   Email
                 </Button>
 
@@ -3127,8 +3133,10 @@ const goNext = () => {
                                             type={field.type}
                                             value={toInputValue(item?.[field.key])}
                                             step={field.type === 'number' ? 'any' : undefined}
+                                            onKeyDown={field.type === 'number' ? preventOcrNumberStep : undefined}
+                                            onWheel={field.type === 'number' ? blurOcrNumberOnWheel : undefined}
                                             onChange={(event) => setLineItemField(index, field.key, event.target.value)}
-                                            className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                                            className={`w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)] ${field.type === 'number' ? 'ocr-number-input' : ''}`}
                                           />
                                         ) : (
                                           <span className="break-words text-[var(--color-ink)]">

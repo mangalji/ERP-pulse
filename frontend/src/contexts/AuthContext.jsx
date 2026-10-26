@@ -146,6 +146,8 @@ export function AuthProvider({ children }) {
     try {
       await authApi.logout()
     } finally {
+      // History page size is a session preference, not a permanent account setting.
+      sessionStorage.removeItem('data_extraction_history_page_size')
       clearAccessToken()
       setUser(null)
       setClientContextLoading(false)

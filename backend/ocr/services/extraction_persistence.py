@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from copy import deepcopy
 
 from django.db import transaction
+from django.utils import timezone
 
 from ocr.models import (
     DocumentType,
     OCRDocument,
     OCRDocumentStatus,
     OCRDocumentVersion,
+    GeneratedInvoiceNumber,
 )
 
 def _nullable_string(value):
@@ -19,6 +22,22 @@ def _nullable_string(value):
         return None
     value = str(value).strip()
     return value or None
+
+
+def _apply_initial_defaults(result, reviewed_result=None):
+    original_data = result.get('data', result)
+    current = reviewed_result if reviewed_result is not None else result
+    current_data = current.get('data', current)
+    if not isinstance(original_data, dict) or not isinstance(current_data, dict):
+        return
+    for key, default in (('invoice_number', None), ('location', 'Pune')):
+        if _nullable_string(original_data.get(key)) or _nullable_string(current_data.get(key)):
+            continue
+        value = default
+        if key == 'invoice_number':
+            value = f'vendor_bill_inv_{GeneratedInvoiceNumber.objects.create().pk}'
+        original_data[key] = value
+        current_data[key] = value
 
 
 def _nullable_decimal(value):
@@ -78,7 +97,7 @@ def normalize_extraction_payload(result: dict) -> dict:
     }
 
 @transaction.atomic
-def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | None = None,allow_company_admin=False):
+def persist_extraction(*, upload=None, document=None, batch=None, user=None, result: dict = None, reviewed_result: dict | None = None, allow_company_admin=False):
     """Persist one extraction as an immutable OCR document version.
 
     The complete original AI JSON is retained in ``normalized_json``.
@@ -92,29 +111,37 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
     snapshot.
     """
 
+    if user is None or result is None:
+        raise ValueError("A user and extraction result are required.")
+    if upload is None and document is None:
+        raise ValueError("An OCR upload or document is required.")
+    if upload is not None and document is not None:
+        raise ValueError("Provide either an OCR upload or document, not both.")
+
     if reviewed_result is not None and not isinstance(reviewed_result, dict):
         raise ValueError('Reviewed OCR result must be a JSON object.')
 
     # Do not retain the deprecated Customer Name field in newly saved snapshots.
     result = _remove_customer_name_key(result)
+    raw_result = deepcopy(result)
     if reviewed_result is not None:
         reviewed_result = _remove_customer_name_key(reviewed_result)
 
-    effective_result = reviewed_result if reviewed_result is not None else result
-
-    normalized = normalize_extraction_payload(effective_result)
-
     company = getattr(user, 'company', None)
 
-    document, _ = OCRDocument.objects.get_or_create(
-        upload=upload,
-        defaults={
-            'user': user,
-            'company': company,
-            'document_type': DocumentType.UNKNOWN,
-            'status': OCRDocumentStatus.PROCESSING,
-        },
-    )
+    if document is None:
+        document, _ = OCRDocument.objects.get_or_create(
+            upload=upload,
+            defaults={
+                'user': user,
+                'company': company,
+                'document_type': DocumentType.UNKNOWN,
+                'status': OCRDocumentStatus.PROCESSING,
+            },
+        )
+    elif batch is not None and document.batch_id is None:
+        document.batch = batch
+        document.save(update_fields=['batch', 'updated_at'])
 
     # Same lock as posting reservation: editing and posting cannot race.
     document = OCRDocument.objects.select_for_update().get(pk=document.pk)
@@ -140,11 +167,20 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
             document.company = company
             document.save(update_fields=['company', 'updated_at'])
 
-    if document.netsuite_postings.exists():
+    from netsuite.models import blocking_ocr_postings
+    if blocking_ocr_postings(document.netsuite_postings.all()).exists():
         raise ValueError(
             'This document has a posting attempt. Reconcile it before editing; '
             'posted bills need an explicit correction workflow.'
         )
+
+    # Defaults are assigned once, when the extraction is first saved. Existing
+    # reviews retain their values and an explicit user edit is never replaced.
+    if not document.versions.exists():
+        _apply_initial_defaults(result, reviewed_result)
+
+    effective_result = reviewed_result if reviewed_result is not None else result
+    normalized = normalize_extraction_payload(effective_result)
 
     version_number = (
         OCRDocumentVersion.objects
@@ -158,7 +194,7 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
     version = OCRDocumentVersion.objects.create(
         document=document,
         version_number=version_number,
-        raw_ocr=result,
+        raw_ocr=raw_result,
         normalized_json=result,
         reviewed_json=(
             reviewed_result if reviewed_result is not None else {}
@@ -172,8 +208,12 @@ def persist_extraction(*, upload, user, result: dict, reviewed_result: dict | No
     document.status = (
         OCRDocumentStatus.APPROVED if reviewed_result is not None else OCRDocumentStatus.EXTRACTED
     )
-    document.processing_completed_at = upload.processing_completed_at
-    document.processing_duration_ms = upload.processing_duration_ms
+    document.processing_completed_at = (
+        upload.processing_completed_at if upload is not None else timezone.now()
+    )
+    document.processing_duration_ms = (
+        upload.processing_duration_ms if upload is not None else None
+    )
     document.failure_reason = None
     document.save(update_fields=[
         'current_version',

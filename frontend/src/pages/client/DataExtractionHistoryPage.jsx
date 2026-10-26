@@ -7,6 +7,7 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import NetSuiteReauthBanner from '../../components/netsuite/NetSuiteReauthBanner.jsx'
+import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
 import {
   isCompanyAdminUser,
   isNetSuiteReauthError,
@@ -21,11 +22,23 @@ const FILTERS = [
   { value: 'POSTED', label: 'Posted' },
 ]
 
+const PAGE_SIZE_OPTIONS = [10, 15, 25, 50, 100]
+const HISTORY_PAGE_SIZE_STORAGE_KEY = 'data_extraction_history_page_size'
+
+function getSavedPageSize() {
+  const savedValue = Number(sessionStorage.getItem(HISTORY_PAGE_SIZE_STORAGE_KEY))
+  return PAGE_SIZE_OPTIONS.includes(savedValue) ? savedValue : 15
+}
+
 function unwrapHistory(response) {
   const payload = response?.data?.data ?? response?.data ?? response ?? {}
   return {
     results: Array.isArray(payload?.results) ? payload.results : [],
     count: Number(payload?.count ?? 0),
+    offset: Number(payload?.offset ?? 0),
+    limit: Number(payload?.limit ?? 15),
+    nextOffset: payload?.next_offset ?? null,
+    previousOffset: payload?.previous_offset ?? null,
   }
 }
 
@@ -83,25 +96,29 @@ export default function DataExtractionHistoryPage() {
   const canDeleteHistory = isCompanyAdminUser(user)
   const [filter, setFilter] = useState('ALL')
   const [records, setRecords] = useState([])
+  const [pagination, setPagination] = useState({ count: 0, offset: 0, limit: 15, nextOffset: null, previousOffset: null })
+  const [pageSize, setPageSize] = useState(getSavedPageSize)
+  const [showPageSizeMenu, setShowPageSizeMenu] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [deletingId, setDeletingId] = useState(null)
   const [deletingSelected, setDeletingSelected] = useState(false)
+  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [actionMessages, setActionMessages] = useState([])
   const [reauthRequired, setReauthRequired] = useState(false)
   const [connection, setConnection] = useState(null)
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (requestedOffset = 0) => {
     try {
       setLoading(true)
       setError('')
 
       const params = new URLSearchParams({
-        offset: '0',
-        limit: '100',
+        offset: String(requestedOffset),
+        limit: String(pageSize),
       })
 
       if (filter !== 'ALL') {
@@ -114,6 +131,7 @@ export default function DataExtractionHistoryPage() {
 
       const payload = unwrapHistory(response)
       setRecords(payload.results)
+      setPagination(payload)
       setSelectedIds(new Set())
     } catch (err) {
       console.error('Failed to load Data Extraction History:', err)
@@ -126,7 +144,7 @@ export default function DataExtractionHistoryPage() {
     } finally {
       setLoading(false)
     }
-  }, [filter])
+  }, [filter, pageSize])
 
   useEffect(() => {
     loadHistory()
@@ -219,10 +237,16 @@ export default function DataExtractionHistoryPage() {
     })
   }
 
+  const updatePageSize = (size) => {
+    sessionStorage.setItem(HISTORY_PAGE_SIZE_STORAGE_KEY, String(size))
+    setPageSize(size)
+    setShowPageSizeMenu(false)
+  }
+
   const handleDelete = async (item) => {
     if (!canDeleteHistory) return
 
-    const recordId = item?.type === 'batch' ? item?.batch_id : item?.upload_id
+    const recordId = item?.batch_id
     if (!recordId) {
       setError('This history record cannot be deleted because its ID is missing.')
       return
@@ -234,7 +258,7 @@ export default function DataExtractionHistoryPage() {
       setNotice('')
       setActionMessages([])
 
-      const recordType = item?.type === 'batch' ? 'batch' : 'upload'
+      const recordType = 'batch'
       await apiClient.delete(
         `/ocr/history/uploads/${recordId}/?record_type=${recordType}`,
       )
@@ -271,8 +295,8 @@ export default function DataExtractionHistoryPage() {
 
     const targets = selectedRecords
       .map((item) => ({
-        id: item?.type === 'batch' ? item?.batch_id : item?.upload_id,
-        record_type: item?.type === 'batch' ? 'batch' : 'upload',
+        id: item?.batch_id,
+        record_type: 'batch',
         historyId: item?.batch_id,
       }))
       .filter((item) => item.id)
@@ -515,6 +539,18 @@ export default function DataExtractionHistoryPage() {
             </div>
 
              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {canDeleteHistory && selectedRecords.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteSelected(true)}
+                  disabled={working || deletingId || deletingSelected}
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingSelected
+                    ? 'Deleting selected...'
+                    : `Delete Selected (${selectedRecords.length})`}
+                </button>
+              )}
               <select
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}
@@ -528,6 +564,54 @@ export default function DataExtractionHistoryPage() {
                 ))}
               </select>
 
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowPageSizeMenu((visible) => !visible)}
+                  disabled={working}
+                  title="Records per page"
+                  aria-label="Choose records per page"
+                  aria-expanded={showPageSizeMenu}
+                  className="inline-flex h-10 items-center gap-1 rounded-lg border border-[var(--color-border)] bg-white px-2.5 text-sm font-medium text-[var(--color-ink)] transition-colors hover:bg-[var(--color-canvas)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    className="h-4 w-4"
+                    aria-hidden="true"
+                  >
+                    <path d="M4 7h16M4 12h16M4 17h16" />
+                    <path d="M7 5v4M12 10v4M17 15v4" />
+                  </svg>
+                  <span>{pageSize}</span>
+                </button>
+
+                {showPageSizeMenu && (
+                  <div className="absolute right-0 z-20 mt-2 w-44 rounded-lg border border-[var(--color-border)] bg-white p-1 shadow-lg">
+                    <p className="px-2 py-1.5 text-xs font-medium text-[var(--color-muted)]">
+                      Records per page
+                    </p>
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => updatePageSize(size)}
+                        className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-[var(--color-canvas)] ${
+                          pageSize === size
+                            ? 'font-semibold text-[var(--color-primary)]'
+                            : 'text-[var(--color-ink)]'
+                        }`}
+                      >
+                        <span>{size} records</span>
+                        {pageSize === size && <span aria-hidden="true">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <Button
                 type="button"
                 intent="secondary"
@@ -536,19 +620,6 @@ export default function DataExtractionHistoryPage() {
               >
                 {allVisibleSelected ? 'Clear All' : 'Select All'}
               </Button>
-
-              {canDeleteHistory && selectedRecords.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleDeleteSelected}
-                  disabled={working || deletingId || deletingSelected}
-                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {deletingSelected
-                    ? 'Deleting selected...'
-                    : `Delete Selected (${selectedRecords.length})`}
-                </button>
-              )}
 
               <Button
                 type="button"
@@ -599,6 +670,15 @@ export default function DataExtractionHistoryPage() {
               </ul>
             </div>
           )}
+          {!loading && pagination.count > 0 && (
+            <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-muted)]">
+              <span>Showing {pagination.offset + 1}-{Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}</span>
+              <div className="flex gap-2">
+                <Button type="button" onClick={() => loadHistory(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>Previous</Button>
+                <Button type="button" onClick={() => loadHistory(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>Next</Button>
+              </div>
+            </div>
+          )}
         </Card>
 
         <Card className="overflow-hidden">
@@ -614,12 +694,15 @@ export default function DataExtractionHistoryPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1240px]">
-                <div className="grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_140px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+              <div className="min-w-[1720px]">
+                <div className="grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_200px_70px_150px_150px_120px_140px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   <div />
                   <div>History #</div>
                   <div>File / Batch</div>
                   <div>Type</div>
+                  <div>Mode</div>
+                  <div>Vendor Email</div>
+                  <div>Email Account</div>
                   <div>Files</div>
                   <div>Created By</div>
                   <div>Created</div>
@@ -639,7 +722,7 @@ export default function DataExtractionHistoryPage() {
                     return (
                       <div
                         key={item.batch_id}
-                        className={`grid grid-cols-[44px_100px_1.35fr_90px_70px_150px_150px_120px_140px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
+                        className={`grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_200px_70px_150px_150px_120px_140px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
                       >
                         <div>
                           <input
@@ -660,14 +743,28 @@ export default function DataExtractionHistoryPage() {
                             {item.filename || 'OCR Record'}
                           </p>
                           <p className="mt-1 text-xs text-[var(--color-muted)]">
-                            {item.type === 'batch'
-                              ? `${item.validated_count || 0}/${item.file_count} validated`
-                              : 'Single file'}
+                            {item.source_type === 'EMAIL'
+                              ? `Email · ${item.source_metadata?.sender || 'unknown sender'}`
+                              : item.type === 'batch'
+                                ? `${item.validated_count || 0}/${item.file_count} validated`
+                                : 'Single file'}
                           </p>
                         </div>
 
                         <div className="text-sm text-[var(--color-muted)]">
-                          {item.type === 'batch' ? 'Batch' : 'Single'}
+                          {item.source_type === 'EMAIL' ? 'Automated' : 'Manual'}
+                        </div>
+
+                        <div className="text-sm text-[var(--color-muted)]">
+                          {item.type === 'batch' ? 'Multiple' : 'Single'}
+                        </div>
+
+                        <div className="truncate pr-2 text-sm text-[var(--color-muted)]" title={item.source_type === 'EMAIL' ? item.source_metadata?.sender || '' : ''}>
+                          {item.source_type === 'EMAIL' ? item.source_metadata?.sender || '' : ''}
+                        </div>
+
+                        <div className="truncate pr-2 text-sm text-[var(--color-muted)]" title={item.source_type === 'EMAIL' ? item.source_metadata?.mailbox || '' : ''}>
+                          {item.source_type === 'EMAIL' ? item.source_metadata?.mailbox || '' : ''}
                         </div>
 
                         <div className="text-sm text-[var(--color-ink)]">
@@ -779,7 +876,27 @@ export default function DataExtractionHistoryPage() {
               </div>
             </div>
           )}
+          {!loading && pagination.count > 0 && (
+            <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-muted)]">
+              <span>Showing {pagination.offset + 1}-{Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}</span>
+              <div className="flex gap-2">
+                <Button type="button" onClick={() => loadHistory(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>Previous</Button>
+                <Button type="button" onClick={() => loadHistory(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>Next</Button>
+              </div>
+            </div>
+          )}
         </Card>
+        <ConfirmDialog
+          open={confirmDeleteSelected}
+          title="Delete selected records?"
+          message={`Are you sure you want to delete ${selectedRecords.length} selected history ${selectedRecords.length === 1 ? 'record' : 'records'}?`}
+          confirmLabel="Delete"
+          onCancel={() => setConfirmDeleteSelected(false)}
+          onConfirm={() => {
+            setConfirmDeleteSelected(false)
+            handleDeleteSelected()
+          }}
+        />
       </div>
     </ClientLayout>
   )

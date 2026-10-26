@@ -65,10 +65,7 @@ export default function CenterTabsPage() {
   setMessage('')
 
   try {
-    const payload = {
-      name,
-      query_param: queryParam,
-    }
+    const payload = isSystemTab ? {} : { name, query_param: queryParam }
 
     // Pre-created/system tab ka Path update nahi hoga.
     if (!isSystemTab) {
@@ -78,6 +75,7 @@ export default function CenterTabsPage() {
     if (form.sort_order !== '') {
       payload.sort_order = Number(form.sort_order)
     }
+    if (isSystemTab && form.sort_order === '') return setError('Sort Order is required.')
 
     if (editingId) {
       await clientApi.updateNavigationTab('top', editingId, payload)
@@ -183,6 +181,7 @@ export default function CenterTabsPage() {
             <div className="mt-4 grid gap-4 sm:grid-cols-4">
   <input
     aria-label="Center Tab Name"
+    disabled={Boolean(editingId && tabs.find((tab) => String(tab.id) === String(editingId))?.system)}
     value={form.name}
     onChange={(e) =>
       setForm((v) => ({ ...v, name: e.target.value }))
@@ -207,6 +206,7 @@ export default function CenterTabsPage() {
 
   <input
     aria-label="Query Param"
+    disabled={Boolean(editingId && tabs.find((tab) => String(tab.id) === String(editingId))?.system)}
     value={form.query_param}
     onChange={(e) =>
       setForm((v) => ({ ...v, query_param: e.target.value }))
@@ -250,7 +250,7 @@ export default function CenterTabsPage() {
                   <td className="px-4 py-3 text-[var(--color-ink-soft)]">{tab.route || '—'}</td>
                   <td className="px-4 py-3">{tab.sort_order ?? '—'}</td>
                   <td className="px-4 py-3 text-right">
-                      <button type="button" onClick={() => editTab(tab)} className="rounded-md border px-3 py-1.5 text-xs font-semibold">
+                      <button type="button" onClick={() => editTab(tab)} className="rounded-md border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40">
                         Edit
                       </button>
                   </td>

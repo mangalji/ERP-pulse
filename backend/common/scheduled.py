@@ -33,9 +33,9 @@ def run_scheduled_tasks() -> dict:
         try:
             task()  # a Celery task object runs synchronously when called
             outcome[name] = "ok"
-            logger.info("Scheduled task finished — %s", name)
+            logger.info("Scheduled task finished: %s", name)
         except Exception:  # noqa: BLE001
             outcome[name] = "failed"
-            logger.error("Scheduled task failed — %s", name, exc_info=True)
+            logger.error("Scheduled task failed: %s", name, exc_info=True)
 
     return outcome

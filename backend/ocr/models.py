@@ -15,6 +15,15 @@ from ocr.storage import ocr_file_storage
 from django.db import models, transaction
 from common.crypto import EncryptedTextField
 
+class GeneratedInvoiceNumber(models.Model):
+    """Database-backed allocation for generated invoice references."""
+
+    id = models.BigAutoField(primary_key=True)
+
+    class Meta:
+        db_table = 'ocr_generated_invoice_number'
+
+
 class OCRBatch(models.Model):
     """
     Groups all OCR uploads created by one user action.
@@ -27,6 +36,7 @@ class OCRBatch(models.Model):
     class SourceType(models.TextChoices):
         DIRECT = 'DIRECT', 'Direct Upload'
         ZIP = 'ZIP', 'ZIP Archive'
+        EMAIL = 'EMAIL', 'Email'
 
     class Status(models.TextChoices):
         CREATED = 'CREATED', 'Created'
@@ -66,6 +76,7 @@ class OCRBatch(models.Model):
     class ProcessingMode(models.TextChoices):
         SINGLE = "SINGLE", "Single"
         MULTIPLE = "MULTIPLE", "Multiple"
+        AUTOMATIC = "AUTOMATIC", "Automatic"
 
 
     processing_mode = models.CharField(
@@ -73,6 +84,32 @@ class OCRBatch(models.Model):
         choices=ProcessingMode.choices,
         default=ProcessingMode.MULTIPLE,
         db_index=True,
+    )
+
+    # Email-originated batches retain their source after the staging row is
+    # promoted and removed.
+    email_integration = models.ForeignKey(
+        "mail_integration.EmailIntegration",
+        on_delete=models.SET_NULL,
+        related_name="ocr_batches",
+        null=True,
+        blank=True,
+    )
+    source_fingerprint = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        unique=True,
+        editable=False,
+    )
+    source_content = models.TextField(blank=True, default="")
+    source_metadata_json = models.JSONField(default=dict, blank=True)
+    netsuite_connection = models.ForeignKey(
+        "netsuite.NetSuiteConnection",
+        on_delete=models.SET_NULL,
+        related_name="ocr_source_batches",
+        null=True,
+        blank=True,
     )
 
     original_filename = models.CharField(
@@ -87,13 +124,15 @@ class OCRBatch(models.Model):
         default=Status.CREATED,
         db_index=True,
     )
-    # Immutable JSON snapshot of the saved OCRExtractionTemplate.fields_config
-    # selected for this upload. Extraction, validation and posting use this
-    # snapshot so later template edits do not silently change an in-flight batch.
+    # Extraction-time template snapshot. Each validation records its own mapping.
     # Upload endpoints require a saved template; inline requested_fields are not
     # accepted as an alternate mapping source.
     # Shape includes standard_fields, standard_field_overrides and custom_fields.
     requested_fields_json = models.JSONField(default=dict, blank=True)
+    extraction_template = models.ForeignKey(
+        'ocr.OCRExtractionTemplate', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='ocr_batches',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
@@ -349,6 +388,15 @@ class OCRDocument(models.Model):
         null=True,
         blank=True,
     )
+    # File documents reach a batch through OCRUpload. Email documents do not
+    # have a file upload, so they need a direct batch relationship.
+    batch = models.ForeignKey(
+        OCRBatch,
+        on_delete=models.SET_NULL,
+        related_name='documents',
+        null=True,
+        blank=True,
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -506,6 +554,7 @@ class OCRValidationResult(models.Model):
     # AI resolution guidance is generated after validation. Persist it with the
     # validation result so a saved OCR document can resume at the same stage.
     ai_diagnostics = models.JSONField(default=list, blank=True)
+    mapping_snapshot = models.JSONField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -8,6 +8,8 @@ import EmptyState from '../../components/ui/EmptyState.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 import { formatDate, formatDateTime } from '../../utils/formatDate.js'
+import { ActiveEmailReconnectNotice } from '../../components/EmailReconnectBanner.jsx'
+import { isCompanyAdminUser } from '../../utils/netsuiteErrors.js'
 
 export default function DashboardPage() {
   const { user } = useAuth()
@@ -86,6 +88,7 @@ const kpis = useMemo(() => {
   return (
     <ClientLayout title="Dashboard" breadcrumb="Dashboard">
       <div className="flex flex-col gap-6">
+        {isCompanyAdminUser(user) && <ActiveEmailReconnectNotice />}
         <div className="flex flex-col gap-1">
           <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
             Welcome back{user?.first_name ? `, ${user.first_name}` : ''}

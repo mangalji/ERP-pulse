@@ -41,6 +41,7 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --color-canvas: #12141c;
   --color-surface: #1a1d27;
   --color-ink: #f4f5fb;
@@ -63,6 +64,12 @@
   --color-positive-soft: #123b32;
   --color-negative: #fb7185;
   --color-negative-soft: #4a1f2a;
+}
+
+/* Native select menus need their own colors in addition to the select box. */
+:root[data-theme="dark"] select option {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
 }
 
 /* A few older screens still use Tailwind's fixed neutral surface utilities.
@@ -127,4 +134,14 @@ body {
 .font-mono-tabular {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+input.ocr-number-input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+input.ocr-number-input::-webkit-inner-spin-button,
+input.ocr-number-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }

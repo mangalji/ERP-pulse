@@ -9,13 +9,15 @@ from __future__ import annotations
 import json
 import redis
 import uuid
+from pathlib import PurePosixPath
+from django.db.models import Q
 
 from django.conf import settings
 
 from common.infra import get_redis_client, warn_throttled
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Exists, OuterRef, Prefetch
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -258,13 +260,15 @@ def _prepare_history_deletion(*, user, record_id, record_type):
         try:
             batch = (
                 _visible_batch_queryset(user)
-                .prefetch_related("uploads__document__versions")
+                .prefetch_related("uploads__document__versions", "documents__versions")
                 .get(pk=record_id)
             )
         except OCRBatch.DoesNotExist as exc:
             raise NotFound("OCR history batch not found.") from exc
 
         uploads = list(batch.uploads.all())
+        documents = [upload.document for upload in uploads if getattr(upload, "document", None)]
+        documents.extend(batch.documents.filter(upload__isnull=True))
         history_id = batch.id
     elif record_type == "upload":
         try:
@@ -277,18 +281,19 @@ def _prepare_history_deletion(*, user, record_id, record_type):
             raise NotFound("OCR history file not found.") from exc
 
         uploads = [upload]
+        documents = [upload.document] if getattr(upload, "document", None) else []
         batch = upload.batch
         history_id = upload.batch_id or upload.id
     else:
         raise ValueError("record_type must be 'upload' or 'batch'.")
 
-    document_ids = [
-        upload.document.id
-        for upload in uploads
-        if getattr(upload, "document", None) is not None
+    latest_version_ids = [
+        latest.id
+        for document in documents
+        if (latest := max(document.versions.all(), key=lambda version: version.version_number, default=None))
     ]
     if NetSuiteOCRPosting.objects.filter(
-        document_id__in=document_ids,
+        version_id__in=latest_version_ids,
         status="posted",
     ).exists():
         raise ValueError("Posted OCR history records cannot be deleted.")
@@ -307,11 +312,10 @@ def _prepare_history_deletion(*, user, record_id, record_type):
 
     for upload in uploads:
         remember_file(upload.file)
-        document = getattr(upload, "document", None)
-        if document is not None:
-            for version in document.versions.all():
-                remember_file(version.original_document)
-                remember_file(version.processed_document)
+    for document in documents:
+        for version in document.versions.all():
+            remember_file(version.original_document)
+            remember_file(version.processed_document)
 
     return {
         "record_id": record_id,
@@ -319,6 +323,7 @@ def _prepare_history_deletion(*, user, record_id, record_type):
         "history_id": history_id,
         "batch": batch,
         "uploads": uploads,
+        "documents": documents,
         "stored_files": stored_files,
     }
 
@@ -326,6 +331,10 @@ def _prepare_history_deletion(*, user, record_id, record_type):
 def _delete_prepared_history_record(deletion):
     """Delete one prepared history record inside the caller's transaction."""
 
+    # Email-originated documents have no upload and are therefore deleted directly.
+    for document in deletion["documents"]:
+        if document.upload_id is None:
+            document.delete()
     for upload in deletion["uploads"]:
         upload.delete()
 
@@ -382,6 +391,8 @@ class OCRHistoryUploadDeleteView(APIView):
 
         with transaction.atomic():
             result = _delete_prepared_history_record(deletion)
+            from audit.notifications import notify
+            notify(request.user.id, request.user.company_id, f'OCR history record #{result["history_id"]} deleted.', '/app/ocr/history', activity_type='manual', actor_id=request.user.id)
 
         return success_response(
             message="OCR history record deleted successfully.",
@@ -449,6 +460,9 @@ class OCRHistoryBulkDeleteView(APIView):
 
         with transaction.atomic():
             deleted = [_delete_prepared_history_record(target) for target in targets]
+            from audit.notifications import notify
+            for item in deleted:
+                notify(request.user.id, request.user.company_id, f'OCR history record #{item["history_id"]} deleted.', '/app/ocr/history', activity_type='manual', actor_id=request.user.id)
 
         return success_response(
             message=f"{len(deleted)} OCR history record(s) deleted successfully.",
@@ -531,284 +545,104 @@ class OCRBatchHistoryView(APIView):
 
 
 class OCRHistoryListView(APIView):
-    """
-    GET /api/v1/ocr/history/
-
-    Returns one top-level history record per single upload or per multiple-file
-    OCR batch. Validation/posting state is derived from the latest version of
-    every document in the record.
-    """
+    """Return manual and automatic email OCR history in one chronological list."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
             offset = max(0, int(request.query_params.get("offset", 0)))
-            limit = min(
-                max(1, int(request.query_params.get("limit", 100))),
-                100,
-            )
+            limit = min(max(1, int(request.query_params.get("limit", 100))), 100)
         except (TypeError, ValueError):
-            return Response(
-                {"detail": "offset and limit must be valid integers."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        # Everything the loops below need is loaded here in a fixed number of
-        # queries. Calling .order_by()/.first() on a related manager later would
-        # bypass the prefetch and run one extra query per batch / document.
-        batches = list(
-            _visible_batch_queryset(request.user)
-            .select_related("user")
-            .prefetch_related(              # .prefetch_related("uploads__document__versions")
-                Prefetch(
-                    "uploads",
-                    queryset=(
-                        OCRUpload.objects
-                        .select_related("document")
-                        .order_by("created_at")
-                        ),
-                        to_attr="ordered_uploads",
-                    ),
-                    # Only the latest version's id is needed here, so skip the
-                    # large JSON columns (raw_ocr, normalized_json, ...).
-                    Prefetch(
-                        "ordered_uploads__document__versions",
-                        queryset=(
-                            OCRDocumentVersion.objects
-                            .only("id","document_id","version_number")
-                            .order_by("-version_number")
-                        ),
-                        to_attr="ordered_versions",
-                    ),
-                )
-            .order_by("-created_at")
-        )
-
-        document_by_upload = {}
-        version_by_document = {}
-        all_document_ids = []
-        all_version_ids = []
-
-        for batch in batches:
-            # for upload in batch.uploads.all().order_by("created_at"):
-            for upload in batch.ordered_uploads:
-                document = getattr(upload, "document", None)
-                document_by_upload[upload.id] = document
-
-                if document is None:
-                    continue
-
-                version = (
-                    document.ordered_versions[0] if document.ordered_versions else None
-                )
-                version_by_document[document.id] = version
-                all_document_ids.append(document.id)
-                if version is not None:
-                    all_version_ids.append(version.id)
-
-        latest_validation = {}
-        if all_document_ids:
-            validations = (
-                OCRValidationResult.objects
-                .filter(document_id__in=all_document_ids)
-                .order_by("document_id", "-created_at")
-            )
-
-            for validation in validations:
-                document_id = validation.document_id
-                current_version = version_by_document.get(document_id)
-                if (
-                    current_version is not None
-                    and validation.version_id != current_version.id
-                ):
-                    continue
-                if document_id not in latest_validation:
-                    latest_validation[document_id] = validation
-
-        latest_posting = {}
-        if all_document_ids and all_version_ids:
-            postings = (
-                NetSuiteOCRPosting.objects
-                .select_related("connection")
-                .filter(
-                    document_id__in=all_document_ids,
-                    version_id__in=all_version_ids,
-                )
-                .order_by("document_id", "version_id", "-created_at")
-            )
-
-            for posting in postings:
-                key = (posting.document_id, posting.version_id)
-                if key not in latest_posting:
-                    latest_posting[key] = posting
-
-        results = []
-
-        for batch in batches:
-            uploads = batch.ordered_uploads
-            if not uploads:
-                continue
-
-            is_multiple = (
-                str(batch.processing_mode).upper()
-                == OCRBatch.ProcessingMode.MULTIPLE
-                or len(uploads) > 1
-            )
-
-            document_ids = [
-                str(document_by_upload[upload.id].id)
-                for upload in uploads
-                if document_by_upload.get(upload.id) is not None
-            ]
-
-            validations = [
-                latest_validation.get(document_by_upload[upload.id].id)
-                for upload in uploads
-                if document_by_upload.get(upload.id) is not None
-            ]
-
-            postings = [
-                latest_posting.get(
-                    (
-                        document_by_upload[upload.id].id,
-                        version_by_document[document_by_upload[upload.id].id].id,
-                    )
-                )
-                for upload in uploads
-                if (
-                    document_by_upload.get(upload.id) is not None
-                    and version_by_document.get(document_by_upload[upload.id].id)
-                    is not None
-                )
-            ]
-
-            total_documents = len(uploads)
-            validated_count = sum(
-                1
-                for validation in validations
-                if validation is not None
-                and validation.status == "VALIDATED"
-            )
-            posted_count = sum(
-                1
-                for posting in postings
-                if posting is not None
-                and posting.status == "posted"
-                and posting.netsuite_record_id
-            )
-
-            if posted_count == total_documents and total_documents:
-                record_status = "POSTED"
-            elif validated_count == total_documents and total_documents:
-                record_status = "VALIDATED"
-            else:
-                record_status = "NOT_VALIDATED"
-
-            validation_errors = []
-            validation_ids = []
-            validation_dates = []
-            for validation in validations:
-                if validation is None:
-                    continue
-                if validation.errors:
-                    validation_errors.extend(validation.errors)
-                validation_ids.append(str(validation.id))
-                validation_dates.append(validation.created_at)
-
-            netsuite_records = [
-                {
-                    "document_id": str(posting.document_id),
-                    "internal_id": posting.netsuite_record_id,
-                    "url": netsuite_vendor_bill_url(
-                        account_id=posting.connection.netsuite_account_id,
-                        record_id=posting.netsuite_record_id,
-                    ),
-                }
-                for posting in postings
-                if (
-                    posting is not None
-                    and posting.status == "posted"
-                    and posting.netsuite_record_id
-                )
-            ]
-
-            if is_multiple:
-                filename = f"Batch — {total_documents} files"
-                record_type = "batch"
-                single_document_id = None
-                single_upload_id = None
-            else:
-                first_upload = uploads[0]
-                filename = first_upload.original_filename
-                record_type = "single"
-                first_document = document_by_upload.get(first_upload.id)
-                single_document_id = (
-                    str(first_document.id)
-                    if first_document is not None
-                    else None
-                )
-                single_upload_id = str(first_upload.id)
-
-            results.append(
-                {
-                    "type": record_type,
-                    "batch_id": str(batch.id),
-                    "history_number": batch.history_number,
-                    "document_id": single_document_id,
-                    "document_ids": document_ids,
-                    "upload_id": single_upload_id,
-                    "filename": filename,
-                    "file_count": total_documents,
-                    "status": batch.status,
-                    "source_type": batch.source_type,
-                    "created_at": batch.created_at,
-                    "owner_id": str(batch.user_id),
-                    "owner_name": _user_display_name(batch.user),
-                    "validation_status": record_status,
-                    "validation_errors": validation_errors,
-                    "validation_id": validation_ids[-1] if validation_ids else None,
-                    "validation_updated_at": max(validation_dates) if validation_dates else None,
-                    "validated_count": validated_count,
-                    "posted_count": posted_count,
-                    "netsuite_records": netsuite_records,
-                }
-            )
+            return Response({"detail": "offset and limit must be valid integers."}, status=status.HTTP_400_BAD_REQUEST)
 
         status_filter = str(request.query_params.get("status", "")).strip().upper()
+        batch_queryset = _visible_batch_queryset(request.user).order_by("-created_at")
         if status_filter in {"NOT_VALIDATED", "VALIDATED", "POSTED"}:
-            results = [
-                item
-                for item in results
-                if item["validation_status"] == status_filter
-            ]
+            documents = OCRDocument.objects.filter(Q(batch_id=OuterRef("pk")) | Q(upload__batch_id=OuterRef("pk")))
+            latest_validation = OCRValidationResult.objects.filter(
+                document_id=OuterRef("pk"),
+                version__version_number=OuterRef("current_version"),
+                status="VALIDATED",
+            )
+            posted_document = NetSuiteOCRPosting.objects.filter(
+                document_id=OuterRef("pk"),
+                version__version_number=OuterRef("current_version"),
+                status="posted",
+            )
+            batch_queryset = batch_queryset.annotate(
+                history_has_documents=Exists(documents),
+                history_has_unvalidated_document=Exists(documents.filter(~Exists(latest_validation))),
+                history_has_posted_document=Exists(documents.filter(Exists(posted_document))),
+            ).filter(history_has_documents=True)
+            if status_filter == "POSTED":
+                batch_queryset = batch_queryset.filter(history_has_posted_document=True)
+            elif status_filter == "VALIDATED":
+                batch_queryset = batch_queryset.filter(
+                    history_has_unvalidated_document=False,
+                    history_has_posted_document=False,
+                )
+            else:
+                batch_queryset = batch_queryset.filter(history_has_unvalidated_document=True, history_has_posted_document=False)
 
-        total = len(results)
-        page_results = results[offset:offset + limit]
-
-        serializer = OCRHistoryEntrySerializer(
-            page_results,
-            many=True,
+        # Count and page before prefetching document/version detail. This keeps
+        # status-filtered history scalable in the same way as All Data history.
+        database_total = batch_queryset.count()
+        batches = list(
+            batch_queryset.select_related("user").prefetch_related(
+                Prefetch("uploads", queryset=OCRUpload.objects.select_related("document").order_by("created_at"), to_attr="ordered_uploads"),
+                Prefetch("documents", queryset=OCRDocument.objects.prefetch_related("versions").order_by("created_at"), to_attr="ordered_documents"),
+            )[offset:offset + limit]
         )
+        all_documents = [
+            (upload.document if getattr(upload, "document", None) else None)
+            for batch in batches for upload in batch.ordered_uploads
+        ] + [document for batch in batches for document in batch.ordered_documents]
+        all_documents = [document for document in all_documents if document is not None]
+        document_ids = [document.id for document in all_documents]
+        latest_version = {
+            document.id: max(document.versions.all(), key=lambda item: item.version_number, default=None)
+            for document in all_documents
+        }
+        validations, postings = {}, {}
+        for validation in OCRValidationResult.objects.filter(document_id__in=document_ids).order_by("document_id", "-created_at"):
+            if validation.document_id not in validations and latest_version.get(validation.document_id) and validation.version_id == latest_version[validation.document_id].id:
+                validations[validation.document_id] = validation
+        version_ids = [version.id for version in latest_version.values() if version]
+        for posting in NetSuiteOCRPosting.objects.select_related("connection").filter(document_id__in=document_ids, version_id__in=version_ids, status="posted").order_by("document_id", "-created_at"):
+            postings.setdefault((posting.document_id, posting.version_id), posting)
 
-        return success_response(
-            message="OCR history fetched successfully.",
-            data={
-                "results": serializer.data,
-                "count": total,
-                "offset": offset,
-                "limit": limit,
-                "next_offset": (
-                    offset + limit
-                    if offset + limit < total
-                    else None
-                ),
-                "previous_offset": (
-                    max(0, offset - limit)
-                    if offset > 0
-                    else None
-                ),
-            },
-        )
+        results = []
+        for batch in batches:
+            uploads = batch.ordered_uploads
+            docs = [upload.document for upload in uploads if getattr(upload, "document", None)] or list(batch.ordered_documents)
+            if not docs:
+                continue
+            is_multiple = batch.processing_mode == OCRBatch.ProcessingMode.MULTIPLE or len(docs) > 1
+            doc_validations = [validations.get(doc.id) for doc in docs]
+            doc_postings = [postings.get((doc.id, latest_version[doc.id].id)) for doc in docs if latest_version.get(doc.id)]
+            valid_count = sum(item is not None and item.status == "VALIDATED" for item in doc_validations)
+            posted_count = sum(1 for item in doc_postings if item is not None)
+            record_status = "POSTED" if posted_count else "VALIDATED" if valid_count == len(docs) else "NOT_VALIDATED"
+            errors = [error for item in doc_validations if item for error in (item.errors or [])]
+            records = [{"document_id": str(item.document_id), "internal_id": item.netsuite_record_id, "url": netsuite_vendor_bill_url(account_id=item.connection.netsuite_account_id, record_id=item.netsuite_record_id)} for item in doc_postings if item and item.status == "posted" and item.netsuite_record_id]
+            first = docs[0]
+            results.append({
+                "type": "batch" if is_multiple else "single", "batch_id": str(batch.id), "history_number": batch.history_number,
+                "document_id": None if is_multiple else str(first.id), "document_ids": [str(doc.id) for doc in docs],
+                "upload_id": str(uploads[0].id) if len(uploads) == 1 and not is_multiple else None,
+                "filename": f"Batch — {len(docs)} files" if is_multiple else (uploads[0].original_filename if uploads else batch.original_filename or "Email vendor bill"),
+                "file_count": len(docs), "status": batch.status, "source_type": batch.source_type,
+                "source_metadata": batch.source_metadata_json or {}, "created_at": batch.created_at,
+                "owner_id": str(batch.user_id), "owner_name": _user_display_name(batch.user),
+                "validation_status": record_status, "validation_errors": errors,
+                "validation_id": str(next((item.id for item in reversed(doc_validations) if item), "")) or None,
+                "validation_updated_at": max((item.created_at for item in doc_validations if item), default=None),
+                "validated_count": valid_count, "posted_count": posted_count, "netsuite_records": records,
+            })
+        total = database_total
+        page_results = results
+        return success_response(message="OCR history fetched successfully.", data={"results": OCRHistoryEntrySerializer(page_results, many=True).data, "count": total, "offset": offset, "limit": limit, "next_offset": offset + limit if offset + limit < total else None, "previous_offset": max(0, offset - limit) if offset else None})
 
 
 class DocumentHistoryView(APIView):
@@ -897,14 +731,13 @@ class DocumentHistoryView(APIView):
                 "document_type": document.document_type,
                 "status": document.status,
                 "upload_id": document.upload_id,
-                "filename": (getattr(document.upload, "original_filename",None) if document.upload_id else None),
+                "filename": (getattr(document.upload, "original_filename", None) if document.upload_id else getattr(document.batch, "original_filename", None)),
+                "source_content": (getattr(document.batch, "source_content", "") or "") if not document.upload_id and document.batch_id else "",
                 "current_version": document.current_version,
                 "overall_confidence": document.overall_confidence,
                 "processing_metadata": document.processing_metadata,
                 "requested_fields": (
-                    getattr(getattr(document.upload, 'batch', None), 'requested_fields_json', None)
-                    if document.upload_id
-                    else None
+                    getattr((getattr(document.upload, 'batch', None) if document.upload_id else document.batch), 'requested_fields_json', None)
                 ),
                 "validation": validation_payload,
                 "posting": posting_payload,
@@ -1075,49 +908,82 @@ class OCRReviewSaveView(APIView):
         )
 
     def _save_existing_document(self, user, document_id, reviewed_result):
-        document = _visible_document_queryset(user).get(
-            pk=document_id,
-        )
+        with transaction.atomic():
+            document = _visible_document_queryset(user).select_for_update().get(pk=document_id)
 
-        latest = (
-            document.versions
-            .order_by("-version_number")
-            .first()
-        )
+            latest = document.versions.order_by("-version_number").first()
+            if latest is None:
+                raise ValueError("No saved OCR version exists for this document.")
 
-        if latest is None:
-            raise ValueError(
-                "No saved OCR version exists for this document."
+            if document.netsuite_postings.filter(status="posted").exists():
+                return self._copy_posted_document(user, document, latest, reviewed_result)
+
+            document, version = persist_extraction(
+                upload=document.upload if document.upload_id else None,
+                document=None if document.upload_id else document,
+                user=user,
+                result=latest.normalized_json,
+                reviewed_result=reviewed_result,
+                allow_company_admin=_is_company_admin(user),
             )
 
-        original_result = latest.normalized_json
-
-        upload = document.upload
-
-        if upload is None:
-            raise ValueError(
-                "The OCR document is not linked to its original upload."
+            return success_response(
+                message="OCR result updated successfully.",
+                data={
+                    "document_id": str(document.id),
+                    "version_id": str(version.id),
+                    "version_number": version.version_number,
+                    "status": document.status,
+                    "data": version.reviewed_json,
+                },
+                status_code=status.HTTP_200_OK,
             )
 
-        document, version = persist_extraction(
-            upload=upload,
-            user=user,
-            result=original_result,
-            reviewed_result=reviewed_result,
-            allow_company_admin=_is_company_admin(user),
-        )
-
-        return success_response(
-            message="OCR result updated successfully.",
-            data={
-                "document_id": str(document.id),
-                "version_id": str(version.id),
-                "version_number": version.version_number,
-                "status": document.status,
-                "data": version.reviewed_json,
-            },
-            status_code=status.HTTP_200_OK,
-        )
+    def _copy_posted_document(self, user, original, latest, reviewed_result):
+        """Create an independent manual record without changing the posted bill."""
+        source_upload = original.upload
+        source_batch = source_upload.batch if source_upload else original.batch
+        copied_file = None
+        try:
+            batch = OCRBatch.objects.create(
+                user=user, company=original.company,
+                source_type=OCRBatch.SourceType.DIRECT,
+                processing_mode=OCRBatch.ProcessingMode.SINGLE,
+                original_filename=(source_upload.original_filename if source_upload else getattr(source_batch, "original_filename", None)),
+                source_content=getattr(source_batch, "source_content", "") or "",
+                requested_fields_json=getattr(source_batch, "requested_fields_json", {}) or {},
+                extraction_template_id=getattr(source_batch, "extraction_template_id", None),
+                status=OCRBatch.Status.COMPLETED,
+            )
+            if source_upload:
+                upload = OCRUpload(
+                    batch=batch, user=user, original_filename=source_upload.original_filename,
+                    stored_filename=source_upload.stored_filename, file_size=source_upload.file_size,
+                    mime_type=source_upload.mime_type, extension=source_upload.extension,
+                    file_hash=source_upload.file_hash, status=OCRUpload.Status.COMPLETED,
+                    processing_completed_at=source_upload.processing_completed_at,
+                    processing_duration_ms=source_upload.processing_duration_ms,
+                )
+                with source_upload.file.open("rb") as source_file:
+                    upload.file.save(f"{uuid.uuid4()}_{PurePosixPath(source_upload.file.name).name}", source_file, save=False)
+                copied_file = (upload.file.storage, upload.file.name)
+                upload.save()
+                document, version = persist_extraction(upload=upload, user=user, result=latest.normalized_json, reviewed_result=reviewed_result)
+            else:
+                upload = None
+                document = OCRDocument.objects.create(batch=batch, user=user, company=original.company, document_type=original.document_type)
+                document, version = persist_extraction(document=document, user=user, result=latest.normalized_json, reviewed_result=reviewed_result)
+            return success_response(
+                message="A new OCR record was created from the posted record.",
+                data={"document_id": str(document.id), "upload_id": str(upload.id) if upload else None,
+                      "version_id": str(version.id), "version_number": version.version_number,
+                      "status": document.status, "data": version.reviewed_json, "created_copy": True},
+                status_code=status.HTTP_200_OK,
+            )
+        except Exception:
+            if copied_file:
+                copied_file[0].delete(copied_file[1])
+            raise
 
 class OCRExtractionTemplateListView(APIView):
     """List/create company-scoped dynamic OCR extraction templates."""
@@ -1563,6 +1429,7 @@ class OCRExtractView(APIView):
                 source_type=source_type,
                 original_filename=original_filename,
                 requested_fields_json=requested_fields or {},
+                extraction_template_id=request.data.get("template_id"),
                 processing_mode = (
                     OCRBatch.ProcessingMode.SINGLE
                     if mode == "single"

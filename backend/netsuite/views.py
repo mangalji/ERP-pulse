@@ -370,11 +370,13 @@ class NetSuitePostOCRVendorBillView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            result = NetSuiteVendorBillPostingService().post_vendor_bill(
-                document_id=document_id,
-                user=request.user,
-                connection_id=connection_id,
-            )
+            from audit.notifications import activity_context
+            with activity_context('manual', request.user.id):
+                result = NetSuiteVendorBillPostingService().post_vendor_bill(
+                    document_id=document_id,
+                    user=request.user,
+                    connection_id=connection_id,
+                )
 
             return success_response(
                 message="Vendor Bill created in NetSuite.",
@@ -632,11 +634,13 @@ class NetSuiteValidateDocumentView(APIView):
 
         try:
             service = NetSuiteValidationService()
-            result = service.validate_document(
-                document_id=document_id,
-                connection_id=connection_id,
-                user=request.user,
-            )
+            from audit.notifications import activity_context
+            with activity_context('manual', request.user.id):
+                result = service.validate_document(
+                    document_id=document_id,
+                    connection_id=connection_id,
+                    user=request.user,
+                )
             return success_response(
                 message='NetSuite document validation completed.',
                 data=result,
@@ -743,7 +747,7 @@ class NetSuiteValidationDiagnosticsView(APIView):
             )
 
         try:
-            result = net_suite_diagnostics_service.diagnose(
+            result = net_suite_diagnostics_service.diagnose_and_persist(
                 company=company,
                 connection_id=connection_id,
                 validation_ids=validation_ids,
@@ -781,22 +785,6 @@ class NetSuiteValidationDiagnosticsView(APIView):
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
-
-        diagnostics_by_validation_id = {
-            str(validation_id): [] for validation_id in validation_ids
-        }
-        for diagnostic in result.get("diagnostics", []):
-            reference = str(diagnostic.get("error_reference") or "")
-            validation_id, separator, _ = reference.partition(":group:")
-            if separator and validation_id in diagnostics_by_validation_id:
-                diagnostics_by_validation_id[validation_id].append(diagnostic)
-
-        for validation_id, diagnostics in diagnostics_by_validation_id.items():
-            OCRValidationResult.objects.filter(
-                id=validation_id,
-                document__company=company,
-                connection_id=connection_id,
-            ).update(ai_diagnostics=diagnostics)
 
         return success_response(
             message=(

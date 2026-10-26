@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
 import ThemeToggle from './ThemeToggle.jsx'
 import ProfileAvatar from '../ui/ProfileAvatar.jsx'
-
+import NotificationMenu from './NotificationMenu.jsx'
 /**
  * Reusable Client Company Portal layout.
  * Desktop keeps the original hover navigation.
@@ -596,6 +596,7 @@ export default function ClientLayout({ children }) {
           </div>
 
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <NotificationMenu userId={user?.id} />
             <ThemeToggle />
             <div className="hidden max-w-48 truncate text-right lg:block">
               {companyName && <span className="text-sm font-semibold capitalize text-[var(--color-ink)]">{companyName}</span>}

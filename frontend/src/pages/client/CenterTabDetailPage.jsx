@@ -259,7 +259,7 @@ export default function CenterTabDetailPage() {
                           <td className="px-4 py-3">{queryParam || '—'}</td>
                           <td className="px-4 py-3">{category.sort_order ?? '—'}</td>
                           <td className="px-4 py-3 text-right">
-                            <button type="button" onClick={() => startEdit(category)} className="rounded-md border px-3 py-1.5 text-xs font-semibold">
+                            <button type="button" disabled={category.system} onClick={() => startEdit(category)} className="rounded-md border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40">
                               Edit
                             </button>
                           </td>

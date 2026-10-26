@@ -12,6 +12,7 @@ import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandl
 import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
 import { getPreviewErrorMessage } from '../../utils/ocrPreviewError.js'
+import { preventOcrNumberStep, blurOcrNumberOnWheel } from '../../utils/ocrNumericInput.js'
 
 const TOP_LEVEL_FIELDS = [
   { key: 'invoice_number', label: 'Invoice Number', type: 'text' },
@@ -349,6 +350,9 @@ const FieldInput = memo(function FieldInput({
       type={field.type}
       value={displayValue}
       step={field.type === 'number' ? 'any' : undefined}
+      className={field.type === 'number' ? 'ocr-number-input' : ''}
+      onKeyDown={field.type === 'number' ? preventOcrNumberStep : undefined}
+      onWheel={field.type === 'number' ? blurOcrNumberOnWheel : undefined}
       onChange={(event) => onChange(field.key, event.target.value)}
     />
   )
@@ -648,6 +652,7 @@ export default function OcrResultPage() {
           version_id: latest.id || null,
           version_number: latest.version_number || null,
           filename: payload.filename || 'OCR document',
+          source_content: payload.source_content || '',
           preview_url: payload.upload_id
             ? `/ocr/extract/uploads/${payload.upload_id}/preview/`
             : null,
@@ -847,13 +852,18 @@ const setField = useCallback((key, value) => {
       setResult(savedResult)
       setData(cloneData(savedResult.data))
       setEditing(false)
+      if (responseData?.created_copy) {
+        setPostedRecord(null)
+        setValidationResult(null)
+        setAiDiagnostics([])
+      }
 
       addToast(
-        'OCR result saved successfully.',
+        responseData?.created_copy ? 'A new OCR record was created.' : 'OCR result saved successfully.',
         'success',
       )
 
-      return savedResult
+      return { ...savedResult, created_copy: Boolean(responseData?.created_copy) }
     } catch (err) {
       console.error(
         'Failed to save OCR result:',
@@ -884,6 +894,7 @@ const setField = useCallback((key, value) => {
   }
 
   const controller = new AbortController()
+  let copiedDocumentId = null
 
   validationAbortControllerRef.current = controller
   setValidating(true)
@@ -906,6 +917,7 @@ const setField = useCallback((key, value) => {
     }
 
     const savedResult = await handleSave()
+    if (savedResult?.created_copy) copiedDocumentId = savedResult.document_id
 
     if (controller.signal.aborted) {
       return
@@ -1001,6 +1013,10 @@ const setField = useCallback((key, value) => {
     )
   } finally {
     setValidating(false)
+
+    if (copiedDocumentId) {
+      navigate(`/app/ocr/history/${copiedDocumentId}`, { replace: true })
+    }
 
     if (
       validationAbortControllerRef.current === controller
@@ -1249,7 +1265,7 @@ function getFileCategory(file) {
                 <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
                   <div className="min-w-0">
                     <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
-                      File Preview
+                      {result.source_content ? 'Email Body' : 'File Preview'}
                     </p>
                     <p className="mt-1 truncate text-sm font-semibold text-[var(--color-ink)]">
                       {result.filename || 'OCR document'}
@@ -1267,7 +1283,13 @@ function getFileCategory(file) {
                     </div>
                   )}
 
-                  {!previewError &&
+                  {result.source_content && (
+                    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-ink)] whitespace-pre-wrap break-words">
+                      {result.source_content}
+                    </div>
+                  )}
+
+                  {!previewError && !result.source_content &&
                     result &&
                     (previewIsPdf || previewIsImage) &&
                     remotePreviewUrl &&
@@ -1295,7 +1317,7 @@ function getFileCategory(file) {
                       />
                     ))}
 
-                  {!previewError &&
+                  {!previewError && !result.source_content &&
                     result &&
                     !previewIsPdf &&
                     !previewIsImage && (
@@ -1313,7 +1335,7 @@ function getFileCategory(file) {
                       </div>
                     )}
 
-                  {!previewError &&
+                  {!previewError && !result.source_content &&
                     result &&
                     (previewIsPdf || previewIsImage) &&
                     !remotePreviewUrl && (
@@ -1430,8 +1452,10 @@ function getFileCategory(file) {
                                             type={field.type}
                                             value={toInputValue(item?.[field.key])}
                                             step={field.type === 'number' ? 'any' : undefined}
+                                            onKeyDown={field.type === 'number' ? preventOcrNumberStep : undefined}
+                                            onWheel={field.type === 'number' ? blurOcrNumberOnWheel : undefined}
                                             onChange={(event) => setLineItemField(index, field.key, event.target.value)}
-                                            className="w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                                            className={`w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)] ${field.type === 'number' ? 'ocr-number-input' : ''}`}
                                           />
                                         ) : (
                                           <span className="break-words text-[var(--color-ink)]">

@@ -475,8 +475,9 @@ export default function CenterCategoryDetailPage() {
                             <td className="px-4 py-3 text-right">
                               <button
                                 type="button"
+                                disabled={child.system}
                                 onClick={() => startEdit(child)}
-                                className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold text-[var(--color-ink)]"
+                                className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold text-[var(--color-ink)] disabled:cursor-not-allowed disabled:opacity-40"
                               >
                                 Edit
                               </button>

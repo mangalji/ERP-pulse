@@ -299,6 +299,20 @@ class NetSuiteOCRPosting(models.Model):
         return f"{self.document_id} v{self.version_id} → {self.netsuite_record_id or self.status}"
 
 
+def blocking_ocr_postings(queryset):
+    """Ignore only a confirmed missing-required-field rejection from NetSuite.
+
+    Network failures, ambiguous responses, pending requests and other errors
+    still require reconciliation before another version can be posted.
+    """
+    return queryset.exclude(
+        status="error",
+        netsuite_record_id__isnull=True,
+        error_message__startswith="NetSuite rejected request (400) for record/v1/vendorBill:",
+        error_message__contains="Please enter value(s) for:",
+    )
+
+
 class NetSuiteCustomField(models.Model):
     """
     Tracks NetSuite custom fields created on behalf of AGSuite OCR

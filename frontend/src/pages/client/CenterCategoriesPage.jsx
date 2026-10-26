@@ -40,6 +40,7 @@ export default function CenterCategoriesPage() {
   const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const editingCategory = categories.find((category) => String(category.id) === String(editingCategoryId))
 
   const loadCategories = async (nextPage = page) => {
     setLoading(true)
@@ -144,9 +145,10 @@ export default function CenterCategoriesPage() {
       if (editingCategoryId) {
         const payload = {
           name,
-          route: categoryForm.route.trim(),
           query_param: queryParam,
+          center_tab_id: categoryForm.center_tab_id,
         }
+        if (!editingCategory?.system) payload.route = categoryForm.route.trim()
 
         if (sortOrder !== null) {
           payload.sort_order = sortOrder
@@ -264,7 +266,6 @@ export default function CenterCategoriesPage() {
                       center_tab_id: event.target.value,
                     }))
                   }
-                  disabled={Boolean(editingCategoryId)}
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm disabled:opacity-60"
                 >
                   <option value="">Select Center Tab</option>
@@ -290,7 +291,9 @@ export default function CenterCategoriesPage() {
                     }))
                   }
                   placeholder="e.g. /app/customers"
-                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm"
+                  disabled={Boolean(editingCategory?.system)}
+                  title={editingCategory?.system ? 'The path of a pre-created category cannot be changed.' : undefined}
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 />
               </div>
 

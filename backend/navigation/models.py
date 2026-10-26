@@ -4,6 +4,7 @@ from django.db import models
 
 class DynamicTopLevelTab(models.Model):
     id = models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False,)
+    company = models.ForeignKey('tenancy.Company', null=True, blank=True, on_delete=models.CASCADE, related_name='+')
     name = models.CharField(max_length=120)
     key = models.SlugField(max_length=120, unique=True)
     route = models.CharField(max_length=255,blank=True,default="")
@@ -32,6 +33,7 @@ class DynamicTopLevelTab(models.Model):
 class DynamicLevel2Tab(models.Model):
 
     id = models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False,)
+    company = models.ForeignKey('tenancy.Company', null=True, blank=True, on_delete=models.CASCADE, related_name='+')
     parent_tab = models.ForeignKey(DynamicTopLevelTab,on_delete=models.CASCADE,related_name="level2_tabs",)
     name = models.CharField(max_length=120)
     key = models.SlugField(max_length=120, unique=True)
@@ -64,6 +66,7 @@ class DynamicLevel2Tab(models.Model):
 class DynamicLevel3Tab(models.Model):
 
     id = models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
+    company = models.ForeignKey('tenancy.Company', null=True, blank=True, on_delete=models.CASCADE, related_name='+')
     parent_tab = models.ForeignKey(DynamicLevel2Tab,on_delete=models.CASCADE,related_name="level3_tabs")
     name = models.CharField(max_length=120)
     key = models.SlugField(max_length=120, unique=True)

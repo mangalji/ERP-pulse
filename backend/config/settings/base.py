@@ -210,6 +210,17 @@ NETSUITE_REDIRECT_URI = config(
     default="",
 )
 
+# ------------------------------------------------------------------
+# Email mailbox OAuth
+# ------------------------------------------------------------------
+# Each provider uses the same backend callback. Register this exact URL in
+# the corresponding Google and Zoho OAuth applications.
+EMAIL_OAUTH_REDIRECT_URI = config("EMAIL_OAUTH_REDIRECT_URI", default="")
+GOOGLE_MAIL_CLIENT_ID = config("GOOGLE_MAIL_CLIENT_ID", default="")
+GOOGLE_MAIL_CLIENT_SECRET = config("GOOGLE_MAIL_CLIENT_SECRET", default="")
+ZOHO_MAIL_CLIENT_ID = config("ZOHO_MAIL_CLIENT_ID", default="")
+ZOHO_MAIL_CLIENT_SECRET = config("ZOHO_MAIL_CLIENT_SECRET", default="")
+
 FIELD_ENCRYPTION_KEY = config(
     "FIELD_ENCRYPTION_KEY",
     default="",

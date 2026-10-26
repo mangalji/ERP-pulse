@@ -1,12 +1,14 @@
 import re
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q, OuterRef, Subquery, Value
+from django.db.models.functions import Coalesce, Concat
 from django.utils.text import slugify
 from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.views import APIView
+from rest_framework.views import APIView as DRFAPIView
 from uuid import UUID
 from common.common_utils import success_response
 from django.core.paginator import Paginator
@@ -20,11 +22,34 @@ from .models import (
 User = get_user_model()
 
 
+class APIView(DRFAPIView):
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        _ensure_system_tabs()
+
+
+def _scope(user):
+    # Legacy unowned custom records remain preserved but are never shared.
+    defaults = Q(company__isnull=True, key__in=SYSTEM_KEYS)
+    visible = defaults | Q(company_id=user.company_id) if user.company_id else defaults
+    return visible & ~Q(key__startswith="system-sort-")
+
+
+def _top_tabs_with_company_order(user):
+    overrides = DynamicTopLevelTab.objects.filter(
+        company_id=user.company_id,
+        key=Concat(Value(f"system-sort-{user.company_id}-"), OuterRef("key")),
+    ).values("sort_order")[:1]
+    return DynamicTopLevelTab.objects.filter(_scope(user), is_active=True).annotate(
+        effective_sort_order=Coalesce(Subquery(overrides), "sort_order")
+    )
+
+
 class CanReadOrManageGlobalNavigation(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return bool(user and user.is_authenticated and (
-            request.method in ('GET', 'HEAD', 'OPTIONS') or _is_company_admin(user)
+            request.method in ('GET', 'HEAD', 'OPTIONS') or (bool(user.company_id) and _is_company_admin(user))
         ))
 
 
@@ -137,6 +162,8 @@ class DynamicNavigationMenuView(APIView):
                 inherited_route=inherited_route,
                 inherited_query_params=inherited_query_params,
             )
+            if level2_tab.key == "integrations-netsuite" and not is_admin:
+                level2_node["route"] = "/app/netsuite"
 
             level2_route = level2_node["route"]
             level2_query_params = level2_node["query_params"]
@@ -158,21 +185,20 @@ class DynamicNavigationMenuView(APIView):
         )
         is_admin = _is_company_admin(request.user)
         top_level_tabs = (
-            DynamicTopLevelTab.objects
-            .filter(is_active=True)
+            _top_tabs_with_company_order(request.user)
             .prefetch_related(
                 Prefetch(
                     "level2_tabs",
                     queryset=(
                         DynamicLevel2Tab.objects
-                        .filter(is_active=True)
+                        .filter(_scope(request.user), is_active=True)
                         .order_by("sort_order","internal_id","name")
                         .prefetch_related(
                             Prefetch(
                                 "level3_tabs",
                                 queryset=(
                                     DynamicLevel3Tab.objects
-                                    .filter(is_active=True)
+                                    .filter(_scope(request.user), is_active=True)
                                     .order_by("sort_order","internal_id","name")
                                 ),
                                 to_attr="active_level3_tabs",
@@ -182,7 +208,7 @@ class DynamicNavigationMenuView(APIView):
                     to_attr="active_level2_tabs",
                 )
             )
-            .order_by("sort_order", "internal_id", "name")
+            .order_by("effective_sort_order", "internal_id", "name")
         )
 
         data = []
@@ -226,6 +252,8 @@ CUSTOM_KEY_PREFIX = "cust_"
 
 SYSTEM_KEYS = {
     "employees",
+    "integrations",
+    "integrations-netsuite",
     "settings",
     "settings-company-info",
     "settings-customize",
@@ -377,6 +405,12 @@ def _seed_system_tabs():
             "sort_order": 10,
         },
         {
+            "key": "integrations",
+            "name": "Integrations",
+            "route": "",
+            "sort_order": 20,
+        },
+        {
             "key": "settings",
             "name": "Settings",
             "route": "/app/settings",
@@ -397,6 +431,7 @@ def _seed_system_tabs():
         )
 
     settings_tab = DynamicTopLevelTab.objects.get(key="settings")
+    integrations_tab = DynamicTopLevelTab.objects.get(key="integrations")
 
     settings_children = [
         {
@@ -417,12 +452,6 @@ def _seed_system_tabs():
             "route": "/app/profile",   
             "sort_order": 30,
         },
-        {
-            "key": "settings-ai-integration",
-            "name": "AI Integration",
-            "route": "/app/settings/ai-integration",
-            "sort_order": 40,
-        }
     ]
 
     for tab_data in settings_children:
@@ -435,6 +464,15 @@ def _seed_system_tabs():
                 "sort_order": tab_data["sort_order"],
                 "is_active": True,
             },
+        )
+
+    for tab_data in [
+        {"key": "settings-ai-integration", "name": "AI Integration", "route": "/app/settings/ai-integration", "sort_order": 10},
+        {"key": "integrations-netsuite", "name": "NetSuite Integration", "route": "/app/integrations/netsuite", "sort_order": 20},
+    ]:
+        DynamicLevel2Tab.objects.update_or_create(
+            key=tab_data["key"],
+            defaults={"parent_tab": integrations_tab, "company": None, "name": tab_data["name"], "route": tab_data["route"], "sort_order": tab_data["sort_order"], "is_active": True},
         )
 
     customize_tab = DynamicLevel2Tab.objects.filter(
@@ -485,6 +523,7 @@ def _company_user_or_none(request, user_id):
 def _access_row_for_item(user, tab_level, tab_id):
     if tab_level == "top":
         tab = DynamicTopLevelTab.objects.filter(
+            _scope(user),
             pk=tab_id,
             is_active=True,
         ).first()
@@ -503,6 +542,7 @@ def _access_row_for_item(user, tab_level, tab_id):
 
     if tab_level == "level2":
         tab = DynamicLevel2Tab.objects.filter(
+            _scope(user),
             pk=tab_id,
             is_active=True,
         ).first()
@@ -521,6 +561,7 @@ def _access_row_for_item(user, tab_level, tab_id):
 
     if tab_level == "level3":
         tab = DynamicLevel3Tab.objects.filter(
+            _scope(user),
             pk=tab_id,
             is_active=True,
         ).first()
@@ -567,9 +608,8 @@ class CenterTabsView(APIView):
             page_number = 1
 
         tabs = (
-            DynamicTopLevelTab.objects
-            .filter(is_active=True)
-            .order_by("sort_order", "internal_id", "name", "id")
+            _top_tabs_with_company_order(request.user)
+            .order_by("effective_sort_order", "internal_id", "name", "id")
         )
 
         paginator = Paginator(tabs, 10)
@@ -586,8 +626,8 @@ class CenterTabsView(APIView):
                         "key": tab.key,
                         "route": tab.route or "",
                         "query_params": tab.query_params or {},
-                        "sort_order": tab.sort_order,
-                        "system": tab.key in {"employees", "settings"},
+                        "sort_order": tab.effective_sort_order,
+                        "system": tab.key in {"employees", "settings", "integrations"},
                     }
                     for tab in page.object_list
                 ],
@@ -632,7 +672,7 @@ class CenterTabsView(APIView):
         try:
             sort_order = _parse_sort_order(
                 request.data.get("sort_order"),
-                DynamicTopLevelTab.objects.all(),
+                DynamicTopLevelTab.objects.filter(_scope(request.user)),
             )
         except ValueError as exc:
             return Response(
@@ -641,6 +681,7 @@ class CenterTabsView(APIView):
             )
 
         tab = DynamicTopLevelTab.objects.create(
+            company=request.user.company,
             name=name,
             key=_build_custom_key(DynamicTopLevelTab, name),
             route=route,
@@ -687,11 +728,15 @@ class CenterTabsBulkDeleteView(APIView):
         ids = list(dict.fromkeys(str(item) for item in ids))
 
         tabs = DynamicTopLevelTab.objects.filter(
+            company=request.user.company,
             id__in=ids,
             is_active=True,
         )
 
-        system_keys = {"employees", "settings"}
+        if tabs.count() != len(ids):
+            return Response({"detail": "One or more tabs are unavailable or protected."}, status=status.HTTP_400_BAD_REQUEST)
+
+        system_keys = {"employees", "settings", "integrations"}
 
         protected_tabs = tabs.filter(key__in=system_keys)
 
@@ -778,9 +823,13 @@ class CenterCategoriesBulkDeleteView(APIView):
         ids = list(dict.fromkeys(str(item) for item in ids))
 
         categories = DynamicLevel2Tab.objects.filter(
+            company=request.user.company,
             id__in=ids,
             is_active=True,
         )
+
+        if categories.count() != len(ids):
+            return Response({"detail": "One or more categories are unavailable or protected."}, status=status.HTTP_400_BAD_REQUEST)
 
         system_keys = {
             "settings-company-info",
@@ -906,7 +955,7 @@ class NavigationCustomizationDataView(APIView):
 
         for top in (
             DynamicTopLevelTab.objects
-            .filter(is_active=True)
+            .filter(_scope(request.user), is_active=True)
             .prefetch_related("level2_tabs__level3_tabs")
             .order_by("sort_order", "name")
         ):
@@ -924,13 +973,13 @@ class NavigationCustomizationDataView(APIView):
                 "query_param": next(iter(top.query_params or {}), ""),
                 "level": "top",
                 "visible": top_visible,
-                "system": top.key in {"employees", "settings"},
+                "system": top.key in SYSTEM_KEYS,
                 "children": [],
             }
 
             for l2 in (
                 top.level2_tabs
-                .filter(is_active=True)
+                .filter(_scope(request.user), is_active=True)
                 .order_by("sort_order", "name")
             ):
                 l2_node = {
@@ -940,21 +989,13 @@ class NavigationCustomizationDataView(APIView):
                 "route": l2.route,
                 "level": "level2",
                 "visible": access_by_l2.get(l2.id, True),
-                "system": (
-                    top.key == "settings"
-                    and l2.key in {
-                        "settings-company-info",
-                        "settings-customize",
-                        "settings-personal-info",
-                        "settings-ai-integration",
-                    }
-                ),
+                "system": l2.key in SYSTEM_KEYS,
                 "children": [],
                 }
 
                 for l3 in (
                     l2.level3_tabs
-                    .filter(is_active=True)
+                    .filter(_scope(request.user), is_active=True)
                     .order_by("sort_order", "name")
                 ):
                     l2_node["children"].append({
@@ -966,7 +1007,7 @@ class NavigationCustomizationDataView(APIView):
                         "query_param": next(iter(l3.query_params or {}), ""),
                         "level": "level3",
                         "visible": access_by_l3.get(l3.id, True),
-                        "system": False,
+                        "system": l3.key in SYSTEM_KEYS,
                         "children": [],
                     })
 
@@ -1034,7 +1075,7 @@ class NavigationAccessUpdateView(APIView):
         if tab_level == "top":
             system_tab = DynamicTopLevelTab.objects.filter(
                 pk=tab_id,
-                key__in={"employees", "settings"},
+                key__in={"employees", "settings", "integrations"},
                 is_active=True,
             ).first()
         
@@ -1052,6 +1093,7 @@ class NavigationAccessUpdateView(APIView):
                     "settings-customize",
                     "settings-personal-info",
                     "settings-ai-integration",
+                    "integrations-netsuite",
                 },
                 is_active=True,
             ).first()
@@ -1189,7 +1231,7 @@ class NavigationMasterCreateView(APIView):
             )
 
         if parent_level == "root":
-            sort_queryset = DynamicTopLevelTab.objects.all()
+            sort_queryset = DynamicTopLevelTab.objects.filter(_scope(request.user))
         elif parent_level == "top":
             sort_queryset = DynamicLevel2Tab.objects.filter(
                 parent_tab_id=parent_id
@@ -1213,6 +1255,7 @@ class NavigationMasterCreateView(APIView):
         with transaction.atomic():
             if parent_level == "root":
                 tab = DynamicTopLevelTab.objects.create(
+                    company=request.user.company,
                     name=name,
                     key=_build_custom_key(DynamicTopLevelTab, name),
                     route=route,
@@ -1225,7 +1268,7 @@ class NavigationMasterCreateView(APIView):
             elif parent_level == "top":
                 parent = (
                     DynamicTopLevelTab.objects
-                    .filter(pk=parent_id, is_active=True)
+                    .filter(_scope(request.user), pk=parent_id, is_active=True)
                     .first()
                 )
 
@@ -1236,6 +1279,7 @@ class NavigationMasterCreateView(APIView):
                     )
 
                 tab = DynamicLevel2Tab.objects.create(
+                    company=request.user.company,
                     parent_tab=parent,
                     name=name,
                     key=_build_custom_key(DynamicLevel2Tab, name),
@@ -1249,7 +1293,7 @@ class NavigationMasterCreateView(APIView):
             else:
                 parent = (
                     DynamicLevel2Tab.objects
-                    .filter(pk=parent_id, is_active=True)
+                    .filter(_scope(request.user), pk=parent_id, is_active=True)
                     .first()
                 )
 
@@ -1260,6 +1304,7 @@ class NavigationMasterCreateView(APIView):
                     )
 
                 tab = DynamicLevel3Tab.objects.create(
+                    company=request.user.company,
                     parent_tab=parent,
                     name=name,
                     key=_build_custom_key(DynamicLevel3Tab, name),
@@ -1311,20 +1356,35 @@ class NavigationMasterUpdateView(APIView):
             )
 
         try:
-            tab = model.objects.get(pk=tab_id, is_active=True)
+            tab = model.objects.get(_scope(request.user), pk=tab_id, is_active=True)
         except model.DoesNotExist:
             return Response(
                 {"detail": "Navigation tab not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Pre-created/system tabs can be edited, but their existing Path/Route
-        # is immutable. Name, Query Param and Sort Order remain editable.
+        if level == "top" and tab.key in {"employees", "settings", "integrations"}:
+            if not request.user.company_id or set(request.data) != {"sort_order"}:
+                return Response({"detail": "Only sort_order may be changed for default tabs."}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                sort_order = int(request.data["sort_order"])
+                if sort_order < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                return Response({"detail": "sort_order must be a non-negative integer."}, status=status.HTTP_400_BAD_REQUEST)
+            DynamicTopLevelTab.objects.update_or_create(
+                key=f"system-sort-{request.user.company_id}-{tab.key}",
+                defaults={"company_id": request.user.company_id, "name": tab.name, "route": tab.route, "query_params": tab.query_params, "sort_order": sort_order, "is_active": True},
+            )
+            return success_response(message="Center Tab order updated successfully.", data={"id": str(tab.id), "sort_order": sort_order})
+
         system_tab = tab.key in SYSTEM_KEYS
+        if system_tab or tab.company_id != request.user.company_id:
+            return Response({"detail": "Default navigation cannot be edited."}, status=status.HTTP_400_BAD_REQUEST)
 
         allowed_fields = {"name", "route", "query_param", "sort_order"}
-        if system_tab:
-            allowed_fields = {"name", "query_param", "sort_order"}
+        if level == "level2":
+            allowed_fields.add("center_tab_id")
 
         unknown_fields = set(request.data.keys()) - allowed_fields
 
@@ -1333,7 +1393,7 @@ class NavigationMasterUpdateView(APIView):
                 {
                     "detail": (
                         "Pre-created tabs allow changes only to name, Query Param, "
-                        "and Sort Order. Path cannot be changed."
+                        "Sort Order, and Center Tab. Path cannot be changed."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1341,6 +1401,20 @@ class NavigationMasterUpdateView(APIView):
 
         old_name = tab.name
         new_name = old_name
+
+        if "center_tab_id" in request.data:
+            try:
+                parent = DynamicTopLevelTab.objects.filter(
+                    _scope(request.user), pk=request.data.get("center_tab_id"), is_active=True,
+                ).first()
+            except (ValueError, TypeError, ValidationError):
+                parent = None
+            if parent is None:
+                return Response(
+                    {"detail": "Center Tab not found."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            tab.parent_tab = parent
 
         if "name" in request.data:
             new_name = str(request.data.get("name") or "").strip()
@@ -1452,7 +1526,7 @@ class NavigationMasterUpdateView(APIView):
             )
 
         try:
-            tab = model.objects.get(pk=tab_id)
+            tab = model.objects.get(_scope(request.user), pk=tab_id)
         except model.DoesNotExist:
             return Response(
                 {"detail": "Navigation tab not found."},
@@ -1470,7 +1544,7 @@ class NavigationMasterUpdateView(APIView):
             "center-categories",
         }
 
-        if tab.key in system_keys:
+        if tab.key in SYSTEM_KEYS or tab.company_id != request.user.company_id:
             return Response(
                 {"detail": "System navigation tabs cannot be deleted."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1545,7 +1619,7 @@ class CenterCategoriesView(APIView):
 
         categories = (
             DynamicLevel2Tab.objects
-            .filter(is_active=True)
+            .filter(_scope(request.user), is_active=True)
             .select_related("parent_tab")
             .order_by("sort_order", "internal_id", "name", "id")
         )
@@ -1555,7 +1629,7 @@ class CenterCategoriesView(APIView):
 
         center_tabs = (
             DynamicTopLevelTab.objects
-            .filter(is_active=True)
+            .filter(_scope(request.user), is_active=True)
             .order_by("sort_order", "internal_id", "name", "id")
         )
 
@@ -1584,6 +1658,7 @@ class CenterCategoriesView(APIView):
                             "settings-customize",
                             "settings-personal-info",
                             "settings-ai-integration",
+                            "integrations-netsuite",
                         },
                     }
                     for category in page.object_list
@@ -1630,7 +1705,7 @@ class CenterCategoriesView(APIView):
 
         parent = (
             DynamicTopLevelTab.objects
-            .filter(pk=center_tab_id, is_active=True)
+            .filter(_scope(request.user), pk=center_tab_id, is_active=True)
             .first()
         )
 
@@ -1661,6 +1736,7 @@ class CenterCategoriesView(APIView):
             )
 
         category = DynamicLevel2Tab.objects.create(
+            company=request.user.company,
             parent_tab=parent,
             name=name,
             key=_build_custom_key(DynamicLevel2Tab, name),
@@ -1700,7 +1776,7 @@ class CenterTabChildrenView(APIView):
     def get(self, request, tab_id):
         tab = (
             DynamicTopLevelTab.objects
-            .filter(pk=tab_id, is_active=True)
+            .filter(_scope(request.user), pk=tab_id, is_active=True)
             .first()
         )
 
@@ -1712,7 +1788,7 @@ class CenterTabChildrenView(APIView):
 
         categories = (
             DynamicLevel2Tab.objects
-            .filter(parent_tab=tab, is_active=True)
+            .filter(_scope(request.user), parent_tab=tab, is_active=True)
             .order_by("sort_order", "internal_id", "name", "id")
         )
 
@@ -1737,12 +1813,7 @@ class CenterTabChildrenView(APIView):
                             "",
                         ),
                         "sort_order": category.sort_order,
-                        "system": category.key in {
-                            "settings-company-info",
-                            "settings-customize",
-                            "settings-personal-info",
-                            "settings-ai-integration",
-                        },
+                        "system": category.key in SYSTEM_KEYS,
                     }
                     for category in categories
                 ],
@@ -1758,15 +1829,15 @@ class CenterCategoryChildrenView(APIView):
 
     permission_classes = [IsAuthenticated, CanReadOrManageGlobalNavigation]
 
-    def get_category(self, category_id):
+    def get_category(self, request, category_id):
         return (
             DynamicLevel2Tab.objects
-            .filter(pk=category_id, is_active=True)
+            .filter(_scope(request.user), pk=category_id, is_active=True)
             .first()
         )
 
     def get(self, request, category_id):
-        category = self.get_category(category_id)
+        category = self.get_category(request, category_id)
 
         if not category:
             return Response(
@@ -1776,7 +1847,7 @@ class CenterCategoryChildrenView(APIView):
 
         children = (
             DynamicLevel3Tab.objects
-            .filter(parent_tab=category, is_active=True)
+            .filter(_scope(request.user), parent_tab=category, is_active=True)
             .order_by("sort_order", "internal_id", "name", "id")
         )
 
@@ -1811,7 +1882,7 @@ class CenterCategoryChildrenView(APIView):
         )
 
     def post(self, request, category_id):
-        category = self.get_category(category_id)
+        category = self.get_category(request, category_id)
 
         if not category:
             return Response(
@@ -1855,6 +1926,7 @@ class CenterCategoryChildrenView(APIView):
             )
 
         child = DynamicLevel3Tab.objects.create(
+            company=request.user.company,
             parent_tab=category,
             name=name,
             key=_build_custom_key(DynamicLevel3Tab, name),

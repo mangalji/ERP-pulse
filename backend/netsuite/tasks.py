@@ -160,11 +160,13 @@ def _run_netsuite_batch(
 
         try:
             if action == "validate":
-                service_result = NetSuiteValidationService().validate_document(
-                    document_id=document_id,
-                    connection_id=connection_id,
-                    user=user,
-                )
+                from audit.notifications import activity_context
+                with activity_context('manual', user.id):
+                    service_result = NetSuiteValidationService().validate_document(
+                        document_id=document_id,
+                        connection_id=connection_id,
+                        user=user,
+                    )
                 result.update(
                     {
                         "status": service_result.get("status", "VALIDATION_FAILED"),
@@ -181,11 +183,13 @@ def _run_netsuite_batch(
                     }
                 )
             else:
-                service_result = NetSuiteVendorBillPostingService().post_vendor_bill(
-                    document_id=document_id,
-                    user=user,
-                    connection_id=connection_id,
-                )
+                from audit.notifications import activity_context
+                with activity_context('manual', user.id):
+                    service_result = NetSuiteVendorBillPostingService().post_vendor_bill(
+                        document_id=document_id,
+                        user=user,
+                        connection_id=connection_id,
+                    )
                 result.update(
                     {
                         "status": (

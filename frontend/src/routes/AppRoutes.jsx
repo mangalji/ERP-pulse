@@ -41,6 +41,7 @@ const OcrResultPage = lazy(() => import('../pages/client/OcrResultPage.jsx'))
 const OcrBatchHistoryPage = lazy(() => import('../pages/client/OcrBatchHistoryPage.jsx'))
 const DataExtractionHistoryPage = lazy(() => import('../pages/client/DataExtractionHistoryPage.jsx'))
 const FileTemplatePage = lazy(() => import('../pages/client/FileTemplatePage.jsx'))
+const EmailIntegrationsPage = lazy(() => import('../pages/client/EmailIntegrationsPage.jsx'))
 
 function PublicRoute({ children }) {
   return <PublicLayout>{children}</PublicLayout>
@@ -215,6 +216,9 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/app/integrations/email" element={
+        <ProtectedRoute requiredRole="client"><EmailIntegrationsPage /></ProtectedRoute>
+      } />
       <Route
         path="/app/ocr"
         element={

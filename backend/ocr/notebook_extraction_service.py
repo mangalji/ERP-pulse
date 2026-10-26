@@ -186,10 +186,10 @@ def _normalize_currency(value: Any) -> Any:
         cleaned = (
             value.strip()
             .replace(",", "")
-            .replace("₹", "")
+            .replace("â‚¹", "")
             .replace("$", "")
-            .replace("€", "")
-            .replace("£", "")
+            .replace("â‚¬", "")
+            .replace("Â£", "")
             .replace("%", "")
         )
         try:
@@ -880,5 +880,124 @@ class NotebookGeminiExtractor:
         raise GeminiConnectionException(
             f"AI extraction failed: {last_exception}"
         ) from last_exception
+
+    def extract_email_text(
+        self,
+        email_body: str,
+        requested_fields: dict[str, Any] | None = None,
+        *,
+        company=None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ) -> dict[str, Any]:
+        """Classify and extract an email body in one provider request.
+
+        The exact template contract, schema construction and datatype
+        normalization used for file OCR are deliberately reused here.
+        """
+        (
+            header_fields,
+            line_fields,
+            include_line_items,
+            header_types,
+            line_types,
+        ) = resolve_field_config(requested_fields)
+        if company is None:
+            raise GeminiConnectionException(
+                "No company context was supplied for OCR AI configuration."
+            )
+        if not isinstance(email_body, str) or not email_body.strip():
+            return {"is_vendor_bill": False, "data": None}
+
+        effective_timeout = self.timeout if timeout is None else timeout
+        effective_max_retries = self.max_retries if max_retries is None else max_retries
+        if effective_timeout <= 0:
+            raise ValueError("OCR extraction timeout must be greater than 0.")
+        if effective_max_retries < 0:
+            raise ValueError("OCR max_retries cannot be negative.")
+
+        header_keys = tuple(header_fields.keys())
+        line_keys = tuple(line_fields.keys())
+        extraction_schema = _build_schema(
+            header_fields, line_fields, include_line_items, header_types, line_types
+        )
+        schema = {
+            "type": "object",
+            "properties": {
+                "is_vendor_bill": {"type": "boolean"},
+                "data": {**extraction_schema, "nullable": True},
+            },
+            "required": ["is_vendor_bill", "data"],
+        }
+        extraction_prompt = build_prompt(
+            header_fields, line_fields, include_line_items, header_types, line_types
+        )
+        prompt = f"""You are deciding whether an incoming EMAIL BODY is a vendor bill.
+Classify it as a vendor bill ONLY when the body itself explicitly contains:
+- a subsidiary;
+- an invoice/bill date AND a due date;
+- at least one distinct item or line with an amount (the amount may be 0).
+Do not use the company name as a matching rule at this stage. Do not infer,
+derive, or assume any missing requirement. Vendor, company, subsidiary and item
+matching against NetSuite remains the later validation step. If any required
+signal is absent, it is not a vendor bill. If it is not a vendor bill, return exactly
+{{\"is_vendor_bill\": false, \"data\": null}}. If it is a vendor bill, return
+{{\"is_vendor_bill\": true, \"data\": <the extraction JSON>}} and apply this
+extraction contract to data:
+
+{extraction_prompt}
+
+EMAIL BODY START
+{email_body}
+EMAIL BODY END
+"""
+        provider = ai_configuration_service.resolve_provider(company=company)
+        request_id = uuid.uuid4().hex[:8]
+        last_exception: Exception | None = None
+        start = time.perf_counter()
+        for attempt in range(effective_max_retries + 1):
+            try:
+                response = provider.generate_structured_json(
+                    prompt=prompt, schema=schema, timeout=effective_timeout
+                )
+                is_vendor_bill = response.get("is_vendor_bill") is True
+                if not is_vendor_bill:
+                    return {"is_vendor_bill": False, "data": None}
+                raw_data = response.get("data")
+                if not isinstance(raw_data, dict):
+                    raise GeminiValidationException(
+                        "AI marked the email as a vendor bill but returned no extraction data."
+                    )
+                data = _normalize_result(raw_data, header_keys, line_keys, include_line_items)
+                data = _apply_datatype_normalization(data, header_types, line_types, line_keys)
+                logger.info(
+                    "Company AI email extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
+                    request_id, attempt + 1, (time.perf_counter() - start) * 1000,
+                )
+                return {"is_vendor_bill": True, "data": data}
+            except GeminiValidationException:
+                raise
+            except AIProviderError as exc:
+                last_exception = exc
+                if getattr(exc, "quota_exhausted", False):
+                    classified = GeminiRateLimitException(f"AI provider quota exhausted: {exc}")
+                    should_retry, wait_seconds = False, 0
+                elif getattr(exc, "rate_limited", False):
+                    classified = GeminiRateLimitException(f"AI provider rate limit exceeded: {exc}")
+                    should_retry, wait_seconds = True, 15
+                elif getattr(exc, "retryable", False):
+                    classified = GeminiTimeoutException(f"AI provider request timed out: {exc}") if getattr(exc, "status_code", None) in {408, 504} else GeminiConnectionException(f"AI provider temporary request failure: {exc}")
+                    should_retry, wait_seconds = True, min(2 ** attempt, 8)
+                else:
+                    classified = GeminiValidationException(f"AI provider request failed: {exc}")
+                    should_retry, wait_seconds = False, 0
+                if not should_retry or attempt >= effective_max_retries:
+                    raise classified from exc
+                time.sleep(wait_seconds)
+            except Exception as exc:
+                last_exception = exc
+                if attempt >= effective_max_retries:
+                    raise GeminiConnectionException(f"AI provider request failed: {exc}") from exc
+        raise GeminiConnectionException(f"AI extraction failed: {last_exception}") from last_exception
 
 notebook_gemini_extractor = NotebookGeminiExtractor()

@@ -36,21 +36,28 @@ def setup_periodic_tasks(sender, **kwargs):
     """
     Run company cleanup once every 24 hours.
     """
-    # Import the task objects lazily (after Django is ready) and pass real
-    # signatures. Celery 5.x requires a CallableSignature here; passing a
-    # plain string name previously raised ``'str' object has no attribute
-    # 'name'`` inside ``add_periodic_task``. The periodic behavior (task,
-    # schedule, name) is unchanged.
-    from tenancy.tasks import purge_expired_deleted_companies
-    from superadmin.tasks import sync_company_subscription_statuses
-
+    # Use sender-bound task signatures instead of ``shared_task`` proxies.
+    # During Django startup a proxy can resolve against a not-yet-populated
+    # task registry and abort this entire signal handler.  The workers still
+    # autodiscover these task modules; this only makes beat registration safe.
     sender.add_periodic_task(
         timedelta(days=1),
-        purge_expired_deleted_companies.s(),
+        sender.signature("tenancy.tasks.purge_expired_deleted_companies"),
         name='purge companies deleted for 15+ days',
     )
     sender.add_periodic_task(
         timedelta(days=1),
-        sync_company_subscription_statuses.s(),
+        sender.signature("superadmin.tasks.sync_company_subscription_statuses"),
         name='sync company subscription statuses',
+    )
+    # Each mailbox's selected sync interval is enforced by the task itself.
+    sender.add_periodic_task(
+        timedelta(minutes=5),
+        sender.signature("mail_integration.tasks.sync_due_mailboxes"),
+        name="sync and process due email bills",
+    )
+    sender.add_periodic_task(
+        timedelta(seconds=20),
+        sender.signature("mail_integration.tasks.email_scheduler_heartbeat"),
+        name="email scheduler health heartbeat",
     )
