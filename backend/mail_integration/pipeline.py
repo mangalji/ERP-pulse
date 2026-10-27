@@ -13,13 +13,14 @@ from django.utils import timezone
 
 from mail_integration.models import EmailIntegration, EmailMessage
 from mail_integration.mailbox import readable_email_body
+from mail_integration.sync import dedupe_syncs_to_retain
 from netsuite.repositories import NetSuiteConnectionRepository
 from netsuite.diagnostics_service import net_suite_diagnostics_service
 from netsuite.services import NetSuiteValidationService, NetSuiteVendorBillPostingService
 from ocr.models import DocumentType, OCRBatch, OCRDocument, OCRDocumentStatus
 from ocr.notebook_extraction_service import notebook_gemini_extractor
 from ocr.services.extraction_persistence import persist_extraction
-from audit.notifications import automated_activity
+from audit.notifications import automated_activity, notify
 
 logger = logging.getLogger(__name__)
 LEASE_MINUTES = 15
@@ -43,16 +44,30 @@ class EmailBillPipeline:
             .select_related("integration", "integration__created_by", "integration__ocr_template", "integration__company")
             .order_by("received_at", "created_at")[:limit]
         )
-        outcome = {"processed": 0, "promoted": 0, "discarded": 0, "deferred": 0}
+        outcome = {
+            "processed": 0,
+            "promoted": 0,
+            "discarded": 0,
+            "deferred": 0,
+            "by_integration": {},
+        }
         for candidate in candidates:
             result = self.process_message(message_id=candidate.id)
             outcome["processed"] += 1
+            per_integration = outcome["by_integration"].setdefault(
+                str(candidate.integration_id),
+                {"processed": 0, "promoted": 0, "discarded": 0, "deferred": 0},
+            )
+            per_integration["processed"] += 1
             if result == "promoted":
                 outcome["promoted"] += 1
+                per_integration["promoted"] += 1
             elif result == "discarded":
                 outcome["discarded"] += 1
+                per_integration["discarded"] += 1
             else:
                 outcome["deferred"] += 1
+                per_integration["deferred"] += 1
         return outcome
 
     def _claim(self, message_id):
@@ -112,6 +127,7 @@ class EmailBillPipeline:
             # without asking the AI to classify the same email again.
             if message.is_vendor_bill is True and isinstance(message.ai_extracted_data_json, dict):
                 data = message.ai_extracted_data_json
+                self._notify_vendor_bill_detected(message)
             else:
                 result = notebook_gemini_extractor.extract_email_text(
                     message.normalized_body or message.raw_body,
@@ -122,16 +138,30 @@ class EmailBillPipeline:
                     self._mark_terminal(
                         message_id=message.id,
                         lease_owner=message.lease_owner,
+                        integration=integration,
                         is_vendor_bill=False,
                         extracted_data=None,
                     )
                     return "discarded"
 
                 data = result["data"]
-                EmailMessage.objects.filter(
+                classified = EmailMessage.objects.filter(
                     pk=message.id,
                     lease_owner=message.lease_owner,
-                ).update(is_vendor_bill=True, ai_extracted_data_json=data)
+                    vendor_bill_notification_sent=False,
+                ).update(
+                    is_vendor_bill=True,
+                    ai_extracted_data_json=data,
+                    vendor_bill_notification_sent=True,
+                )
+                if classified:
+                    notify(
+                        integration.created_by_id,
+                        integration.company_id,
+                        f"Vendor-bill email detected from {message.sender_email or 'unknown sender'}; processing started.",
+                        "/app/integrations/email",
+                        activity_type="automated",
+                    )
 
             if not isinstance(data, dict):
                 raise ValueError("Vendor-bill email extraction did not return JSON data.")
@@ -161,6 +191,7 @@ class EmailBillPipeline:
                     self._mark_terminal(
                         message_id=locked.id,
                         lease_owner=message.lease_owner,
+                        integration=locked.integration,
                         is_vendor_bill=True,
                         extracted_data=data,
                     )
@@ -206,9 +237,9 @@ class EmailBillPipeline:
                 batch.status = OCRBatch.Status.COMPLETED
                 batch.completed_at = timezone.now()
                 batch.save(update_fields=["status", "completed_at"])
-                # Keep the terminal row through two later successful syncs so
-                # an overlap-window fetch cannot re-run this email.
-                locked.dedupe_syncs_remaining = 2
+                # Retain through every overlapping sync so a delayed provider
+                # listing cannot send the same email through OCR twice.
+                locked.dedupe_syncs_remaining = dedupe_syncs_to_retain(integration)
                 locked.lease_owner = ""
                 locked.lease_expires_at = None
                 locked.next_attempt_at = None
@@ -223,16 +254,32 @@ class EmailBillPipeline:
             return "deferred"
 
     @staticmethod
-    def _mark_terminal(*, message_id, lease_owner: str, is_vendor_bill: bool, extracted_data) -> None:
-        """Retain a terminal message until two later successful syncs."""
+    def _mark_terminal(*, message_id, lease_owner: str, integration, is_vendor_bill: bool, extracted_data) -> None:
+        """Retain a terminal message until its full provider overlap has elapsed."""
         EmailMessage.objects.filter(pk=message_id, lease_owner=lease_owner).update(
             is_vendor_bill=is_vendor_bill,
             ai_extracted_data_json=extracted_data,
-            dedupe_syncs_remaining=2,
+            dedupe_syncs_remaining=dedupe_syncs_to_retain(integration),
             lease_owner="",
             lease_expires_at=None,
             next_attempt_at=None,
         )
+
+    @staticmethod
+    def _notify_vendor_bill_detected(message: EmailMessage) -> None:
+        """Backfill the detection notification for a safely resumed message."""
+        notified = EmailMessage.objects.filter(
+            pk=message.id,
+            vendor_bill_notification_sent=False,
+        ).update(vendor_bill_notification_sent=True)
+        if notified:
+            notify(
+                message.integration.created_by_id,
+                message.integration.company_id,
+                f"Vendor-bill email detected from {message.sender_email or 'unknown sender'}; processing started.",
+                "/app/integrations/email",
+                activity_type="automated",
+            )
 
     def _validate_and_post(self, *, document_id, user, connection_id):
         if not connection_id:

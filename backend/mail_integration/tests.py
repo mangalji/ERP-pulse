@@ -2,6 +2,8 @@ from urllib.parse import parse_qs, urlparse
 from unittest.mock import Mock, patch
 from datetime import timedelta
 
+import requests
+
 from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 
@@ -11,7 +13,7 @@ from mail_integration.mailbox import GmailMailboxClient, normalize_email_body
 from mail_integration.models import EmailIntegration
 from mail_integration.oauth import build_authorization_url, resolve_state, oauth_config_for
 from mail_integration.serializers import EmailIntegrationCreateSerializer, EmailIntegrationSerializer
-from mail_integration.sync import EmailSyncService
+from mail_integration.sync import EmailSyncService, dedupe_syncs_to_retain, sync_lookback_for
 from mail_integration.health import ensure_email_processing_available
 from mail_integration.exceptions import EmailIntegrationStateError
 from mail_integration.services import EmailIntegrationService
@@ -120,6 +122,17 @@ class EmailRefreshFailureTests(SimpleTestCase):
                     client.refresh_access_token()
                 self.assertEqual(raised.exception.authorization_required, expected)
 
+    def test_dns_failure_is_logged_as_dns_resolution(self):
+        client = EmailOAuthClient(integration=EmailIntegration(provider="GOOGLE", refresh_token="token"))
+        dns_error = requests.ConnectionError(
+            "Failed to resolve 'accounts.google.com' ([Errno 11001] getaddrinfo failed)"
+        )
+        with patch("mail_integration.client.requests.post", side_effect=dns_error), \
+             self.assertLogs("mail_integration.client", level="WARNING") as logs:
+            with self.assertRaisesRegex(EmailIntegrationOAuthError, "Could not reach"):
+                client.refresh_access_token()
+        self.assertTrue(any("category=dns_resolution" in line for line in logs.output))
+
     def test_refresh_failure_pauses_only_invalid_authorization(self):
         for requires_auth in (True, False):
             integration = EmailIntegration(status="CONNECTED", is_active=True, initial_sync_from_at=timezone.now())
@@ -149,10 +162,16 @@ class EmailRefreshFailureTests(SimpleTestCase):
              patch.object(EmailSyncService, "_advance_terminal_dedupe"):
             client.return_value.refresh_access_token.return_value = tokens
             self.assertEqual(EmailSyncService().sync_integration(integration_id=integration.id), 0)
-        mailbox.iter_messages_since.assert_called_once_with(last_sync - timedelta(minutes=5))
+        mailbox.iter_messages_since.assert_called_once_with(last_sync - timedelta(minutes=65))
         self.assertEqual(integration.access_token, "new")
         self.assertEqual(integration.refresh_token, "old")
         self.assertGreater(integration.last_successful_sync_at, last_sync)
+
+    def test_five_minute_sync_uses_safe_overlap_and_retention(self):
+        integration = EmailIntegration(sync_interval_minutes=5)
+
+        self.assertEqual(sync_lookback_for(integration), timedelta(minutes=65))
+        self.assertEqual(dedupe_syncs_to_retain(integration), 13)
 
     def test_error_connection_never_fetches(self):
         integration = EmailIntegration(status="ERROR", is_active=True)

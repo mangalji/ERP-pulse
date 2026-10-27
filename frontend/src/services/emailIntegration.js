@@ -3,6 +3,7 @@ import apiClient, { unwrap } from './apiClient.js'
 const root = '/email/integrations/'
 export const emailIntegrationApi = {
   list: () => apiClient.get(root).then(unwrap),
+  health: () => apiClient.get('/email/processing-health/').then(unwrap),
   connect: (payload) => apiClient.post(root, payload).then(unwrap),
   activate: (id) => apiClient.post(`${root}${id}/activate/`).then(unwrap),
   configureInitialSync: (id, payload) => apiClient.patch(`${root}${id}/initial-sync/`, payload).then(unwrap),

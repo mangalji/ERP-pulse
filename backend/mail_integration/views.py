@@ -11,6 +11,7 @@ from mail_integration.serializers import (
     EmailOAuthCallbackSerializer,
 )
 from mail_integration.services import EmailIntegrationService
+from mail_integration.health import email_processing_status
 
 
 class EmailIntegrationCollectionView(APIView):
@@ -36,6 +37,18 @@ class EmailIntegrationCollectionView(APIView):
                 "integration": EmailIntegrationSerializer(integration).data,
                 "authorization_url": authorization_url,
             },
+        )
+
+
+class EmailProcessingHealthView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        service = EmailIntegrationService()
+        service.list_company_integrations(user=request.user)
+        return success_response(
+            message="Email processing status fetched successfully.",
+            data=email_processing_status(),
         )
 
 

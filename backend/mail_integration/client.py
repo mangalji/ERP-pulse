@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+import logging
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
@@ -12,6 +14,9 @@ from django.utils import timezone
 from mail_integration.exceptions import EmailIntegrationOAuthError
 from mail_integration.models import EmailIntegration
 from mail_integration.oauth import oauth_config_for, validate_oauth_configuration
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -111,6 +116,9 @@ class EmailOAuthClient:
         try:
             response = requests.get(url, headers=headers, timeout=20)
         except requests.RequestException as exc:
+            EmailOAuthClient._log_provider_request_failure(
+                operation="mailbox identity verification", url=url, exc=exc,
+            )
             raise EmailIntegrationOAuthError(
                 "Could not verify the authorized mailbox identity."
             ) from exc
@@ -138,6 +146,13 @@ class EmailOAuthClient:
                 timeout=20,
             )
         except requests.RequestException as exc:
+            self._log_provider_request_failure(
+                operation=f"OAuth {payload.get('grant_type', 'token')} request",
+                url=self.config.token_url,
+                exc=exc,
+                integration_id=self.integration.id,
+                provider=self.integration.provider,
+            )
             raise EmailIntegrationOAuthError(
                 "Could not reach the email provider. Please try again."
             ) from exc
@@ -152,6 +167,15 @@ class EmailOAuthClient:
         if response.status_code >= 400 or not data.get("access_token"):
             provider_error = str(
                 data.get("error_description") or data.get("error") or "OAuth failed."
+            )
+            logger.warning(
+                "Email OAuth token request was rejected — integration=%s provider=%s "
+                "grant_type=%s status=%s provider_error=%s",
+                self.integration.id,
+                self.integration.provider,
+                payload.get("grant_type"),
+                response.status_code,
+                str(data.get("error") or "unknown")[:200],
             )
             invalid_grant = (
                 payload.get("grant_type") == "refresh_token"
@@ -179,4 +203,39 @@ class EmailOAuthClient:
             refresh_token=data.get("refresh_token") or None,
             access_token_expires_at=timezone.now() + timedelta(seconds=expires_in),
             provider_metadata=metadata,
+        )
+
+    @staticmethod
+    def _log_provider_request_failure(
+        *,
+        operation: str,
+        url: str,
+        exc: requests.RequestException,
+        integration_id=None,
+        provider=None,
+    ) -> None:
+        """Log actionable network diagnostics without exposing OAuth secrets."""
+        detail = str(exc)
+        host = urlparse(url).hostname or "unknown"
+        normalized = detail.casefold()
+        if isinstance(exc, requests.Timeout):
+            category = "timeout"
+        elif any(marker in normalized for marker in (
+            "failed to resolve", "name resolution", "getaddrinfo",
+        )):
+            category = "dns_resolution"
+        elif isinstance(exc, requests.ConnectionError):
+            category = "connection"
+        else:
+            category = "request"
+
+        logger.warning(
+            "Email provider request failed — integration=%s provider=%s operation=%s "
+            "category=%s host=%s detail=%s",
+            integration_id or "unknown",
+            provider or "unknown",
+            operation,
+            category,
+            host,
+            detail[:500],
         )

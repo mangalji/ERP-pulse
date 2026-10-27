@@ -7,7 +7,7 @@ from audit.models import AuditLog
 from audit.notifications import document_label, notify
 from ocr.models import OCRDocumentVersion, OCRValidationResult, OCRUpload
 from netsuite.models import NetSuiteOCRPosting, NetSuiteConnection
-from mail_integration.models import EmailMessage, EmailIntegration
+from mail_integration.models import EmailIntegration
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +30,6 @@ def audit_event(sender, instance, created, **kwargs):
         return
     if instance.action in ('create', 'update', 'delete', 'login', 'connect', 'disconnect'):
         notify(instance.user_id, instance.company_id, f'{instance.entity}: {instance.action} successful.', activity_type='manual', actor_id=instance.user_id)
-
-
-@receiver(post_save, sender=EmailMessage)
-@safe_event
-def email_fetched(sender, instance, created, **kwargs):
-    if created:
-        integration = instance.integration
-        notify(integration.created_by_id, integration.company_id, f'Email fetched from {instance.sender_email or "unknown sender"}.', '/app/integrations/email', activity_type='automated')
 
 
 @receiver(post_save, sender=OCRDocumentVersion)
@@ -70,7 +62,7 @@ def posting_changed(sender, instance, created, **kwargs):
     if instance.status in ('posted', 'error') and instance.status != getattr(instance, '_previous_status', None):
         doc = instance.document
         state = 'completed' if instance.status == 'posted' else 'failed'
-        notify(doc.user_id, doc.company_id, f'NetSuite posting {state} for {document_label(doc)}.', f'/app/ocr/history/{doc.pk}')
+        notify(doc.user_id, doc.company_id, f' Vendor bill post to NetSuite via mail {state} for {document_label(doc)}.', f'/app/ocr/history/{doc.pk}')
 
 
 @receiver(pre_save, sender=EmailIntegration)

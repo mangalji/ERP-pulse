@@ -13,7 +13,7 @@ from common.crypto import EncryptedTextField
 class EmailIntegration(models.Model):
     """One OAuth-connected mailbox belonging to a company."""
 
-    DEFAULT_SYNC_INTERVAL_MINUTES = 30
+    DEFAULT_SYNC_INTERVAL_MINUTES = 5
 
     class Provider(models.TextChoices):
         GOOGLE = "GOOGLE", "Google Gmail"
@@ -65,6 +65,9 @@ class EmailIntegration(models.Model):
     next_sync_at = models.DateTimeField(null=True, blank=True, db_index=True)
     last_error = models.TextField(blank=True, default="")
     consecutive_failures = models.PositiveSmallIntegerField(default=0)
+    # A concise outcome from the most recent successful mailbox task.  This
+    # lets the UI explain exactly what the scheduler did without reading logs.
+    last_sync_summary = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -102,6 +105,7 @@ class EmailMessage(models.Model):
     normalized_body = models.TextField(blank=True, default="")
     body_hash = models.CharField(max_length=64, db_index=True)
     is_vendor_bill = models.BooleanField(null=True, blank=True, db_index=True)
+    vendor_bill_notification_sent = models.BooleanField(default=False)
     ai_extracted_data_json = models.JSONField(null=True, blank=True)
     # Terminal rows are retained briefly so an overlapping mailbox sync cannot
     # stage and send the same provider message through AI again.

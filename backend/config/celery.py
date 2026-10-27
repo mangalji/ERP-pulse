@@ -50,14 +50,16 @@ def setup_periodic_tasks(sender, **kwargs):
         sender.signature("superadmin.tasks.sync_company_subscription_statuses"),
         name='sync company subscription statuses',
     )
-    # Each mailbox's selected sync interval is enforced by the task itself.
+    # This is only a lightweight due-check.  Each mailbox's selected fetch
+    # interval is enforced by the task itself, so provider APIs are not polled
+    # every minute.
     sender.add_periodic_task(
-        timedelta(minutes=5),
+        timedelta(minutes=1),
         sender.signature("mail_integration.tasks.sync_due_mailboxes"),
         name="sync and process due email bills",
     )
     sender.add_periodic_task(
-        timedelta(seconds=20),
+        timedelta(seconds=30),
         sender.signature("mail_integration.tasks.email_scheduler_heartbeat"),
         name="email scheduler health heartbeat",
     )

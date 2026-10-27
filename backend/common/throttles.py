@@ -4,10 +4,6 @@ Custom DRF throttle classes with rates driven by Django settings.
 All rates are defined in settings.py so they can be changed without
 touching code. Defaults match the production hardening requirements:
 
-- Anonymous OTP endpoints: 5/min
-- AI Chat: 20/min
-- Dashboard: 120/min
-- NetSuite Sync: 30/min
 """
 import hashlib
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle, SimpleRateThrottle

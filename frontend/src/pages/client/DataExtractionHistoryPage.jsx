@@ -75,20 +75,29 @@ function errorMessage(error) {
     'The requested action failed.'
   )
 }
-// function isCompanyAdminUser(user) {
-//   if (user?.is_superadmin || user?.is_staff) return true
 
-//   return (Array.isArray(user?.roles) ? user.roles : []).some((role) => {
-//     const value =
-//       typeof role === 'string'
-//         ? role
-//         : role?.name ?? role?.code ?? role?.key ?? ''
+function HistoryPagination({ pagination, recordsLength, working, onPageChange }) {
+  const start = pagination.count === 0 ? 0 : pagination.offset + 1
+  const end = Math.min(pagination.offset + recordsLength, pagination.count)
 
-//     return ['company_admin', 'company admin'].includes(
-//       String(value).trim().toLowerCase(),
-//     )
-//   })
-// }
+  return (
+    <div className="grid grid-cols-2 items-center gap-x-3 gap-y-3 border-t border-[var(--color-border)] px-3 py-3 text-sm text-[var(--color-muted)] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4">
+      <span className="col-span-2 min-w-0 text-center text-xs leading-5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:text-sm">
+        Showing {start}-{end} of {pagination.count}
+      </span>
+      <div className="flex min-w-0 justify-start sm:col-start-1 sm:row-start-1">
+        <Button type="button" onClick={() => onPageChange(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>
+          Previous
+        </Button>
+      </div>
+      <div className="flex min-w-0 justify-end sm:col-start-3 sm:row-start-1">
+        <Button type="button" onClick={() => onPageChange(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>
+          Next
+        </Button>
+      </div>
+    </div>
+  )
+}
 
 export default function DataExtractionHistoryPage() {
   const navigate = useNavigate()
@@ -526,8 +535,9 @@ export default function DataExtractionHistoryPage() {
       title="Data Extraction History"
       breadcrumb="OCR / Data Extraction / Data Extraction History"
     >
-      <div className="flex w-full flex-col gap-6">
-        <Card className="p-5 sm:p-6">
+      <div className="flex w-full flex-col">
+        <Card className="overflow-hidden">
+          <div className="p-5 sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">
@@ -670,51 +680,17 @@ export default function DataExtractionHistoryPage() {
               </ul>
             </div>
           )}
-          {!loading && pagination.count > 0 && (
-            // <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-muted)]">
-            //   <span>Showing {pagination.offset + 1}-{Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}</span>
-            //   <div className="flex gap-2">
-            //     <Button type="button" onClick={() => loadHistory(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>Previous</Button>
-            //     <Button type="button" onClick={() => loadHistory(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>Next</Button>
-            //   </div>
-            // </div>
-            
-          <div className="grid grid-cols-2 items-center gap-x-3 gap-y-3 border-t border-[var(--color-border)] px-3 py-3 text-sm text-[var(--color-muted)] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4">
-                    
-            {/* Showing: mobile par first row, desktop par exact center */}
-            <span className="col-span-2 min-w-0 text-center text-xs leading-5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:text-sm">
-              Showing {pagination.count === 0 ? 0 : pagination.offset + 1}-
-              {Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}
-            </span>
-                    
-            {/* Previous: mobile par bottom-left, desktop par left corner */}
-            <div className="flex min-w-0 justify-start sm:col-start-1 sm:row-start-1">
-              <Button
-                type="button"
-                onClick={() => loadHistory(pagination.previousOffset)}
-                disabled={pagination.previousOffset === null || working}
-              >
-                Previous
-              </Button>
-            </div>
-                    
-            {/* Next: mobile par bottom-right, desktop par right corner */}
-            <div className="flex min-w-0 justify-end sm:col-start-3 sm:row-start-1">
-              <Button
-                type="button"
-                onClick={() => loadHistory(pagination.nextOffset)}
-                disabled={pagination.nextOffset === null || working}
-              >
-                Next
-              </Button>
-            </div>
-                    
           </div>
-
+          {!loading && pagination.count > 0 && (
+            <div className="mx-5 sm:mx-6">
+              <HistoryPagination
+                pagination={pagination}
+                recordsLength={records.length}
+                working={working}
+                onPageChange={loadHistory}
+              />
+            </div>
           )}
-        </Card>
-
-        <Card className="overflow-hidden">
           {loading ? (
             <div className="p-8 text-sm text-[var(--color-muted)]">
               Loading history...
@@ -910,12 +886,13 @@ export default function DataExtractionHistoryPage() {
             </div>
           )}
           {!loading && pagination.count > 0 && (
-            <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-muted)]">
-              <span>Showing {pagination.offset + 1}-{Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}</span>
-              <div className="flex gap-2">
-                <Button type="button" onClick={() => loadHistory(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>Previous</Button>
-                <Button type="button" onClick={() => loadHistory(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>Next</Button>
-              </div>
+            <div className="mx-5 sm:mx-6">
+              <HistoryPagination
+                pagination={pagination}
+                recordsLength={records.length}
+                working={working}
+                onPageChange={loadHistory}
+              />
             </div>
           )}
         </Card>

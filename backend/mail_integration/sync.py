@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 from datetime import timedelta
 
 from django.db import IntegrityError, transaction
@@ -17,9 +18,34 @@ from mail_integration.models import EmailIntegration, EmailMessage
 
 
 logger = logging.getLogger(__name__)
-SYNC_LOOKBACK = timedelta(minutes=5)
+# A provider can expose a newly delivered email late, or return an incomplete
+# listing transiently.  Re-read two full mailbox cycles plus a small boundary
+# buffer; durable provider-ID de-duplication makes the overlap safe.
+SYNC_LOOKBACK_BUFFER = timedelta(minutes=5)
+SYNC_LOOKBACK_CYCLES = 2
+# Keep an absolute safety window as well. This recovers messages that were
+# visible to a mailbox provider but omitted from one scheduled listing.
+MIN_SYNC_LOOKBACK = timedelta(minutes=65)
 RETRY_DELAY = timedelta(minutes=10)
 TOKEN_REFRESH_SKEW = timedelta(seconds=60)
+
+
+def sync_lookback_for(integration: EmailIntegration) -> timedelta:
+    interval_minutes = max(
+        int(integration.sync_interval_minutes or EmailIntegration.DEFAULT_SYNC_INTERVAL_MINUTES),
+        1,
+    )
+    cycle_lookback = timedelta(minutes=interval_minutes * SYNC_LOOKBACK_CYCLES)
+    return max(cycle_lookback + SYNC_LOOKBACK_BUFFER, MIN_SYNC_LOOKBACK)
+
+
+def dedupe_syncs_to_retain(integration: EmailIntegration) -> int:
+    """Keep a terminal staged row through every sync that can replay it."""
+    interval_minutes = max(
+        int(integration.sync_interval_minutes or EmailIntegration.DEFAULT_SYNC_INTERVAL_MINUTES),
+        1,
+    )
+    return max(2, math.ceil(sync_lookback_for(integration).total_seconds() / (interval_minutes * 60)))
 
 
 class EmailSyncService:
@@ -33,14 +59,27 @@ class EmailSyncService:
             is_paused=False,
             initial_sync_from_at__isnull=False,
         ).filter(Q(next_sync_at__isnull=True) | Q(next_sync_at__lte=now))
-        outcomes = {"checked": 0, "staged": 0, "failed": 0}
+        outcomes = {"checked": 0, "staged": 0, "failed": 0, "by_integration": {}}
         for integration_id in due.values_list("id", flat=True):
             outcomes["checked"] += 1
             try:
-                outcomes["staged"] += self.sync_integration(integration_id=integration_id)
+                staged = self.sync_integration(integration_id=integration_id)
+                outcomes["staged"] += staged
+                outcomes["by_integration"][str(integration_id)] = {
+                    "checked_at": timezone.now().isoformat(),
+                    "fetched": staged,
+                }
+            except (EmailIntegrationOAuthError, EmailMailboxFetchError) as exc:
+                outcomes["failed"] += 1
+                logger.warning(
+                    "Email mailbox sync failed — integration=%s category=%s error=%s",
+                    integration_id,
+                    "authorization" if getattr(exc, "authorization_required", False) else "provider_or_network",
+                    str(exc),
+                )
             except Exception:  # Individual mailbox failures must not block others.
                 outcomes["failed"] += 1
-                logger.exception("Email mailbox sync failed — integration=%s", integration_id)
+                logger.exception("Email mailbox sync crashed unexpectedly — integration=%s", integration_id)
         return outcomes
 
     def sync_integration(self, *, integration_id) -> int:
@@ -52,18 +91,29 @@ class EmailSyncService:
 
         now = timezone.now()
         since = integration.last_successful_sync_at or integration.initial_sync_from_at
-        # The overlap protects messages delivered at a provider timestamp boundary.
+        # Re-read enough history to recover a provider-side delayed/partial
+        # listing. `_stage_message` de-duplicates by provider message ID, so
+        # this cannot create a second OCR record for a previously seen email.
         if integration.last_successful_sync_at:
-            since -= SYNC_LOOKBACK
+            since -= sync_lookback_for(integration)
 
         try:
             self._refresh_access_token_if_needed(integration)
             self._verify_mailbox_identity(integration)
             staged = 0
+            returned = 0
+            duplicates = 0
+            received_times = []
             for message in mailbox_client_for(integration).iter_messages_since(since):
                 if not EmailIntegration.objects.filter(pk=integration.id, status=EmailIntegration.Status.CONNECTED, is_active=True, is_paused=False).exists():
                     return staged
-                staged += int(self._stage_message(integration=integration, message=message))
+                returned += 1
+                if message.received_at:
+                    received_times.append(message.received_at)
+                if self._stage_message(integration=integration, message=message):
+                    staged += 1
+                else:
+                    duplicates += 1
         except EmailIntegrationOAuthError as exc:
             self._record_failure(integration=integration, error=str(exc), authorization_error=exc.authorization_required)
             raise
@@ -77,6 +127,18 @@ class EmailSyncService:
         except Exception as exc:
             self._record_failure(integration=integration, error=str(exc), authorization_error=False)
             raise
+
+        logger.info(
+            "Email mailbox sync completed — integration=%s provider=%s since=%s returned=%s staged=%s duplicates=%s oldest_received=%s newest_received=%s",
+            integration.id,
+            integration.provider,
+            since.isoformat(),
+            returned,
+            staged,
+            duplicates,
+            min(received_times).isoformat() if received_times else None,
+            max(received_times).isoformat() if received_times else None,
+        )
 
         # Advance only after every page and message has been durably staged.
         # A terminal message stays for two *future successful* syncs.  This is

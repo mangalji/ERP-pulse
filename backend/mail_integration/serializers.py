@@ -79,6 +79,7 @@ class EmailIntegrationSerializer(serializers.ModelSerializer):
             "initial_sync_configured",
             "last_successful_sync_at",
             "next_sync_at",
+            "last_sync_summary",
             "last_error",
             "consecutive_failures",
             "token_expires_in_seconds",

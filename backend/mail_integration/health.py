@@ -17,23 +17,46 @@ def record_scheduler_heartbeat():
     _broker_redis().set(HEARTBEAT_KEY, "1", ex=HEARTBEAT_TTL_SECONDS)
 
 
-def ensure_email_processing_available():
+def email_processing_status():
+    """Return worker and beat state for the integration UI without raising."""
+    result = {
+        "worker_running": False,
+        "scheduler_running": False,
+        "message": "",
+    }
     try:
         broker = _broker_redis()
         broker.ping()
     except Exception as exc:
-        raise EmailIntegrationStateError("Cannot reach the Celery Redis broker. Start Redis and try again.") from exc
+        result["message"] = "Cannot reach the Celery Redis broker."
+        return result
 
     try:
         from config.celery import app
         workers = app.control.inspect(timeout=2).ping()
-    except Exception as exc:
-        raise EmailIntegrationStateError("Cannot verify a Celery worker. Start the worker and try again.") from exc
+        result["worker_running"] = bool(workers)
+    except Exception:
+        result["message"] = "Cannot verify a Celery worker."
+        return result
     if not workers:
-        raise EmailIntegrationStateError("No Celery worker responded. Start the worker and try again.")
+        result["message"] = "No Celery worker responded."
+        return result
     try:
-        heartbeat = broker.exists(HEARTBEAT_KEY)
-    except Exception as exc:
-        raise EmailIntegrationStateError("Cannot verify the email scheduler through Redis. Try again.") from exc
-    if not heartbeat:
-        raise EmailIntegrationStateError("Email scheduler is not responding. Start Celery Beat and wait up to 30 seconds before trying again.")
+        result["scheduler_running"] = bool(broker.exists(HEARTBEAT_KEY))
+    except Exception:
+        result["message"] = "Cannot verify the email scheduler through Redis."
+        return result
+    if not result["scheduler_running"]:
+        result["message"] = "Email scheduler is not responding. Start Celery Beat and wait up to 30 seconds."
+    return result
+
+
+def ensure_email_processing_available():
+    status = email_processing_status()
+    if status["worker_running"] and status["scheduler_running"]:
+        return
+    if status["message"] == "Cannot reach the Celery Redis broker.":
+        raise EmailIntegrationStateError("Cannot reach the Celery Redis broker. Start Redis and try again.")
+    if not status["worker_running"]:
+        raise EmailIntegrationStateError("No Celery worker responded. Start the worker and try again.")
+    raise EmailIntegrationStateError("Email scheduler is not responding. Start Celery Beat and wait up to 30 seconds before trying again.")
