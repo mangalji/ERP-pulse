@@ -125,6 +125,9 @@ export const clientApi = {
   getTransactions: (params) =>
     apiClient.get('/transactions/', { params }).then(unwrap),
 
+  updateTransaction: (id, payload) => apiClient.patch(`/transactions/${id}/`, payload).then(unwrap),
+  deleteTransaction: (id) => apiClient.delete(`/transactions/${id}/`).then(unwrap),
+
   createTransaction: ({ transactionType, recordType, payload }) =>
     apiClient.post('/transactions/', payload, {
       params: {

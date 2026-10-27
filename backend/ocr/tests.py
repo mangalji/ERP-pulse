@@ -37,15 +37,17 @@ class OCRExtractionDefaultsTests(SimpleTestCase):
 
 
 class OCRPostingRetrySafetyTests(SimpleTestCase):
-    def test_only_confirmed_missing_required_field_rejection_is_excluded(self):
+    def test_confirmed_input_rejections_are_excluded(self):
         from netsuite.models import blocking_ocr_postings
+        from django.db.models import Q
         queryset = Mock()
         self.assertIs(blocking_ocr_postings(queryset), queryset.exclude.return_value)
         queryset.exclude.assert_called_once_with(
+            Q(error_message__contains='Please enter value(s) for:')
+            | Q(error_message__contains='You have entered an Invalid Field Value'),
             status='error',
             netsuite_record_id__isnull=True,
             error_message__startswith='NetSuite rejected request (400) for record/v1/vendorBill:',
-            error_message__contains='Please enter value(s) for:',
         )
 
 

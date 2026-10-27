@@ -300,16 +300,17 @@ class NetSuiteOCRPosting(models.Model):
 
 
 def blocking_ocr_postings(queryset):
-    """Ignore only a confirmed missing-required-field rejection from NetSuite.
+    """Ignore confirmed NetSuite input-validation rejections.
 
     Network failures, ambiguous responses, pending requests and other errors
     still require reconciliation before another version can be posted.
     """
     return queryset.exclude(
+        models.Q(error_message__contains="Please enter value(s) for:")
+        | models.Q(error_message__contains="You have entered an Invalid Field Value"),
         status="error",
         netsuite_record_id__isnull=True,
         error_message__startswith="NetSuite rejected request (400) for record/v1/vendorBill:",
-        error_message__contains="Please enter value(s) for:",
     )
 
 

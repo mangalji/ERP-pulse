@@ -22,7 +22,7 @@ const FILTERS = [
   { value: 'POSTED', label: 'Posted' },
 ]
 
-const PAGE_SIZE_OPTIONS = [10, 15, 25, 50, 100]
+const PAGE_SIZE_OPTIONS = [10, 50, 100]
 const HISTORY_PAGE_SIZE_STORAGE_KEY = 'data_extraction_history_page_size'
 
 function getSavedPageSize() {
@@ -63,7 +63,7 @@ function formatDate(value) {
 
 function historyRecordLabel(record) {
   const historyNumber = record?.history_number
-  const identifier = historyNumber ? `History #${historyNumber}` : 'History record'
+  const identifier = historyNumber ? `S.No. #${historyNumber}` : 'History record'
   return `${identifier} — ${record?.filename || 'Unnamed OCR file'}`
 }
 
@@ -533,9 +533,9 @@ export default function DataExtractionHistoryPage() {
               <h1 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)] sm:text-2xl">
                 Data Extraction History
               </h1>
-              <p className="mt-1 text-sm text-[var(--color-muted)]">
+              {/* <p className="mt-1 text-sm text-[var(--color-muted)]">
                 Review single OCR files and multiple-file batches, validate unresolved records, and post only fully validated records to NetSuite.
-              </p>
+              </p> */}
             </div>
 
              <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -671,13 +671,46 @@ export default function DataExtractionHistoryPage() {
             </div>
           )}
           {!loading && pagination.count > 0 && (
-            <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-muted)]">
-              <span>Showing {pagination.offset + 1}-{Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}</span>
-              <div className="flex gap-2">
-                <Button type="button" onClick={() => loadHistory(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>Previous</Button>
-                <Button type="button" onClick={() => loadHistory(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>Next</Button>
-              </div>
+            // <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-muted)]">
+            //   <span>Showing {pagination.offset + 1}-{Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}</span>
+            //   <div className="flex gap-2">
+            //     <Button type="button" onClick={() => loadHistory(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>Previous</Button>
+            //     <Button type="button" onClick={() => loadHistory(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>Next</Button>
+            //   </div>
+            // </div>
+            
+          <div className="grid grid-cols-2 items-center gap-x-3 gap-y-3 border-t border-[var(--color-border)] px-3 py-3 text-sm text-[var(--color-muted)] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4">
+                    
+            {/* Showing: mobile par first row, desktop par exact center */}
+            <span className="col-span-2 min-w-0 text-center text-xs leading-5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:text-sm">
+              Showing {pagination.count === 0 ? 0 : pagination.offset + 1}-
+              {Math.min(pagination.offset + records.length, pagination.count)} of {pagination.count}
+            </span>
+                    
+            {/* Previous: mobile par bottom-left, desktop par left corner */}
+            <div className="flex min-w-0 justify-start sm:col-start-1 sm:row-start-1">
+              <Button
+                type="button"
+                onClick={() => loadHistory(pagination.previousOffset)}
+                disabled={pagination.previousOffset === null || working}
+              >
+                Previous
+              </Button>
             </div>
+                    
+            {/* Next: mobile par bottom-right, desktop par right corner */}
+            <div className="flex min-w-0 justify-end sm:col-start-3 sm:row-start-1">
+              <Button
+                type="button"
+                onClick={() => loadHistory(pagination.nextOffset)}
+                disabled={pagination.nextOffset === null || working}
+              >
+                Next
+              </Button>
+            </div>
+                    
+          </div>
+
           )}
         </Card>
 
@@ -695,13 +728,13 @@ export default function DataExtractionHistoryPage() {
           ) : (
             <div className="overflow-x-auto">
               <div className="min-w-[1720px]">
-                <div className="grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_200px_70px_150px_150px_120px_140px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+                <div className="grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_150px_150px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   <div />
-                  <div>History #</div>
+                  <div>S.No.</div>
                   <div>File / Batch</div>
                   <div>Type</div>
                   <div>Mode</div>
-                  <div>Vendor Email</div>
+                  {/* <div>Vendor Email</div> */}
                   <div>Email Account</div>
                   <div>Files</div>
                   <div>Created By</div>
@@ -722,7 +755,7 @@ export default function DataExtractionHistoryPage() {
                     return (
                       <div
                         key={item.batch_id}
-                        className={`grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_200px_70px_150px_150px_120px_140px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
+                        className={`grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_150px_150px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
                       >
                         <div>
                           <input
@@ -744,7 +777,7 @@ export default function DataExtractionHistoryPage() {
                           </p>
                           <p className="mt-1 text-xs text-[var(--color-muted)]">
                             {item.source_type === 'EMAIL'
-                              ? `Email · ${item.source_metadata?.sender || 'unknown sender'}`
+                              ? `Vendor Email · ${item.source_metadata?.sender || 'unknown sender'}`
                               : item.type === 'batch'
                                 ? `${item.validated_count || 0}/${item.file_count} validated`
                                 : 'Single file'}
@@ -759,9 +792,9 @@ export default function DataExtractionHistoryPage() {
                           {item.type === 'batch' ? 'Multiple' : 'Single'}
                         </div>
 
-                        <div className="truncate pr-2 text-sm text-[var(--color-muted)]" title={item.source_type === 'EMAIL' ? item.source_metadata?.sender || '' : ''}>
+                        {/* <div className="truncate pr-2 text-sm text-[var(--color-muted)]" title={item.source_type === 'EMAIL' ? item.source_metadata?.sender || '' : ''}>
                           {item.source_type === 'EMAIL' ? item.source_metadata?.sender || '' : ''}
-                        </div>
+                        </div> */}
 
                         <div className="truncate pr-2 text-sm text-[var(--color-muted)]" title={item.source_type === 'EMAIL' ? item.source_metadata?.mailbox || '' : ''}>
                           {item.source_type === 'EMAIL' ? item.source_metadata?.mailbox || '' : ''}

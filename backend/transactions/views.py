@@ -1,6 +1,7 @@
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from django.shortcuts import get_object_or_404
 
 from common.pagination import paginated_response
 from common.common_utils import success_response
@@ -8,6 +9,7 @@ from transactions.models import Transaction, get_model_schema
 from transactions.serializers import (
     TransactionCreateSerializer,
     TransactionListSerializer,
+    TransactionUpdateSerializer,
 )
 from transactions.services import transaction_service
 
@@ -102,3 +104,27 @@ class TransactionsView(APIView):
             message="Transaction created successfully.",
             data=TransactionListSerializer(transaction).data,
         )
+
+
+class TransactionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_transaction(self, request, pk):
+        company = getattr(request.user, "company", None)
+        return get_object_or_404(Transaction.objects.select_related("company"), pk=pk, company=company)
+
+    def patch(self, request, pk):
+        transaction = self._get_transaction(request, pk)
+        serializer = TransactionUpdateSerializer(transaction, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        if "transaction_type" in serializer.validated_data and "record_type" not in serializer.validated_data:
+            raise ValidationError({"record_type": "Choose a record type for the transaction type."})
+        tran_id = serializer.validated_data.get("tran_id", transaction.tran_id)
+        if Transaction.objects.filter(company=transaction.company, tran_id=tran_id).exclude(pk=pk).exists():
+            raise ValidationError({"tran_id": "A transaction with this invoice number already exists."})
+        serializer.save()
+        return success_response(message="Transaction updated successfully.", data=TransactionListSerializer(transaction).data)
+
+    def delete(self, request, pk):
+        self._get_transaction(request, pk).delete()
+        return success_response(message="Transaction deleted successfully.", data={})

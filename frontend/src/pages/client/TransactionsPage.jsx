@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
+import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
 import { clientApi } from '../../services/client.js'
 
 const PAGE_SIZE = 20
@@ -46,6 +47,9 @@ export default function TransactionsPage() {
   const [newOpen, setNewOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [editingRow, setEditingRow] = useState(null)
+  const [deleteRow, setDeleteRow] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const loadTransactions = useCallback(async () => {
     setLoading(true)
@@ -122,6 +126,7 @@ useEffect(() => {
   const hasNext = offset + rows.length < count
 
   const openNewForm = () => {
+    setEditingRow(null)
     const initialForm = {}
 
     formFields.forEach((field) => {
@@ -150,7 +155,32 @@ useEffect(() => {
     }
 
     setNewOpen(false)
+    setEditingRow(null)
     setForm(EMPTY_FORM)
+  }
+
+  const openEditForm = (row) => {
+    const initialForm = {}
+    formFields.forEach((field) => { initialForm[field.name] = row[field.name] ?? '' })
+    setForm(initialForm)
+    setEditingRow(row)
+    setError('')
+    setNewOpen(true)
+  }
+
+  const handleDelete = async () => {
+    if (!deleteRow || deleting) return
+    setDeleting(true)
+    setError('')
+    try {
+      await clientApi.deleteTransaction(deleteRow.id)
+      setDeleteRow(null)
+      if (rows.length === 1 && offset > 0) setOffset(Math.max(0, offset - PAGE_SIZE))
+      else await loadTransactions()
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.response?.data?.message || 'Failed to delete transaction.')
+      setDeleteRow(null)
+    } finally { setDeleting(false) }
   }
 
   const updateField = (field, value) => {
@@ -163,11 +193,14 @@ useEffect(() => {
     }))
   }
 
-  const tableFields = schema.fields || []
+  const tableFields = (schema.fields || [])
+    .filter((field) => !['company', 'name'].includes(field.name))
+    .map((field) => ({ ...field, label: { tran_id: 'Invoice Number', tran_date: 'Invoice Date', base_amount: 'Amount', gst_percentage: 'GST (%)', amount: 'Total Amount' }[field.name] || field.label }))
   const transactionContexts = collectTransactionContexts(navigationItems)
   const transactionTypeOptions = [...new Set([
     ...transactionContexts.map((context) => context.transactionType),
     transactionType,
+    editingRow?.transaction_type,
   ].filter(Boolean))]
   const selectedFormTransactionType = String(form.transaction_type || '').trim()
   const recordTypeOptions = [...new Set([
@@ -175,22 +208,23 @@ useEffect(() => {
       .filter((context) => context.transactionType === selectedFormTransactionType)
       .map((context) => context.recordType),
     selectedFormTransactionType === transactionType ? recordType : '',
+    selectedFormTransactionType === editingRow?.transaction_type ? editingRow?.record_type : '',
   ].filter(Boolean))]
 
-  const formFields = tableFields.filter(
+  const formFields = (schema.fields || []).filter(
     (field) =>
       !field.read_only &&
       field.name !== 'company',
-  )
+  ).map((field) => ({ ...field, label: { tran_id: 'Invoice Number', tran_date: 'Invoice Date', base_amount: 'Amount', gst_percentage: 'GST (%)', amount: 'Total Amount' }[field.name] || field.label }))
 
   const handleCreate = async (event) => {
     event.preventDefault()
 
     const selectedTransactionType = String(
-      form.transaction_type || transactionType,
+      form.transaction_type || '',
     ).trim()
     const selectedRecordType = String(
-      form.record_type || recordType,
+      form.record_type || '',
     ).trim()
 
     if (!selectedTransactionType || !selectedRecordType) {
@@ -203,22 +237,28 @@ useEffect(() => {
       record_type: _recordType,
       ...transactionPayload
     } = form
+    transactionPayload.due_date = transactionPayload.due_date || null
+    transactionPayload.base_amount = transactionPayload.base_amount === '' ? null : transactionPayload.base_amount
+    transactionPayload.gst_percentage = transactionPayload.gst_percentage === '' ? null : transactionPayload.gst_percentage
+    delete transactionPayload.amount
 
     setSaving(true)
     setError('')
 
     try {
-      await clientApi.createTransaction({
+      if (editingRow) {
+        await clientApi.updateTransaction(editingRow.id, { ...transactionPayload, transaction_type: selectedTransactionType, record_type: selectedRecordType })
+      } else await clientApi.createTransaction({
         transactionType: selectedTransactionType,
         recordType: selectedRecordType,
         payload: transactionPayload,
       })
 
       setNewOpen(false)
+      setEditingRow(null)
       setForm(EMPTY_FORM)
-      setOffset(0)
-
-      await loadTransactions()
+      if (!editingRow && offset !== 0) setOffset(0)
+      else await loadTransactions()
     } catch (err) {
       const message =
         err?.response?.data?.message ||
@@ -283,6 +323,7 @@ useEffect(() => {
                       {field.label}
                     </th>
                   ))}
+                  <th className="px-4 py-3 text-left font-medium text-[var(--color-muted)]">Actions</th>
                 </tr>
               </thead>
 
@@ -290,7 +331,7 @@ useEffect(() => {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={Math.max(tableFields.length, 1)}
+                      colSpan={Math.max(tableFields.length + 1, 1)}
                       className="px-4 py-10 text-center text-[var(--color-muted)]"
                     >
                       Loading transactions…
@@ -299,7 +340,7 @@ useEffect(() => {
                 ) : rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={Math.max(tableFields.length, 1)}
+                      colSpan={Math.max(tableFields.length + 1, 1)}
                       className="px-4 py-10 text-center text-[var(--color-muted)]"
                     >
                       No transactions found.
@@ -315,9 +356,10 @@ useEffect(() => {
                         key={field.name}
                         className="px-4 py-3 text-[var(--color-ink)]"
                       >
-                        {row[field.name] ?? '—'}
+                        {row[field.name] === '' || row[field.name] == null ? '—' : row[field.name]}
                       </td>
                     ))}
+                      <td className="whitespace-nowrap px-4 py-3"><button type="button" className="mr-3 text-[var(--color-primary)]" onClick={() => openEditForm(row)}>Edit</button><button type="button" className="text-red-600" onClick={() => setDeleteRow(row)}>Delete</button></td>
                     </tr>
                   ))
                 )}
@@ -370,7 +412,7 @@ useEffect(() => {
               <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
                 <div>
                   <h2 className="text-lg font-semibold text-[var(--color-ink)]">
-                    New {recordType || 'Transaction'}
+                    {editingRow ? 'Edit Transaction' : `New ${recordType || 'Transaction'}`}
                   </h2>
 
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -391,9 +433,14 @@ useEffect(() => {
               </div>
 
               <form onSubmit={handleCreate} className="space-y-5 p-5">
+                {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {formFields.map((field) => {
-                    const value = form[field.name] ?? ''
+                    const hasCalculation = form.base_amount !== '' && form.base_amount != null && form.gst_percentage !== '' && form.gst_percentage != null
+                    const hasPartialCalculation = form.base_amount !== '' && form.base_amount != null || form.gst_percentage !== '' && form.gst_percentage != null
+                    const value = field.name === 'amount' && hasCalculation
+                      ? (Number(form.base_amount) * (1 + Number(form.gst_percentage) / 100)).toFixed(2)
+                      : field.name === 'amount' && hasPartialCalculation ? '' : form[field.name] ?? ''
 
                     if (field.name === 'transaction_type' || field.name === 'record_type') {
                       const isTransactionType = field.name === 'transaction_type'
@@ -432,7 +479,9 @@ useEffect(() => {
                   
                     let inputType = 'text'
                   
-                    if (field.type === 'DateField') {
+                    if (['base_amount', 'gst_percentage'].includes(field.name)) {
+                      inputType = 'text'
+                    } else if (field.type === 'DateField') {
                       inputType = 'date'
                     } else if (field.type === 'DecimalField' || field.type === 'IntegerField') {
                       inputType = 'number'
@@ -446,11 +495,14 @@ useEffect(() => {
                     
                         <input
                           type={inputType}
+                          inputMode={['base_amount', 'gst_percentage'].includes(field.name) ? 'decimal' : undefined}
                           value={value}
                           onChange={(event) =>
                             updateField(field.name, event.target.value)
                           }
                           required={field.required}
+                          readOnly={field.name === 'amount'}
+                          min={['base_amount', 'gst_percentage'].includes(field.name) ? '0' : undefined}
                           step={inputType === 'number' ? 'any' : undefined}
                           className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
                         />
@@ -481,6 +533,7 @@ useEffect(() => {
             </div>
           </div>
         )}
+        <ConfirmDialog open={Boolean(deleteRow)} title="Delete transaction?" message={`Delete invoice ${deleteRow?.tran_id || ''}?`} confirmLabel="Delete" loading={deleting} onConfirm={handleDelete} onCancel={() => { if (!deleting) setDeleteRow(null) }} />
       </div>
     </ClientLayout>
   )

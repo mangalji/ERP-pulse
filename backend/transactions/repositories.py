@@ -27,7 +27,8 @@ class TransactionRepository:
         queryset = (
             Transaction.objects
             .filter(**filters)
-            .order_by("-tran_date", "-id")
+            .select_related("company")
+            .order_by("id")
         )
 
         count = queryset.count()

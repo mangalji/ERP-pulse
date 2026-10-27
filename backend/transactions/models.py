@@ -42,6 +42,10 @@ class Transaction(models.Model):
 
     tran_date = models.DateField()
 
+    due_date = models.DateField(null=True, blank=True)
+
+    subsidiary = models.CharField(max_length=255, blank=True, default="")
+
     # Company / customer / vendor name.
     entity = models.CharField(
         max_length=255,
@@ -60,6 +64,9 @@ class Transaction(models.Model):
         blank=True,
         default="",
     )
+
+    base_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+    gst_percentage = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
 
     amount = models.DecimalField(
         max_digits=18,

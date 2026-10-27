@@ -102,6 +102,15 @@ class EmailPauseTests(SimpleTestCase):
 
 @override_settings(EMAIL_OAUTH_REDIRECT_URI="http://localhost/callback/", GOOGLE_MAIL_CLIENT_ID="id", GOOGLE_MAIL_CLIENT_SECRET="secret")
 class EmailRefreshFailureTests(SimpleTestCase):
+    @override_settings(ZOHO_MAIL_CLIENT_ID="id", ZOHO_MAIL_CLIENT_SECRET="secret")
+    def test_zoho_invalid_refresh_code_requires_reconnect(self):
+        client = EmailOAuthClient(integration=EmailIntegration(provider="ZOHO", refresh_token="token"))
+        with patch("mail_integration.client.requests.post") as post:
+            post.return_value = Mock(status_code=400, json=Mock(return_value={"error": "invalid_code"}))
+            with self.assertRaises(EmailIntegrationOAuthError) as raised:
+                client.refresh_access_token()
+        self.assertTrue(raised.exception.authorization_required)
+
     def test_invalid_grant_requires_reconnect_but_provider_failure_does_not(self):
         client = EmailOAuthClient(integration=EmailIntegration(provider="GOOGLE", refresh_token="token"))
         for status, response, expected in [(400, {"error": "invalid_grant"}, True), (503, {"error": "server_error"}, False)]:

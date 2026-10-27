@@ -153,3 +153,5 @@ env_var_prod_catalyst.yaml
 qa_audit
 backend/data.py
 zoho_test.py
+backend/celerybeat*
+

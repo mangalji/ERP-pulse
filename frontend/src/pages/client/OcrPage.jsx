@@ -546,7 +546,7 @@ function BatchFileResultCard({
             <p className="truncate text-sm font-semibold text-[var(--color-ink)]">
               {index + 1}. {result?.filename || 'OCR file'}
             </p>
-            {validation && validationStatus !== 'SAVE_FAILED' && (
+            {validation && !validated && validationStatus !== 'SAVE_FAILED' && (
               <p className="mt-1 text-xs text-[var(--color-muted)]">
                 Vendor {validation.vendor?.matched ? '✓ found' : '✕ not found'} ·{' '}
                 {matchedItems}/{items.length} items matched
@@ -568,7 +568,7 @@ function BatchFileResultCard({
 
         {validation && (
           <div className="border-t border-[var(--color-border)] p-4">
-            {validationStatus !== 'SAVE_FAILED' && (
+            {!validated && validationStatus !== 'SAVE_FAILED' && (
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-lg border border-[var(--color-border)] p-4">
                   <p className="text-xs text-[var(--color-muted)]">Vendor</p>
@@ -591,7 +591,7 @@ function BatchFileResultCard({
               </div>
             )}
 
-            {validation.summary && (
+            {!validated && validation.summary && (
               <p className="mt-3 text-xs text-[var(--color-muted)]">
                 {Number(validation.summary.source_rows || 0)} source rows ·{' '}
                 {Number(validation.summary.unique_netsuite_items || 0)} unique NetSuite items ·{' '}
@@ -604,7 +604,7 @@ function BatchFileResultCard({
               <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
                 <p className="text-sm font-semibold text-emerald-900">Validation successful</p>
                 <p className="mt-1 text-sm text-emerald-800">
-                  This file has been validated against NetSuite and is ready to post.
+                  This file has been validated against NetSuite.
                 </p>
               </div>
             ) : (
@@ -1581,6 +1581,11 @@ useEffect(() => {
       }
     }
 
+    if (String(validation?.status || '').toUpperCase() === 'VALIDATED') {
+      await handlePost({ automatic: true, documentId: documentId, connectionId: connectionId })
+      return
+    }
+
     addToast(
       validation?.status === 'VALIDATED'
         ? 'OCR data validated successfully.'
@@ -1634,15 +1639,16 @@ useEffect(() => {
     await handleSaveAndValidate()
   }
 
-  const handlePost = async () => {
-    if (editing || saving || validating || posting) {
+  const handlePost = async (options = {}) => {
+    const automatic = options.automatic === true
+    if (!automatic && (editing || saving || validating || posting)) {
     addToast(
       'Finish editing and saving the OCR data before posting it to NetSuite.',
       'error',
     )
     return
   }
-  if (!activeResult?.document_id) {
+  if (!(options.documentId || activeResult?.document_id)) {
     addToast(
       'Please save the OCR data before posting it to NetSuite.',
       'error',
@@ -1651,7 +1657,7 @@ useEffect(() => {
   }
 
   if (
-    String(validationResult?.status || '').toUpperCase() !==
+    !automatic && String(validationResult?.status || '').toUpperCase() !==
     'VALIDATED'
   ) {
     addToast(
@@ -1668,7 +1674,7 @@ useEffect(() => {
   setPosting(true)
   
   try {
-    const connectionData = await loadNetSuiteConnection()
+    const connectionData = options.connectionId ? { id: options.connectionId } : await loadNetSuiteConnection()
     if (controller.signal.aborted){
       return
     }
@@ -1687,7 +1693,7 @@ useEffect(() => {
     }
 
     const postingResult = await netsuiteApi.postOCRVendorBill(
-      activeResult.document_id,
+      options.documentId || activeResult.document_id,
       activeConnectionId,
       {
         signal: controller.signal,
@@ -1699,7 +1705,7 @@ useEffect(() => {
     }
 
     setPostedRecord({
-      documentId: activeResult.document_id,
+      documentId: options.documentId || activeResult.document_id,
       internalId: postingResult?.netsuite_record_id
         ? String(postingResult.netsuite_record_id)
         : null,
@@ -2006,9 +2012,38 @@ useEffect(() => {
         (entry) => entry.status === 'VALIDATED',
       ).length
 
+      const validatedIds = [...entries.entries()]
+        .filter(([, entry]) => entry.status === 'VALIDATED')
+        .map(([documentId]) => documentId)
+      if (validatedIds.length) {
+        try {
+          setBatchProgress(`Posting 0/${validatedIds.length}...`)
+          const postingJob = await netsuiteApi.batchPostDocuments(validatedIds, connectionId)
+          if (!postingJob?.job_id) throw new Error('NetSuite batch posting did not return a job ID.')
+          const postingOutcome = await netsuiteApi.waitForBatchJob(postingJob.job_id, {
+            onProgress: (progress) => {
+              applyBatchPostResults(progress?.results)
+              setBatchProgress(`Posting ${progress?.completed ?? 0}/${progress?.total ?? validatedIds.length}...`)
+            },
+          })
+          const postedEntries = applyBatchPostResults(postingOutcome?.results)
+          const postedCount = [...postedEntries.values()].filter((entry) =>
+            ['POSTED', 'ALREADY_POSTED'].includes(entry.status),
+          ).length
+          addToast(
+            postedCount === validatedIds.length
+              ? `${postedCount} Vendor Bills posted to NetSuite.`
+              : `${postedCount} of ${validatedIds.length} Vendor Bills posted. Review posting errors and retry.`,
+            postedCount === validatedIds.length ? 'success' : 'error',
+          )
+        } catch (err) {
+          addToast(err?.response?.data?.detail || err?.message || 'Automatic posting failed. Review and retry.', 'error')
+        }
+      }
+
       if (validatedCount === documentIds.length && saveFailures === 0) {
         addToast(
-          `All ${documentIds.length} files validated successfully. You can now post the batch to NetSuite.`,
+          `All ${documentIds.length} files validated successfully.`,
           'success',
         )
       } else {
@@ -3379,7 +3414,9 @@ const goNext = () => {
               </div>
 
               <div className="p-4">
-                <div className="grid gap-3 md:grid-cols-2">
+                {String(validationResult?.status || '').toUpperCase() !== 'VALIDATED' && (
+                  <>
+<div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-lg border border-[var(--color-border)] p-4">
                     <p className="text-xs text-[var(--color-muted)]">Vendor</p>
                     <p className="mt-1 font-medium text-[var(--color-ink)]">
@@ -3413,13 +3450,16 @@ const goNext = () => {
                   </p>
                 )}
 
-                {String(validationResult?.status || '').toUpperCase() === 'VALIDATED' ? (
+                                  </>
+                )}
+
+                  {String(validationResult?.status || '').toUpperCase() === 'VALIDATED' ? (
                   <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
                     <p className="text-sm font-semibold text-emerald-900">
                       Validation successful
                     </p>
                     <p className="mt-1 text-sm text-emerald-800">
-                      The OCR data has been successfully validated against NetSuite and is ready to post.
+                      The OCR data has been successfully validated against NetSuite.
                     </p>
                     {postedRecord?.internalId &&
                       postedRecord.documentId === activeResult?.document_id && (

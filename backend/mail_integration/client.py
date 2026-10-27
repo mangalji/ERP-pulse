@@ -155,7 +155,13 @@ class EmailOAuthClient:
             )
             invalid_grant = (
                 payload.get("grant_type") == "refresh_token"
-                and str(data.get("error", "")).lower() == "invalid_grant"
+                and (
+                    str(data.get("error", "")).lower() == "invalid_grant"
+                    or (
+                        self.integration.provider == EmailIntegration.Provider.ZOHO
+                        and str(data.get("error", "")).lower() == "invalid_code"
+                    )
+                )
             )
             raise EmailIntegrationOAuthError(
                 "Mailbox authorization expired or was revoked. Reconnect it."

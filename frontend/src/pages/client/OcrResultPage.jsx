@@ -961,6 +961,11 @@ const setField = useCallback((key, value) => {
       }
     }
 
+    if (String(validation?.status || '').toUpperCase() === 'VALIDATED') {
+      await handlePost({ automatic: true, documentId: activeDocumentId, connectionId: activeConnectionId })
+      return
+    }
+
     addToast(
       validation?.status === 'VALIDATED'
         ? 'OCR data validated successfully.'
@@ -1032,15 +1037,16 @@ const setField = useCallback((key, value) => {
     await handleSaveAndValidate()
   }
 
-  const handlePost = async () => {
-    if (editing || saving || validating || posting) {
+  const handlePost = async (options = {}) => {
+    const automatic = options.automatic === true
+    if (!automatic && (editing || saving || validating || posting)) {
       addToast(
         'Finish editing and saving the OCR data before posting it to NetSuite.',
         'error',
       )
       return
     }
-  if (!result?.document_id) {
+  if (!(options.documentId || result?.document_id)) {
     addToast(
       'Please save the OCR data before posting it to NetSuite.',
       'error',
@@ -1049,7 +1055,7 @@ const setField = useCallback((key, value) => {
   }
 
   if (
-    String(validationResult?.status || '').toUpperCase() !==
+    !automatic && String(validationResult?.status || '').toUpperCase() !==
     'VALIDATED'
   ) {
     addToast(
@@ -1065,7 +1071,7 @@ const setField = useCallback((key, value) => {
   setPosting(true)
 
   try {
-    const connectionData = await loadNetSuiteConnection()
+    const connectionData = options.connectionId ? { id: options.connectionId } : await loadNetSuiteConnection()
 
     if (controller.signal.aborted) {
       return
@@ -1086,7 +1092,7 @@ const setField = useCallback((key, value) => {
     }
 
     const postingResult = await netsuiteApi.postOCRVendorBill(
-      result.document_id,
+      options.documentId || result.document_id,
       activeConnectionId,
       {
         signal: controller.signal,
@@ -1596,7 +1602,9 @@ function getFileCategory(file) {
                 </div>
 
                 <div className="p-4">
-                  <div className="grid gap-3 md:grid-cols-2">
+                  {String(validationResult?.status || '').toUpperCase() !== 'VALIDATED' && (
+                  <>
+<div className="grid gap-3 md:grid-cols-2">
                     <div className="rounded-lg border border-[var(--color-border)] p-4">
                       <p className="text-xs text-[var(--color-muted)]">
                         Vendor
@@ -1647,6 +1655,9 @@ function getFileCategory(file) {
                       unmatched
                     </p>
                   )}
+
+                                    </>
+                )}
 
                   {String(
                     validationResult?.status || '',

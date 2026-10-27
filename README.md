@@ -23,7 +23,7 @@ operator (Super Admin).
 | Frontend | https://agsuiteerp-60086947932.catalystserverless.in | Catalyst Web Client Hosting |
 | Backend API | https://agsuiteerp-50046369262.catalystappsail.in | Catalyst AppSail |
 | Database | PostgreSQL | Supabase |
-| Redis | Optional | The app runs without it |
+| Redis | Required for automated email processing | Broker and scheduler heartbeat; optional for some other workflows |
 
 > **Keep these in sync.** When the production URLs change, update the backend environment
 > variables `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL`
@@ -92,12 +92,13 @@ Company (tenant)
 | `accounts` | Custom user, JWT auth, email OTP (login / profile / password reset), login history |
 | `tenancy` | `Company` model, `TenantMiddleware`, company lifecycle (suspend / reactivate / soft-delete / purge) |
 | `rbac` | Roles |
-| `audit` | Append-only audit log for lifecycle events |
+| `audit` | Audit log and user-scoped notifications |
 | `invitations` | Single-use invitation tokens with expiry, public accept flow |
 | `subscriptions` | Plan assignment and subscription lifecycle for companies |
 | `superadmin` | Platform portal API: companies, plans, employees, settings |
 | `netsuite` | OAuth 2.0 connections, token manager, REST Record API + SuiteQL, field catalogue, custom fields, OCR validation / posting, **batch validate / post jobs** |
 | `ocr` | AI extraction engine, extraction templates, batches / uploads / documents with version history, per-company AI configuration, file storage, background execution |
+| `mail_integration` | Zoho Mail / Gmail OAuth, mailbox scheduling, email staging and automated vendor-bill processing |
 | `navigation` | Admin-configurable dynamic navigation tabs |
 | `transactions` | Company transaction records |
 | `dashboard` | Company dashboard data |
@@ -152,6 +153,29 @@ Company (tenant)
 - History of batches, documents and document versions; every history row has a permanent sequential
   history number that is never reused after deletion
 - Failures carry a stable `failure_code` and a user-safe message; technical detail goes to the logs
+- On first save, an empty extracted invoice number gets a database-allocated `vendor_bill_inv_<number>`;
+  an empty location defaults to `Pune`. Existing extracted or user-entered values are preserved.
+  The selected NetSuite account must contain a usable matching location and template mapping.
+
+### Automated email bills
+- Company administrators can connect Zoho Mail or Gmail with OAuth credentials and an OCR template.
+  The selected active mailbox is used for automatic processing.
+- Starting automatic sync requires an initial date and time. The worker fetches message bodies, stages
+  emails with deduplication, classifies vendor bills with AI, and saves each bill as a separate history
+  record before validation and, when valid, NetSuite posting. Validation and posting errors remain in
+  history for review. Manual uploads continue independently.
+- Mailbox fetching defaults to every **30 minutes**. Celery Beat dispatches the due-mailbox task every
+  **5 minutes**; the task checks each connection's next due time before fetching. Beat also dispatches
+  a scheduler heartbeat every 20 seconds.
+- Stop/resume controls pause or resume fetching. A missing or invalid refresh token requires reconnecting;
+  automatic fetching cannot continue while the connection needs authorization.
+
+### Notifications
+- The client header shows a notification bell with an unread count, read/unread controls, mark all read,
+  and a scrollable, paginated Show all view. Where available, notifications distinguish manual actions
+  and their actor from automated events.
+- Notifications are scoped to the recipient and company. Coverage includes selected audit, email,
+  extraction, validation and posting events; not every action or error currently creates a notification.
 
 ### Platform
 - Admin-configurable navigation tabs and categories
@@ -167,7 +191,7 @@ Company (tenant)
 **Backend**: Python 3.12, Django 6.x, Django REST Framework, SimpleJWT, PostgreSQL
 (`psycopg2`), WhiteNoise, django-cors-headers, python-decouple, dj-database-url,
 `cryptography` (Fernet), Gunicorn. OCR: PyMuPDF, OpenCV (headless), Pillow, `google-genai`.
-Optional: Celery + Redis.
+Celery + Redis are required for automated email processing and optional for some other workflows.
 
 **Frontend**: React 19, Vite 8, React Router 7, Axios, Tailwind CSS 4, oxlint.
 
@@ -179,15 +203,16 @@ Supabase PostgreSQL. Also runs on Docker, AWS, GCP, Render or a VPS - see
 
 ## Background Processing & Resilience
 
-The backend is designed to run with **only PostgreSQL**. Redis, Celery and a persistent local disk
-are optional accelerators; when one is missing, a throttled one-line warning is logged and the app
-continues on a PostgreSQL fallback.
+Some OCR and housekeeping workflows can run with PostgreSQL fallbacks. **Automated mailbox fetching
+requires Redis, a Celery worker and Celery Beat**; the OCR fallback worker does not replace the email
+scheduler.
 
 | Concern | With Redis / Celery | Without |
 |---------|---------------------|---------|
 | OCR result cache, extraction lock, Gemini rate limiter | Redis | PostgreSQL (`OCRGeminiLease`, DB cache) |
 | OCR and NetSuite batch jobs | Celery worker | In-process background threads, or a dedicated `run_ocr_worker` process |
 | Daily housekeeping (purge deleted companies, sync subscription status) | Celery beat | `manage.py run_scheduled_tasks`, or `run_ocr_worker` (runs it daily) |
+| Automated email fetching and processing | Redis broker, Celery worker and Beat | Not available |
 | Uploaded files | local disk | `OCR_STORAGE_BACKEND=db` (PostgreSQL) or `s3` |
 
 **How a job runs** (`OCR_EXECUTION_MODE`, default `auto`):
@@ -220,6 +245,7 @@ so cached extractions are never shared between tenants.
 │   ├── accounts/  tenancy/  rbac/  audit/  invitations/  subscriptions/  superadmin/
 │   ├── netsuite/          # client, oauth, token manager, services, batch jobs (jobs.py)
 │   ├── ocr/               # views, tasks (engine), execution, leases, storage, error_taxonomy, ai/
+│   ├── mail_integration/  # provider OAuth, sync, staging, email processing and scheduler health
 │   ├── navigation/  transactions/  dashboard/  monitoring/  common/  core/
 │   └── requirements.txt
 ├── frontend/
@@ -263,7 +289,7 @@ company from the request user and never trust a company id sent by the client.
 ## Local Development
 
 **Prerequisites**: Python 3.12, Node.js 20+, Git. PostgreSQL is recommended (some migrations expect it).
-Redis is **not** required.
+Redis is required when testing automated email processing.
 
 ### Backend (Windows PowerShell)
 
@@ -282,6 +308,21 @@ The API runs at `http://localhost:8000`.
 
 OCR jobs run in background threads of the dev server. To run them in a separate process instead,
 set `OCR_EXECUTION_MODE=external` and start `python manage.py run_ocr_worker` in a second terminal.
+
+### Automated email processing locally
+
+Start Redis and configure the same `CELERY_BROKER_URL` for the backend, worker and Beat. From the
+`backend/` directory, using the project's activated virtual environment, run these in separate terminals:
+
+```powershell
+python -m celery -A config worker --loglevel=info --pool=solo
+python -m celery -A config beat --loglevel=info
+```
+
+Keep both processes running alongside the backend. Register `EMAIL_OAUTH_REDIRECT_URI` with the email
+provider, configure the mailbox in **Email Integration**, and select the initial sync date/time when
+starting automatic sync. Run migrations before starting updated processes; restart the backend and
+worker after code changes. The worker's `--pool=solo` option is useful for local Windows testing.
 
 ### Frontend
 
@@ -326,6 +367,7 @@ Full templates: `backend/.env.example`, `frontend/.env.example`, `env.docker.exa
 | `FIELD_ENCRYPTION_KEY` | Fernet key for encrypted fields |
 | `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` | Host and origin configuration |
 | `NETSUITE_REDIRECT_URI` | OAuth redirect; the backend route `/api/v1/netsuite/callback/` |
+| `EMAIL_OAUTH_REDIRECT_URI` | Email OAuth callback; register the exact backend `/api/v1/email/callback/` URL with the provider |
 | `EMAIL_*` / `BREVO_API_KEY` | Email delivery (OTP, invitations) |
 
 **Optional (all have safe defaults)**: `REDIS_URL` / `REDIS_ENABLED`, `CELERY_BROKER_URL`,
@@ -365,6 +407,10 @@ next status poll resumes the job.
 
 Register the same `NETSUITE_REDIRECT_URI` in the NetSuite integration record.
 
+Automated email processing additionally needs a Redis broker and separately running Celery worker and
+Beat. The AppSail web process and thread-based OCR configuration above do not by themselves provide
+that scheduler. Configure and register `EMAIL_OAUTH_REDIRECT_URI` for the deployed backend as well.
+
 ### Other hosts
 
 Docker, AWS, GCP Cloud Run, Render and VPS setups, with the processes and environment each needs, are in
@@ -401,6 +447,9 @@ a one-line warning with the reason. A traceback is written only for genuinely un
 | Frontend loads but calls the wrong API | `VITE_API_BASE_URL` not set for the build |
 | `Redis unavailable ... continuing without Redis` | Informational: PostgreSQL fallbacks are in use |
 | `Celery is not available (...)` | Informational: jobs run in background threads |
+| Email scheduler not responding | Check Redis, the Celery worker and Celery Beat use the same broker; allow time for the heartbeat |
+| Email mailbox has no refresh token | Reconnect the mailbox and complete provider authorization; never share tokens in logs or support messages |
+| NetSuite rejects a location ID | Confirm the location is active and usable for the bill's subsidiary, item and role. Posting resolves a location name to an internal ID and may also apply it to item lines |
 | `Unknown command: run_ocr_worker` | The command file must be at `backend/ocr/management/commands/run_ocr_worker.py` |
 | OCR file "no longer available on the server" | Local disk is not persistent; use `OCR_STORAGE_BACKEND=db` or `s3` |
 | Job stays "processing" on Catalyst | Instance was stopped; open the batch again, polling resumes it |

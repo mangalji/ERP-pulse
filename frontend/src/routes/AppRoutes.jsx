@@ -37,6 +37,7 @@ const NetSuiteIntegrationsPage = lazy(() => import('../pages/client/NetSuiteInte
 const EmployeeNetSuitePage = lazy(() => import('../pages/client/EmployeeNetSuitePage.jsx'))
 const TransactionsPage = lazy(() => import('../pages/client/TransactionsPage.jsx'))
 const OcrPage = lazy(() => import('../pages/client/OcrPage.jsx'))
+const NotificationsPage = lazy(() => import('../pages/client/NotificationsPage.jsx'))
 const OcrResultPage = lazy(() => import('../pages/client/OcrResultPage.jsx'))
 const OcrBatchHistoryPage = lazy(() => import('../pages/client/OcrBatchHistoryPage.jsx'))
 const DataExtractionHistoryPage = lazy(() => import('../pages/client/DataExtractionHistoryPage.jsx'))
@@ -216,6 +217,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/app/notifications" element={<ProtectedRoute requiredRole="client"><NotificationsPage /></ProtectedRoute>} />
       <Route path="/app/integrations/email" element={
         <ProtectedRoute requiredRole="client"><EmailIntegrationsPage /></ProtectedRoute>
       } />
