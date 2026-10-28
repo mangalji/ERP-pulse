@@ -6,8 +6,9 @@ import base64
 import html
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from email.utils import getaddresses, parsedate_to_datetime
+from collections.abc import Callable
 from typing import Iterator
 
 import requests
@@ -93,7 +94,14 @@ class BaseMailboxClient:
     def headers(self) -> dict[str, str]:
         raise NotImplementedError
 
-    def iter_messages_since(self, since: datetime) -> Iterator[IncomingMailboxMessage]:
+    def iter_messages_since(
+        self,
+        since: datetime,
+        *,
+        until: datetime | None = None,
+        cursor: str = "",
+        on_page_completed: Callable[[str], bool | None] | None = None,
+    ) -> Iterator[IncomingMailboxMessage]:
         raise NotImplementedError
 
     @staticmethod
@@ -125,10 +133,22 @@ class GmailMailboxClient(BaseMailboxClient):
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.integration.access_token}"}
 
-    def iter_messages_since(self, since: datetime) -> Iterator[IncomingMailboxMessage]:
-        page_token = ""
+    def iter_messages_since(
+        self,
+        since: datetime,
+        *,
+        until: datetime | None = None,
+        cursor: str = "",
+        on_page_completed: Callable[[str], bool | None] | None = None,
+    ) -> Iterator[IncomingMailboxMessage]:
+        page_token = cursor
         while True:
-            params = {"q": f"after:{int(since.timestamp())}", "maxResults": 500}
+            query = f"after:{int(since.timestamp())}"
+            # Keep a large initial sync a stable, resumable window. Messages
+            # delivered while it runs are picked up by the next regular sync.
+            if until:
+                query += f" before:{int(until.timestamp()) + 1}"
+            params = {"q": query, "maxResults": 500}
             if page_token:
                 params["pageToken"] = page_token
             listing = self.get(f"{self.api_base_url}/messages", headers=self.headers, params=params)
@@ -142,7 +162,13 @@ class GmailMailboxClient(BaseMailboxClient):
                     params={"format": "full"},
                 )
                 yield self.parse_message(message)
-            page_token = str(listing.get("nextPageToken") or "")
+            next_page_token = str(listing.get("nextPageToken") or "")
+            if on_page_completed and next_page_token:
+                # The sync service may stop after a bounded number of fully
+                # checkpointed pages. The next scheduled run resumes here.
+                if on_page_completed(next_page_token) is False:
+                    return
+            page_token = next_page_token
             if not page_token:
                 return
 
@@ -204,46 +230,68 @@ class ZohoMailboxClient(BaseMailboxClient):
         except KeyError as exc:
             raise EmailMailboxFetchError("Unsupported Zoho data center.") from exc
 
-    def iter_messages_since(self, since: datetime) -> Iterator[IncomingMailboxMessage]:
+    def iter_messages_since(
+        self,
+        since: datetime,
+        *,
+        until: datetime | None = None,
+        cursor: str = "",
+        on_page_completed: Callable[[str], bool | None] | None = None,
+    ) -> Iterator[IncomingMailboxMessage]:
         account_id = self._account_id()
-        for folder_id in self._inbox_folders(account_id):
-            start = 1
-            while True:
-                listing = self.get(
-                    f"{self.api_base_url}/api/accounts/{account_id}/messages/view",
-                    headers=self.headers,
-                    params={"folderId": folder_id, "start": start, "limit": 200, "status": "all", "includeto": "true", "sortBy": "date", "sortorder": "false"},
+        try:
+            start = max(1, int(cursor or "1"))
+        except ValueError as exc:
+            raise EmailMailboxFetchError("Zoho mailbox sync cursor is invalid.") from exc
+
+        # The search API filters the large history window at Zoho instead of
+        # making the application page through every message in the Inbox.
+        # Zoho date searches are calendar-day based, so retain exact timestamp
+        # checks below for the start/end boundaries.
+        search_start = timezone.localtime(since - timedelta(days=1)).strftime("%d-%b-%Y")
+        search_end = timezone.localtime((until or timezone.now()) + timedelta(days=1)).strftime("%d-%b-%Y")
+        search_key = f"in:Inbox::fromDate:{search_start}::toDate:{search_end}"
+        while True:
+            listing = self.get(
+                f"{self.api_base_url}/api/accounts/{account_id}/messages/search",
+                headers=self.headers,
+                params={"searchKey": search_key, "start": start, "limit": 200, "includeto": "true"},
+            )
+            messages = listing.get("data") or []
+            if not isinstance(messages, list):
+                raise EmailMailboxFetchError("Zoho returned an invalid message list.")
+            if not messages:
+                return
+            for item in messages:
+                received_at = _millis_to_datetime(item.get("receivedTime", item.get("receivedtime"))) or _millis_to_datetime(item.get("sentDateInGMT"))
+                if received_at and (received_at < since or (until and received_at > until)):
+                    continue
+                message_id = str(item.get("messageId") or "")
+                folder_id = str(item.get("folderId") or "")
+                if not message_id or not folder_id:
+                    continue
+                raw_body = self._content(account_id, folder_id, message_id)
+                yield IncomingMailboxMessage(
+                    provider_message_id=message_id,
+                    provider_thread_id=str(item.get("threadId") or ""),
+                    internet_message_id=str(item.get("mailId") or ""),
+                    sender_email=(_addresses(str(item.get("fromAddress") or "")) or [""])[0],
+                    recipient_emails=_addresses(str(item.get("toAddress") or "")),
+                    subject=str(item.get("subject") or "").strip(),
+                    sent_at=_millis_to_datetime(item.get("sentDateInGMT")),
+                    received_at=received_at,
+                    raw_body=raw_body,
+                    normalized_body=normalize_email_body(raw_body),
                 )
-                messages = listing.get("data") or []
-                if not isinstance(messages, list):
-                    raise EmailMailboxFetchError("Zoho returned an invalid message list.")
-                if not messages:
+            next_start = start + len(messages)
+            if on_page_completed and len(messages) == 200:
+                # Persist the next offset only after this complete page was
+                # staged. A later run can safely continue at that offset.
+                if on_page_completed(str(next_start)) is False:
                     return
-                reached_old_message = False
-                for item in messages:
-                    received_at = _millis_to_datetime(item.get("receivedTime", item.get("receivedtime"))) or _millis_to_datetime(item.get("sentDateInGMT"))
-                    if received_at and received_at < since:
-                        reached_old_message = True
-                        continue
-                    message_id = str(item.get("messageId") or "")
-                    if not message_id:
-                        continue
-                    raw_body = self._content(account_id, folder_id, message_id)
-                    yield IncomingMailboxMessage(
-                        provider_message_id=message_id,
-                        provider_thread_id=str(item.get("threadId") or ""),
-                        internet_message_id=str(item.get("mailId") or ""),
-                        sender_email=(_addresses(str(item.get("fromAddress") or "")) or [""])[0],
-                        recipient_emails=_addresses(str(item.get("toAddress") or "")),
-                        subject=str(item.get("subject") or "").strip(),
-                        sent_at=_millis_to_datetime(item.get("sentDateInGMT")),
-                        received_at=received_at,
-                        raw_body=raw_body,
-                        normalized_body=normalize_email_body(raw_body),
-                    )
-                if reached_old_message or len(messages) < 200:
-                    return
-                start += len(messages)
+            if len(messages) < 200:
+                return
+            start = next_start
 
     def _account_id(self) -> str:
         metadata = dict(self.integration.provider_metadata or {})

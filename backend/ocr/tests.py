@@ -1,5 +1,6 @@
 from django.test import SimpleTestCase
 from contextlib import nullcontext
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 from ocr.notebook_extraction_service import (
@@ -8,21 +9,23 @@ from ocr.notebook_extraction_service import (
     FIELD_DATA_TYPES,
     LINE_ITEM_DATA_TYPES,
     get_standard_field_catalog,
+    build_prompt,
     resolve_field_config,
+    _apply_template_default_values,
 )
 
 
 class OCRExtractionDefaultsTests(SimpleTestCase):
     @patch('ocr.services.extraction_persistence.GeneratedInvoiceNumber.objects.create')
-    def test_missing_values_receive_sequential_invoice_and_pune(self, create):
+    def test_missing_invoice_number_receives_sequential_default(self, create):
         from ocr.services.extraction_persistence import _apply_initial_defaults
         create.side_effect = [Mock(pk=1), Mock(pk=2)]
         first = {'invoice_number': None, 'location': None}
         second = {'invoice_number': '', 'location': ''}
         _apply_initial_defaults(first)
         _apply_initial_defaults(second)
-        self.assertEqual(first, {'invoice_number': 'vendor_bill_inv_1', 'location': 'Pune'})
-        self.assertEqual(second, {'invoice_number': 'vendor_bill_inv_2', 'location': 'Pune'})
+        self.assertEqual(first, {'invoice_number': 'vendor_bill_inv_1', 'location': None})
+        self.assertEqual(second, {'invoice_number': 'vendor_bill_inv_2', 'location': ''})
 
     @patch('ocr.services.extraction_persistence.GeneratedInvoiceNumber.objects.create')
     def test_existing_ai_or_reviewed_values_are_preserved(self, create):
@@ -34,6 +37,98 @@ class OCRExtractionDefaultsTests(SimpleTestCase):
         _apply_initial_defaults({'invoice_number': None, 'location': None}, reviewed)
         self.assertEqual(reviewed, {'invoice_number': 'MANUAL-1', 'location': 'Mumbai'})
         create.assert_not_called()
+
+
+class OCRTemplateDefaultValueTests(SimpleTestCase):
+    def test_defaults_override_ai_values_for_header_and_line_fields(self):
+        template = {
+            "standard_fields": ["location", "currency", "quantity"],
+            "standard_field_overrides": {
+                "location": {"default_value": "Pune", "scope": "header"},
+                "currency": {"default_value": "INR", "scope": "header"},
+                "quantity": {"default_value": "1", "scope": "line"},
+            },
+            "custom_fields": [],
+        }
+        extracted = {
+            "location": None,
+            "currency": "USD",
+            "line_items": [
+                {"item": "Service A", "quantity": None},
+                {"item": "Service B", "quantity": 2},
+            ],
+        }
+
+        result = _apply_template_default_values(extracted, template)
+
+        self.assertEqual(result["location"], "Pune")
+        self.assertEqual(result["currency"], "INR")
+        self.assertEqual(result["line_items"][0]["quantity"], 1)
+        self.assertEqual(result["line_items"][1]["quantity"], 1)
+
+    def test_invalid_default_value_is_rejected_when_template_is_saved(self):
+        with self.assertRaisesMessage(ValueError, 'Default Value for field "invoice_date"'):
+            resolve_field_config({
+                "standard_fields": ["invoice_date"],
+                "standard_field_overrides": {
+                    "invoice_date": {"default_value": "not-a-date"},
+                },
+                "custom_fields": [],
+            })
+
+
+class OCRDateFallbackPromptTests(SimpleTestCase):
+    def test_single_date_fallback_uses_supplied_email_received_date(self):
+        prompt = build_prompt(
+            {"invoice_date": "Invoice date", "due_date": "Due date"},
+            {},
+            False,
+            {"invoice_date": "date", "due_date": "date"},
+            {},
+            fallback_invoice_date="2026-10-27",
+        )
+
+        self.assertIn("Preserve that source date as `due_date`", prompt)
+        self.assertIn("set `invoice_date` to `2026-10-27`", prompt)
+        self.assertIn("never overwrite an explicitly stated date", prompt)
+
+    def test_single_date_fallback_is_omitted_without_both_date_fields(self):
+        prompt = build_prompt(
+            {"invoice_date": "Invoice date"},
+            {},
+            False,
+            {"invoice_date": "date"},
+            {},
+        )
+
+        self.assertNotIn("Single-date fallback", prompt)
+
+
+class OCREmailReceivedDateFallbackTests(SimpleTestCase):
+    def test_missing_invoice_date_uses_email_received_date(self):
+        from ocr.notebook_extraction_service import _apply_email_received_date_fallback
+
+        data = {"invoice_date": None, "due_date": "2026-11-06"}
+        result = _apply_email_received_date_fallback(
+            data,
+            ("invoice_date", "due_date"),
+            email_received_at=datetime(2026, 10, 27, 12, 34),
+        )
+
+        self.assertEqual(result["invoice_date"], "2026-10-27")
+        self.assertEqual(result["due_date"], "2026-11-06")
+
+    def test_existing_invoice_date_is_never_overwritten(self):
+        from ocr.notebook_extraction_service import _apply_email_received_date_fallback
+
+        data = {"invoice_date": "2026-10-20"}
+        result = _apply_email_received_date_fallback(
+            data,
+            ("invoice_date",),
+            email_received_at=datetime(2026, 10, 27, 12, 34),
+        )
+
+        self.assertEqual(result["invoice_date"], "2026-10-20")
 
 
 class OCRPostingRetrySafetyTests(SimpleTestCase):

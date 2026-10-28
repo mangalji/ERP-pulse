@@ -50,6 +50,11 @@ def setup_periodic_tasks(sender, **kwargs):
         sender.signature("superadmin.tasks.sync_company_subscription_statuses"),
         name='sync company subscription statuses',
     )
+    sender.add_periodic_task(
+        timedelta(days=1),
+        sender.signature("audit.tasks.purge_expired_operational_audit_logs"),
+        name='purge expired automated activity logs',
+    )
     # This is only a lightweight due-check.  Each mailbox's selected fetch
     # interval is enforced by the task itself, so provider APIs are not polled
     # every minute.

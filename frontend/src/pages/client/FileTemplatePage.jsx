@@ -190,6 +190,9 @@ function normalizeCatalogField(field) {
       field?.sublist_id ||
       '',
 
+    // Optional fixed value that overrides the extracted value when configured.
+    default_value: field?.default_value ?? '',
+
     standard: true,
     enabled: field?.enabled !== false,
   }
@@ -235,6 +238,9 @@ function normalizeCustomField(field, index = 0) {
       field?.netsuite_field_sublist_id ||
       field?.sublist_id ||
       '',
+
+    // Optional fixed value that overrides the extracted value when configured.
+    default_value: field?.default_value ?? '',
     
     standard: false,
     enabled: field?.enabled !== false,
@@ -1112,6 +1118,7 @@ const handleRefreshNetSuiteFields = async () => {
             override?.netsuite_field_sublist_id ||
             normalized.netsuite_field_sublist_id ||
             '',
+          default_value: override?.default_value ?? normalized.default_value ?? '',
           enabled: !disabledStandardKeys.has(normalized.original_key) &&
             override?.enabled !== false,
         }
@@ -1152,6 +1159,7 @@ const handleRefreshNetSuiteFields = async () => {
         netsuite_field_id: '',
         netsuite_field_scope: '',
         netsuite_field_sublist_id: '',
+        default_value: '',
   
         standard: false,
         enabled: true,
@@ -1226,6 +1234,8 @@ const handleRefreshNetSuiteFields = async () => {
           netsuite_field_sublist_id:
             field.netsuite_field_sublist_id || '',
 
+          default_value: field.default_value ?? '',
+
           description: normalizeDescriptionText(field.description),
           questionaire: normalizeDescriptionText(field.description),
           data_type: field.data_type,
@@ -1245,6 +1255,8 @@ const handleRefreshNetSuiteFields = async () => {
 
       netsuite_field_sublist_id:
         field.netsuite_field_sublist_id || '',
+
+      default_value: field.default_value ?? '',
 
       label: field.label?.trim(),
       description: normalizeDescriptionText(field.description),
@@ -1742,11 +1754,12 @@ const handleRefreshNetSuiteFields = async () => {
                 </div>
 
                 <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-                  <table className="min-w-[1200px] w-full border-collapse text-sm">
+                  <table className="min-w-[1400px] w-full border-collapse text-sm">
                     <thead>
                       <tr className="border-b border-[var(--color-border)] bg-[var(--color-canvas)] text-left">
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Field Name</th>
                         <th className="min-w-[220px] px-4 py-3 font-semibold text-[var(--color-ink)]">NetSuite Field ID</th>
+                        <th className="min-w-[180px] px-4 py-3 font-semibold text-[var(--color-ink)]">Default Value</th>
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Questionaire</th>
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Datatype</th>
                         <th className="px-4 py-3 font-semibold text-[var(--color-ink)]">Scope</th>
@@ -1821,6 +1834,23 @@ const handleRefreshNetSuiteFields = async () => {
                             </td>
                             <td className="px-4 py-3">
                               {mode === 'view' || disabledField ? (
+                                <div className={`min-h-10 px-3 py-2 ${disabledField ? 'text-gray-400' : 'text-[var(--color-ink)]'}`}>
+                                  {field.default_value === undefined || field.default_value === null || field.default_value === ''
+                                    ? '—'
+                                    : String(field.default_value)}
+                                </div>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={field.default_value ?? ''}
+                                  onChange={(event) => updateField(field.id, { default_value: event.target.value })}
+                                  placeholder="Optional fixed value"
+                                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
+                                />
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              {mode === 'view' || disabledField ? (
                                 <div className={`min-h-10 rounded-md px-3 py-2 ${disabledField ? 'text-gray-400' : 'text-[var(--color-ink)]'}`}>
                                   {field.description || '—'}
                                 </div>
@@ -1890,7 +1920,7 @@ const handleRefreshNetSuiteFields = async () => {
                       })}
                       {fields.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
+                          <td colSpan={7} className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
                             No fields configured. Click Add Field to create one.
                           </td>
                         </tr>

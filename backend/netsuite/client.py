@@ -133,6 +133,24 @@ class NetSuiteAuthClient:
             params=query_params,
         )
 
+    def get_record(
+        self,
+        *,
+        record_type: str,
+        record_id: str,
+        access_token: str | None = None,
+    ) -> dict:
+        """GET one NetSuite REST record by its internal ID."""
+        if not NetSuiteRecordType.is_valid(record_type):
+            raise ValueError(f"Unsupported record type: {record_type}")
+        if not str(record_id or "").strip():
+            raise ValueError("A NetSuite record ID is required.")
+
+        return self._get(
+            path=f"record/v1/{record_type}/{record_id}",
+            access_token=access_token,
+        )
+
     def create_record(
         self,
         *,

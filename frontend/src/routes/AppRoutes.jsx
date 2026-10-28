@@ -43,6 +43,7 @@ const OcrBatchHistoryPage = lazy(() => import('../pages/client/OcrBatchHistoryPa
 const DataExtractionHistoryPage = lazy(() => import('../pages/client/DataExtractionHistoryPage.jsx'))
 const FileTemplatePage = lazy(() => import('../pages/client/FileTemplatePage.jsx'))
 const EmailIntegrationsPage = lazy(() => import('../pages/client/EmailIntegrationsPage.jsx'))
+const CompanyActivityLogPage = lazy(() => import('../pages/client/CompanyActivityLogPage.jsx'))
 
 function PublicRoute({ children }) {
   return <PublicLayout>{children}</PublicLayout>
@@ -285,6 +286,14 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute requiredRole="client">
             <AIIntegrationPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/company-activity-log"
+        element={
+          <ProtectedRoute requiredRole="client">
+            <CompanyActivityLogPage />
           </ProtectedRoute>
         }
       />

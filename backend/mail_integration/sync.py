@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from audit.models import AuditAction, AuditModule, AuditStatus
+from audit.services import audit_service
 from mail_integration.client import EmailOAuthClient
 from mail_integration.exceptions import EmailIntegrationOAuthError, EmailIntegrationStateError, EmailMailboxFetchError
 from mail_integration.mailbox import IncomingMailboxMessage, mailbox_client_for
@@ -28,6 +31,9 @@ SYNC_LOOKBACK_CYCLES = 2
 MIN_SYNC_LOOKBACK = timedelta(minutes=65)
 RETRY_DELAY = timedelta(minutes=10)
 TOKEN_REFRESH_SKEW = timedelta(seconds=60)
+# Initial history may span years. Bound one worker invocation while retaining
+# a durable page cursor so a large backfill resumes on the next Beat cycle.
+MAX_MAILBOX_PAGES_PER_RUN = 5
 
 
 def sync_lookback_for(integration: EmailIntegration) -> timedelta:
@@ -97,6 +103,29 @@ class EmailSyncService:
         if integration.last_successful_sync_at:
             since -= sync_lookback_for(integration)
 
+        since, sync_until, resume_cursor = self._sync_window(
+            integration=integration,
+            default_since=since,
+            default_until=now,
+        )
+
+        checkpointed_pages = 0
+        sync_has_more_pages = False
+
+        def save_page_checkpoint(next_cursor: str) -> bool:
+            nonlocal checkpointed_pages, sync_has_more_pages
+            self._save_page_checkpoint(
+                integration=integration,
+                since=since,
+                until=sync_until,
+                cursor=next_cursor,
+            )
+            checkpointed_pages += 1
+            if checkpointed_pages >= MAX_MAILBOX_PAGES_PER_RUN:
+                sync_has_more_pages = True
+                return False
+            return True
+
         try:
             self._refresh_access_token_if_needed(integration)
             self._verify_mailbox_identity(integration)
@@ -104,13 +133,30 @@ class EmailSyncService:
             returned = 0
             duplicates = 0
             received_times = []
-            for message in mailbox_client_for(integration).iter_messages_since(since):
+            message_summaries = []
+            for message in mailbox_client_for(integration).iter_messages_since(
+                since,
+                until=sync_until,
+                cursor=resume_cursor,
+                on_page_completed=save_page_checkpoint,
+            ):
                 if not EmailIntegration.objects.filter(pk=integration.id, status=EmailIntegration.Status.CONNECTED, is_active=True, is_paused=False).exists():
                     return staged
                 returned += 1
                 if message.received_at:
                     received_times.append(message.received_at)
-                if self._stage_message(integration=integration, message=message):
+                was_staged = self._stage_message(integration=integration, message=message)
+                message_summaries.append({
+                    "provider_message_id": message.provider_message_id or None,
+                    "internet_message_id": message.internet_message_id or None,
+                    "thread_id": message.provider_thread_id or None,
+                    "sender": message.sender_email or None,
+                    "subject": (message.subject or "")[:500] or None,
+                    "received_at": message.received_at.isoformat() if message.received_at else None,
+                    "staging_result": "staged" if was_staged else "duplicate",
+                    "classification": "pending",
+                })
+                if was_staged:
                     staged += 1
                 else:
                     duplicates += 1
@@ -129,10 +175,12 @@ class EmailSyncService:
             raise
 
         logger.info(
-            "Email mailbox sync completed — integration=%s provider=%s since=%s returned=%s staged=%s duplicates=%s oldest_received=%s newest_received=%s",
+            "Email mailbox sync completed — integration=%s provider=%s since=%s until=%s resumed=%s returned=%s staged=%s duplicates=%s oldest_received=%s newest_received=%s",
             integration.id,
             integration.provider,
             since.isoformat(),
+            sync_until.isoformat(),
+            bool(resume_cursor),
             returned,
             staged,
             duplicates,
@@ -140,21 +188,148 @@ class EmailSyncService:
             max(received_times).isoformat() if received_times else None,
         )
 
+        if sync_has_more_pages:
+            # Do not move the final watermark: this is only a completed slice
+            # of a frozen window. Beat will pick the saved provider cursor up
+            # promptly and continue without losing or duplicating messages.
+            integration.next_sync_at = timezone.now()
+            integration.last_error = ""
+            integration.consecutive_failures = 0
+            integration.save(update_fields=[
+                "next_sync_at", "last_error", "consecutive_failures", "updated_at",
+            ])
+            audit_service.log(
+                module=AuditModule.EMAIL,
+                action=AuditAction.FETCH,
+                entity="Mailbox sync checkpointed",
+                entity_id=str(integration.id),
+                company=integration.company,
+                activity_type="automated",
+                status=AuditStatus.SUCCESS,
+                detail={
+                    "summary": (
+                        f"{returned} email(s) checked in this batch; "
+                        "mailbox history sync will continue automatically."
+                    ),
+                    "provider": integration.provider,
+                    "mailbox": integration.mailbox_email,
+                    "sync_window_start": since.isoformat(),
+                    "sync_window_end": sync_until.isoformat(),
+                    "checkpointed_pages": checkpointed_pages,
+                    "next_run": integration.next_sync_at.isoformat(),
+                    "counts": {"returned": returned, "staged": staged, "duplicates": duplicates},
+                    "messages": message_summaries,
+                },
+            )
+            logger.info(
+                "Email mailbox sync batch checkpointed — integration=%s provider=%s pages=%s next_run=%s",
+                integration.id, integration.provider, checkpointed_pages, integration.next_sync_at.isoformat(),
+            )
+            return staged
+
         # Advance only after every page and message has been durably staged.
         # A terminal message stays for two *future successful* syncs.  This is
         # deliberately sync-count based: a failed mailbox fetch must not make
         # the overlap-window de-duplication marker disappear.
         self._advance_terminal_dedupe(integration)
-        integration.last_successful_sync_at = now
-        integration.next_sync_at = now + timedelta(minutes=integration.sync_interval_minutes)
+        # `sync_until` was frozen before the paginated read began. Use it as
+        # the watermark, rather than the start time or completion time, so a
+        # long history backfill cannot skip mail delivered while it ran.
+        completed_at = timezone.now()
+        integration.last_successful_sync_at = sync_until
+        integration.next_sync_at = completed_at + timedelta(minutes=integration.sync_interval_minutes)
         integration.last_error = ""
         integration.consecutive_failures = 0
-        integration.provider_cursor = now.isoformat()
+        # All pages of this frozen time window were staged. Clear any resume
+        # checkpoint only now; on an interrupted run the persisted checkpoint
+        # stays intact and the next due task continues from that page.
+        integration.provider_cursor = ""
         integration.save(update_fields=[
             "last_successful_sync_at", "next_sync_at", "last_error",
             "consecutive_failures", "provider_cursor", "updated_at",
         ])
+        audit_service.log(
+            module=AuditModule.EMAIL,
+            action=AuditAction.FETCH,
+            entity="Mailbox sync completed",
+            entity_id=str(integration.id),
+            company=integration.company,
+            activity_type="automated",
+            status=AuditStatus.SUCCESS,
+            detail={
+                "summary": f"{returned} email(s) checked · {staged} new · {duplicates} duplicate",
+                "provider": integration.provider,
+                "mailbox": integration.mailbox_email,
+                "sync_window_start": since.isoformat(),
+                "sync_window_end": sync_until.isoformat(),
+                "resumed_from_checkpoint": bool(resume_cursor),
+                "sync_completed_at": completed_at.isoformat(),
+                "counts": {"returned": returned, "staged": staged, "duplicates": duplicates},
+                "messages": message_summaries,
+            },
+        )
         return staged
+
+    @staticmethod
+    def _parse_cursor_datetime(value: object) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+            return timezone.make_aware(parsed, timezone.get_current_timezone()) if timezone.is_naive(parsed) else parsed
+        except (TypeError, ValueError):
+            return None
+
+    def _sync_window(
+        self,
+        *,
+        integration: EmailIntegration,
+        default_since: datetime,
+        default_until: datetime,
+    ) -> tuple[datetime, datetime, str]:
+        """Resume an interrupted paginated mailbox read only for its same window."""
+        try:
+            checkpoint = json.loads(integration.provider_cursor or "")
+        except (TypeError, ValueError):
+            checkpoint = None
+        if not isinstance(checkpoint, dict):
+            return default_since, default_until, ""
+        if checkpoint.get("kind") != "mailbox_sync" or checkpoint.get("provider") != integration.provider:
+            return default_since, default_until, ""
+        since = self._parse_cursor_datetime(checkpoint.get("window_start"))
+        until = self._parse_cursor_datetime(checkpoint.get("window_end"))
+        cursor = checkpoint.get("cursor")
+        if not since or not until or not isinstance(cursor, str) or not cursor or until < since:
+            return default_since, default_until, ""
+        return since, until, cursor
+
+    @staticmethod
+    def _save_page_checkpoint(
+        *,
+        integration: EmailIntegration,
+        since: datetime,
+        until: datetime,
+        cursor: str,
+    ) -> None:
+        payload = json.dumps({
+            "kind": "mailbox_sync",
+            "provider": integration.provider,
+            "window_start": since.isoformat(),
+            "window_end": until.isoformat(),
+            "cursor": cursor,
+        })
+        updated = EmailIntegration.objects.filter(
+            pk=integration.pk,
+            status=EmailIntegration.Status.CONNECTED,
+            is_active=True,
+            is_paused=False,
+        ).update(provider_cursor=payload, updated_at=timezone.now())
+        if not updated:
+            raise EmailIntegrationStateError("Mailbox sync was stopped before the page checkpoint could be saved.")
+        logger.info(
+            "Email mailbox sync page checkpoint saved — integration=%s provider=%s cursor=%s window_start=%s window_end=%s",
+            integration.id, integration.provider, cursor, since.isoformat(), until.isoformat(),
+        )
 
     @staticmethod
     def _verify_mailbox_identity(integration: EmailIntegration) -> None:
@@ -265,6 +440,23 @@ class EmailSyncService:
             last_error=integration.last_error, next_sync_at=integration.next_sync_at, updated_at=timezone.now(),
         )
         if updated:
+            audit_service.log(
+                module=AuditModule.EMAIL,
+                action=AuditAction.FETCH,
+                entity="Mailbox sync failed",
+                entity_id=str(integration.id),
+                company=integration.company,
+                activity_type="automated",
+                status=AuditStatus.FAILED,
+                detail={
+                    "summary": "Mailbox access failed; retry has been scheduled.",
+                    "provider": integration.provider,
+                    "mailbox": integration.mailbox_email,
+                    "authorization_required": authorization_error,
+                    "retry_at": integration.next_sync_at.isoformat() if integration.next_sync_at else None,
+                    "error": error[:2000],
+                },
+            )
             from audit.notifications import notify
             message = f'Email connection {integration.mailbox_email} needs to be reconnected.' if authorization_error else f'Email sync failed for {integration.mailbox_email}; it will be retried.'
             notify(integration.created_by_id, integration.company_id, message, '/app/integrations/email', activity_type='automated')

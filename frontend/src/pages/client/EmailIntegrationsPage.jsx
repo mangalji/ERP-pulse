@@ -108,7 +108,7 @@ function SyncDetails({ item, health, loading }) {
   return <div className="mt-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-4 text-sm md:grid-cols-2">
     <Detail label="Last successful mailbox check" value={dateTime(item.last_successful_sync_at)} />
     <Detail label="Next automatic mailbox check" value={item.is_paused ? 'Paused' : dateTime(item.next_sync_at)} />
-    <Detail label="Fetch cadence" value={`Every ${item.sync_interval_minutes} minutes`} />
+    <Detail label="Fetch email difference" value={`Every ${item.sync_interval_minutes} minutes`} />
     <Detail label="Worker status" value={loading ? 'Checking…' : status(health?.worker_running)} tone={loading ? undefined : health?.worker_running ? 'success' : 'error'} />
     <Detail label="Scheduler status" value={loading ? 'Checking…' : status(health?.scheduler_running)} tone={loading ? undefined : health?.scheduler_running ? 'success' : 'error'} />
     <Detail label="Latest processing result" value={summary.completed_at ? `${summary.emails_fetched || 0} email(s) fetched, ${summary.vendor_bill_records_created || 0} vendor-bill record(s) created, ${summary.emails_ignored || 0} ignored` : 'No completed sync yet'} />

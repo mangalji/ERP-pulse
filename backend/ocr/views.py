@@ -47,6 +47,8 @@ from ocr.exceptions import OCRTimeBudgetExceeded
 from ocr.execution import dispatch_upload, recover_batch
 from ocr.tasks import process_single_ocr_upload
 from ocr.utils import logger
+from audit.models import AuditAction, AuditModule
+from audit.services import audit_service
 from ocr.services.zip_upload_service import (
     ZipValidationError,
     extract_supported_files_from_zip,
@@ -589,7 +591,7 @@ class OCRHistoryListView(APIView):
         # status-filtered history scalable in the same way as All Data history.
         database_total = batch_queryset.count()
         batches = list(
-            batch_queryset.select_related("user").prefetch_related(
+            batch_queryset.select_related("user", "netsuite_connection").prefetch_related(
                 Prefetch("uploads", queryset=OCRUpload.objects.select_related("document").order_by("created_at"), to_attr="ordered_uploads"),
                 Prefetch("documents", queryset=OCRDocument.objects.prefetch_related("versions").order_by("created_at"), to_attr="ordered_documents"),
             )[offset:offset + limit]
@@ -605,7 +607,7 @@ class OCRHistoryListView(APIView):
             for document in all_documents
         }
         validations, postings = {}, {}
-        for validation in OCRValidationResult.objects.filter(document_id__in=document_ids).order_by("document_id", "-created_at"):
+        for validation in OCRValidationResult.objects.select_related("connection").filter(document_id__in=document_ids).order_by("document_id", "-created_at"):
             if validation.document_id not in validations and latest_version.get(validation.document_id) and validation.version_id == latest_version[validation.document_id].id:
                 validations[validation.document_id] = validation
         version_ids = [version.id for version in latest_version.values() if version]
@@ -621,6 +623,23 @@ class OCRHistoryListView(APIView):
             is_multiple = batch.processing_mode == OCRBatch.ProcessingMode.MULTIPLE or len(docs) > 1
             doc_validations = [validations.get(doc.id) for doc in docs]
             doc_postings = [postings.get((doc.id, latest_version[doc.id].id)) for doc in docs if latest_version.get(doc.id)]
+            # Keep the account identity tied to this history record, rather
+            # than using the user's currently active connection. A user may
+            # change their active NetSuite account after this OCR record was
+            # validated or posted.
+            account_ids = []
+            for document in docs:
+                version = latest_version.get(document.id)
+                posting = postings.get((document.id, version.id)) if version else None
+                validation = validations.get(document.id)
+                connection = (
+                    getattr(posting, "connection", None)
+                    or getattr(validation, "connection", None)
+                    or batch.netsuite_connection
+                )
+                account_id = getattr(connection, "netsuite_account_id", None)
+                if account_id and account_id not in account_ids:
+                    account_ids.append(account_id)
             valid_count = sum(item is not None and item.status == "VALIDATED" for item in doc_validations)
             posted_count = sum(1 for item in doc_postings if item is not None)
             record_status = "POSTED" if posted_count else "VALIDATED" if valid_count == len(docs) else "NOT_VALIDATED"
@@ -639,6 +658,7 @@ class OCRHistoryListView(APIView):
                 "validation_id": str(next((item.id for item in reversed(doc_validations) if item), "")) or None,
                 "validation_updated_at": max((item.created_at for item in doc_validations if item), default=None),
                 "validated_count": valid_count, "posted_count": posted_count, "netsuite_records": records,
+                "netsuite_account_ids": account_ids,
             })
         total = database_total
         page_results = results
@@ -664,6 +684,28 @@ class DocumentHistoryView(APIView):
             )
         except OCRDocument.DoesNotExist as exc:
             raise NotFound("Document not found.") from exc
+
+        batch = document.batch if document.batch_id else None
+        filename = (
+            getattr(document.upload, "original_filename", None)
+            if document.upload_id
+            else getattr(batch, "original_filename", None)
+        ) or "OCR document"
+        audit_service.log(
+            module=AuditModule.OCR,
+            action=AuditAction.VIEW,
+            entity="OCR bill result viewed",
+            entity_id=str(document.id),
+            company=request.user.company,
+            user=request.user,
+            detail={
+                "summary": f"Opened OCR bill result: {filename}.",
+                "document_id": str(document.id),
+                "filename": filename,
+                "source_type": getattr(batch, "source_type", "manual"),
+                "document_status": document.status,
+            },
+        )
         versions = list(
             document.versions.all().order_by("version_number")
         )
@@ -1016,6 +1058,21 @@ class OCRExtractionTemplateListView(APIView):
                 "created_by": request.user,
             },
         )
+        audit_service.log(
+            module=AuditModule.OCR,
+            action=AuditAction.CREATE if created else AuditAction.UPDATE,
+            entity="OCR extraction template",
+            entity_id=str(template.id),
+            company=request.user.company,
+            user=request.user,
+            detail={
+                "summary": f"Template '{template.name}' was {'created' if created else 'updated'}.",
+                "template_id": str(template.id),
+                "template_name": template.name,
+                "field_count": len(fields_config or {}),
+                "field_names": list((fields_config or {}).keys())[:100],
+            },
+        )
         return success_response(
             message=(
                 "Extraction template saved successfully."
@@ -1054,6 +1111,8 @@ class OCRExtractionTemplateDetailView(APIView):
 
     def patch(self, request, template_id):
         template = self._get_template(request, template_id)
+        previous_name = template.name
+        previous_field_count = len(template.fields_config or {})
 
         serializer = OCRExtractionTemplateUpdateSerializer(
             data=request.data, context={"request": request}
@@ -1117,6 +1176,24 @@ class OCRExtractionTemplateDetailView(APIView):
                     update_fields=["preferred_ocr_template"]
                 )
 
+        audit_service.log(
+            module=AuditModule.OCR,
+            action=AuditAction.UPDATE,
+            entity="OCR extraction template",
+            entity_id=str(template.id),
+            company=request.user.company,
+            user=request.user,
+            detail={
+                "summary": f"Template '{template.name}' was updated.",
+                "template_id": str(template.id),
+                "previous_name": previous_name,
+                "template_name": template.name,
+                "changed_fields": sorted(validated_data.keys()) + (["is_preferred"] if is_preferred is not None else []),
+                "previous_field_count": previous_field_count,
+                "field_count": len(template.fields_config or {}),
+            },
+        )
+
         return success_response(
             message="Extraction template updated successfully.",
             data=OCRExtractionTemplateSerializer(template,context={"request": request}).data,
@@ -1124,8 +1201,26 @@ class OCRExtractionTemplateDetailView(APIView):
 
     def delete(self, request, template_id):
         template = self._get_template(request, template_id)
+        template_id = str(template.id)
+        template_name = template.name
+        field_count = len(template.fields_config or {})
 
         template.delete()
+
+        audit_service.log(
+            module=AuditModule.OCR,
+            action=AuditAction.DELETE,
+            entity="OCR extraction template",
+            entity_id=template_id,
+            company=request.user.company,
+            user=request.user,
+            detail={
+                "summary": f"Template '{template_name}' was deleted.",
+                "template_id": template_id,
+                "template_name": template_name,
+                "field_count": field_count,
+            },
+        )
 
         return success_response(
             message="Extraction template deleted successfully.",

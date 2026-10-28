@@ -11,6 +11,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from audit.models import AuditAction, AuditModule, AuditStatus
+from audit.services import audit_service
 from mail_integration.models import EmailIntegration, EmailMessage
 from mail_integration.mailbox import readable_email_body
 from mail_integration.sync import dedupe_syncs_to_retain
@@ -106,6 +108,23 @@ class EmailBillPipeline:
         )
         logger.warning("Email bill processing deferred — message=%s error=%s", message_id, error)
         message = EmailMessage.objects.select_related('integration').filter(pk=message_id).first()
+        if message:
+            audit_service.log(
+                module=AuditModule.EMAIL,
+                action=AuditAction.PROCESS,
+                entity="Email processing deferred",
+                entity_id=str(message.id),
+                company=message.integration.company,
+                activity_type="automated",
+                status=AuditStatus.FAILED,
+                detail={
+                    "summary": f"Processing deferred for email from {message.sender_email or 'unknown sender'}.",
+                    **self._message_metadata(message),
+                    "attempt": message.attempt_count,
+                    "retry_at": (timezone.now() + timedelta(minutes=RETRY_DELAY_MINUTES)).isoformat(),
+                    "error": str(error)[:2000],
+                },
+            )
         if message and message.attempt_count == 1:
             from audit.notifications import notify
             notify(message.integration.created_by_id, message.integration.company_id, f'Email processing failed for {message.sender_email or "unknown sender"}; it will be retried.', '/app/integrations/email')
@@ -133,6 +152,7 @@ class EmailBillPipeline:
                     message.normalized_body or message.raw_body,
                     requested_fields=template.fields_config,
                     company=integration.company,
+                    email_received_at=message.received_at,
                 )
                 if not result["is_vendor_bill"]:
                     self._mark_terminal(
@@ -141,6 +161,20 @@ class EmailBillPipeline:
                         integration=integration,
                         is_vendor_bill=False,
                         extracted_data=None,
+                    )
+                    audit_service.log(
+                        module=AuditModule.EMAIL,
+                        action=AuditAction.PROCESS,
+                        entity="Email classified as not a vendor bill",
+                        entity_id=str(message.id),
+                        company=integration.company,
+                        activity_type="automated",
+                        status=AuditStatus.INFO,
+                        detail={
+                            "summary": "Email was checked and ignored because it is not a vendor bill.",
+                            **self._message_metadata(message),
+                            "classification": "not_vendor_bill",
+                        },
                     )
                     return "discarded"
 
@@ -155,6 +189,21 @@ class EmailBillPipeline:
                     vendor_bill_notification_sent=True,
                 )
                 if classified:
+                    audit_service.log(
+                        module=AuditModule.AI,
+                        action=AuditAction.PROCESS,
+                        entity="Vendor-bill email extracted",
+                        entity_id=str(message.id),
+                        company=integration.company,
+                        activity_type="automated",
+                        status=AuditStatus.SUCCESS,
+                        detail={
+                            "summary": f"Vendor-bill email from {message.sender_email or 'unknown sender'} was identified and extracted.",
+                            **self._message_metadata(message),
+                            "classification": "vendor_bill",
+                            "extracted_fields": sorted(str(key) for key in data.keys())[:100],
+                        },
+                    )
                     notify(
                         integration.created_by_id,
                         integration.company_id,
@@ -166,6 +215,45 @@ class EmailBillPipeline:
             if not isinstance(data, dict):
                 raise ValueError("Vendor-bill email extraction did not return JSON data.")
 
+            # Resolve vendor defaults before taking the message lock.  This can
+            # make a NetSuite REST/SuiteQL request, and holding a database row
+            # lock while waiting for an external service would unnecessarily
+            # block a retry or another scheduler run.
+            connection = NetSuiteConnectionRepository().get_for_user(user)
+            validation_service = NetSuiteValidationService()
+            sender_vendor = validation_service.resolve_vendor_from_sender_email(
+                data=data,
+                requested_fields=template.fields_config,
+                user=user,
+                sender_email=message.sender_email,
+                connection=connection,
+            )
+            enrichment = validation_service.enrich_missing_vendor_references(
+                data=data,
+                # The OCR batch is created only after enrichment succeeds.
+                # Use the selected integration template here; the same
+                # configuration is snapshotted onto the batch below.
+                requested_fields=template.fields_config,
+                user=user,
+                connection=connection,
+            )
+            if enrichment.get("changed"):
+                logger.info(
+                    "Email vendor reference enrichment completed — message=%s vendor=%s fields=%s",
+                    message.id,
+                    enrichment.get("vendor_id"),
+                    ",".join(sorted(enrichment["changed"])),
+                )
+            elif enrichment.get("reason") not in {
+                "nothing_missing_or_not_mapped",
+                "no_active_connection",
+            }:
+                logger.info(
+                    "Email vendor reference enrichment skipped — message=%s reason=%s",
+                    message.id,
+                    enrichment.get("reason"),
+                )
+
             with transaction.atomic():
                 locked = EmailMessage.objects.select_for_update().select_related("integration").get(pk=message.id)
                 if locked.lease_owner != message.lease_owner:
@@ -175,12 +263,14 @@ class EmailBillPipeline:
                     locked.lease_expires_at = None
                     locked.save(update_fields=["lease_owner", "lease_expires_at", "updated_at"])
                     return "deferred"
-                # Use the persisted AI result, rather than an in-memory value,
-                # so promotion always consumes the durable staged extraction.
-                data = locked.ai_extracted_data_json
-                if not isinstance(data, dict):
+                # The staged result is required for recovery.  The local copy
+                # below is the same result, optionally enriched before this
+                # transaction with safe vendor defaults from NetSuite.
+                if not isinstance(locked.ai_extracted_data_json, dict):
                     raise ValueError("Vendor-bill email staging data is missing.")
-                connection = NetSuiteConnectionRepository().get_for_user(user)
+                # Persist sender-email vendor resolution and any NetSuite
+                # defaults with the staged message as well as the OCR record.
+                locked.ai_extracted_data_json = data
                 fingerprint = hashlib.sha256(
                     f"{locked.integration_id}:{locked.provider_message_id or locked.internet_message_id or locked.id}".encode()
                 ).hexdigest()
@@ -244,10 +334,96 @@ class EmailBillPipeline:
                 locked.lease_expires_at = None
                 locked.next_attempt_at = None
                 locked.save(update_fields=[
+                    "ai_extracted_data_json",
                     "dedupe_syncs_remaining", "lease_owner", "lease_expires_at",
                     "next_attempt_at", "updated_at",
                 ])
-            self._validate_and_post(document_id=document.id, user=user, connection_id=connection.id if connection else None)
+            audit_service.log(
+                module=AuditModule.OCR,
+                action=AuditAction.CREATE,
+                entity="OCR document created from email",
+                entity_id=str(document.id),
+                company=integration.company,
+                activity_type="automated",
+                status=AuditStatus.SUCCESS,
+                detail={
+                    "summary": "Email extraction was saved as an OCR record.",
+                    **self._message_metadata(message),
+                    "document_id": str(document.id),
+                    "source": "email",
+                },
+            )
+            if sender_vendor.get("matched"):
+                audit_service.log(
+                    module=AuditModule.NETSUITE,
+                    action=AuditAction.PROCESS,
+                    entity="Vendor resolved from email sender",
+                    entity_id=str(document.id),
+                    company=integration.company,
+                    activity_type="automated",
+                    status=AuditStatus.SUCCESS,
+                    detail={
+                        "summary": "The email sender was matched to the latest active NetSuite vendor.",
+                        **self._message_metadata(message),
+                        "document_id": str(document.id),
+                        "vendor_id": sender_vendor.get("vendor_id"),
+                        "vendor_name": sender_vendor.get("vendor_name"),
+                    },
+                )
+            if enrichment.get("changed"):
+                audit_service.log(
+                    module=AuditModule.NETSUITE,
+                    action=AuditAction.PROCESS,
+                    entity="Vendor defaults enriched from NetSuite",
+                    entity_id=str(document.id),
+                    company=integration.company,
+                    activity_type="automated",
+                    status=AuditStatus.SUCCESS,
+                    detail={
+                        "summary": "Missing vendor-bill reference fields were filled from the matched NetSuite vendor.",
+                        **self._message_metadata(message),
+                        "document_id": str(document.id),
+                        "vendor_id": enrichment.get("vendor_id"),
+                        "filled_fields": enrichment["changed"],
+                    },
+                )
+            if sender_vendor.get("matched"):
+                self._validate_and_post(
+                    document_id=document.id,
+                    user=user,
+                    connection_id=connection.id if connection else None,
+                )
+            else:
+                reason = sender_vendor.get("reason") or "vendor_email_not_found"
+                logger.warning(
+                    "Automatic email validation deferred — document=%s sender=%s reason=%s",
+                    document.id,
+                    message.sender_email,
+                    reason,
+                )
+                audit_service.log(
+                    module=AuditModule.NETSUITE,
+                    action=AuditAction.VALIDATE,
+                    entity="Automatic validation deferred",
+                    entity_id=str(document.id),
+                    company=integration.company,
+                    activity_type="automated",
+                    status=AuditStatus.INFO,
+                    detail={
+                        "summary": "The OCR record was saved, but automatic validation was skipped because its sender email could not be resolved to an active NetSuite vendor.",
+                        **self._message_metadata(message),
+                        "document_id": str(document.id),
+                        "vendor_lookup_reason": reason,
+                        "vendor_lookup_error": sender_vendor.get("error"),
+                    },
+                )
+                notify(
+                    integration.created_by_id,
+                    integration.company_id,
+                    f"Email OCR was saved, but {message.sender_email or 'the sender'} was not matched to an active NetSuite vendor. Review and validate it manually.",
+                    f"/app/ocr/history/{document.id}",
+                    activity_type="automated",
+                )
             return "promoted"
         except Exception as exc:
             self._defer(message.id, exc)
@@ -281,9 +457,31 @@ class EmailBillPipeline:
                 activity_type="automated",
             )
 
+    @staticmethod
+    def _message_metadata(message: EmailMessage) -> dict:
+        """Safe message evidence for audit logs; deliberately excludes bodies."""
+        return {
+            "provider_message_id": message.provider_message_id or None,
+            "internet_message_id": message.internet_message_id or None,
+            "sender": message.sender_email or None,
+            "subject": (message.subject or "")[:500] or None,
+            "sent_at": message.sent_at.isoformat() if message.sent_at else None,
+            "received_at": message.received_at.isoformat() if message.received_at else None,
+        }
+
     def _validate_and_post(self, *, document_id, user, connection_id):
         if not connection_id:
             logger.warning("Email OCR document awaits NetSuite connection — document=%s", document_id)
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.VALIDATE,
+                entity="Automatic validation deferred",
+                entity_id=str(document_id),
+                company=user.company,
+                activity_type="automated",
+                status=AuditStatus.INFO,
+                detail={"summary": "No active NetSuite connection was available for this email OCR record.", "document_id": str(document_id)},
+            )
             return
         try:
             validation = NetSuiteValidationService().validate_document(
@@ -298,10 +496,61 @@ class EmailBillPipeline:
                         )
                     except Exception:
                         logger.exception("Email OCR AI diagnostics failed — document=%s", document_id)
+                audit_service.log(
+                    module=AuditModule.NETSUITE,
+                    action=AuditAction.VALIDATE,
+                    entity="Vendor bill validation failed",
+                    entity_id=str(document_id),
+                    company=user.company,
+                    activity_type="automated",
+                    status=AuditStatus.FAILED,
+                    detail={
+                        "summary": "NetSuite validation failed; the OCR record requires review.",
+                        "document_id": str(document_id),
+                        "connection_id": str(connection_id),
+                        "validation_id": str(validation.get("validation_id") or "") or None,
+                        "errors": validation.get("errors") or [],
+                    },
+                )
                 return
-            NetSuiteVendorBillPostingService().post_vendor_bill(
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.VALIDATE,
+                entity="Vendor bill validation succeeded",
+                entity_id=str(document_id),
+                company=user.company,
+                activity_type="automated",
+                status=AuditStatus.SUCCESS,
+                detail={"summary": "NetSuite validation succeeded; automatic posting started.", "document_id": str(document_id), "connection_id": str(connection_id)},
+            )
+            posting = NetSuiteVendorBillPostingService().post_vendor_bill(
                 document_id=document_id, connection_id=connection_id, user=user
+            )
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.POST,
+                entity="Vendor bill posted automatically",
+                entity_id=str(document_id),
+                company=user.company,
+                activity_type="automated",
+                status=AuditStatus.SUCCESS,
+                detail={
+                    "summary": "Vendor bill was posted to NetSuite automatically.",
+                    "document_id": str(document_id),
+                    "connection_id": str(connection_id),
+                    "netsuite_record_id": (posting or {}).get("netsuite_record_id") if isinstance(posting, dict) else None,
+                },
             )
         except Exception as exc:
             # Existing validation/posting services persist their user-visible outcomes.
             logger.warning("Email OCR auto validation/posting stopped — document=%s error=%s", document_id, exc)
+            audit_service.log(
+                module=AuditModule.NETSUITE,
+                action=AuditAction.POST,
+                entity="Automatic validation or posting failed",
+                entity_id=str(document_id),
+                company=user.company,
+                activity_type="automated",
+                status=AuditStatus.FAILED,
+                detail={"summary": "Automatic NetSuite processing stopped; review the OCR record.", "document_id": str(document_id), "connection_id": str(connection_id), "error": str(exc)[:2000]},
+            )

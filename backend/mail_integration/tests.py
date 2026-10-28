@@ -1,5 +1,5 @@
 from urllib.parse import parse_qs, urlparse
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, PropertyMock, patch
 from datetime import timedelta
 
 import requests
@@ -18,6 +18,7 @@ from mail_integration.health import ensure_email_processing_available
 from mail_integration.exceptions import EmailIntegrationStateError
 from mail_integration.services import EmailIntegrationService
 from mail_integration.pipeline import EmailBillPipeline
+from netsuite.services import NetSuiteValidationService
 
 
 class EmailValidationFlowTests(SimpleTestCase):
@@ -60,6 +61,55 @@ class EmailValidationFlowTests(SimpleTestCase):
             document_id="doc", connection_id="connection", user=user,
         )
         diagnostics.diagnose_and_persist.assert_not_called()
+
+
+class SenderEmailVendorResolutionTests(SimpleTestCase):
+    @patch("netsuite.services._build_template_netsuite_mappings")
+    def test_sender_email_uses_latest_active_vendor_and_overrides_extraction(self, mappings):
+        mappings.return_value = [{
+            "source_scope": "header",
+            "target_field_id": "entity",
+            "source_field_key": "vendor_name",
+        }]
+        connection = Mock(status="connected", is_active=True)
+        service = NetSuiteValidationService()
+        data = {"vendor_name": "Name incorrectly extracted from email"}
+        with patch.object(service, "_execute_live_suiteql", return_value={"items": [
+            {"id": "103", "email": "vendor@example.com", "companyname": "Inactive Newest", "isinactive": "T"},
+            {"id": "102", "email": "VENDOR@example.com", "companyname": "Latest Active Vendor", "isinactive": "F"},
+            {"id": "101", "email": "vendor@example.com", "companyname": "Older Active Vendor", "isinactive": "F"},
+        ]}) as suiteql:
+            result = service.resolve_vendor_from_sender_email(
+                data=data,
+                requested_fields=[],
+                user=Mock(),
+                sender_email="vendor@example.com",
+                connection=connection,
+            )
+
+        self.assertTrue(result["matched"])
+        self.assertEqual(result["vendor_id"], "102")
+        self.assertEqual(data["vendor_name"], "Latest Active Vendor")
+        self.assertIn("ORDER BY id DESC", suiteql.call_args.kwargs["query"])
+
+    @patch("netsuite.services._build_template_netsuite_mappings")
+    def test_sender_email_without_vendor_keeps_record_for_manual_review(self, mappings):
+        mappings.return_value = [{
+            "source_scope": "header",
+            "target_field_id": "entity",
+            "source_field_key": "vendor_name",
+        }]
+        service = NetSuiteValidationService()
+        with patch.object(service, "_execute_live_suiteql", return_value={"items": []}):
+            result = service.resolve_vendor_from_sender_email(
+                data={},
+                requested_fields=[],
+                user=Mock(),
+                sender_email="unknown@example.com",
+                connection=Mock(status="connected", is_active=True),
+            )
+        self.assertFalse(result["matched"])
+        self.assertEqual(result["reason"], "vendor_email_not_found")
 
 
 class EmailSchedulerHealthTests(SimpleTestCase):
@@ -138,7 +188,12 @@ class EmailRefreshFailureTests(SimpleTestCase):
             integration = EmailIntegration(status="CONNECTED", is_active=True, initial_sync_from_at=timezone.now())
             integration.save = Mock()
             failure = EmailIntegrationOAuthError("failed", authorization_required=requires_auth)
-            with self.subTest(requires_auth=requires_auth), patch.object(EmailIntegration.objects, "get", return_value=integration), patch.object(EmailSyncService, "_refresh_access_token_if_needed", side_effect=failure):
+            with self.subTest(requires_auth=requires_auth), \
+                 patch.object(EmailIntegration.objects, "get", return_value=integration), \
+                 patch.object(EmailIntegration.objects, "filter"), \
+                 patch("mail_integration.sync.audit_service.log"), \
+                 patch.object(EmailIntegration, "company", new_callable=PropertyMock, return_value=Mock()), \
+                 patch.object(EmailSyncService, "_refresh_access_token_if_needed", side_effect=failure):
                 with self.assertRaises(EmailIntegrationOAuthError):
                     EmailSyncService().sync_integration(integration_id=integration.id)
             self.assertEqual(integration.status, "ERROR" if requires_auth else "CONNECTED")
@@ -157,12 +212,20 @@ class EmailRefreshFailureTests(SimpleTestCase):
         mailbox = Mock()
         mailbox.iter_messages_since.return_value = []
         with patch.object(EmailIntegration.objects, "get", return_value=integration), \
+             patch.object(EmailIntegration.objects, "filter"), \
+             patch("mail_integration.sync.audit_service.log"), \
+             patch.object(EmailIntegration, "company", new_callable=PropertyMock, return_value=Mock()), \
              patch("mail_integration.sync.EmailOAuthClient") as client, \
              patch("mail_integration.sync.mailbox_client_for", return_value=mailbox), \
              patch.object(EmailSyncService, "_advance_terminal_dedupe"):
             client.return_value.refresh_access_token.return_value = tokens
             self.assertEqual(EmailSyncService().sync_integration(integration_id=integration.id), 0)
-        mailbox.iter_messages_since.assert_called_once_with(last_sync - timedelta(minutes=65))
+        mailbox.iter_messages_since.assert_called_once_with(
+            last_sync - timedelta(minutes=65),
+            until=ANY,
+            cursor="",
+            on_page_completed=ANY,
+        )
         self.assertEqual(integration.access_token, "new")
         self.assertEqual(integration.refresh_token, "old")
         self.assertGreater(integration.last_successful_sync_at, last_sync)

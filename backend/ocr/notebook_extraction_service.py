@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from django.conf import settings
+from django.utils import timezone
 from ocr.ai.providers import AIProviderError
 from ocr.ai.service import ai_configuration_service
 
@@ -52,7 +53,8 @@ FIELD_DESCRIPTIONS = {
         ),
     "due_date": ( # field_id = duedate
         "Payment due date, normalized to YYYY-MM-DD when stated. "
-        "Do not calculate or guess a missing due date."
+        "Do not calculate or guess a missing due date, except for the "
+        "single-date fallback explicitly stated in the extraction rules."
         ),
     "vendor_name": ( # field_id = entity
         "Name of the vendor or supplier issuing the invoice."
@@ -483,6 +485,11 @@ def resolve_field_config(
         scope = override.get("scope") or default_scope
         if scope not in {"header", "line"}:
             raise ValueError(f"Invalid scope for field '{key}'.")
+        _normalise_configured_default_value(
+            override.get("default_value"),
+            data_type,
+            label=str(override.get("label") or key),
+        )
         if scope == "line":
             line_fields[key] = description
             line_types[key] = data_type
@@ -523,6 +530,11 @@ def resolve_field_config(
         
         if scope not in {"header", "line"}:
             raise ValueError(f"Invalid scope for custom field '{label}'.")
+        _normalise_configured_default_value(
+            custom.get("default_value"),
+            data_type,
+            label=label,
+        )
         
         if scope == "line":
             line_fields[key] = description
@@ -635,12 +647,159 @@ def _normalize_result(
     normalized["line_items"] = normalized_items
     return normalized
 
+
+def _is_empty_extracted_value(value: Any) -> bool:
+    """Return whether an AI-extracted scalar should be treated as absent."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _normalise_configured_default_value(
+    value: Any,
+    data_type: str,
+    *,
+    label: str,
+) -> Any:
+    """Validate and normalise one optional template fallback value."""
+    if _is_empty_extracted_value(value):
+        return None
+
+    normalized = _normalize_datatype(value, data_type)
+    if normalized is None:
+        raise ValueError(
+            f'Default Value for field "{label}" is not valid for datatype '
+            f'"{data_type}".'
+        )
+    return normalized
+
+
+def _configured_field_defaults(
+    requested_fields: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return normalised header and line fallbacks from a saved template."""
+    if not isinstance(requested_fields, dict):
+        return {}, {}
+
+    selected_standard = requested_fields.get("standard_fields") or []
+    overrides = requested_fields.get("standard_field_overrides") or {}
+    custom_fields = requested_fields.get("custom_fields") or []
+    header_defaults: dict[str, Any] = {}
+    line_defaults: dict[str, Any] = {}
+
+    if isinstance(selected_standard, list) and isinstance(overrides, dict):
+        for raw_key in selected_standard:
+            key = str(raw_key or "").strip()
+            if key in FIELD_DESCRIPTIONS:
+                fallback_type, fallback_scope = FIELD_DATA_TYPES.get(key, "text"), "header"
+            elif key in LINE_ITEM_FIELDS:
+                fallback_type, fallback_scope = LINE_ITEM_DATA_TYPES.get(key, "text"), "line"
+            else:
+                continue
+
+            override = overrides.get(key) or {}
+            if not isinstance(override, dict):
+                continue
+            value = _normalise_configured_default_value(
+                override.get("default_value"),
+                _coerce_data_type(override.get("data_type") or fallback_type),
+                label=str(override.get("label") or key),
+            )
+            if value is not None:
+                scope = override.get("scope") or fallback_scope
+                target = line_defaults if scope == "line" else header_defaults
+                target[key] = value
+
+    if isinstance(custom_fields, list):
+        for custom in custom_fields:
+            if not isinstance(custom, dict) or custom.get("enabled") is False:
+                continue
+            label = str(custom.get("label") or custom.get("key") or "").strip()
+            if not label:
+                continue
+            value = _normalise_configured_default_value(
+                custom.get("default_value"),
+                _coerce_data_type(custom.get("data_type")),
+                label=label,
+            )
+            if value is not None:
+                key = _slugify_field_key(str(custom.get("key") or label))
+                target = line_defaults if custom.get("scope") == "line" else header_defaults
+                target[key] = value
+
+    return header_defaults, line_defaults
+
+
+def _apply_template_default_values(
+    data: dict[str, Any],
+    requested_fields: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply configured template values after extraction.
+
+    A configured default is intentional business configuration, not a fallback:
+    it always replaces the AI-extracted value for that field.
+    """
+    header_defaults, line_defaults = _configured_field_defaults(requested_fields)
+    if not header_defaults and not line_defaults:
+        return data
+
+    result = dict(data)
+    for key, value in header_defaults.items():
+        result[key] = value
+
+    if line_defaults and isinstance(result.get("line_items"), list):
+        result["line_items"] = [
+            (
+                {
+                    **line,
+                    **{
+                        key: value
+                        for key, value in line_defaults.items()
+                    },
+                }
+                if isinstance(line, dict)
+                else line
+            )
+            for line in result["line_items"]
+        ]
+
+    return result
+
+
+def _apply_email_received_date_fallback(
+    data: dict[str, Any],
+    header_keys: tuple[str, ...],
+    *,
+    email_received_at: datetime | None,
+) -> dict[str, Any]:
+    """Fill a missing invoice date from the mailbox timestamp.
+
+    The email receipt time is application-owned evidence, unlike a value
+    inferred by the model. Therefore it is safe to use only when the selected
+    template requests ``invoice_date`` and the AI left that field empty.
+    A source-provided invoice date is always preserved.
+    """
+    if "invoice_date" not in header_keys or not _is_empty_extracted_value(
+        data.get("invoice_date")
+    ):
+        return data
+    if email_received_at is None:
+        return data
+
+    received_date = (
+        timezone.localtime(email_received_at).date()
+        if timezone.is_aware(email_received_at)
+        else email_received_at.date()
+    )
+    data["invoice_date"] = received_date.isoformat()
+    return data
+
 def build_prompt(
     header_fields: dict[str, str],
     line_fields: dict[str, str],
     include_line_items: bool,
     header_types: dict[str, str],
     line_types: dict[str, str],
+    *,
+    fallback_invoice_date: str | None = None,
 ) -> str:
     """Build the extraction prompt entirely from the resolved template contract."""
     field_lines = "\n".join(
@@ -665,6 +824,11 @@ def build_prompt(
     else:
         line_items_section = ""
         line_item_rules = "- Do not return line_items because no line fields were requested."
+    date_fallback_rule = ""
+    if {"invoice_date", "due_date"}.issubset(header_fields):
+        reference_date = fallback_invoice_date or timezone.localdate().isoformat()
+        date_fallback_rule = f"""- Single-date fallback: apply this only when the source explicitly contains exactly one relevant bill/invoice date and does not explicitly contain a second invoice/bill or due date. Preserve that source date as `due_date` and set `invoice_date` to `{reference_date}`. This is the current date for a file or the email's received date for an email. Do not apply this fallback when both dates are explicitly present, and never overwrite an explicitly stated date.
+"""
     return f"""You are the PRIMARY extraction stage of a production business-document extraction system.
 Read the attached document in full. Layouts vary widely across invoices, receipts, purchase orders, vouchers, credit notes, debit notes, and other business documents.
 
@@ -683,7 +847,7 @@ Rules:
 - Use null when the requested value is missing, unreadable, ambiguous, or cannot be directly matched to source evidence.
 - Inspect the entire document before deciding a field is null.
 - Follow the declared datatype for every field.
-{line_item_rules}
+{date_fallback_rule}{line_item_rules}
 - Do not output fields merely because other information is visible in the document; unrequested fields must be omitted.
 - The final JSON must contain exactly the header fields and line-item fields defined by this template.
 """
@@ -797,6 +961,7 @@ class NotebookGeminiExtractor:
                     line_types,
                     line_keys,
                 )
+                result = _apply_template_default_values(result, requested_fields)
 
                 logger.info(
                     "Company AI OCR extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
@@ -887,6 +1052,7 @@ class NotebookGeminiExtractor:
         requested_fields: dict[str, Any] | None = None,
         *,
         company=None,
+        email_received_at: datetime | None = None,
         timeout: float | None = None,
         max_retries: int | None = None,
     ) -> dict[str, Any]:
@@ -930,17 +1096,30 @@ class NotebookGeminiExtractor:
             "required": ["is_vendor_bill", "data"],
         }
         extraction_prompt = build_prompt(
-            header_fields, line_fields, include_line_items, header_types, line_types
+            header_fields,
+            line_fields,
+            include_line_items,
+            header_types,
+            line_types,
+            fallback_invoice_date=(
+                timezone.localtime(email_received_at).date().isoformat()
+                if email_received_at and timezone.is_aware(email_received_at)
+                else email_received_at.date().isoformat()
+                if email_received_at
+                else None
+            ),
         )
         prompt = f"""You are deciding whether an incoming EMAIL BODY is a vendor bill.
 Classify it as a vendor bill ONLY when the body itself explicitly contains:
-- a subsidiary;
-- an invoice/bill date AND a due date;
+- at least one date (for example, an invoice/bill date or due date);
 - at least one distinct item or line with an amount (the amount may be 0).
-Do not use the company name as a matching rule at this stage. Do not infer,
-derive, or assume any missing requirement. Vendor, company, subsidiary and item
-matching against NetSuite remains the later validation step. If any required
-signal is absent, it is not a vendor bill. If it is not a vendor bill, return exactly
+The sender email is resolved to a NetSuite vendor separately, so a company or
+vendor name is optional in the email body. Subsidiary and location are also
+optional: extract them when explicitly present, but do not require them to
+classify the email as a vendor bill. Do not infer, derive, or assume any missing
+requirement. Vendor, company, subsidiary and item matching against NetSuite
+remains the later validation step. If either required signal is absent, it is not
+a vendor bill. If it is not a vendor bill, return exactly
 {{\"is_vendor_bill\": false, \"data\": null}}. If it is a vendor bill, return
 {{\"is_vendor_bill\": true, \"data\": <the extraction JSON>}} and apply this
 extraction contract to data:
@@ -970,6 +1149,12 @@ EMAIL BODY END
                     )
                 data = _normalize_result(raw_data, header_keys, line_keys, include_line_items)
                 data = _apply_datatype_normalization(data, header_types, line_types, line_keys)
+                data = _apply_email_received_date_fallback(
+                    data,
+                    header_keys,
+                    email_received_at=email_received_at,
+                )
+                data = _apply_template_default_values(data, requested_fields)
                 logger.info(
                     "Company AI email extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
                     request_id, attempt + 1, (time.perf_counter() - start) * 1000,

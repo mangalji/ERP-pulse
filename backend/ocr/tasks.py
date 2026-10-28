@@ -1231,6 +1231,39 @@ def _persist_success(
     """
     _validate_extraction_result(result)
 
+    # Apply live vendor defaults before the result becomes the user's review
+    # payload. This is best-effort: an unavailable/ambiguous NetSuite vendor
+    # must never turn a successful AI extraction into a failed OCR job.
+    try:
+        from netsuite.services import NetSuiteValidationService
+
+        enrichment = NetSuiteValidationService().enrich_missing_vendor_references(
+            data=result,
+            requested_fields=requested_fields,
+            user=upload.user,
+        )
+        if enrichment.get("changed"):
+            logger.info(
+                "OCR vendor reference enrichment completed — upload=%s vendor=%s fields=%s",
+                upload.id,
+                enrichment.get("vendor_id"),
+                ",".join(sorted(enrichment["changed"])),
+            )
+        elif enrichment.get("reason") not in {
+            "nothing_missing_or_not_mapped",
+            "no_active_connection",
+        }:
+            logger.info(
+                "OCR vendor reference enrichment skipped — upload=%s reason=%s",
+                upload.id,
+                enrichment.get("reason"),
+            )
+    except Exception:
+        logger.exception(
+            "OCR vendor reference enrichment crashed unexpectedly — upload=%s",
+            upload.id,
+        )
+
     if write_cache:
         _write_cached_result(
             upload.file_hash,

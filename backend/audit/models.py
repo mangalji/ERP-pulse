@@ -29,6 +29,8 @@ class AuditModule(models.TextChoices):
     DEMO = 'demo', 'Demo Request'
     INVITATION = 'invitation', 'Invitation'
     SUBSCRIPTION = 'subscription', 'Subscription'
+    EMAIL = 'email', 'Email'
+    SCHEDULER = 'scheduler', 'Scheduler'
 
 
 class AuditAction(models.TextChoices):
@@ -52,6 +54,21 @@ class AuditAction(models.TextChoices):
     REJECT = 'reject', 'Reject'
     SEND = 'send', 'Send'
     ACCEPT = 'accept', 'Accept'
+    FETCH = 'fetch', 'Fetch'
+    PROCESS = 'process', 'Process'
+    VALIDATE = 'validate', 'Validate'
+    POST = 'post', 'Post'
+
+
+class AuditActivityType(models.TextChoices):
+    MANUAL = 'manual', 'Manual'
+    AUTOMATED = 'automated', 'Automated'
+
+
+class AuditStatus(models.TextChoices):
+    SUCCESS = 'success', 'Success'
+    FAILED = 'failed', 'Failed'
+    INFO = 'info', 'Info'
 
 
 class AuditLog(models.Model):
@@ -79,6 +96,21 @@ class AuditLog(models.Model):
     new_value = models.JSONField(null=True, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=512,null=True,blank=True)
+    activity_type = models.CharField(
+        max_length=12,
+        choices=AuditActivityType.choices,
+        default=AuditActivityType.MANUAL,
+        db_index=True,
+    )
+    status = models.CharField(
+        max_length=12,
+        choices=AuditStatus.choices,
+        default=AuditStatus.SUCCESS,
+        db_index=True,
+    )
+    # Structured operational evidence. Credentials, OTP values and raw email
+    # bodies are redacted by AuditService before this field is persisted.
+    detail = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -88,6 +120,7 @@ class AuditLog(models.Model):
             models.Index(fields=['company', '-created_at'], name='audit_company_recent_idx'),
             models.Index(fields=['user', '-created_at'], name='audit_user_recent_idx'),
             models.Index(fields=['module', 'entity'], name='audit_module_entity_idx'),
+            models.Index(fields=['company', 'activity_type', '-created_at'], name='audit_company_type_recent_idx'),
         ]
 
     def __str__(self) -> str:

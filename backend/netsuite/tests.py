@@ -7,6 +7,7 @@ from netsuite.oauth import netsuite_vendor_bill_url
 from netsuite.services import (
     NetSuiteFieldMappingService,
     NetSuiteVendorBillPostingService,
+    NetSuiteValidationService,
     _build_template_netsuite_mappings,
 )
 from netsuite.validation_error_groups import build_validation_error_groups
@@ -296,3 +297,32 @@ class NetSuiteFieldCatalogueTests(SimpleTestCase):
                 },
             ],
         )
+
+
+class VendorReferenceEnrichmentTests(SimpleTestCase):
+    def test_accepts_a_single_vendor_reference(self):
+        reference = NetSuiteValidationService._reference_candidate(
+            {"id": "15", "refName": "Pune"}
+        )
+
+        self.assertEqual(reference, {"id": "15", "name": "Pune"})
+
+    def test_uses_explicit_primary_reference_from_a_list(self):
+        reference = NetSuiteValidationService._reference_candidate(
+            [
+                {"id": "1", "refName": "India"},
+                {"id": "2", "refName": "US", "primary": True},
+            ]
+        )
+
+        self.assertEqual(reference, {"id": "2", "name": "US"})
+
+    def test_rejects_ambiguous_multi_value_reference(self):
+        reference = NetSuiteValidationService._reference_candidate(
+            [
+                {"id": "15", "refName": "Pune"},
+                {"id": "16", "refName": "Bangalore"},
+            ]
+        )
+
+        self.assertIsNone(reference)

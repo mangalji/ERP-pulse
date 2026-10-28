@@ -30,7 +30,7 @@ def _apply_initial_defaults(result, reviewed_result=None):
     current_data = current.get('data', current)
     if not isinstance(original_data, dict) or not isinstance(current_data, dict):
         return
-    for key, default in (('invoice_number', None), ('location', 'Pune')):
+    for key, default in (('invoice_number', None),):
         if _nullable_string(original_data.get(key)) or _nullable_string(current_data.get(key)):
             continue
         value = default

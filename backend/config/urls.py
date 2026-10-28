@@ -27,4 +27,5 @@ urlpatterns = [
     path('api/v1/transactions/', include('transactions.urls')),
     path('api/v1/email/', include('mail_integration.urls')),
     path('api/v1/notifications/', include('audit.notification_urls')),
+    path('api/v1/audit/', include('audit.urls')),
 ]

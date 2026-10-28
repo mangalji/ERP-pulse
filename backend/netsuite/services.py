@@ -3354,6 +3354,405 @@ class NetSuiteValidationService:
         # instance. Cache it so validation does not re-query the same chain
         # for every item candidate. Keys are (connection_id, subsidiary_id).
         self._subsidiary_ancestor_cache = {}
+
+    @staticmethod
+    def _is_missing_reference_value(value) -> bool:
+        """Treat blank text and empty reference objects as missing."""
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        if isinstance(value, dict):
+            return not any(
+                str(value.get(key) or "").strip()
+                for key in ("id", "name", "label", "text", "refName")
+            )
+        return False
+
+    @staticmethod
+    def _reference_candidate(value):
+        """Read a NetSuite REST select reference without guessing a choice."""
+        if isinstance(value, dict):
+            nested = value.get("items") or value.get("values")
+            if isinstance(nested, list):
+                return NetSuiteValidationService._reference_candidate(nested)
+            candidates = [value]
+        elif isinstance(value, list):
+            candidates = [candidate for candidate in value if isinstance(candidate, dict)]
+        else:
+            return None
+
+        if len(candidates) == 1:
+            candidate = candidates[0]
+        else:
+            primary = [
+                item for item in candidates
+                if item.get("primary") is True
+                or item.get("isPrimary") is True
+                or item.get("default") is True
+                or item.get("isDefault") is True
+            ]
+            if len(primary) != 1:
+                return None
+            candidate = primary[0]
+
+        record_id = candidate.get("id") or candidate.get("internalId")
+        name = (
+            candidate.get("refName")
+            or candidate.get("name")
+            or candidate.get("label")
+            or candidate.get("text")
+        )
+        return {
+            "id": str(record_id).strip() if record_id not in (None, "") else None,
+            "name": str(name).strip() if name not in (None, "") else None,
+        }
+
+    def _reference_name_by_id_live(self, *, connection, field_name, record_id):
+        """Resolve a select-reference ID to its display name for OCR JSON."""
+        table_config = self.SELECT_FIELD_SUITEQL_TABLES.get(field_name)
+        if table_config is None or not record_id:
+            return None
+        table, match_columns = table_config
+        id_literal = self._suiteql_id_literal(record_id)
+        if id_literal is None:
+            return None
+        response = self._execute_live_suiteql(
+            connection=connection,
+            query=(
+                f"SELECT id, {', '.join(match_columns)}, isinactive "
+                f"FROM {table} WHERE id = {id_literal}"
+            ),
+            limit=2,
+        )
+        rows = response.get("items", []) if isinstance(response, dict) else []
+        active = [
+            row for row in rows
+            if str(row.get("isinactive", "F")).upper() != "T"
+        ]
+        if len(active) != 1:
+            return None
+        for column in match_columns:
+            value = active[0].get(column)
+            if value not in (None, ""):
+                return str(value).strip()
+        return None
+
+    def _fetch_vendor_reference_defaults_live(self, *, connection, vendor_id):
+        """Return only unambiguous vendor-level subsidiary/location defaults."""
+        access_token = self.token_manager.get_valid_access_token(connection)
+        client = NetSuiteAuthClient(
+            account_id=connection.netsuite_account_id,
+            client_id=connection.client_id,
+            client_secret=connection.client_secret,
+            access_token=access_token,
+        )
+        vendor = client.get_record(
+            record_type=NetSuiteRecordType.VENDOR,
+            record_id=str(vendor_id),
+        )
+        if not isinstance(vendor, dict):
+            raise NetSuiteRecordFetchException(
+                "NetSuite returned an invalid vendor record while resolving defaults."
+            )
+
+        # NetSuite account customizations vary. These are the standard and
+        # commonly exposed REST field names; we never select the first value
+        # when a multi-value field has no explicit primary/default marker.
+        candidates = {
+            "subsidiary": [
+                vendor.get("subsidiary"),
+                vendor.get("primarySubsidiary"),
+                vendor.get("primarysubsidiary"),
+            ],
+            "location": [
+                vendor.get("location"),
+                vendor.get("defaultLocation"),
+                vendor.get("defaultlocation"),
+            ],
+        }
+        defaults = {}
+        for field_name, raw_values in candidates.items():
+            # A multi-subsidiary/vendor-location list may be ambiguous while
+            # NetSuite simultaneously exposes a separate primary/default
+            # field. Keep looking for that explicit field rather than falling
+            # back to an arbitrary list member.
+            reference = next(
+                (
+                    candidate
+                    for raw_value in raw_values
+                    if raw_value is not None
+                    for candidate in [self._reference_candidate(raw_value)]
+                    if candidate is not None
+                ),
+                None,
+            )
+            if reference is None:
+                continue
+            if not reference.get("name") and reference.get("id"):
+                reference["name"] = self._reference_name_by_id_live(
+                    connection=connection,
+                    field_name=field_name,
+                    record_id=reference["id"],
+                )
+            if reference.get("name"):
+                defaults[field_name] = reference
+        return defaults
+
+    def enrich_missing_vendor_references(
+        self,
+        *,
+        data,
+        requested_fields,
+        user,
+        connection=None,
+    ) -> dict:
+        """Fill only missing bill subsidiary/location from one matched vendor.
+
+        This is deliberately best-effort. Extraction must remain available if
+        NetSuite is offline, the vendor is absent/ambiguous, or the vendor
+        record does not expose one of these defaults. In all such cases the
+        original extracted data is preserved for normal validation and review.
+        """
+        outcome = {"changed": {}, "reason": None, "vendor_id": None}
+        if not isinstance(data, dict):
+            outcome["reason"] = "invalid_extraction_data"
+            return outcome
+
+        try:
+            active_connection = connection or self.repository.get_for_user(user)
+            if (
+                active_connection is None
+                or active_connection.status != "connected"
+                or not active_connection.is_active
+            ):
+                outcome["reason"] = "no_active_connection"
+                return outcome
+
+            mappings = _build_template_netsuite_mappings(
+                requested_fields,
+                connection=active_connection,
+                record_type="vendorBill",
+            )
+            header_mappings = [
+                mapping for mapping in mappings
+                if str(mapping.get("source_scope") or "").strip().lower()
+                in {"header", "body"}
+            ]
+            vendor_mapping = next(
+                (
+                    mapping for mapping in header_mappings
+                    if str(mapping.get("target_field_id") or "").strip().lower()
+                    in {"entity", "vendor"}
+                ),
+                None,
+            )
+            targets = {
+                field_name: next(
+                    (
+                        mapping for mapping in header_mappings
+                        if str(mapping.get("target_field_id") or "").strip().lower()
+                        == field_name
+                    ),
+                    None,
+                )
+                for field_name in ("subsidiary", "location")
+            }
+            missing_targets = {
+                field_name: mapping
+                for field_name, mapping in targets.items()
+                if mapping is not None
+                and self._is_missing_reference_value(
+                    data.get(mapping["source_field_key"])
+                )
+            }
+            if not missing_targets:
+                outcome["reason"] = "nothing_missing_or_not_mapped"
+                return outcome
+
+            vendor_key = (
+                vendor_mapping.get("source_field_key")
+                if vendor_mapping else "vendor_name"
+            )
+            vendor_name = data.get(vendor_key) or data.get("vendor_name")
+            vendor_name = str(vendor_name or "").strip()
+            if not vendor_name:
+                outcome["reason"] = "vendor_name_missing"
+                return outcome
+
+            vendor_result = self._validate_vendor_live(
+                connection=active_connection,
+                vendor_name=vendor_name,
+            )
+            if not vendor_result.get("matched"):
+                outcome["reason"] = (
+                    "vendor_ambiguous" if vendor_result.get("ambiguous")
+                    else "vendor_not_found"
+                )
+                return outcome
+
+            outcome["vendor_id"] = vendor_result.get("netsuite_id")
+            defaults = self._fetch_vendor_reference_defaults_live(
+                connection=active_connection,
+                vendor_id=vendor_result["netsuite_id"],
+            )
+            for field_name, mapping in missing_targets.items():
+                reference = defaults.get(field_name) or {}
+                value = reference.get("name")
+                if value:
+                    data[mapping["source_field_key"]] = value
+                    outcome["changed"][field_name] = {
+                        "value": value,
+                        "netsuite_id": reference.get("id"),
+                    }
+            outcome["reason"] = (
+                "enriched" if outcome["changed"] else "vendor_defaults_unavailable"
+            )
+            return outcome
+        except Exception as exc:  # Enrichment cannot discard a valid OCR result.
+            logger.warning(
+                "Vendor reference enrichment skipped — user=%s connection=%s error=%s",
+                getattr(user, "id", None),
+                getattr(connection, "id", None),
+                exc,
+            )
+            outcome["reason"] = "lookup_error"
+            outcome["error"] = str(exc)[:1000]
+            return outcome
+
+    def resolve_vendor_from_sender_email(
+        self,
+        *,
+        data,
+        requested_fields,
+        user,
+        sender_email,
+        connection=None,
+    ) -> dict:
+        """Resolve an automated-email vendor from its sender address.
+
+        Email bodies are not a trustworthy source of the vendor identity.  For
+        the email automation only, the mailbox sender is matched exactly to a
+        NetSuite vendor's ``email`` field.  More than one vendor can share an
+        address, so the most recently created *active* vendor (highest internal
+        ID) wins.  File uploads never call this method.
+        """
+        outcome = {
+            "matched": False,
+            "reason": None,
+            "vendor_id": None,
+            "vendor_name": None,
+            "changed": {},
+        }
+        if not isinstance(data, dict):
+            outcome["reason"] = "invalid_extraction_data"
+            return outcome
+
+        normalized_email = str(sender_email or "").strip().casefold()
+        if not normalized_email:
+            outcome["reason"] = "sender_email_missing"
+            return outcome
+
+        try:
+            active_connection = connection or self.repository.get_for_user(user)
+            if (
+                active_connection is None
+                or active_connection.status != "connected"
+                or not active_connection.is_active
+            ):
+                outcome["reason"] = "no_active_connection"
+                return outcome
+
+            mappings = _build_template_netsuite_mappings(
+                requested_fields,
+                connection=active_connection,
+                record_type="vendorBill",
+            )
+            vendor_mapping = next(
+                (
+                    mapping
+                    for mapping in mappings
+                    if str(mapping.get("source_scope") or "").strip().lower()
+                    in {"header", "body"}
+                    and str(mapping.get("target_field_id") or "").strip().lower()
+                    in {"entity", "vendor"}
+                ),
+                None,
+            )
+            if vendor_mapping is None:
+                outcome["reason"] = "vendor_field_not_mapped"
+                return outcome
+
+            vendor = self._find_latest_active_vendor_by_email_live(
+                connection=active_connection,
+                sender_email=normalized_email,
+            )
+            if vendor is None:
+                outcome["reason"] = "vendor_email_not_found"
+                return outcome
+
+            vendor_name = str(
+                vendor.get("companyname") or vendor.get("entityid") or ""
+            ).strip()
+            if not vendor_name:
+                outcome["reason"] = "vendor_name_unavailable"
+                return outcome
+
+            data[vendor_mapping["source_field_key"]] = vendor_name
+            outcome.update(
+                matched=True,
+                reason="matched",
+                vendor_id=str(vendor["id"]),
+                vendor_name=vendor_name,
+                changed={
+                    "vendor": {
+                        "value": vendor_name,
+                        "netsuite_id": str(vendor["id"]),
+                        "source": "sender_email",
+                    }
+                },
+            )
+            return outcome
+        except Exception as exc:
+            logger.warning(
+                "Sender-email vendor lookup failed — user=%s connection=%s sender=%s error=%s",
+                getattr(user, "id", None),
+                getattr(connection, "id", None),
+                normalized_email,
+                exc,
+            )
+            outcome["reason"] = "lookup_error"
+            outcome["error"] = str(exc)[:1000]
+            return outcome
+
+    def _find_latest_active_vendor_by_email_live(self, *, connection, sender_email):
+        """Return the newest active vendor sharing an exact email address."""
+        literal = self._suiteql_literal(sender_email)
+        if literal is None:
+            return None
+        response = self._execute_live_suiteql(
+            connection=connection,
+            query=f"""
+                SELECT id, entityid, companyname, email, isinactive
+                FROM vendor
+                WHERE LOWER(email) = LOWER({literal})
+                ORDER BY id DESC
+            """,
+            # A vendor email should normally be unique.  A small bounded list
+            # still lets us skip an inactive newest duplicate safely.
+            limit=20,
+        )
+        rows = response.get("items", []) if isinstance(response, dict) else []
+        expected_email = str(sender_email).strip().casefold()
+        for row in rows:
+            if not isinstance(row, dict) or row.get("id") is None:
+                continue
+            if str(row.get("isinactive", "F")).upper() == "T":
+                continue
+            if str(row.get("email") or "").strip().casefold() != expected_email:
+                continue
+            return row
+        return None
     
     @staticmethod
     def _is_company_admin(user) -> bool:

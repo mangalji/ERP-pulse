@@ -703,8 +703,8 @@ export default function DataExtractionHistoryPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1720px]">
-                <div className="grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_150px_150px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+              <div className="min-w-[1900px]">
+                <div className="grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_180px_150px_150px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   <div />
                   <div>S.No.</div>
                   <div>File / Batch</div>
@@ -715,6 +715,7 @@ export default function DataExtractionHistoryPage() {
                   <div>Files</div>
                   <div>Created By</div>
                   <div>Created</div>
+                  <div>NetSuite Account</div>
                   <div>Status</div>
                   <div>NetSuite Bill</div>
                   <div className="text-center">{canDeleteHistory ? 'Action' : ''}</div>
@@ -731,7 +732,7 @@ export default function DataExtractionHistoryPage() {
                     return (
                       <div
                         key={item.batch_id}
-                        className={`grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_150px_150px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
+                        className={`grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_180px_150px_150px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
                       >
                         <div>
                           <input
@@ -789,6 +790,13 @@ export default function DataExtractionHistoryPage() {
 
                         <div className="text-sm text-[var(--color-muted)]">
                           {formatDate(item.created_at)}
+                        </div>
+
+                        <div
+                          className="truncate pr-2 font-mono text-xs text-[var(--color-muted)]"
+                          title={(item.netsuite_account_ids || []).join(', ')}
+                        >
+                          {(item.netsuite_account_ids || []).join(', ') || '--'}
                         </div>
 
                         <div className="flex flex-col items-start gap-2">
