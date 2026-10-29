@@ -12,6 +12,7 @@ from typing import Any
 
 
 _MONEY_QUANTUM = Decimal("0.01")
+_RATE_QUANTUM = Decimal("0.000001")
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -28,6 +29,12 @@ def _money(value: Decimal) -> int | float:
     return int(rounded) if rounded == rounded.to_integral_value() else float(rounded)
 
 
+def _rate(value: Decimal) -> int | float:
+    """Keep derived unit prices precise enough for fractional quantities."""
+    rounded = value.quantize(_RATE_QUANTUM, rounding=ROUND_HALF_UP)
+    return int(rounded) if rounded == rounded.to_integral_value() else float(rounded)
+
+
 def _set_calculated(target: dict[str, Any], key: str, value: int | float | None, *, overwrite: bool) -> None:
     """Set only configured fields; preserve explicit values for review saves."""
     if key not in target:
@@ -39,12 +46,13 @@ def _set_calculated(target: dict[str, Any], key: str, value: int | float | None,
 def apply_calculated_values(
     extraction: dict[str, Any], *, overwrite: bool = True
 ) -> dict[str, Any]:
-    """Calculate line and invoice values without relying on AI arithmetic.
+    """Normalize financial values without relying on AI arithmetic.
 
-    A line subtotal is quantity × unit price.  A line tax is calculated only
-    when a tax rate is supplied.  Line total is subtotal plus the available
-    tax.  Header total tax stays empty when no line contains known tax data;
-    header amount is populated only when every line has a calculable total.
+    Direct values from the source remain inputs, but all derivable values are
+    resolved deterministically.  In particular, a gross line total can be
+    converted to a pre-tax subtotal when tax information is available; that
+    subtotal can then derive a missing unit price or quantity.  This is used
+    after both email and file extraction, so their results behave identically.
     """
     if not isinstance(extraction, dict):
         return extraction
@@ -71,16 +79,55 @@ def apply_calculated_values(
         quantity = _decimal(item.get("quantity"))
         unit_price = _decimal(item.get("unit_price"))
         source_subtotal = _decimal(item.get("subtotal"))
-        subtotal = quantity * unit_price if quantity is not None and unit_price is not None else source_subtotal
-        _set_calculated(item, "subtotal", _money(subtotal) if subtotal is not None else None, overwrite=overwrite)
-
         tax_rate = _decimal(item.get("tax_rate"))
         source_tax = _decimal(item.get("tax_amount"))
-        tax_amount = subtotal * tax_rate / Decimal("100") if subtotal is not None and tax_rate is not None else source_tax
+        source_total = _decimal(item.get("total_amount"))
+
+        # For review saves, an explicit user value remains authoritative.  For
+        # initial extraction, recompute derived values from the raw inputs.
+        if not overwrite and source_subtotal is not None:
+            subtotal = source_subtotal
+        elif quantity is not None and unit_price is not None:
+            subtotal = quantity * unit_price
+        elif source_subtotal is not None:
+            subtotal = source_subtotal
+        elif source_total is not None:
+            # A provided total is gross only if the source also supplied tax
+            # information.  Otherwise total and subtotal are the same.
+            if source_tax is not None:
+                subtotal = source_total - source_tax
+            elif tax_rate is not None and tax_rate > Decimal("-100"):
+                subtotal = source_total / (Decimal("1") + (tax_rate / Decimal("100")))
+            else:
+                subtotal = source_total
+        else:
+            subtotal = None
+
+        # Derive one missing line input when the other input and the resolved
+        # pre-tax subtotal are known.  Never divide by zero or invent a value.
+        if quantity is None and unit_price not in (None, Decimal("0")) and subtotal is not None:
+            quantity = subtotal / unit_price
+            _set_calculated(item, "quantity", _rate(quantity), overwrite=overwrite)
+        elif unit_price is None and quantity not in (None, Decimal("0")) and subtotal is not None:
+            unit_price = subtotal / quantity
+            _set_calculated(item, "unit_price", _rate(unit_price), overwrite=overwrite)
+
+        _set_calculated(item, "subtotal", _money(subtotal) if subtotal is not None else None, overwrite=overwrite)
+
+        if not overwrite and source_tax is not None:
+            tax_amount = source_tax
+        elif subtotal is not None and tax_rate is not None:
+            tax_amount = subtotal * tax_rate / Decimal("100")
+        else:
+            tax_amount = source_tax
         _set_calculated(item, "tax_amount", _money(tax_amount) if tax_amount is not None else None, overwrite=overwrite)
 
-        source_total = _decimal(item.get("total_amount"))
-        total_amount = subtotal + (tax_amount or Decimal("0")) if subtotal is not None else source_total
+        if not overwrite and source_total is not None:
+            total_amount = source_total
+        elif subtotal is not None:
+            total_amount = subtotal + (tax_amount or Decimal("0"))
+        else:
+            total_amount = source_total
         _set_calculated(item, "total_amount", _money(total_amount) if total_amount is not None else None, overwrite=overwrite)
 
         if tax_amount is not None:

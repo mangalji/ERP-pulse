@@ -120,6 +120,79 @@ class OCRCalculatedValueTests(SimpleTestCase):
         self.assertEqual(result["line_items"][0]["total_amount"], 80)
         self.assertEqual(result["amount"], 999)
 
+    def test_derives_subtotal_and_rate_from_quantity_and_total_without_tax(self):
+        from ocr.services.calculated_values import apply_calculated_values
+
+        result = apply_calculated_values({
+            "line_items": [{
+                "quantity": 1000,
+                "unit_price": None,
+                "subtotal": None,
+                "tax_rate": None,
+                "tax_amount": None,
+                "total_amount": 9000,
+            }],
+        })
+
+        line = result["line_items"][0]
+        self.assertEqual(line["unit_price"], 9)
+        self.assertEqual(line["subtotal"], 9000)
+        self.assertEqual(line["total_amount"], 9000)
+
+    def test_derives_pre_tax_values_from_gross_total_and_tax_rate(self):
+        from ocr.services.calculated_values import apply_calculated_values
+
+        result = apply_calculated_values({
+            "total_tax_amount": None,
+            "amount": None,
+            "line_items": [{
+                "quantity": 1000,
+                "unit_price": None,
+                "subtotal": None,
+                "tax_rate": 18,
+                "tax_amount": None,
+                "total_amount": 9000,
+            }],
+        })
+
+        line = result["line_items"][0]
+        self.assertEqual(line["subtotal"], 7627.12)
+        self.assertEqual(line["tax_amount"], 1372.88)
+        self.assertEqual(line["total_amount"], 9000)
+        self.assertEqual(line["unit_price"], 7.627119)
+        self.assertEqual(result["total_tax_amount"], 1372.88)
+        self.assertEqual(result["amount"], 9000)
+
+    def test_derives_quantity_from_rate_and_total(self):
+        from ocr.services.calculated_values import apply_calculated_values
+
+        result = apply_calculated_values({
+            "line_items": [{
+                "quantity": None,
+                "unit_price": 9,
+                "subtotal": None,
+                "total_amount": 9000,
+            }],
+        })
+
+        line = result["line_items"][0]
+        self.assertEqual(line["quantity"], 1000)
+        self.assertEqual(line["subtotal"], 9000)
+
+    def test_does_not_derive_inverse_values_when_division_would_be_unsafe(self):
+        from ocr.services.calculated_values import apply_calculated_values
+
+        result = apply_calculated_values({
+            "line_items": [{
+                "quantity": 0,
+                "unit_price": None,
+                "subtotal": None,
+                "total_amount": 9000,
+            }],
+        })
+
+        self.assertIsNone(result["line_items"][0]["unit_price"])
+
 
 class OCRDateFallbackPromptTests(SimpleTestCase):
     def test_single_date_fallback_uses_supplied_email_received_date(self):
