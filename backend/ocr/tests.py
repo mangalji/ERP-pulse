@@ -3,7 +3,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from ocr.notebook_extraction_service import (
+from ocr.ai_extraction_service import (
     FIELD_DESCRIPTIONS,
     LINE_ITEM_FIELDS,
     FIELD_DATA_TYPES,
@@ -150,7 +150,7 @@ class OCRDateFallbackPromptTests(SimpleTestCase):
 
 class OCREmailReceivedDateFallbackTests(SimpleTestCase):
     def test_missing_invoice_date_uses_email_received_date(self):
-        from ocr.notebook_extraction_service import _apply_email_received_date_fallback
+        from ocr.ai_extraction_service import _apply_email_received_date_fallback
 
         data = {"invoice_date": None, "due_date": "2026-11-06"}
         result = _apply_email_received_date_fallback(
@@ -187,9 +187,9 @@ class OCREmailVendorBillPromptTests(SimpleTestCase):
         self.assertIn("follow-ups", prompt)
         self.assertIn("clear transaction or procurement intent", prompt)
 
-    @patch("ocr.notebook_extraction_service.ai_configuration_service.resolve_provider")
+    @patch("ocr.ai_extraction_service.ai_configuration_service.resolve_provider")
     def test_email_extractor_returns_terminal_non_bill_classification(self, resolve_provider):
-        from ocr.notebook_extraction_service import NotebookGeminiExtractor
+        from ocr.ai_extraction_service import AIExtractor
 
         provider = resolve_provider.return_value
         provider.generate_structured_json.return_value = {
@@ -197,7 +197,7 @@ class OCREmailVendorBillPromptTests(SimpleTestCase):
             "data": None,
         }
 
-        result = NotebookGeminiExtractor().extract_email_text(
+        result = AIExtractor().extract_email_text(
             "Can you confirm the delivery status for last week's order?",
             requested_fields={"standard_fields": ["invoice_date"], "custom_fields": []},
             company=Mock(),
@@ -213,7 +213,7 @@ class OCREmailVendorBillPromptTests(SimpleTestCase):
         self.assertTrue(request["schema"]["properties"]["data"]["nullable"])
 
     def test_mailbox_date_overrides_extracted_invoice_date(self):
-        from ocr.notebook_extraction_service import _apply_email_received_date_fallback
+        from ocr.ai_extraction_service import _apply_email_received_date_fallback
 
         data = {"invoice_date": "2026-10-20", "due_date": "2026-11-06"}
         result = _apply_email_received_date_fallback(

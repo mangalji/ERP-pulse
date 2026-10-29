@@ -42,7 +42,7 @@ from ocr.pdf_processor import get_fitz
 from ocr.exceptions import OCRException
 from ocr.services import ocr_service
 from ocr.services.extraction_persistence import persist_extraction
-from ocr.notebook_extraction_service import get_standard_field_catalog, resolve_field_config
+from ocr.ai_extraction_service import get_standard_field_catalog, resolve_field_config
 from ocr.exceptions import OCRTimeBudgetExceeded
 from ocr.execution import dispatch_upload, recover_batch
 from ocr.tasks import process_single_ocr_upload

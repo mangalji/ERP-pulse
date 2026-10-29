@@ -20,7 +20,7 @@ from netsuite.repositories import NetSuiteConnectionRepository
 from netsuite.diagnostics_service import net_suite_diagnostics_service
 from netsuite.services import NetSuiteValidationService, NetSuiteVendorBillPostingService
 from ocr.models import DocumentType, OCRBatch, OCRDocument, OCRDocumentStatus
-from ocr.notebook_extraction_service import notebook_gemini_extractor
+from ocr.ai_extraction_service import ai_extractor
 from ocr.services.extraction_persistence import persist_extraction
 from audit.notifications import automated_activity, notify
 
@@ -199,7 +199,7 @@ class EmailBillPipeline:
                 data.update(sender_vendor_data)
                 self._notify_vendor_bill_detected(message)
             else:
-                classification = notebook_gemini_extractor.extract_email_text(
+                classification = ai_extractor.extract_email_text(
                     message.normalized_body or message.raw_body,
                     requested_fields=template.fields_config,
                     company=integration.company,

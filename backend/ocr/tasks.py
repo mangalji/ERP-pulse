@@ -35,7 +35,7 @@ from ocr.exceptions import (
     OCRTimeBudgetExceeded,
 )
 from ocr.models import OCRBatch, OCRDocument, OCRUpload
-from ocr.notebook_extraction_service import get_standard_field_catalog, notebook_gemini_extractor
+from ocr.ai_extraction_service import ai_extractor, get_standard_field_catalog
 from ocr.adapters import get_adapter
 from common.infra import get_redis_client, report_redis_failure, warn_throttled
 from ocr.storage import local_file_path
@@ -223,7 +223,7 @@ def _extract_single_page(
         mime_type = "image/png"
 
     if deadline_monotonic is None:
-        return notebook_gemini_extractor.extract(
+        return ai_extractor.extract(
             file_path=page_path,
             mime_type=mime_type,
             requested_fields=requested_fields,
@@ -246,7 +246,7 @@ def _extract_single_page(
         request_timeout = max(1.0, remaining - 2.0)
 
         try:
-            result = notebook_gemini_extractor.extract(
+            result = ai_extractor.extract(
                 file_path=page_path,
                 mime_type=mime_type,
                 requested_fields=requested_fields,
@@ -423,7 +423,7 @@ def _canonical_config(requested_fields: Any) -> dict:
         if relevant:
             normalized_overrides[key] = relevant
 
-    from ocr.notebook_extraction_service import _slugify_field_key
+    from ocr.ai_extraction_service import _slugify_field_key
     
     normalized_custom = []
     

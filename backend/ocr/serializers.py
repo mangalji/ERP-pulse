@@ -233,7 +233,7 @@ class OCRExtractionTemplateCreateSerializer(serializers.Serializer):
             )
         # Route through the canonical resolver so the Phase 2 line-custom
         # field rule and shape validation are enforced on save too.
-        from ocr.notebook_extraction_service import resolve_field_config
+        from ocr.ai_extraction_service import resolve_field_config
 
         try:
             resolve_field_config(value)
@@ -286,7 +286,7 @@ class OCRExtractionTemplateUpdateSerializer(serializers.Serializer):
                 "fields_config must be a JSON object."
             )
 
-        from ocr.notebook_extraction_service import resolve_field_config
+        from ocr.ai_extraction_service import resolve_field_config
 
         try:
             resolve_field_config(value)

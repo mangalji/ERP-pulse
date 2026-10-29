@@ -65,7 +65,7 @@ class EmailValidationFlowTests(SimpleTestCase):
 
 class SenderEmailVendorResolutionTests(SimpleTestCase):
     @patch("mail_integration.pipeline.audit_service.log")
-    @patch("mail_integration.pipeline.notebook_gemini_extractor.extract_email_text")
+    @patch("mail_integration.pipeline.ai_extractor.extract_email_text")
     @patch("mail_integration.pipeline.NetSuiteValidationService")
     @patch("mail_integration.pipeline.NetSuiteConnectionRepository")
     def test_unmatched_sender_is_terminal_without_an_ai_request(
@@ -109,7 +109,7 @@ class SenderEmailVendorResolutionTests(SimpleTestCase):
         audit_log.assert_called_once()
 
     @patch("mail_integration.pipeline.audit_service.log")
-    @patch("mail_integration.pipeline.notebook_gemini_extractor.extract_email_text")
+    @patch("mail_integration.pipeline.ai_extractor.extract_email_text")
     @patch("mail_integration.pipeline.NetSuiteValidationService")
     @patch("mail_integration.pipeline.NetSuiteConnectionRepository")
     def test_matched_vendor_normal_email_is_terminal_after_one_ai_classification(

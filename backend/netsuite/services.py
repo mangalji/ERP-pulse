@@ -266,7 +266,7 @@ def _build_template_netsuite_mappings(
             is_custom=False,
         )
 
-    from ocr.notebook_extraction_service import _slugify_field_key
+    from ocr.ai_extraction_service import _slugify_field_key
 
     for custom in custom_fields:
         if not isinstance(custom, dict):

@@ -915,7 +915,7 @@ Rules:
 - The final JSON must contain exactly the header fields and line-item fields defined by this template.
 """
 
-class NotebookGeminiExtractor:
+class AIExtractor:
     """Company-scoped OCR extractor with a provider-neutral AI backend.
 
     The class name is retained for compatibility with existing imports. The
@@ -1255,4 +1255,4 @@ class NotebookGeminiExtractor:
                     raise GeminiConnectionException(f"AI provider request failed: {exc}") from exc
         raise GeminiConnectionException(f"AI extraction failed: {last_exception}") from last_exception
 
-notebook_gemini_extractor = NotebookGeminiExtractor()
+ai_extractor = AIExtractor()
