@@ -66,8 +66,14 @@ function money(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
-function recalculateInvoiceTotals(current) {
+function recalculateInvoiceTotals(current, fields = null) {
   const items = Array.isArray(current?.line_items) ? current.line_items : []
+  const headerDefaults = new Map((fields?.headerFields || [])
+    .filter((field) => field.defaultValue !== null && field.defaultValue !== undefined && field.defaultValue !== '')
+    .map((field) => [field.key, field.defaultValue]))
+  const lineDefaults = new Map((fields?.lineFields || [])
+    .filter((field) => field.defaultValue !== null && field.defaultValue !== undefined && field.defaultValue !== '')
+    .map((field) => [field.key, field.defaultValue]))
 
   let totalTax = 0
   let invoiceTotal = 0
@@ -85,26 +91,28 @@ function recalculateInvoiceTotals(current) {
       ? money(subtotal * taxRate / 100)
       : numericValue(item?.tax_amount)
 
-    const totalAmount = subtotal !== null
-      ? money(subtotal + (taxAmount ?? 0))
+    const effectiveSubtotal = numericValue(lineDefaults.get('subtotal')) ?? subtotal
+    const effectiveTaxAmount = numericValue(lineDefaults.get('tax_amount')) ?? taxAmount
+    const totalAmount = effectiveSubtotal !== null
+      ? money(effectiveSubtotal + (effectiveTaxAmount ?? 0))
       : numericValue(item?.total_amount)
 
-    totalTax += taxAmount ?? 0
-    invoiceTotal += totalAmount ?? 0
+    totalTax += effectiveTaxAmount ?? 0
+    invoiceTotal += numericValue(lineDefaults.get('total_amount')) ?? totalAmount ?? 0
 
     return {
       ...item,
-      subtotal,
-      tax_amount: taxAmount,
-      total_amount: totalAmount,
+      subtotal: lineDefaults.get('subtotal') ?? subtotal,
+      tax_amount: lineDefaults.get('tax_amount') ?? taxAmount,
+      total_amount: lineDefaults.get('total_amount') ?? totalAmount,
     }
   })
 
   return {
     ...current,
     line_items: lineItems,
-    total_tax_amount: money(totalTax),
-    amount: money(invoiceTotal),
+    total_tax_amount: headerDefaults.get('total_tax_amount') ?? money(totalTax),
+    amount: headerDefaults.get('amount') ?? money(invoiceTotal),
   }
 }
 
@@ -146,6 +154,7 @@ function resolveConfiguredFields(config, fallbackData = {}) {
           dataType,
           type: toInputType(dataType),
           scope,
+          defaultValue: override.default_value ?? null,
           standard: true,
         }
       })
@@ -164,6 +173,7 @@ function resolveConfiguredFields(config, fallbackData = {}) {
           dataType,
           type: toInputType(dataType),
           scope: field.scope === 'line' ? 'line' : 'header',
+          defaultValue: field.default_value ?? null,
           standard: false,
         }
       })
@@ -639,11 +649,10 @@ export default function OcrResultPage() {
             ? latest.reviewed_json
             : latest?.normalized_json ?? {}
 
-        setRequestedFieldsConfig(
-          payload?.requested_fields && typeof payload.requested_fields === 'object'
-            ? payload.requested_fields
-            : null,
-        )
+        const requestedFields = payload?.requested_fields && typeof payload.requested_fields === 'object'
+          ? payload.requested_fields
+          : null
+        setRequestedFieldsConfig(requestedFields)
 
         const loadedResult = {
           status: payload.status || 'APPROVED',
@@ -660,7 +669,10 @@ export default function OcrResultPage() {
         }
 
         setResult(loadedResult)
-        setData(cloneData(reviewedData))
+        setData(recalculateInvoiceTotals(
+          cloneData(reviewedData),
+          resolveConfiguredFields(requestedFields, reviewedData),
+        ))
 
         const savedValidation = payload?.validation || null
         setValidationResult(savedValidation)
@@ -769,9 +781,9 @@ const setField = useCallback((key, value) => {
       return recalculateInvoiceTotals({
         ...current,
         line_items: nextItems,
-      })
+      }, configuredFields)
     })
-  }, [invalidateValidation])
+  }, [invalidateValidation, configuredFields])
 
   const addLineItem = useCallback(() => {
     invalidateValidation()
@@ -783,8 +795,8 @@ const setField = useCallback((key, value) => {
           : []),
         emptyLineItem(lineFieldDefinitions),
       ],
-    }))
-  }, [invalidateValidation,lineFieldDefinitions])
+    }, configuredFields))
+  }, [invalidateValidation, lineFieldDefinitions, configuredFields])
 
   const removeLineItem = useCallback((index) => {
     invalidateValidation()
@@ -794,8 +806,8 @@ const setField = useCallback((key, value) => {
         ? current.line_items
         : []
       ).filter((_, itemIndex) => itemIndex !== index),
-    }))
-  }, [invalidateValidation])
+    }, configuredFields))
+  }, [invalidateValidation, configuredFields])
 
   const handleSave = async () => {
     if (!result?.document_id) {
@@ -1505,7 +1517,7 @@ function getFileCategory(file) {
                       intent="secondary"
                       onClick={() => {
                         setViewMode('fields')
-                        setData((current) => recalculateInvoiceTotals(current))
+                        setData((current) => recalculateInvoiceTotals(current, configuredFields))
                         setEditing(true)
                       }}
                       disabled={editing || saving || validating || posting}

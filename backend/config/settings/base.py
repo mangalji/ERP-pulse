@@ -75,6 +75,10 @@ MIDDLEWARE = [
 
     "tenancy.middleware.TenantMiddleware",
 
+    # Makes safe request/network evidence available to AuditService.  This is
+    # intentionally after authentication and tenant resolution.
+    "audit.middleware.AuditRequestContextMiddleware",
+
     "django.contrib.messages.middleware.MessageMiddleware",
 
     "django.middleware.clickjacking.XFrameOptionsMiddleware",

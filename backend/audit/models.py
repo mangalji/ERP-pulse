@@ -140,3 +140,56 @@ class Notification(models.Model):
     class Meta:
         ordering = ['-created_at', '-id']
         indexes = [models.Index(fields=['recipient', 'company', '-created_at'], name='notif_user_company_recent')]
+
+
+class IntegrationFailureAlert(models.Model):
+    """Delivery state for actionable integration-failure emails.
+
+    This is intentionally separate from ``Notification``: in-app notifications
+    are an activity feed, whereas this model prevents duplicate outbound email
+    alerts and records when the 24-hour reminder is due.
+    """
+
+    class IntegrationType(models.TextChoices):
+        EMAIL = 'email', 'Email'
+        NETSUITE = 'netsuite', 'NetSuite'
+        AI = 'ai', 'AI'
+
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name='integration_failure_alerts',
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='integration_failure_alerts',
+    )
+    integration_type = models.CharField(max_length=20, choices=IntegrationType.choices)
+    connection_id = models.CharField(max_length=100)
+    connection_label = models.CharField(max_length=255, blank=True, default='')
+    provider = models.CharField(max_length=100, blank=True, default='')
+    reconnect_path = models.CharField(max_length=500, blank=True, default='')
+    last_error = models.TextField(blank=True, default='')
+    is_open = models.BooleanField(default=True, db_index=True)
+    failed_at = models.DateTimeField()
+    last_delivery_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_alert_sent_at = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'integration_failure_alert'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'integration_type', 'connection_id'],
+                name='integration_failure_alert_unique_connection',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['is_open', 'last_alert_sent_at'], name='int_failure_alert_due_idx'),
+            models.Index(fields=['company', 'is_open'], name='int_failure_alert_company_idx'),
+        ]

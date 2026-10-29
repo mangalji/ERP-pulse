@@ -43,6 +43,10 @@ class CompanyActivityLogView(APIView):
             "status": row.status,
             "user_name": _actor_name(row.user) if row.activity_type == "manual" else None,
             "summary": (row.detail or {}).get("summary") or row.entity,
+            "ip_address": row.ip_address,
+            "user_agent": row.user_agent,
+            "request": (row.detail or {}).get("request"),
+            "netsuite": (row.detail or {}).get("netsuite"),
             "detail": row.detail or {},
         } for row in rows]
         return Response({

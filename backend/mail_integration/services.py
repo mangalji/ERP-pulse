@@ -200,6 +200,14 @@ class EmailIntegrationService:
                 ]
             )
 
+        from audit.integration_alerts import mark_integration_healthy
+        from audit.models import IntegrationFailureAlert
+        mark_integration_healthy(
+            integration_type=IntegrationFailureAlert.IntegrationType.EMAIL,
+            connection_id=str(integration.id),
+            company=integration.company,
+        )
+
         audit_service.log(
             module=AuditModule.SETTINGS,
             action=AuditAction.CONNECT,
@@ -223,6 +231,18 @@ class EmailIntegrationService:
         integration.status = EmailIntegration.Status.ERROR
         integration.last_error = error_message[:2000]
         integration.save(update_fields=["status", "last_error", "updated_at"])
+        from audit.integration_alerts import report_integration_failure
+        from audit.models import IntegrationFailureAlert
+        report_integration_failure(
+            integration_type=IntegrationFailureAlert.IntegrationType.EMAIL,
+            connection_id=str(integration.id),
+            company=integration.company,
+            owner=integration.created_by,
+            connection_label=integration.display_name or integration.mailbox_email,
+            provider=integration.provider,
+            error=integration.last_error,
+            reconnect_path='/app/integrations/email',
+        )
 
     def activate(self, *, user: User, integration_id):
         self._ensure_operational(user=user)
@@ -307,6 +327,13 @@ class EmailIntegrationService:
                 "updated_at",
             ]
         )
+        from audit.integration_alerts import mark_integration_healthy
+        from audit.models import IntegrationFailureAlert
+        mark_integration_healthy(
+            integration_type=IntegrationFailureAlert.IntegrationType.EMAIL,
+            connection_id=str(integration.id),
+            company=integration.company,
+        )
         return integration
 
     def reconnect_url(self, *, user: User, integration_id) -> tuple[EmailIntegration, str]:
@@ -336,5 +363,13 @@ class EmailIntegrationService:
                 "access_token", "refresh_token", "access_token_expires_at",
                 "provider_metadata", "status", "last_error", "consecutive_failures", "updated_at",
             ]
+        )
+        from audit.integration_alerts import mark_integration_healthy
+        from audit.models import IntegrationFailureAlert
+
+        mark_integration_healthy(
+            integration_type=IntegrationFailureAlert.IntegrationType.EMAIL,
+            connection_id=str(integration.id),
+            company=integration.company,
         )
         return integration

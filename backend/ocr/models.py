@@ -583,6 +583,14 @@ class AIConfiguration(models.Model):
     model = models.CharField(max_length=255)
     api_key = EncryptedTextField(default="", blank=True)
     is_active = models.BooleanField(default=False)
+    configured_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="configured_ai_connections",
+    )
+    last_error = models.TextField(default="", blank=True)
     last_tested_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

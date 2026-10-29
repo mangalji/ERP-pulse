@@ -12,6 +12,7 @@ from ocr.notebook_extraction_service import (
     build_prompt,
     resolve_field_config,
     _apply_template_default_values,
+    _build_email_vendor_bill_prompt,
 )
 
 
@@ -77,6 +78,49 @@ class OCRTemplateDefaultValueTests(SimpleTestCase):
             })
 
 
+class OCRCalculatedValueTests(SimpleTestCase):
+    def test_calculates_line_and_invoice_values_from_source_inputs(self):
+        from ocr.services.calculated_values import apply_calculated_values
+
+        result = apply_calculated_values({
+            "total_tax_amount": None,
+            "amount": None,
+            "line_items": [{
+                "item": "Laptops",
+                "quantity": 20,
+                "unit_price": 30000,
+                "subtotal": None,
+                "tax_rate": 18,
+                "tax_amount": None,
+                "total_amount": None,
+            }],
+        })
+
+        line = result["line_items"][0]
+        self.assertEqual(line["subtotal"], 600000)
+        self.assertEqual(line["tax_amount"], 108000)
+        self.assertEqual(line["total_amount"], 708000)
+        self.assertEqual(result["total_tax_amount"], 108000)
+        self.assertEqual(result["amount"], 708000)
+
+    def test_preserves_explicit_values_during_review_persistence(self):
+        from ocr.services.calculated_values import apply_calculated_values
+
+        result = apply_calculated_values({
+            "amount": 999,
+            "line_items": [{
+                "quantity": 2,
+                "unit_price": 50,
+                "subtotal": 80,
+                "total_amount": 80,
+            }],
+        }, overwrite=False)
+
+        self.assertEqual(result["line_items"][0]["subtotal"], 80)
+        self.assertEqual(result["line_items"][0]["total_amount"], 80)
+        self.assertEqual(result["amount"], 999)
+
+
 class OCRDateFallbackPromptTests(SimpleTestCase):
     def test_single_date_fallback_uses_supplied_email_received_date(self):
         prompt = build_prompt(
@@ -118,17 +162,68 @@ class OCREmailReceivedDateFallbackTests(SimpleTestCase):
         self.assertEqual(result["invoice_date"], "2026-10-27")
         self.assertEqual(result["due_date"], "2026-11-06")
 
-    def test_existing_invoice_date_is_never_overwritten(self):
+
+class OCREmailVendorBillPromptTests(SimpleTestCase):
+    def test_email_prompt_classifies_and_handles_free_form_bill_lines(self):
+        extraction_contract = build_prompt(
+            {"invoice_date": "Invoice issue date", "due_date": "Payment due date"},
+            {"item": "Item", "quantity": "Quantity", "unit_price": "Unit price"},
+            True,
+            {"invoice_date": "date", "due_date": "date"},
+            {"item": "text", "quantity": "number", "unit_price": "currency"},
+        )
+
+        prompt = _build_email_vendor_bill_prompt(
+            extraction_contract=extraction_contract,
+            email_body="Please arrange two consulting sessions at 5000 each.",
+        )
+
+        self.assertIn("sender has already been matched to an active NetSuite vendor", prompt)
+        self.assertIn("conversational prose", prompt)
+        self.assertIn("missing quantity is valid for services", prompt)
+        self.assertIn("missing price is valid", prompt)
+        self.assertIn("mailbox received date", prompt)
+        self.assertIn('"is_vendor_bill"', prompt)
+        self.assertIn("follow-ups", prompt)
+        self.assertIn("clear transaction or procurement intent", prompt)
+
+    @patch("ocr.notebook_extraction_service.ai_configuration_service.resolve_provider")
+    def test_email_extractor_returns_terminal_non_bill_classification(self, resolve_provider):
+        from ocr.notebook_extraction_service import NotebookGeminiExtractor
+
+        provider = resolve_provider.return_value
+        provider.generate_structured_json.return_value = {
+            "is_vendor_bill": False,
+            "data": None,
+        }
+
+        result = NotebookGeminiExtractor().extract_email_text(
+            "Can you confirm the delivery status for last week's order?",
+            requested_fields={"standard_fields": ["invoice_date"], "custom_fields": []},
+            company=Mock(),
+            email_received_at=datetime(2026, 10, 28, 10, 0),
+            timeout=1,
+            max_retries=0,
+        )
+
+        self.assertEqual(result, {"is_vendor_bill": False, "data": None})
+        request = provider.generate_structured_json.call_args.kwargs
+        self.assertIn('"is_vendor_bill"', request["prompt"])
+        self.assertIn("data", request["schema"]["properties"])
+        self.assertTrue(request["schema"]["properties"]["data"]["nullable"])
+
+    def test_mailbox_date_overrides_extracted_invoice_date(self):
         from ocr.notebook_extraction_service import _apply_email_received_date_fallback
 
-        data = {"invoice_date": "2026-10-20"}
+        data = {"invoice_date": "2026-10-20", "due_date": "2026-11-06"}
         result = _apply_email_received_date_fallback(
             data,
             ("invoice_date",),
             email_received_at=datetime(2026, 10, 27, 12, 34),
         )
 
-        self.assertEqual(result["invoice_date"], "2026-10-20")
+        self.assertEqual(result["invoice_date"], "2026-10-27")
+        self.assertEqual(result["due_date"], "2026-11-06")
 
 
 class OCRPostingRetrySafetyTests(SimpleTestCase):

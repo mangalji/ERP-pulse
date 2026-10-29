@@ -25,6 +25,7 @@ from django.conf import settings
 from django.utils import timezone
 from ocr.ai.providers import AIProviderError
 from ocr.ai.service import ai_configuration_service
+from ocr.services.calculated_values import apply_calculated_values
 
 from ocr.exceptions import (
     GeminiConnectionException,
@@ -770,16 +771,15 @@ def _apply_email_received_date_fallback(
     *,
     email_received_at: datetime | None,
 ) -> dict[str, Any]:
-    """Fill a missing invoice date from the mailbox timestamp.
+    """Apply the mailbox receipt date as the invoice date for email input.
 
     The email receipt time is application-owned evidence, unlike a value
-    inferred by the model. Therefore it is safe to use only when the selected
-    template requests ``invoice_date`` and the AI left that field empty.
-    A source-provided invoice date is always preserved.
+    inferred by the model. The automated-email workflow defines the mailbox
+    receipt date as the invoice date, so it deliberately overrides an AI
+    extracted value and a template default. A source-provided due date remains
+    untouched and optional.
     """
-    if "invoice_date" not in header_keys or not _is_empty_extracted_value(
-        data.get("invoice_date")
-    ):
+    if "invoice_date" not in header_keys:
         return data
     if email_received_at is None:
         return data
@@ -791,6 +791,69 @@ def _apply_email_received_date_fallback(
     )
     data["invoice_date"] = received_date.isoformat()
     return data
+
+
+def _build_email_vendor_bill_prompt(*, extraction_contract: str, email_body: str) -> str:
+    """Build the email-only extraction instruction without changing file OCR.
+
+    NetSuite sender-email resolution has already established the vendor before
+    this prompt is used.  A known vendor can still send ordinary messages, so
+    this one email-specific request both classifies the message and extracts
+    data only when the message is a vendor-bill instruction.
+    """
+    return f"""You are assessing an email from a known NetSuite vendor for a possible Vendor Bill.
+The sender has already been matched to an active NetSuite vendor, but that alone
+does NOT mean this particular message is a vendor bill.
+
+First decide whether the message represents a concrete billable purchase,
+invoice, order, supply request, charge, or payment request. Return
+"is_vendor_bill": true only when all of the following are supported by the
+email:
+1. there is clear transaction or procurement intent;
+2. at least one specific product or service is being requested, supplied, or
+   billed; and
+3. at least one commercial detail is present for a line: quantity, rate/price,
+   amount, or an explicit statement that the line is free or zero-value.
+
+Return "is_vendor_bill": false for ordinary follow-ups, reminders, delivery
+status questions, availability or price enquiries, general discussions, or
+messages that merely reference a prior invoice/order without requesting,
+supplying, or billing a concrete line. When false, return data as null and do
+not attempt extraction.
+
+When true, extract the information present in the email body into the
+configured schema. Email messages can be invoices, purchase instructions,
+short requests, conversational prose, tables, or a mixture of formats.
+
+Identify every distinct product or service line that is explicitly supported by
+the message, even when the information is written naturally rather than in
+columns.
+Where the configured extraction contract refers to visible source rows, cells,
+or columns, interpret that for an email as each separately described product or
+service in prose or a table. Do not require a tabular layout.
+
+For each line, return only values that the message supports:
+- identify the product or service name;
+- extract quantity when stated; a missing quantity is valid for services;
+- extract a unit rate or price when stated; a missing price is valid for a
+  no-charge item or service;
+- preserve an explicit line amount; when a requested amount is not explicitly
+  present, leave that field empty rather than deriving it;
+- do not use zero for a missing number unless the message explicitly states
+  that the line is free or has a zero value.
+
+The mailbox received date is supplied by the application and is always the
+invoice date. Extract a due date only when the email explicitly provides one.
+Vendor identity is supplied by the matched NetSuite vendor, so do not infer or
+replace it from email text. Subsidiary and location are optional email values
+and may be populated later from the matched vendor.
+
+{extraction_contract}
+
+EMAIL BODY START
+{email_body}
+EMAIL BODY END
+"""
 
 def build_prompt(
     header_fields: dict[str, str],
@@ -817,7 +880,7 @@ def build_prompt(
 - Never merge, collapse, skip, duplicate, or summarize separate rows.
 - Read each requested line field from its own corresponding source cell/column for that row.
 - Do not fill a missing line field by copying a value from another row, header, footer, or nearby column.
-- Do not calculate or derive a missing value from other values. For example, do not calculate unit price from amount and quantity, do not calculate tax from tax rate, and do not add tax to the amount column.
+- Extract only values that are directly supported by the source. Do not perform arithmetic for subtotal, tax, or totals; leave a derived field null when it is not explicitly shown. The application calculates derived financial fields deterministically after extraction.
 - If a requested line field has no directly supported value in that source row, return null for that field.
 - Preserve complete visible row information only within the fields the template requested.
 - Before finalizing, recount visible source rows and compare that count with line_items."""
@@ -961,7 +1024,12 @@ class NotebookGeminiExtractor:
                     line_types,
                     line_keys,
                 )
+                result = apply_calculated_values(result)
                 result = _apply_template_default_values(result, requested_fields)
+
+                if company is not None:
+                    from audit.integration_alerts import mark_ai_healthy
+                    mark_ai_healthy(company=company)
 
                 logger.info(
                     "Company AI OCR extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
@@ -1023,6 +1091,9 @@ class NotebookGeminiExtractor:
                 )
 
                 if not should_retry or attempt >= effective_max_retries:
+                    if company is not None:
+                        from audit.integration_alerts import report_ai_connection_failure
+                        report_ai_connection_failure(company=company, error=exc)
                     raise classified from last_exception
 
                 if wait_seconds:
@@ -1056,10 +1127,11 @@ class NotebookGeminiExtractor:
         timeout: float | None = None,
         max_retries: int | None = None,
     ) -> dict[str, Any]:
-        """Classify and extract an email body in one provider request.
+        """Extract a sender-verified vendor email with its own prompt.
 
         The exact template contract, schema construction and datatype
-        normalization used for file OCR are deliberately reused here.
+        normalization used for file OCR are deliberately reused here, while
+        the email prompt remains independent from file extraction behaviour.
         """
         (
             header_fields,
@@ -1073,7 +1145,7 @@ class NotebookGeminiExtractor:
                 "No company context was supplied for OCR AI configuration."
             )
         if not isinstance(email_body, str) or not email_body.strip():
-            return {"is_vendor_bill": False, "data": None}
+            raise GeminiValidationException("A sender-matched email has no readable body to extract.")
 
         effective_timeout = self.timeout if timeout is None else timeout
         effective_max_retries = self.max_retries if max_retries is None else max_retries
@@ -1091,7 +1163,10 @@ class NotebookGeminiExtractor:
             "type": "object",
             "properties": {
                 "is_vendor_bill": {"type": "boolean"},
-                "data": {**extraction_schema, "nullable": True},
+                "data": {
+                    **extraction_schema,
+                    "nullable": True,
+                },
             },
             "required": ["is_vendor_bill", "data"],
         }
@@ -1109,27 +1184,10 @@ class NotebookGeminiExtractor:
                 else None
             ),
         )
-        prompt = f"""You are deciding whether an incoming EMAIL BODY is a vendor bill.
-Classify it as a vendor bill ONLY when the body itself explicitly contains:
-- at least one date (for example, an invoice/bill date or due date);
-- at least one distinct item or line with an amount (the amount may be 0).
-The sender email is resolved to a NetSuite vendor separately, so a company or
-vendor name is optional in the email body. Subsidiary and location are also
-optional: extract them when explicitly present, but do not require them to
-classify the email as a vendor bill. Do not infer, derive, or assume any missing
-requirement. Vendor, company, subsidiary and item matching against NetSuite
-remains the later validation step. If either required signal is absent, it is not
-a vendor bill. If it is not a vendor bill, return exactly
-{{\"is_vendor_bill\": false, \"data\": null}}. If it is a vendor bill, return
-{{\"is_vendor_bill\": true, \"data\": <the extraction JSON>}} and apply this
-extraction contract to data:
-
-{extraction_prompt}
-
-EMAIL BODY START
-{email_body}
-EMAIL BODY END
-"""
+        prompt = _build_email_vendor_bill_prompt(
+            extraction_contract=extraction_prompt,
+            email_body=email_body,
+        )
         provider = ai_configuration_service.resolve_provider(company=company)
         request_id = uuid.uuid4().hex[:8]
         last_exception: Exception | None = None
@@ -1139,22 +1197,31 @@ EMAIL BODY END
                 response = provider.generate_structured_json(
                     prompt=prompt, schema=schema, timeout=effective_timeout
                 )
-                is_vendor_bill = response.get("is_vendor_bill") is True
-                if not is_vendor_bill:
-                    return {"is_vendor_bill": False, "data": None}
-                raw_data = response.get("data")
-                if not isinstance(raw_data, dict):
-                    raise GeminiValidationException(
-                        "AI marked the email as a vendor bill but returned no extraction data."
+                if not isinstance(response, dict):
+                    raise GeminiValidationException("AI email extraction did not return a JSON object.")
+                if response.get("is_vendor_bill") is not True:
+                    logger.info(
+                        "Company AI email classified message as not a vendor bill — request_id=%s attempt=%d duration_ms=%.2f",
+                        request_id, attempt + 1, (time.perf_counter() - start) * 1000,
                     )
-                data = _normalize_result(raw_data, header_keys, line_keys, include_line_items)
+                    return {"is_vendor_bill": False, "data": None}
+                extracted_data = response.get("data")
+                if not isinstance(extracted_data, dict):
+                    raise GeminiValidationException(
+                        "AI classified the email as a vendor bill but did not return extraction data."
+                    )
+                data = _normalize_result(extracted_data, header_keys, line_keys, include_line_items)
                 data = _apply_datatype_normalization(data, header_types, line_types, line_keys)
+                data = apply_calculated_values(data)
+                data = _apply_template_default_values(data, requested_fields)
                 data = _apply_email_received_date_fallback(
                     data,
                     header_keys,
                     email_received_at=email_received_at,
                 )
-                data = _apply_template_default_values(data, requested_fields)
+                if company is not None:
+                    from audit.integration_alerts import mark_ai_healthy
+                    mark_ai_healthy(company=company)
                 logger.info(
                     "Company AI email extraction completed — request_id=%s attempt=%d duration_ms=%.2f",
                     request_id, attempt + 1, (time.perf_counter() - start) * 1000,
@@ -1177,6 +1244,9 @@ EMAIL BODY END
                     classified = GeminiValidationException(f"AI provider request failed: {exc}")
                     should_retry, wait_seconds = False, 0
                 if not should_retry or attempt >= effective_max_retries:
+                    if company is not None:
+                        from audit.integration_alerts import report_ai_connection_failure
+                        report_ai_connection_failure(company=company, error=exc)
                     raise classified from exc
                 time.sleep(wait_seconds)
             except Exception as exc:

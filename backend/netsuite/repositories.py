@@ -196,6 +196,14 @@ class NetSuiteConnectionRepository:
                 'access_token', 'refresh_token', 'access_token_expires_at','refresh_token_expires_at','status', "consecutive_failures", "last_error", 'updated_at',
             ]
         )
+        from audit.integration_alerts import mark_integration_healthy
+        from audit.models import IntegrationFailureAlert
+
+        mark_integration_healthy(
+            integration_type=IntegrationFailureAlert.IntegrationType.NETSUITE,
+            connection_id=str(connection.id),
+            company=connection.company,
+        )
         return connection
 
     def mark_token_invalid(
@@ -233,6 +241,20 @@ class NetSuiteConnectionRepository:
                 "updated_at",
             ]
         )
+        from audit.integration_alerts import report_integration_failure
+        from audit.models import IntegrationFailureAlert
+
+        report_integration_failure(
+            integration_type=IntegrationFailureAlert.IntegrationType.NETSUITE,
+            connection_id=str(connection.id),
+            company=connection.company,
+            owner=connection.user,
+            connection_label=connection.client_name or connection.netsuite_account_id,
+            provider="NetSuite",
+            error=connection.last_error,
+            reconnect_path="/app/integrations/netsuite",
+        )
+        return connection
         
     def get_by_id(self,user:User,connection_id)-> NetSuiteConnection | None:
         return NetSuiteConnection.objects.filter(
@@ -354,6 +376,14 @@ class NetSuiteConnectionRepository:
             connection.status = 'connected'
             update_fields.append('status')
         connection.save(update_fields=update_fields)
+        from audit.integration_alerts import mark_integration_healthy
+        from audit.models import IntegrationFailureAlert
+
+        mark_integration_healthy(
+            integration_type=IntegrationFailureAlert.IntegrationType.NETSUITE,
+            connection_id=str(connection.id),
+            company=connection.company,
+        )
         return connection
 
     def record_sync_failure(self, connection: NetSuiteConnection, *, error_message: str) -> NetSuiteConnection:
@@ -366,6 +396,20 @@ class NetSuiteConnectionRepository:
             connection.status = 'error'
             update_fields.append('status')
         connection.save(update_fields=update_fields)
+        if connection.status == 'error':
+            from audit.integration_alerts import report_integration_failure
+            from audit.models import IntegrationFailureAlert
+
+            report_integration_failure(
+                integration_type=IntegrationFailureAlert.IntegrationType.NETSUITE,
+                connection_id=str(connection.id),
+                company=connection.company,
+                owner=connection.user,
+                connection_label=connection.client_name or connection.netsuite_account_id,
+                provider="NetSuite",
+                error=connection.last_error,
+                reconnect_path="/app/integrations/netsuite",
+            )
         return connection
 
     def touch_last_used(self, connection: NetSuiteConnection) -> NetSuiteConnection:

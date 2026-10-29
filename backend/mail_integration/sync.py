@@ -460,3 +460,16 @@ class EmailSyncService:
             from audit.notifications import notify
             message = f'Email connection {integration.mailbox_email} needs to be reconnected.' if authorization_error else f'Email sync failed for {integration.mailbox_email}; it will be retried.'
             notify(integration.created_by_id, integration.company_id, message, '/app/integrations/email', activity_type='automated')
+            if authorization_error:
+                from audit.integration_alerts import report_integration_failure
+                from audit.models import IntegrationFailureAlert
+                report_integration_failure(
+                    integration_type=IntegrationFailureAlert.IntegrationType.EMAIL,
+                    connection_id=str(integration.id),
+                    company=integration.company,
+                    owner=integration.created_by,
+                    connection_label=integration.display_name or integration.mailbox_email,
+                    provider=integration.provider,
+                    error=integration.last_error,
+                    reconnect_path='/app/integrations/email',
+                )

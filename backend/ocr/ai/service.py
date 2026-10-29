@@ -147,8 +147,19 @@ class AIConfigurationService:
         configuration.model = model
         configuration.api_key = api_key
         configuration.is_active = True
+        configuration.configured_by = user
+        configuration.last_error = ""
         configuration.last_tested_at = timezone.now()
         configuration.save()
+
+        from audit.integration_alerts import mark_integration_healthy
+        from audit.models import IntegrationFailureAlert
+
+        mark_integration_healthy(
+            integration_type=IntegrationFailureAlert.IntegrationType.AI,
+            connection_id=str(configuration.id),
+            company=company,
+        )
 
         audit_service.log(
             module=AuditModule.AI,
@@ -189,14 +200,25 @@ class AIConfigurationService:
         # Disconnect means credentials are removed, not merely hidden.
         configuration.api_key = ""
         configuration.is_active = False
+        configuration.last_error = ""
         configuration.last_tested_at = None
         configuration.save(
             update_fields=[
                 "api_key",
                 "is_active",
+                "last_error",
                 "last_tested_at",
                 "updated_at",
             ]
+        )
+
+        from audit.integration_alerts import mark_integration_healthy
+        from audit.models import IntegrationFailureAlert
+
+        mark_integration_healthy(
+            integration_type=IntegrationFailureAlert.IntegrationType.AI,
+            connection_id=str(configuration.id),
+            company=company,
         )
 
         audit_service.log(

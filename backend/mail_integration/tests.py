@@ -64,6 +64,99 @@ class EmailValidationFlowTests(SimpleTestCase):
 
 
 class SenderEmailVendorResolutionTests(SimpleTestCase):
+    @patch("mail_integration.pipeline.audit_service.log")
+    @patch("mail_integration.pipeline.notebook_gemini_extractor.extract_email_text")
+    @patch("mail_integration.pipeline.NetSuiteValidationService")
+    @patch("mail_integration.pipeline.NetSuiteConnectionRepository")
+    def test_unmatched_sender_is_terminal_without_an_ai_request(
+        self, repository, validation_service, extract_email, audit_log,
+    ):
+        """Ordinary mailbox traffic must never consume an AI extraction call."""
+        user = Mock()
+        template = Mock(fields_config={"standard_fields": ["vendor_name"]})
+        integration = Mock(created_by=user, ocr_template=template, company=Mock())
+        message = Mock(
+            id="4a3a0d89-6af9-4a63-8fc7-4d7d4717b20c",
+            integration=integration,
+            lease_owner="lease-1",
+            sender_email="unknown@example.com",
+            subject="Ordinary mailbox message",
+            provider_message_id="provider-message-1",
+            internet_message_id="internet-message-1",
+            sent_at=None,
+            received_at=None,
+        )
+        repository.return_value.get_for_user.return_value = Mock()
+        validation_service.return_value.resolve_vendor_from_sender_email.return_value = {
+            "matched": False,
+            "reason": "vendor_email_not_found",
+        }
+        pipeline = EmailBillPipeline()
+
+        with patch.object(pipeline, "_claim", return_value=message), \
+             patch.object(pipeline, "_mark_terminal") as mark_terminal:
+            result = pipeline.process_message(message_id=message.id)
+
+        self.assertEqual(result, "discarded")
+        extract_email.assert_not_called()
+        mark_terminal.assert_called_once_with(
+            message_id=message.id,
+            lease_owner="lease-1",
+            integration=integration,
+            is_vendor_bill=False,
+            extracted_data=None,
+        )
+        audit_log.assert_called_once()
+
+    @patch("mail_integration.pipeline.audit_service.log")
+    @patch("mail_integration.pipeline.notebook_gemini_extractor.extract_email_text")
+    @patch("mail_integration.pipeline.NetSuiteValidationService")
+    @patch("mail_integration.pipeline.NetSuiteConnectionRepository")
+    def test_matched_vendor_normal_email_is_terminal_after_one_ai_classification(
+        self, repository, validation_service, extract_email, audit_log,
+    ):
+        """A vendor follow-up must not become an OCR bill merely because its sender matches."""
+        user = Mock()
+        template = Mock(fields_config={"standard_fields": ["vendor_name"]})
+        integration = Mock(created_by=user, ocr_template=template, company=Mock())
+        message = Mock(
+            id="9ba8a3f9-28ab-4c7d-a873-96f735d0f8ac",
+            integration=integration,
+            lease_owner="lease-2",
+            sender_email="vendor@example.com",
+            subject="Delivery status follow-up",
+            provider_message_id="provider-message-2",
+            internet_message_id="internet-message-2",
+            normalized_body="Can you confirm the delivery status for our earlier order?",
+            raw_body="Can you confirm the delivery status for our earlier order?",
+            received_at=timezone.now(),
+            sent_at=None,
+            is_vendor_bill=None,
+            ai_extracted_data_json=None,
+        )
+        repository.return_value.get_for_user.return_value = Mock()
+        validation_service.return_value.resolve_vendor_from_sender_email.return_value = {
+            "matched": True,
+            "vendor_id": "102",
+        }
+        extract_email.return_value = {"is_vendor_bill": False, "data": None}
+        pipeline = EmailBillPipeline()
+
+        with patch.object(pipeline, "_claim", return_value=message), \
+             patch.object(pipeline, "_mark_terminal") as mark_terminal:
+            result = pipeline.process_message(message_id=message.id)
+
+        self.assertEqual(result, "discarded")
+        extract_email.assert_called_once()
+        mark_terminal.assert_called_once_with(
+            message_id=message.id,
+            lease_owner="lease-2",
+            integration=integration,
+            is_vendor_bill=False,
+            extracted_data=None,
+        )
+        audit_log.assert_called_once()
+
     @patch("netsuite.services._build_template_netsuite_mappings")
     def test_sender_email_uses_latest_active_vendor_and_overrides_extraction(self, mappings):
         mappings.return_value = [{
@@ -93,7 +186,7 @@ class SenderEmailVendorResolutionTests(SimpleTestCase):
         self.assertIn("ORDER BY id DESC", suiteql.call_args.kwargs["query"])
 
     @patch("netsuite.services._build_template_netsuite_mappings")
-    def test_sender_email_without_vendor_keeps_record_for_manual_review(self, mappings):
+    def test_sender_email_without_vendor_is_reported_as_unmatched(self, mappings):
         mappings.return_value = [{
             "source_scope": "header",
             "target_field_id": "entity",

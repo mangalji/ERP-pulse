@@ -16,6 +16,7 @@ from ocr.models import (
     OCRDocumentVersion,
     GeneratedInvoiceNumber,
 )
+from ocr.services.calculated_values import apply_calculated_values
 
 def _nullable_string(value):
     if value is None:
@@ -178,6 +179,13 @@ def persist_extraction(*, upload=None, document=None, batch=None, user=None, res
     # reviews retain their values and an explicit user edit is never replaced.
     if not document.versions.exists():
         _apply_initial_defaults(result, reviewed_result)
+
+    # Fill legacy/null derived values at persistence time too. Explicit user
+    # values and template defaults are preserved here; new extraction output is
+    # calculated before defaults are applied in the extraction service.
+    result = apply_calculated_values(result, overwrite=False)
+    if reviewed_result is not None:
+        reviewed_result = apply_calculated_values(reviewed_result, overwrite=False)
 
     effective_result = reviewed_result if reviewed_result is not None else result
     normalized = normalize_extraction_payload(effective_result)

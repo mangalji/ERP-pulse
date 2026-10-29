@@ -13,11 +13,17 @@ from mail_integration.models import EmailIntegration
 def email_scheduler_heartbeat():
     """Beat dispatches this task; a worker records proof of execution."""
     record_scheduler_heartbeat()
+    # This also catches connections that became unhealthy while a worker or
+    # scheduler was down; no request needs to be made for the alert to resume.
+    from audit.integration_alerts import check_integration_failure_alerts
+    check_integration_failure_alerts()
 
 
 @shared_task
 def sync_due_mailboxes():
     """Stage new messages, then promote due email bills FIFO."""
+    from audit.integration_alerts import check_integration_failure_alerts
+    check_integration_failure_alerts()
     sync = EmailSyncService().sync_due_integrations()
     pipeline = EmailBillPipeline().process_due_messages()
     sync_details = sync.pop("by_integration", {})
