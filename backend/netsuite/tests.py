@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase
 
@@ -300,6 +301,49 @@ class NetSuiteFieldCatalogueTests(SimpleTestCase):
 
 
 class VendorReferenceEnrichmentTests(SimpleTestCase):
+    def test_subsidiary_currency_overrides_ai_and_template_values(self):
+        service = NetSuiteValidationService()
+        connection = SimpleNamespace(status="connected", is_active=True)
+        mappings = [
+            {"source_scope": "header", "target_field_id": "subsidiary", "source_field_key": "company_unit"},
+            {"source_scope": "header", "target_field_id": "currency", "source_field_key": "bill_currency"},
+        ]
+        service.enrich_missing_vendor_references = Mock(return_value={"changed": {}, "reason": None})
+        service._resolve_select_field_live = Mock(return_value="3")
+        service._execute_live_suiteql = Mock(return_value={"items": [{"id": "7", "symbol": "INR", "name": "Indian Rupee"}]})
+        data = {"company_unit": "India", "bill_currency": "USD"}
+        with patch("netsuite.services._build_template_netsuite_mappings", return_value=mappings):
+            result = service.enrich_transaction_references(
+                data=data, requested_fields={}, user=None, connection=connection,
+            )
+        self.assertEqual(data["bill_currency"], "INR")
+        self.assertEqual(result["changed"]["currency"]["netsuite_id"], "7")
+
+    def test_vendor_enrichment_runs_before_currency_and_failure_clears_ai_currency(self):
+        service = NetSuiteValidationService()
+        connection = SimpleNamespace(status="connected", is_active=True)
+        def enrich(**kwargs):
+            kwargs["data"]["subsidiary"] = {"id": "3"}
+            return {"changed": {"subsidiary": {"value": "India"}}, "reason": "enriched"}
+        service.enrich_missing_vendor_references = Mock(side_effect=enrich)
+        service._execute_live_suiteql = Mock(return_value={"items": []})
+        mappings = [
+            {"source_scope": "header", "target_field_id": key, "source_field_key": key}
+            for key in ("subsidiary", "currency")
+        ]
+        data = {"currency": "USD"}
+        with patch("netsuite.services._build_template_netsuite_mappings", return_value=mappings):
+            result = service.enrich_transaction_references(
+                data=data, requested_fields={}, user=None, connection=connection,
+            )
+        self.assertIsNone(data["currency"])
+        self.assertEqual(result["reason"], "subsidiary_currency_lookup_error")
+
+    def test_currency_lookup_rejects_missing_subsidiary(self):
+        service = NetSuiteValidationService()
+        with self.assertRaises(ValueError):
+            service._fetch_subsidiary_currency_live(connection=None, subsidiary_id=None)
+
     def test_accepts_a_single_vendor_reference(self):
         reference = NetSuiteValidationService._reference_candidate(
             {"id": "15", "refName": "Pune"}

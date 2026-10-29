@@ -275,7 +275,7 @@ class EmailBillPipeline:
             # Resolve missing vendor defaults before taking the message lock.
             # This can make a NetSuite request, and holding a row lock while
             # waiting for an external service would unnecessarily block retry.
-            enrichment = validation_service.enrich_missing_vendor_references(
+            enrichment = validation_service.enrich_transaction_references(
                 data=data,
                 # The OCR batch is created only after enrichment succeeds.
                 # Use the selected integration template here; the same

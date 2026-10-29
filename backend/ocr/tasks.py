@@ -1237,7 +1237,7 @@ def _persist_success(
     try:
         from netsuite.services import NetSuiteValidationService
 
-        enrichment = NetSuiteValidationService().enrich_missing_vendor_references(
+        enrichment = NetSuiteValidationService().enrich_transaction_references(
             data=result,
             requested_fields=requested_fields,
             user=upload.user,

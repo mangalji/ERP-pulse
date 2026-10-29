@@ -1825,6 +1825,12 @@ class NetSuiteVendorBillPostingService:
 
         validation_service = NetSuiteValidationService()
 
+        mapped_body_fields = {
+            str(mapping.get("target_field_id") or "").strip().lower()
+            for mapping in body_field_mappings
+        }
+        use_subsidiary_currency = {"subsidiary", "currency"}.issubset(mapped_body_fields)
+
         # NetSuite computes these Vendor Bill fields itself from the line
         # items / tax details sublist — they're read-only on the record,
         # not something the REST API accepts as direct input. If a field
@@ -1854,6 +1860,9 @@ class NetSuiteVendorBillPostingService:
                 continue
 
             target_field_key = target_field_id.strip().lower()
+            if target_field_key == "currency" and use_subsidiary_currency:
+                # Set from the final resolved subsidiary below, including after review edits.
+                continue
             if target_field_key in {"entity", "vendor"}:
                 # The template must explicitly map its vendor source field to
                 # Entity/Vendor.  The validated internal ID, rather than OCR
@@ -1976,6 +1985,13 @@ class NetSuiteVendorBillPostingService:
             payload["item"] = {"items":payload_items}
 
         # Stable reconciliation identity across versions and interrupted attempts.
+        if use_subsidiary_currency:
+            subsidiary_id = (payload.get("subsidiary") or {}).get("id")
+            currency = validation_service._fetch_subsidiary_currency_live(
+                connection=connection, subsidiary_id=subsidiary_id,
+            )
+            payload["currency"] = {"id": currency["id"]}
+
         payload['externalId'] = f'agsuite-vb-{company.pk}-{document.pk}'
 
 
@@ -3498,6 +3514,72 @@ class NetSuiteValidationService:
             if reference.get("name"):
                 defaults[field_name] = reference
         return defaults
+
+    def _fetch_subsidiary_currency_live(self, *, connection, subsidiary_id):
+        """Read the subsidiary's base currency, never the vendor/AI currency."""
+        literal = self._suiteql_id_literal(subsidiary_id)
+        if literal is None:
+            raise ValueError("A valid subsidiary ID is required to fetch currency.")
+        response = self._execute_live_suiteql(
+            connection=connection,
+            query=(
+                "SELECT c.id, c.symbol, c.name FROM subsidiary s "
+                "JOIN currency c ON c.id = s.currency "
+                f"WHERE s.id = {literal} AND c.isinactive = 'F'"
+            ),
+            limit=2,
+        )
+        rows = response.get("items", []) if isinstance(response, dict) else []
+        if len(rows) != 1 or not rows[0].get("id"):
+            raise ValueError("Could not fetch an active currency for the subsidiary.")
+        row = rows[0]
+        return {"id": str(row["id"]), "name": row.get("symbol") or row.get("name") or str(row["id"])}
+
+    def enrich_transaction_references(self, *, data, requested_fields, user, connection=None):
+        """Fill vendor references, then override mapped currency from subsidiary."""
+        outcome = self.enrich_missing_vendor_references(
+            data=data, requested_fields=requested_fields, user=user, connection=connection,
+        )
+        if not isinstance(data, dict):
+            return outcome
+        currency_key = None
+        try:
+            active_connection = connection or self.repository.get_for_user(user)
+            if not active_connection or active_connection.status != "connected" or not active_connection.is_active:
+                return outcome
+            mappings = _build_template_netsuite_mappings(
+                requested_fields, connection=active_connection, record_type="vendorBill",
+            )
+            fields = {
+                str(mapping.get("target_field_id") or "").lower(): mapping["source_field_key"]
+                for mapping in mappings
+                if str(mapping.get("source_scope") or "").lower() in {"header", "body"}
+            }
+            currency_key = fields.get("currency")
+            subsidiary = data.get(fields.get("subsidiary"))
+            if not currency_key or self._is_missing_reference_value(subsidiary):
+                return outcome
+            # Clear stale AI/template currency if the authoritative lookup fails.
+            data[currency_key] = None
+            subsidiary_id = subsidiary.get("id") if isinstance(subsidiary, dict) else None
+            if not subsidiary_id:
+                reference = self._reference_candidate(subsidiary)
+                subsidiary_id = self._resolve_select_field_live(
+                    connection=active_connection, target_field_id="subsidiary",
+                    value=reference.get("name") if reference else subsidiary,
+                    require_unique=True,
+                )
+            currency = self._fetch_subsidiary_currency_live(
+                connection=active_connection, subsidiary_id=subsidiary_id,
+            )
+            data[currency_key] = currency["name"]
+            outcome["changed"]["currency"] = {"value": currency["name"], "netsuite_id": currency["id"]}
+            outcome["reason"] = "enriched"
+        except Exception as exc:
+            logger.warning("Subsidiary currency enrichment failed: %s", exc)
+            outcome["reason"] = "subsidiary_currency_lookup_error"
+            outcome["error"] = str(exc)[:1000]
+        return outcome
 
     def enrich_missing_vendor_references(
         self,
