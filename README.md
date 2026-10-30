@@ -1,503 +1,346 @@
 # AGSuite ERP
 
-![Python](https://img.shields.io/badge/Python-3.12-blue)
-![Django](https://img.shields.io/badge/Django-6.x-green)
-![DRF](https://img.shields.io/badge/DRF-REST-red)
-![React](https://img.shields.io/badge/React-19-61dafb)
-![Vite](https://img.shields.io/badge/Vite-8-646cff)
-![Status](https://img.shields.io/badge/Status-Active%20Development-yellow)
-![License](https://img.shields.io/badge/License-Private-lightgrey)
+AGSuite ERP is a multi-tenant application for invoice capture, review, and Oracle NetSuite integration. It helps finance teams turn uploaded documents and incoming vendor emails into structured, validated Vendor Bills while retaining document versions, processing history, and posting results.
 
-**AGSuite ERP** is a multi-tenant SaaS platform built with **Django REST Framework** and
-**React (Vite)**. A company signs up, connects its **Oracle NetSuite** account, and uses
-AI-assisted **OCR / data extraction** to turn invoices and other documents into validated
-NetSuite records (for example Vendor Bills), under a subscription managed by a platform
-operator (Super Admin).
+The platform includes a company workspace for administrators and employees, plus a Super Admin portal for managing tenants and subscriptions.
 
----
+## Contents
 
-## Live Deployment (Zoho Catalyst)
-
-| Layer | URL | Host |
-|-------|-----|------|
-| Frontend | https://agsuiteerp-60086947932.catalystserverless.in | Catalyst Web Client Hosting |
-| Backend API | https://agsuiteerp-50046369262.catalystappsail.in | Catalyst AppSail |
-| Database | PostgreSQL | Supabase |
-| Redis | Required for automated email processing | Broker and scheduler heartbeat; optional for some other workflows |
-
-> **Keep these in sync.** When the production URLs change, update the backend environment
-> variables `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL`
-> and `NETSUITE_REDIRECT_URI`, and the frontend variable `VITE_API_BASE_URL`
-> (see [Production configuration](#production-configuration-catalyst)).
-
----
-
-## Table of Contents
-
-- [Platform Architecture](#platform-architecture)
-- [Backend Modules](#backend-modules)
-- [Key Features](#key-features)
-- [Tech Stack](#tech-stack)
-- [Background Processing & Resilience](#background-processing--resilience)
-- [Project Structure](#project-structure)
-- [Authentication & Security](#authentication--security)
-- [Multi-Tenancy Model](#multi-tenancy-model)
-- [Local Development](#local-development)
+- [Capabilities](#capabilities)
+- [Processing workflow](#processing-workflow)
+- [Architecture](#architecture)
+- [Repository layout](#repository-layout)
+- [Local development](#local-development)
+- [Configuration](#configuration)
 - [Docker](#docker)
-- [Environment Variables](#environment-variables)
-- [Deployment](#deployment)
-- [Operations](#operations)
-- [Troubleshooting](#troubleshooting)
 - [Testing](#testing)
-- [Documentation](#documentation)
-- [Development Status](#development-status)
-- [License](#license)
+- [Deployment and operations](#deployment-and-operations)
+- [Troubleshooting](#troubleshooting)
+- [Development guidelines](#development-guidelines)
 
----
+## Capabilities
 
-## Platform Architecture
+| Area | Capabilities |
+| --- | --- |
+| Document processing | PDF and image extraction, multiple-file and ZIP uploads, configurable templates, header and line-item fields, document review and version history |
+| AI configuration | Company-level provider and model configuration for Google Gemini, OpenAI, and Anthropic |
+| NetSuite | OAuth connections, employee connection assignments, field mapping, live reference validation, Vendor Bill posting, and background batch jobs |
+| Email automation | Zoho Mail and Gmail connections, scheduled fetching, message staging and deduplication, vendor-bill processing, and validation/posting results |
+| Access management | Company-scoped access, roles, invitations, JWT authentication, email OTP, and company lifecycle controls |
+| Administration | Subscription plans, tenant administration, configurable navigation, notifications, audit records, and operational monitoring |
 
-```
-AGSuite Platform
-    │
-    ▼
-Super Admin (platform operator)
-    │
-    ▼
-Company (tenant)
-    │
-    ├── Company Admin
-    │     ├── Subscription / plan
-    │     ├── Employees
-    │     ├── NetSuite connections
-    │     └── AI configuration + OCR extraction templates
-    │
-    └── Employees
-          └── Use only the NetSuite connections assigned to them
-              (credentials are never exposed)
-```
+## Processing workflow
 
-- **Super Admin** manages companies, plans, employees and platform settings.
-- **Company Admin** manages that company's admins, employees, invitations, connections and navigation.
-- **Company (tenant)** owns all of its data; every tenant-scoped query is filtered by company.
-- **Employees** work with the connections an admin assigned; Company Admins have company-wide access and
-  do not require a connection assignment. Secrets stay server-side.
+### Document uploads
 
----
+1. Select an extraction template and upload documents.
+2. Extract structured header and line-item data using the company's AI configuration.
+3. Apply template defaults and enrich mapped references from NetSuite.
+4. Review and save the extracted data; calculate applicable line totals and taxes.
+5. Validate vendor, item, and other mapped references against the connected NetSuite account.
+6. Post a validated Vendor Bill and retain its internal ID and NetSuite record link in history.
 
-## Backend Modules
+### Automated email processing
 
-| App | Responsibility |
-|-----|----------------|
-| `accounts` | Custom user, JWT auth, email OTP (login / profile / password reset), login history |
-| `tenancy` | `Company` model, `TenantMiddleware`, company lifecycle (suspend / reactivate / soft-delete / purge) |
-| `rbac` | Roles |
-| `audit` | Audit log and user-scoped notifications |
-| `invitations` | Single-use invitation tokens with expiry, public accept flow |
-| `subscriptions` | Plan assignment and subscription lifecycle for companies |
-| `superadmin` | Platform portal API: companies, plans, employees, settings |
-| `netsuite` | OAuth 2.0 connections, token manager, REST Record API + SuiteQL, field catalogue, custom fields, OCR validation / posting, **batch validate / post jobs** |
-| `ocr` | AI extraction engine, extraction templates, batches / uploads / documents with version history, per-company AI configuration, file storage, background execution |
-| `mail_integration` | Zoho Mail / Gmail OAuth, mailbox scheduling, email staging and automated vendor-bill processing |
-| `navigation` | Admin-configurable dynamic navigation tabs |
-| `transactions` | Company transaction records |
-| `dashboard` | Company dashboard data |
-| `monitoring` | Request log, error log, API usage, health and readiness endpoints |
-| `common` | Shared utilities: email (SMTP + Brevo), field encryption, throttles, optional-Redis helpers, scheduled tasks |
-| `core` | Shared base model |
+Connect a mailbox, select its extraction template, and choose an initial synchronization date and time. Background workers fetch and stage messages, identify vendor bills, and create document history records. Valid bills proceed through validation and posting; failures remain available for review.
 
----
+The default mailbox interval is **5 minutes**. Celery Beat checks for due mailboxes every **1 minute** and dispatches a separate health heartbeat every **30 seconds**. The displayed next-check time is the mailbox's eligibility time: execution occurs on the next scheduler check and may be delayed further by worker load or provider response time.
 
-## Key Features
+### Field precedence and NetSuite references
 
-### Authentication
-- JWT access / refresh tokens, accepted from the `Authorization: Bearer` header **or** httpOnly cookies
-- Email OTP for login, profile changes and password reset
-- Login history per user
-- Automatic access-token refresh in the frontend with queued retry of concurrent 401s
+- Configured template defaults replace AI-extracted values for their fields.
+- Missing mapped subsidiary and location values can be filled from an unambiguously matched vendor's NetSuite record. Existing values are preserved by this vendor fallback.
+- When subsidiary and currency are mapped, the subsidiary's base currency replaces the extracted or template currency. Posting fetches currency again using the final resolved subsidiary and sends the NetSuite currency internal ID.
+- A failed subsidiary-currency lookup during enrichment clears the old currency value. A failed lookup during posting prevents the bill from being submitted.
+- A missing invoice number receives a database-allocated `vendor_bill_inv_<number>` on initial save. Location is resolved through extraction, configuration, or vendor enrichment; there is no hard-coded location default.
 
-### Multi-tenancy
-- `TenantMiddleware` resolves the active company for each authenticated request
-- Company lifecycle: active, suspended, soft-deleted, purged after a retention period
-- Requests for suspended or deleted companies are rejected
+Reference lookup and posting depend on the connected account's records, permissions, and transaction rules.
 
-### Invitations and subscriptions
-- Super Admin and Company Admin use the same invitation flow for their respective users
-- UUID invitation tokens with expiry, resend and a public acceptance page; pending or expired
-  invitations leave the user inactive until password setup is completed
-- Plans and company subscriptions managed from the Super Admin portal; client-side subscription page
+## Architecture
 
-### NetSuite integration
-- OAuth 2.0 Authorization Code flow; several connections per company; employee assignment
-- Encrypted credentials and tokens at rest (Fernet)
-- Concurrency-safe token refresh, connection health tracking and test connection
-- REST Record API and SuiteQL; field catalogue and custom fields
-- Validation of extracted documents against NetSuite reference data and **Vendor Bill posting**
-- **Batch validate / post** runs as a background job with live progress; it resumes after a crash and
-  never re-posts documents that already finished
-- A successful Vendor Bill post returns its NetSuite internal ID and a direct **View in NetSuite** link.
-  The browser URL is generated server-side from the connected NetSuite account ID and record ID.
-
-### OCR and data extraction
-- Upload a single file, several files, or a ZIP; PDFs and images are normalised into page images
-- **Dynamic extraction templates** per company: choose standard fields, add custom fields with their
-  own AI instruction and header / line scope
-- AI providers: **Google Gemini**, **OpenAI** and **Anthropic**, configured per company
-  (API key stored encrypted); Gemini calls are rate-limited (concurrency + requests per minute)
-- Review screen: extracted data is a draft until a user reviews and saves it
-- Save & Validate calculates line-item totals and taxes from the reviewed data before NetSuite posting
-- Repeated unmatched line items with identical line-level data are grouped for validation diagnostics,
-  so users receive one resolution instead of duplicate messages and AI diagnostics use fewer tokens
-- Validation errors and AI diagnostics are stored with the document version. History reopens the
-  workflow at its saved state: not validated, validated, or posted (including the NetSuite record link)
-- History of batches, documents and document versions; every history row has a permanent sequential
-  history number that is never reused after deletion
-- Failures carry a stable `failure_code` and a user-safe message; technical detail goes to the logs
-- On first save, an empty extracted invoice number gets a database-allocated `vendor_bill_inv_<number>`;
-  an empty location defaults to `Pune`. Existing extracted or user-entered values are preserved.
-  The selected NetSuite account must contain a usable matching location and template mapping.
-
-### Automated email bills
-- Company administrators can connect Zoho Mail or Gmail with OAuth credentials and an OCR template.
-  The selected active mailbox is used for automatic processing.
-- Starting automatic sync requires an initial date and time. The worker fetches message bodies, stages
-  emails with deduplication, classifies vendor bills with AI, and saves each bill as a separate history
-  record before validation and, when valid, NetSuite posting. Validation and posting errors remain in
-  history for review. Manual uploads continue independently.
-- Mailbox fetching defaults to every **30 minutes**. Celery Beat dispatches the due-mailbox task every
-  **5 minutes**; the task checks each connection's next due time before fetching. Beat also dispatches
-  a scheduler heartbeat every 20 seconds.
-- Stop/resume controls pause or resume fetching. A missing or invalid refresh token requires reconnecting;
-  automatic fetching cannot continue while the connection needs authorization.
-
-### Notifications
-- The client header shows a notification bell with an unread count, read/unread controls, mark all read,
-  and a scrollable, paginated Show all view. Where available, notifications distinguish manual actions
-  and their actor from automated events.
-- Notifications are scoped to the recipient and company. Coverage includes selected audit, email,
-  extraction, validation and posting events; not every action or error currently creates a notification.
-
-### Platform
-- Admin-configurable navigation tabs and categories
-- Navigation changes are reflected in the active client session without requiring a browser refresh
-- Request monitoring, error log, API usage, system-health page
-- Super Admin portal and client portal in the same React app; a deleted company can be permanently
-  removed from the Super Admin's soft-deleted list when immediate removal is required
-
----
-
-## Tech Stack
-
-**Backend**: Python 3.12, Django 6.x, Django REST Framework, SimpleJWT, PostgreSQL
-(`psycopg2`), WhiteNoise, django-cors-headers, python-decouple, dj-database-url,
-`cryptography` (Fernet), Gunicorn. OCR: PyMuPDF, OpenCV (headless), Pillow, `google-genai`.
-Celery + Redis are required for automated email processing and optional for some other workflows.
-
-**Frontend**: React 19, Vite 8, React Router 7, Axios, Tailwind CSS 4, oxlint.
-
-**Hosting (production)**: Zoho Catalyst (AppSail for the API, Web Client Hosting for the UI),
-Supabase PostgreSQL. Also runs on Docker, AWS, GCP, Render or a VPS - see
-[DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md).
-
----
-
-## Background Processing & Resilience
-
-Some OCR and housekeeping workflows can run with PostgreSQL fallbacks. **Automated mailbox fetching
-requires Redis, a Celery worker and Celery Beat**; the OCR fallback worker does not replace the email
-scheduler.
-
-| Concern | With Redis / Celery | Without |
-|---------|---------------------|---------|
-| OCR result cache, extraction lock, Gemini rate limiter | Redis | PostgreSQL (`OCRGeminiLease`, DB cache) |
-| OCR and NetSuite batch jobs | Celery worker | In-process background threads, or a dedicated `run_ocr_worker` process |
-| Daily housekeeping (purge deleted companies, sync subscription status) | Celery beat | `manage.py run_scheduled_tasks`, or `run_ocr_worker` (runs it daily) |
-| Automated email fetching and processing | Redis broker, Celery worker and Beat | Not available |
-| Uploaded files | local disk | `OCR_STORAGE_BACKEND=db` (PostgreSQL) or `s3` |
-
-**How a job runs** (`OCR_EXECUTION_MODE`, default `auto`):
-
-1. Celery is used only if a broker **and** a live worker answer a ping; otherwise
-2. background threads in the web process run the job; `external` mode leaves jobs for
-   `manage.py run_ocr_worker`.
-
-**Job state lives in PostgreSQL** (status + lease). A running job keeps renewing its lease; if its
-process dies, the job is re-queued automatically. Recovery is triggered by the frontend's status
-polling, so no scheduler is needed. Duplicate dispatch is harmless because each job is claimed
-atomically.
-
-**Single-file OCR** is answered synchronously when it finishes within
-`OCR_SINGLE_TIME_BUDGET_SECONDS` (180 s, or 20 s on Catalyst, which ends requests after 30 s).
-Otherwise the request returns `202`, the file continues in the background and the UI polls the batch.
-
-**Cache isolation**: cache and lock keys include the company and the company's AI provider/model,
-so cached extractions are never shared between tenants.
-
----
-
-## Project Structure
-
-```
-.
-├── backend/
-│   ├── manage.py, main.py (Catalyst entry), gunicorn.conf.py, app-config.json
-│   ├── config/            # settings split by concern (base, database, ocr, security, ...), urls, celery
-│   ├── accounts/  tenancy/  rbac/  audit/  invitations/  subscriptions/  superadmin/
-│   ├── netsuite/          # client, oauth, token manager, services, batch jobs (jobs.py)
-│   ├── ocr/               # views, tasks (engine), execution, leases, storage, error_taxonomy, ai/
-│   ├── mail_integration/  # provider OAuth, sync, staging, email processing and scheduler health
-│   ├── navigation/  transactions/  dashboard/  monitoring/  common/  core/
-│   └── requirements.txt
-├── frontend/
-│   └── src/ { pages/{auth,client,superadmin,public,invitations}, components, services, contexts,
-│              hooks, layouts, routes, utils }
-├── catalyst.json          # AppSail (backend) + client (frontend/dist) deployment
-├── Dockerfile.backend, Dockerfile.frontend, docker-compose.yml, nginx.conf
-├── DEPLOY.md, DEPLOY_ANYWHERE.md
-└── env.docker.example, env.postgres.example
+```mermaid
+flowchart LR
+    UI[React workspace] --> API[Django REST API]
+    API --> DB[(PostgreSQL)]
+    API --> Files[Document storage]
+    API --> Queue[(Redis broker)]
+    Beat[Celery Beat] --> Queue
+    Queue --> Worker[Celery worker]
+    Worker --> DB
+    Worker --> Files
+    Worker --> AI[AI provider]
+    Worker --> Mail[Zoho Mail / Gmail]
+    Worker --> NS[NetSuite REST / SuiteQL]
+    API --> AI
+    API --> NS
 ```
 
----
+| Component | Technology / responsibility |
+| --- | --- |
+| Frontend | React 19, Vite 8, React Router, Tailwind CSS, Axios |
+| API | Django 6, Django REST Framework, SimpleJWT |
+| Database | PostgreSQL for application data, document history, and durable job state |
+| Background processing | Celery and Redis; Celery Beat for scheduled work |
+| Document storage | Local filesystem, PostgreSQL-backed storage, or S3-compatible storage |
+| Deployment | Gunicorn for the API; Nginx for the Docker frontend and reverse proxy |
 
-## Authentication & Security
+Automated email processing requires Redis, a Celery worker, and Celery Beat. OCR and NetSuite batch processing also support an in-process execution mode and a dedicated PostgreSQL-backed worker through `run_ocr_worker`. These alternatives do not replace the email scheduler.
 
-- **Tokens**: the frontend keeps the access token in memory and sends it as a Bearer header; the
-  backend also accepts httpOnly `access_token` / `refresh_token` cookies. Lifetimes come from
-  `JWT_ACCESS_TOKEN_LIFETIME_MINUTES` / `JWT_REFRESH_TOKEN_LIFETIME_DAYS`.
-- **Production settings** enable HSTS (1 year, subdomains, preload), secure session / CSRF cookies,
-  a strict referrer policy and `SECURE_SSL_REDIRECT` (overridable by env).
-- **Field-level encryption**: NetSuite secrets and AI API keys are encrypted with Fernet using
-  `FIELD_ENCRYPTION_KEY`. Rotating the key makes existing encrypted rows unreadable.
-  ```bash
-  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-  ```
-- **Throttling** is env-driven (`THROTTLE_ANON`, `THROTTLE_USER`, `THROTTLE_LOGIN_OTP`,
-  `THROTTLE_REGISTER_OTP`, `THROTTLE_DASHBOARD`, `THROTTLE_NETSUITE_SYNC`, `THROTTLE_HEALTH_CHECK`).
-- **Error hygiene**: API responses and the public health endpoint do not expose database or
-  internal exception details; those go to the logs only.
+Company-scoped services and access controls separate tenant data. Integration credentials and AI API keys use field-level encryption. Keep the encryption key available to every process that reads those records.
 
----
+## Repository layout
 
-## Multi-Tenancy Model
+```text
+backend/
+  config/             Settings, API routes, WSGI, and Celery configuration
+  accounts/           Authentication, user profiles, and login workflows
+  tenancy/            Companies and tenant lifecycle
+  rbac/               Roles and access configuration
+  invitations/        User invitation and acceptance workflows
+  subscriptions/      Plans and company subscriptions
+  superadmin/         Platform administration
+  ocr/                Extraction, templates, document history, storage, and jobs
+  netsuite/           OAuth, reference validation, mapping, and posting
+  mail_integration/   Mailbox connections, synchronization, and bill pipeline
+  audit/              Audit records and notifications
+  monitoring/         Health, readiness, errors, and API usage
+  common/             Shared services and utilities
+  dashboard/          Dashboard data
+  navigation/         Configurable navigation
+  transactions/       Transaction records
+frontend/
+  src/                Pages, components, routes, contexts, and API services
+Dockerfile.backend    Backend container image
+Dockerfile.frontend   Frontend build and Nginx image
+docker-compose.yml    Local container services and worker profiles
+nginx.conf            Frontend serving and API proxy configuration
+```
 
-Every tenant-scoped model carries a company reference. `TenantMiddleware` resolves the company from
-the authenticated user and blocks requests for suspended or deleted companies. Services derive the
-company from the request user and never trust a company id sent by the client.
+## Local development
 
----
+### Prerequisites
 
-## Local Development
+- Python 3.12 or later; the backend container uses Python 3.12.
+- Node.js 22.12 or later and npm.
+- PostgreSQL and a development database.
+- Redis when running Celery or automated email processing.
+- Provider credentials for the integrations you intend to exercise.
 
-**Prerequisites**: Python 3.12, Node.js 20+, Git. PostgreSQL is recommended (some migrations expect it).
-Redis is required when testing automated email processing.
+Run the following commands from the repository root unless a step changes directories. Examples use PowerShell.
 
-### Backend (Windows PowerShell)
+### 1. Prepare the backend
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r backend/requirements.txt
+Copy-Item backend/.env.example backend/.env
+```
+
+On Linux or macOS, activate with `source .venv/bin/activate` and copy files with `cp`.
+
+The backend example is production-oriented. Before starting locally, update `backend/.env` with development settings:
+
+```dotenv
+DJANGO_SETTINGS_MODULE=config.settings.local
+DEBUG=True
+DJANGO_DEBUG=True
+SECRET_KEY=<generated-django-secret>
+FIELD_ENCRYPTION_KEY=<generated-fernet-key>
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<development_database>
+ALLOWED_HOSTS=localhost,127.0.0.1
+CORS_ALLOWED_ORIGINS=http://localhost:5173
+CSRF_TRUSTED_ORIGINS=http://localhost:5173
+FRONTEND_URL=http://localhost:5173
+SECURE_SSL_REDIRECT=False
+JWT_AUTH_COOKIE_SECURE=False
+JWT_AUTH_COOKIE_SAMESITE=Lax
+NETSUITE_REDIRECT_URI=http://localhost:8000/api/v1/netsuite/callback/
+EMAIL_OAUTH_REDIRECT_URI=http://localhost:8000/api/v1/email/callback/
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+```
+
+Generate the two keys separately:
+
+```powershell
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Replace the example SMTP/Brevo credentials with working development credentials. To use console email delivery locally, leave `EMAIL_HOST` and `BREVO_API_KEY` empty. Register the exact OAuth callback URLs with the relevant providers; use an approved HTTPS development callback where required by provider configuration.
 
 ```powershell
 cd backend
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env      # set SECRET_KEY, DATABASE_URL (or LOCAL_DB_NAME), FIELD_ENCRYPTION_KEY
 python manage.py migrate
+python manage.py seed_rbac
+python manage.py createsuperuser
 python manage.py runserver
 ```
 
-macOS / Linux: `python -m venv .venv && source .venv/bin/activate`, then the same commands (`cp` instead of `copy`).
-The API runs at `http://localhost:8000`.
+The API is available at `http://localhost:8000`, with application routes under `/api/v1/`.
 
-OCR jobs run in background threads of the dev server. To run them in a separate process instead,
-set `OCR_EXECUTION_MODE=external` and start `python manage.py run_ocr_worker` in a second terminal.
+### 2. Start background services
 
-### Automated email processing locally
-
-Start Redis and configure the same `CELERY_BROKER_URL` for the backend, worker and Beat. From the
-`backend/` directory, using the project's activated virtual environment, run these in separate terminals:
+Start Redis. In separate terminals, activate the same virtual environment, change to `backend/`, and run:
 
 ```powershell
 python -m celery -A config worker --loglevel=info --pool=solo
+```
+
+```powershell
 python -m celery -A config beat --loglevel=info
 ```
 
-Keep both processes running alongside the backend. Register `EMAIL_OAUTH_REDIRECT_URI` with the email
-provider, configure the mailbox in **Email Integration**, and select the initial sync date/time when
-starting automatic sync. Run migrations before starting updated processes; restart the backend and
-worker after code changes. The worker's `--pool=solo` option is useful for local Windows testing.
+`--pool=solo` is intended here for local Windows development. Keep both processes running for email automation, using the same database, encryption key, and broker configuration as the API. Restart workers after backend changes.
 
-### Frontend
+For a dedicated OCR/NetSuite worker without Celery, set `OCR_EXECUTION_MODE=external` and run `python manage.py run_ocr_worker`. Email automation still needs Celery and Beat.
+
+### 3. Start the frontend
+
+In a separate terminal from the repository root:
 
 ```powershell
 cd frontend
-npm install
-copy .env.example .env      # VITE_API_BASE_URL, e.g. http://localhost:8000/api/v1
+npm ci
+Copy-Item .env.example .env
+```
+
+Set the following in `frontend/.env`:
+
+```dotenv
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+```powershell
 npm run dev
 ```
 
-The UI runs at `http://localhost:5173`. `npm run build` produces `frontend/dist`.
+Open `http://localhost:5173`. Configure the company, AI provider, NetSuite connection, and extraction template before processing documents. Automated email processing additionally requires an active mailbox and initial sync date.
 
----
+## Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `DJANGO_SETTINGS_MODULE` | Select `config.settings.local`, `config.settings.production`, or dedicated test settings |
+| `DATABASE_URL` | PostgreSQL connection string; local configuration also supports `LOCAL_DATABASE_URL` as a fallback |
+| `SECRET_KEY` | Django application secret |
+| `FIELD_ENCRYPTION_KEY` | Fernet key for encrypted integration credentials and API keys |
+| `ALLOWED_HOSTS` | Allowed backend hostnames |
+| `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` | Browser origins and frontend URL |
+| `NETSUITE_REDIRECT_URI`, `EMAIL_OAUTH_REDIRECT_URI` | Provider-registered OAuth callbacks |
+| `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `BREVO_API_KEY` | Outbound delivery for OTPs and invitations; separate from mailbox OAuth |
+| `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker and result service |
+| `OCR_EXECUTION_MODE` | Job execution strategy: `auto`, `celery`, `thread`, `inline`, or `external` |
+| `OCR_STORAGE_BACKEND` | Document storage: `auto`, `local`, `db`, or `s3` |
+| `OCR_S3_*` | S3 bucket, region, endpoint, and optional credentials |
+| `VITE_API_BASE_URL` | Frontend API endpoint, embedded at build time |
+
+Use the environment templates as starting points: [backend](backend/.env.example), [frontend](frontend/.env.example), [Docker application](env.docker.example), and [Docker PostgreSQL](env.postgres.example). Runtime settings are defined in `backend/config/settings/`.
+
+Store secrets outside version control. Back up the encryption key securely with your recovery procedures; replacing it without migrating encrypted values makes existing credentials unreadable.
 
 ## Docker
 
-```bash
-cp env.docker.example .env.docker        # then fill in the values
-docker compose up -d --build              # PostgreSQL + backend + frontend (minimal)
+Copy both environment templates from the repository root:
+
+```powershell
+Copy-Item env.docker.example .env.docker
+Copy-Item env.postgres.example .env.postgres
 ```
 
-| Command | What it adds |
-|---------|--------------|
-| `docker compose --profile full up -d` | Redis, Celery worker and beat (uncomment the Redis lines in `.env.docker` first) |
-| `docker compose --profile worker up -d` | PostgreSQL-queue worker (`run_ocr_worker`); set `OCR_EXECUTION_MODE=external` |
+Fill in the application keys and database credentials. Keep the PostgreSQL password consistent between both files. The supplied database health check expects `agsuite_user` and `agsuite_erp`; update it if you change those names.
 
-Stop with `docker compose down`; rebuild with `docker compose up -d --build`.
+For email automation, enable the following values in `.env.docker`:
 
----
-
-## Environment Variables
-
-Full templates: `backend/.env.example`, `frontend/.env.example`, `env.docker.example`,
-`env.postgres.example`.
-
-**Required (backend)**
-
-| Variable | Purpose |
-|----------|---------|
-| `SECRET_KEY` | Django secret |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `FIELD_ENCRYPTION_KEY` | Fernet key for encrypted fields |
-| `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` | Host and origin configuration |
-| `NETSUITE_REDIRECT_URI` | OAuth redirect; the backend route `/api/v1/netsuite/callback/` |
-| `EMAIL_OAUTH_REDIRECT_URI` | Email OAuth callback; register the exact backend `/api/v1/email/callback/` URL with the provider |
-| `EMAIL_*` / `BREVO_API_KEY` | Email delivery (OTP, invitations) |
-
-**Optional (all have safe defaults)**: `REDIS_URL` / `REDIS_ENABLED`, `CELERY_BROKER_URL`,
-`OCR_EXECUTION_MODE`, `OCR_BACKGROUND_WORKERS`, `OCR_STORAGE_BACKEND`, `OCR_S3_*`,
-`OCR_SINGLE_TIME_BUDGET_SECONDS`, `OCR_SINGLE_ASYNC`, `OCR_MULTIPLE_ENABLED`, `OCR_JOB_*`,
-`GUNICORN_WORKERS` / `GUNICORN_THREADS` / `GUNICORN_TIMEOUT`. The complete table is in
-[DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md).
-
-**Frontend**: `VITE_API_BASE_URL` (the production build falls back to the Catalyst backend URL).
-
----
-
-## Deployment
-
-### Production configuration (Catalyst)
-
-Backend (AppSail `agsuiteerp`, source `backend`, command `python3 main.py`, Python 3.12, 2048 MB):
-
-```env
-ALLOWED_HOSTS=agsuiteerp-50046369262.catalystappsail.in
-CORS_ALLOWED_ORIGINS=https://agsuiteerp-60086947932.catalystserverless.in
-CSRF_TRUSTED_ORIGINS=https://agsuiteerp-60086947932.catalystserverless.in,https://agsuiteerp-50046369262.catalystappsail.in
-FRONTEND_URL=https://agsuiteerp-60086947932.catalystserverless.in
-NETSUITE_REDIRECT_URI=https://agsuiteerp-50046369262.catalystappsail.in/api/v1/netsuite/callback/
-
-# Catalyst has no persistent disk and no worker process:
-OCR_STORAGE_BACKEND=db          # or s3
-OCR_EXECUTION_MODE=thread
+```dotenv
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
+REDIS_URL=redis://redis:6379/0
 ```
 
-Frontend build: set `VITE_API_BASE_URL=https://agsuiteerp-50046369262.catalystappsail.in/api/v1`,
-then run `npm run build` and deploy `frontend/dist`.
+Set OAuth callbacks to the externally reachable API URL. With the supplied Nginx configuration and local port 80, callbacks use `http://localhost/api/v1/...`; the backend port is not published directly. Configure outbound email credentials or clear unused example values before starting.
 
-Catalyst ends every request after **30 seconds**. Long OCR continues in the background and the UI polls
-for the result. A background thread only runs while the AppSail instance is alive; if it is stopped, the
-next status poll resumes the job.
+```powershell
+docker compose --profile full up -d --build
+docker compose ps
+docker compose logs -f backend celery_worker celery_beat
+```
 
-Register the same `NETSUITE_REDIRECT_URI` in the NetSuite integration record.
+The frontend is served at `http://localhost`. The backend entrypoint applies migrations, seeds roles, and collects static files.
 
-Automated email processing additionally needs a Redis broker and separately running Celery worker and
-Beat. The AppSail web process and thread-based OCR configuration above do not by themselves provide
-that scheduler. Configure and register `EMAIL_OAUTH_REDIRECT_URI` for the deployed backend as well.
+| Profile | Services |
+| --- | --- |
+| Default | Frontend, backend, PostgreSQL, Redis, and static-volume initialization |
+| `full` | Default services plus Celery worker and Beat |
+| `worker` | Default services plus the dedicated OCR/NetSuite worker; use `OCR_EXECUTION_MODE=external` |
 
-### Other hosts
-
-Docker, AWS, GCP Cloud Run, Render and VPS setups, with the processes and environment each needs, are in
-[DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md). Database and general deployment notes are in [DEPLOY.md](DEPLOY.md).
-
-After every deploy run `python manage.py migrate`.
-
----
-
-## Operations
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /` and `GET /health/` | Liveness |
-| `GET /api/v1/monitoring/health/` | Database, email, encryption, **storage**, **redis** and **ocr_execution** checks. Redis / Celery are reported but never degrade the status |
-| `GET /api/v1/monitoring/readiness/` | Readiness |
-
-| Command | Purpose |
-|---------|---------|
-| `python manage.py run_ocr_worker [--once] [--interval N]` | PostgreSQL-queue worker for OCR and NetSuite batch jobs; also runs the daily housekeeping |
-| `python manage.py run_scheduled_tasks` | Daily housekeeping without Celery beat; safe to run from any scheduler |
-
-**Logging policy**: expected conditions (Redis down, quota exhausted, a document NetSuite rejected) produce
-a one-line warning with the reason. A traceback is written only for genuinely unexpected errors.
-
----
-
-## Troubleshooting
-
-| Symptom | Likely cause |
-|---------|--------------|
-| `400 DisallowedHost` / bad request on the API | `ALLOWED_HOSTS` does not include the deployed API host |
-| Browser CORS or CSRF errors | `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` missing the frontend origin |
-| Frontend loads but calls the wrong API | `VITE_API_BASE_URL` not set for the build |
-| `Redis unavailable ... continuing without Redis` | Informational: PostgreSQL fallbacks are in use |
-| `Celery is not available (...)` | Informational: jobs run in background threads |
-| Email scheduler not responding | Check Redis, the Celery worker and Celery Beat use the same broker; allow time for the heartbeat |
-| Email mailbox has no refresh token | Reconnect the mailbox and complete provider authorization; never share tokens in logs or support messages |
-| NetSuite rejects a location ID | Confirm the location is active and usable for the bill's subsidiary, item and role. Posting resolves a location name to an internal ID and may also apply it to item lines |
-| `Unknown command: run_ocr_worker` | The command file must be at `backend/ocr/management/commands/run_ocr_worker.py` |
-| OCR file "no longer available on the server" | Local disk is not persistent; use `OCR_STORAGE_BACKEND=db` or `s3` |
-| Job stays "processing" on Catalyst | Instance was stopped; open the batch again, polling resumes it |
-
----
+Named volumes retain database, Redis, media, and static data. `docker compose down` stops the stack; adding `--volumes` deletes those volumes.
 
 ## Testing
 
-Run backend checks and tests from `backend/`:
+Run backend checks from `backend/` with the virtual environment active:
 
 ```powershell
 python manage.py check
-python manage.py test
+python manage.py test netsuite.tests ocr.tests mail_integration.tests --noinput
 ```
 
-Run frontend checks from `frontend/`:
+For the full suite, use a dedicated PostgreSQL test server and the repository's test settings. The test user must be able to create the separate test database:
+
+```powershell
+$env:DJANGO_SETTINGS_MODULE = "config.settings.testing"
+$env:TEST_DATABASE_URL = "postgresql://<test_user>:<password>@localhost:5432/postgres"
+$env:TEST_DATABASE_NAME = "test_agsuite"
+python manage.py test --noinput
+```
+
+Use a separate terminal for these settings so subsequent development commands retain their development configuration.
+
+From `frontend/`:
 
 ```powershell
 npm run lint
 npm run build
 ```
 
-Smoke test after a deploy: check `/api/v1/monitoring/health/`, complete login OTP verification, invite and
-accept a company user, upload one file, upload several files, validate them, and post one validated Vendor
-Bill to NetSuite. Confirm that its internal ID and **View in NetSuite** link are returned.
+Integration acceptance checks should cover login, a document upload, mapped-field validation, and a Vendor Bill posted to a NetSuite sandbox. For email changes, also check scheduled fetching, duplicate handling, and failure visibility in history. Mocked unit tests do not verify account-specific NetSuite permissions or provider behavior.
 
----
+## Deployment and operations
 
-## Documentation
+Deploy the API, frontend, database, document storage, and required workers as separate operational components. Use persistent/shared document storage when running multiple instances. For automated email workflows, keep Redis, workers, and a single active Beat scheduler available.
 
-- [DEPLOY.md](DEPLOY.md) - general deployment notes
-- [DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md) - host-by-host guide and the full list of optional variables
+A release should apply database migrations, collect static assets, rebuild the frontend with the target API URL, and restart backend workers. Configure HTTPS, allowed hosts, browser origins, and provider callbacks for the target environment. Production uses `config.settings.production`; run `python manage.py check --deploy` with the production environment before rollout.
 
----
+| Endpoint / command | Purpose |
+| --- | --- |
+| `GET /health/` | Basic API liveness |
+| `GET /api/v1/monitoring/health/` | Application dependency diagnostics |
+| `GET /api/v1/monitoring/readiness/` | Readiness check |
+| `python manage.py run_ocr_worker` | Dedicated OCR and NetSuite job worker |
+| `python manage.py run_scheduled_tasks` | Housekeeping when scheduled outside Celery Beat |
 
-## Development Status
+Monitor mailbox due times and completion results alongside worker and scheduler health. A healthy API alone does not establish that email processing is running. Maintain backups of PostgreSQL, uploaded documents, and encryption keys, and verify restoration in a separate environment.
 
-**Implemented**: custom user + JWT + email OTP; multi-tenancy with company lifecycle; invitations;
-subscriptions and plans; Super Admin and client portals; NetSuite OAuth, connections, REST + SuiteQL,
-field catalogue, custom fields; OCR extraction with templates, history and versions; saved validation and
-AI diagnostics; Vendor Bill posting with NetSuite record links; NetSuite batch jobs; optional Redis / Celery
-with PostgreSQL fallbacks; storage backends (local / PostgreSQL / S3); monitoring and health.
+Additional deployment notes are available in [DEPLOY.md](DEPLOY.md) and [DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md). For exact service profiles, defaults, and supported options, consult the checked-in Compose file and settings modules.
 
-**Active work**: production hardening on Catalyst, a new automated test suite, connection reconnect flow
-when refresh tokens expire.
+## Troubleshooting
 
----
+| Symptom | Check |
+| --- | --- |
+| API returns `DisallowedHost` | Backend hostname in `ALLOWED_HOSTS` |
+| Browser reports CORS/CSRF errors | Frontend origin, trusted origins, cookie settings, and HTTP/HTTPS consistency |
+| Frontend calls the wrong API | `VITE_API_BASE_URL` at build time; rebuild after changing it |
+| Email passes its displayed due time | Next one-minute scheduler check, worker queue, connection state, and provider response |
+| Sync reports `checked: 0` | No mailbox met the active, connected, unpaused, initialized, and due filters |
+| Mailbox requires authorization | Reconnect through provider OAuth to restore valid credentials |
+| Currency enrichment or posting fails | Subsidiary mapping, subsidiary record, currency availability, and SuiteQL permissions |
+| NetSuite rejects a reference | Record status, subsidiary compatibility, field mapping, and integration-role permissions |
+| Uploaded files disappear after a restart | Storage persistence and shared access between API and workers |
+| Jobs remain queued | Execution mode, worker availability, broker configuration, and job logs |
 
-## License
+## Development guidelines
 
-This project is under active development. All rights reserved.
+Keep tenant scoping and authorization in place when adding endpoints or background jobs. Add migrations for model changes and focused tests for behavior changes. Validate integration changes with sandbox accounts before production use.
+
+Keep credentials, OAuth tokens, customer documents, and environment files out of commits and diagnostic output. Update this README when setup, supported workflows, or operational requirements change; document deployment-specific configuration in the corresponding environment's runbook.
