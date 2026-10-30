@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from common.timing import timed_stage
+
 import hashlib
 import logging
 import uuid
@@ -130,6 +132,7 @@ class EmailBillPipeline:
             notify(message.integration.created_by_id, message.integration.company_id, f'Email processing failed for {message.sender_email or "unknown sender"}; it will be retried.', '/app/integrations/email')
 
     @automated_activity
+    @timed_stage("email.process_message")
     def process_message(self, *, message_id) -> str:
         message = self._claim(message_id)
         if message is None:

@@ -7,6 +7,8 @@ Redis quota limiting, and per-file persistence.
 """
 from __future__ import annotations
 import sys
+from common.timing import timed_stage
+
 import time
 import hashlib
 import json
@@ -177,6 +179,7 @@ def _validate_extraction_result(result, *, page_index: int | None = None) -> Non
         )
 
 
+@timed_stage("ocr.prepare_pages")
 def _normalize_to_page_paths(adapter, upload, original_path) -> list[str]:
     """Run the document adapter and return the image page paths for the AI."""
     normalized = adapter.normalize()
@@ -293,6 +296,7 @@ def _extract_single_page(
     return result
 
 
+@timed_stage("ocr.extract_pages")
 def _perform_ocr_extraction(
     upload,
     requested_fields,
@@ -1210,6 +1214,7 @@ def _begin_processing(upload, owner: str = ""):
     return started_at
 
 
+@timed_stage("ocr.enrich_and_persist")
 def _persist_success(
     upload,
     result: dict,
@@ -1546,6 +1551,7 @@ class JobOutcome:
     exc: BaseException | None = None
     countdown: float = 0.0
 
+@timed_stage("ocr.upload_job")
 def execute_upload_job(
     upload_id: str,
     user_id: str,

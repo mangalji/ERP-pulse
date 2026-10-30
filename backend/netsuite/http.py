@@ -18,6 +18,8 @@ transient failure would send an already-invalidated code and fail
 differently than the original error, hiding the real problem.
 """
 
+from common.timing import timed_stage
+
 import logging
 import time
 import uuid
@@ -45,6 +47,7 @@ def new_correlation_id() -> str:
     return uuid.uuid4().hex
 
 
+@timed_stage("netsuite.http_request")
 def send(
     method: str,
     url: str,

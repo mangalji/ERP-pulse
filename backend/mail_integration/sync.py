@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from common.timing import timed_stage
+
 import hashlib
 import json
 import logging
@@ -57,6 +59,7 @@ def dedupe_syncs_to_retain(integration: EmailIntegration) -> int:
 class EmailSyncService:
     """Idempotent mailbox-to-staging synchronisation; no AI work belongs here."""
 
+    @timed_stage("email.sync_due_mailboxes")
     def sync_due_integrations(self) -> dict:
         now = timezone.now()
         due = EmailIntegration.objects.filter(
@@ -88,6 +91,7 @@ class EmailSyncService:
                 logger.exception("Email mailbox sync crashed unexpectedly — integration=%s", integration_id)
         return outcomes
 
+    @timed_stage("email.fetch_mailbox")
     def sync_integration(self, *, integration_id) -> int:
         integration = EmailIntegration.objects.get(id=integration_id)
         if integration.status != EmailIntegration.Status.CONNECTED or not integration.is_active or integration.is_paused:

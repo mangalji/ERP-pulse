@@ -322,6 +322,14 @@ A release should apply database migrations, collect static assets, rebuild the f
 
 Monitor mailbox due times and completion results alongside worker and scheduler health. A healthy API alone does not establish that email processing is running. Maintain backups of PostgreSQL, uploaded documents, and encryption keys, and verify restoration in a separate environment.
 
+### Workflow timing
+
+At INFO level, the `performance` logger emits `TIMING` followed by JSON for document preparation/extraction, AI extraction, mailbox fetching, email processing, NetSuite enrichment, reference lookups, SuiteQL, validation, and posting. Each event contains `stage`, `duration_ms`, `trace_id`, `span_id`, `parent_span_id`, `outcome`, and available job/document identifiers. Payloads, credentials, query text, and exception messages are excluded.
+
+Filter backend/worker logs by `TIMING` and then by document/message ID or `trace_id` to compare stages. Nested calls within the same execution context share a trace; traces are not automatically propagated across thread or Celery boundaries. Durations include time spent inside child stages and retries, so do not add parent and child durations together. `netsuite.http_request` includes retry waits, while `netsuite.post_vendor_bill` covers the entire posting service call. These timings measure execution, not queue waiting time.
+
+`outcome=returned` means the function returned normally, including business validation failures or deferred work. `outcome=raised` records an escaping exception and its type. Consult the workflow's result/error logs to determine business success. Changing the effective `performance` logger level above INFO disables these measurements.
+
 Additional deployment notes are available in [DEPLOY.md](DEPLOY.md) and [DEPLOY_ANYWHERE.md](DEPLOY_ANYWHERE.md). For exact service profiles, defaults, and supported options, consult the checked-in Compose file and settings modules.
 
 ## Troubleshooting

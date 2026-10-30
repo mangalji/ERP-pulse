@@ -7,6 +7,8 @@ touches any of those directly, mirroring how AuthenticationService
 orchestrates UserRepository/OTPService for the accounts app.
 """
 
+from common.timing import timed_stage
+
 import logging
 from difflib import SequenceMatcher
 import hashlib
@@ -1538,6 +1540,7 @@ class NetSuiteVendorBillPostingService:
 
         return value
 
+    @timed_stage("netsuite.post_vendor_bill")
     def post_vendor_bill(self, *, document_id, user: User, connection_id=None) -> dict:
         """
         Post the latest validated OCR version as a NetSuite Vendor Bill.
@@ -3515,6 +3518,7 @@ class NetSuiteValidationService:
                 defaults[field_name] = reference
         return defaults
 
+    @timed_stage("netsuite.subsidiary_currency")
     def _fetch_subsidiary_currency_live(self, *, connection, subsidiary_id):
         """Read the subsidiary's base currency, never the vendor/AI currency."""
         literal = self._suiteql_id_literal(subsidiary_id)
@@ -3535,6 +3539,7 @@ class NetSuiteValidationService:
         row = rows[0]
         return {"id": str(row["id"]), "name": row.get("symbol") or row.get("name") or str(row["id"])}
 
+    @timed_stage("netsuite.enrich_references")
     def enrich_transaction_references(self, *, data, requested_fields, user, connection=None):
         """Fill vendor references, then override mapped currency from subsidiary."""
         outcome = self.enrich_missing_vendor_references(
@@ -3867,6 +3872,7 @@ class NetSuiteValidationService:
         # OCR/user supplied values must never be interpolated raw.
         return "'" + value.replace("'", "''") + "'"
 
+    @timed_stage("netsuite.suiteql")
     def _execute_live_suiteql(
         self,
         *,
@@ -3924,6 +3930,7 @@ class NetSuiteValidationService:
         "term": ("term", ("name",)),
     }
 
+    @timed_stage("netsuite.reference_lookup")
     def _resolve_select_field_live(
         self,
         *,
@@ -4187,6 +4194,7 @@ class NetSuiteValidationService:
 
         return base
     
+    @timed_stage("netsuite.validate_document")
     def validate_document(
         self,
         *,
@@ -4779,6 +4787,7 @@ class NetSuiteValidationService:
             },
         }
     
+    @timed_stage("netsuite.vendor_lookup")
     def _validate_vendor_live(
         self,
         *,
@@ -5239,6 +5248,7 @@ class NetSuiteValidationService:
 
         return invalid_items
 
+    @timed_stage("netsuite.item_validation")
     def _validate_items_live(
         self,
         *,

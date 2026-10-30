@@ -15,6 +15,8 @@ OpenCV preprocessing pipeline are intentionally outside this service.
 from __future__ import annotations
 
 import re
+from common.timing import timed_stage
+
 import time
 import uuid
 from datetime import datetime
@@ -928,6 +930,7 @@ class AIExtractor:
         self.max_retries = getattr(settings, "OCR_MAX_RETRIES", 2)
         self.retry_delay = getattr(settings, "OCR_RETRY_DELAY", 1.0)
 
+    @timed_stage("ai.document_extraction")
     def extract(
         self,
         file_path: str | Path,
@@ -1117,6 +1120,7 @@ class AIExtractor:
             f"AI extraction failed: {last_exception}"
         ) from last_exception
 
+    @timed_stage("ai.email_extraction")
     def extract_email_text(
         self,
         email_body: str,
