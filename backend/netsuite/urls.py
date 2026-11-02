@@ -3,6 +3,7 @@ from django.urls import path
 from netsuite.views import (
     NetSuiteCallbackView,
     NetSuiteConnectionDetailView,
+    NetSuiteDisconnectView,
     NetSuiteConnectionSwitchView,
     NetSuiteCompanyConnectionsView,
     NetSuiteAssignEmployeeView,
@@ -23,6 +24,7 @@ from netsuite.views import (
 urlpatterns = [
     path('callback/', NetSuiteCallbackView.as_view(), name='netsuite-callback'),
     path("connections/<uuid:connection_id>/", NetSuiteConnectionDetailView.as_view(),name="netsuite_connection_detail_view"),
+    path("connections/<uuid:connection_id>/disconnect/", NetSuiteDisconnectView.as_view(),name="netsuite_connection_disconnect_view"),
     path("connections/<uuid:connection_id>/switch/", NetSuiteConnectionSwitchView.as_view(),name="netsuite_connection_switch_view"),
     path("company/connections/", NetSuiteCompanyConnectionsView.as_view(), name="netsuite_company_connections"),
     path("company/connections/<uuid:connection_id>/assign-employee/", NetSuiteAssignEmployeeView.as_view(), name="netsuite_assign_employee"),

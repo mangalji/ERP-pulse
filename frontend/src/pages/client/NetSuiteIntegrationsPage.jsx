@@ -126,14 +126,14 @@ export default function NetSuiteIntegrationsPage() {
     setAssigningId(connectionId)
   }
 
-  const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to delete this connection?')) return
+  const handleDisconnect = async (id) => {
+    if (!confirm('Disconnect this NetSuite connection? You can reconnect it later.')) return
     try {
-      await netsuiteApi.deleteConnection(id)
-      addToast('Connection deleted', 'success')
-      loadData()
+      await netsuiteApi.disconnectConnection(id)
+      addToast('Connection disconnected', 'success')
+      await loadData()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to delete connection', 'error')
+      addToast(err.payload?.message || err.message || 'Failed to disconnect connection', 'error')
     }
   }
 
@@ -231,7 +231,7 @@ export default function NetSuiteIntegrationsPage() {
                 canReconnect={canReconnect}
                 onAssign={handleAssign}
                 onRemoveEmployee={handleRemoveEmployee}
-                onDelete={handleDelete}
+                onDisconnect={handleDisconnect}
                 onEdit={(c) => { setEditingId(c.id); setShowForm(true); }}
                 employees={conn.employee_assignments || []}
               />

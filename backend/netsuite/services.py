@@ -612,7 +612,47 @@ class NetSuiteConnectionService:
         )
 
         self.repository.delete(connection)
-    
+
+    def disconnect_connection(self, *, user: User, connection_id):
+        """Disconnect a NetSuite account without deleting its history/configuration."""
+        self._ensure_user_company_operational(user=user)
+        if not self._is_company_admin(user):
+            raise PermissionError("Only Company Admin can disconnect NetSuite connections.")
+
+        connection = self.repository.get_by_id(user, connection_id)
+        if connection is None:
+            raise NetSuiteConnectionNotFoundException("NetSuite connection not found.")
+
+        connection.status = "disconnected"
+        connection.is_active = False
+        connection.access_token = None
+        connection.refresh_token = None
+        connection.access_token_expires_at = None
+        connection.refresh_token_expires_at = None
+        connection.last_error = None
+        connection.consecutive_failures = 0
+        connection.save(update_fields=[
+            "status", "is_active", "access_token", "refresh_token",
+            "access_token_expires_at", "refresh_token_expires_at",
+            "last_error", "consecutive_failures", "updated_at",
+        ])
+
+        if user.current_netsuite_connection_id == connection.id:
+            user.current_netsuite_connection = None
+            user.save(update_fields=["current_netsuite_connection", "updated_at"])
+
+        audit_service.log(
+            module=AuditModule.NETSUITE,
+            action=AuditAction.DISCONNECT,
+            entity="NetSuiteConnection",
+            entity_id=str(connection.id),
+            company=connection.company,
+            user=user,
+            old_value={"event": "connected", "account_name": connection.netsuite_account_id},
+            new_value={"event": "disconnected", "account_name": connection.netsuite_account_id},
+        )
+        return connection
+
     def switch_connection(
             self,*,
             user:User,

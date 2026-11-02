@@ -554,7 +554,7 @@ class OCRHistoryListView(APIView):
     def get(self, request):
         try:
             offset = max(0, int(request.query_params.get("offset", 0)))
-            limit = min(max(1, int(request.query_params.get("limit", 100))), 100)
+            limit = min(max(1, int(request.query_params.get("limit", 10))), 100)
         except (TypeError, ValueError):
             return Response({"detail": "offset and limit must be valid integers."}, status=status.HTTP_400_BAD_REQUEST)
 

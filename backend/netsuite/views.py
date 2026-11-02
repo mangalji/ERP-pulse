@@ -156,6 +156,23 @@ class NetSuiteConnectionDetailView(APIView):
             )
         return success_response(message="Connection deleted successfully.")
 
+class NetSuiteDisconnectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id):
+        try:
+            connection = NetSuiteConnectionService().disconnect_connection(
+                user=request.user,
+                connection_id=connection_id,
+            )
+        except NetSuiteConnectionNotFoundException as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return success_response(
+            message="NetSuite connection disconnected successfully.",
+            data=NetSuiteConnectionListSerializer(connection).data,
+        )
+
+
 class NetSuiteConnectionSwitchView(APIView):
     
     permission_classes = [IsAuthenticated]

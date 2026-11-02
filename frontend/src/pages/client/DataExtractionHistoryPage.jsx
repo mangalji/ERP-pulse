@@ -27,7 +27,9 @@ const HISTORY_PAGE_SIZE_STORAGE_KEY = 'data_extraction_history_page_size'
 
 function getSavedPageSize() {
   const savedValue = Number(sessionStorage.getItem(HISTORY_PAGE_SIZE_STORAGE_KEY))
-  return PAGE_SIZE_OPTIONS.includes(savedValue) ? savedValue : 15
+  return Number.isInteger(savedValue) && savedValue >= 1 && savedValue <= 100
+    ? savedValue
+    : 10
 }
 
 function unwrapHistory(response) {
@@ -36,7 +38,7 @@ function unwrapHistory(response) {
     results: Array.isArray(payload?.results) ? payload.results : [],
     count: Number(payload?.count ?? 0),
     offset: Number(payload?.offset ?? 0),
-    limit: Number(payload?.limit ?? 15),
+    limit: Number(payload?.limit ?? 10),
     nextOffset: payload?.next_offset ?? null,
     previousOffset: payload?.previous_offset ?? null,
   }
@@ -105,7 +107,7 @@ export default function DataExtractionHistoryPage() {
   const canDeleteHistory = isCompanyAdminUser(user)
   const [filter, setFilter] = useState('ALL')
   const [records, setRecords] = useState([])
-  const [pagination, setPagination] = useState({ count: 0, offset: 0, limit: 15, nextOffset: null, previousOffset: null })
+  const [pagination, setPagination] = useState({ count: 0, offset: 0, limit: 10, nextOffset: null, previousOffset: null })
   const [pageSize, setPageSize] = useState(getSavedPageSize)
   const [showPageSizeMenu, setShowPageSizeMenu] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
@@ -247,9 +249,23 @@ export default function DataExtractionHistoryPage() {
   }
 
   const updatePageSize = (size) => {
-    sessionStorage.setItem(HISTORY_PAGE_SIZE_STORAGE_KEY, String(size))
-    setPageSize(size)
+    const normalizedSize = Number(size)
+    if (!Number.isInteger(normalizedSize) || normalizedSize < 1 || normalizedSize > 100) return
+    sessionStorage.setItem(HISTORY_PAGE_SIZE_STORAGE_KEY, String(normalizedSize))
+    setPageSize(normalizedSize)
     setShowPageSizeMenu(false)
+  }
+
+  const chooseCustomPageSize = () => {
+    const value = window.prompt('How many records should be shown on each page? Enter a number from 1 to 100.', String(pageSize))
+    if (value === null) return
+    const customSize = Number(value.trim())
+    if (!Number.isInteger(customSize) || customSize < 1 || customSize > 100) {
+      setError('Custom records per page must be a whole number between 1 and 100.')
+      return
+    }
+    setError('')
+    updatePageSize(customSize)
   }
 
   const handleDelete = async (item) => {
@@ -618,6 +634,14 @@ export default function DataExtractionHistoryPage() {
                         {pageSize === size && <span aria-hidden="true">✓</span>}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      onClick={chooseCustomPageSize}
+                      className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm text-[var(--color-ink)] transition-colors hover:bg-[var(--color-canvas)]"
+                    >
+                      <span>Custom</span>
+                      {!PAGE_SIZE_OPTIONS.includes(pageSize) && <span aria-hidden="true">✓</span>}
+                    </button>
                   </div>
                 )}
               </div>

@@ -10,8 +10,8 @@ export const netsuiteApi = {
   
   renameConnection: (id, clientName) =>
     apiClient.patch(`${NETSUITE_ENDPOINTS.connections}${id}/`, { client_name: clientName }).then(unwrap),
-  
-  deleteConnection: (id) => apiClient.delete(`${NETSUITE_ENDPOINTS.connections}${id}/`).then(unwrap),
+
+  disconnectConnection: (id) => apiClient.post(`${NETSUITE_ENDPOINTS.connections}${id}/disconnect/`).then(unwrap),
   
   getCompanyConnections: () => apiClient.get(NETSUITE_ENDPOINTS.companyConnections).then(unwrap),
 

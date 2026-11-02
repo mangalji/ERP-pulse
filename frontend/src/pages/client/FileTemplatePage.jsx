@@ -453,24 +453,6 @@ function NetSuiteFieldCombobox({
   },
 )
 
-  const getNetSuiteFieldContext = (option) => {
-    const contexts = Array.isArray(option?.sublist_contexts)
-      ? option.sublist_contexts
-          .map((context) =>
-            String(context || '').trim().toLowerCase(),
-          )
-          .filter(Boolean)
-      : []
-        
-    if (contexts.length > 0) {
-      return contexts.join('/')
-    }
-  
-    return String(
-      option?.scope || '',
-    ).trim().toLowerCase()
-  }
-
   const getNetSuiteFieldDisplay = (option) => {
   const scope = String(
     option?.scope || '',
@@ -513,12 +495,9 @@ function NetSuiteFieldCombobox({
         option.id || '',
       ).toLowerCase()
 
-      const context = getNetSuiteFieldContext(option)
-
       return (
         label.includes(query) ||
-        id.includes(query) ||
-        context.includes(query)
+        id.includes(query)
       )
     })
   }, [options, search])
@@ -1720,6 +1699,44 @@ const handleRefreshNetSuiteFields = async () => {
                     </div>
                   )}
                 </div>
+
+                {mode !== 'view' && (
+                  <div className="mb-6 flex flex-wrap items-center justify-end gap-3 border-b border-[var(--color-border)] pb-5">
+                    <Button
+                      type="button"
+                      intent="secondary"
+                      onClick={() => {
+                        if (selectedTemplateId) {
+                          const selected = templates.find((item) => String(item.id) === String(selectedTemplateId))
+                          if (selected) selectTemplate(selected, 'view')
+                          else handleBackToTemplates()
+                        } else {
+                          handleBackToTemplates()
+                        }
+                        setError('')
+                        setMessage('')
+                      }}
+                      disabled={saving || deleting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      intent="secondary"
+                      onClick={() => handleSave({ saveAs: true })}
+                      disabled={saving || deleting}
+                    >
+                      {saving ? 'Saving...' : 'Save As'}
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => handleSave()}
+                      disabled={saving || deleting}
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
+                )}
 
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
