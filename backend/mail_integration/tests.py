@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import requests
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from mail_integration.client import EmailOAuthClient
@@ -245,6 +245,35 @@ class EmailPauseTests(SimpleTestCase):
             ensure_email_processing_available()
 
 
+class EmailActivationTests(TestCase):
+    @patch("mail_integration.services.is_company_admin", return_value=True)
+    @patch("mail_integration.services.EmailIntegration.objects.filter")
+    def test_activate_reschedules_configured_mailbox_immediately(self, active_filter, is_admin):
+        service = EmailIntegrationService()
+        old_next_sync = timezone.now() - timedelta(hours=1)
+        integration = EmailIntegration(
+            status="CONNECTED",
+            is_active=False,
+            is_paused=False,
+            initial_sync_from_at=timezone.now() - timedelta(minutes=5),
+            next_sync_at=old_next_sync,
+        )
+        integration.save = Mock()
+        active_filter.return_value.update = Mock()
+        user = Mock(company_id="company-1")
+
+        with patch.object(service, "_ensure_operational"), patch.object(
+            service, "_get_for_user", return_value=integration
+        ):
+            service.activate(user=user, integration_id=integration.id)
+
+        self.assertTrue(integration.is_active)
+        self.assertGreater(integration.next_sync_at, old_next_sync)
+        integration.save.assert_called_once_with(
+            update_fields=["is_active", "updated_at", "next_sync_at"]
+        )
+
+
 @override_settings(EMAIL_OAUTH_REDIRECT_URI="http://localhost/callback/", GOOGLE_MAIL_CLIENT_ID="id", GOOGLE_MAIL_CLIENT_SECRET="secret")
 class EmailRefreshFailureTests(SimpleTestCase):
     @override_settings(ZOHO_MAIL_CLIENT_ID="id", ZOHO_MAIL_CLIENT_SECRET="secret")
@@ -323,11 +352,11 @@ class EmailRefreshFailureTests(SimpleTestCase):
         self.assertEqual(integration.refresh_token, "old")
         self.assertGreater(integration.last_successful_sync_at, last_sync)
 
-    def test_five_minute_sync_uses_safe_overlap_and_retention(self):
-        integration = EmailIntegration(sync_interval_minutes=5)
+    def test_one_minute_sync_uses_safe_overlap_and_retention(self):
+        integration = EmailIntegration(sync_interval_minutes=1)
 
         self.assertEqual(sync_lookback_for(integration), timedelta(minutes=65))
-        self.assertEqual(dedupe_syncs_to_retain(integration), 13)
+        self.assertEqual(dedupe_syncs_to_retain(integration), 65)
 
     def test_error_connection_never_fetches(self):
         integration = EmailIntegration(status="ERROR", is_active=True)

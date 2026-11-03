@@ -881,7 +881,12 @@ export default function OcrPage() {
     multiple: false,
   })
 
-  const { toasts, addToast, removeToast } = useToast()
+  const persistToast = useCallback((message) => apiClient.post('/notifications/', {
+    message,
+    link: '/app/ocr',
+    activity_type: 'manual',
+  }).then(() => window.dispatchEvent(new Event('notifications-changed'))), [])
+  const { toasts, addToast, removeToast } = useToast({ autoDismiss: false, latestOnly: true, persist: persistToast })
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [validating, setValidating] = useState(false)
@@ -2758,7 +2763,7 @@ const goNext = () => {
   return (
     <ClientLayout title="OCR" breadcrumb="OCR">
       <div className="flex w-full flex-col gap-6">
-        <Toast toasts={toasts} removeToast={removeToast} />
+        <Toast toasts={toasts} removeToast={removeToast} position="top" />
         {/* Upload / actions */}
         <Card className="p-4 sm:p-5">
           <div className="flex flex-col gap-3">

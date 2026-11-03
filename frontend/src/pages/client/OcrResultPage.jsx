@@ -495,7 +495,12 @@ export default function OcrResultPage() {
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagnosticError, setDiagnosticError] = useState('')
 
-  const { toasts, addToast, removeToast } = useToast()
+  const persistToast = useCallback((message) => apiClient.post('/notifications/', {
+    message,
+    link: documentId ? `/app/ocr/history/${documentId}` : '/app/ocr/history',
+    activity_type: 'manual',
+  }).then(() => window.dispatchEvent(new Event('notifications-changed'))), [documentId])
+  const { toasts, addToast, removeToast } = useToast({ autoDismiss: false, latestOnly: true, persist: persistToast })
   const connectionId = connection?.id || null
   const aiDiagnosticsByReference = useMemo(
     () =>
@@ -1219,7 +1224,7 @@ function getFileCategory(file) {
   return (
     <ClientLayout title="OCR Result" breadcrumb="OCR / OCR Result">
       <div className="flex w-full flex-col gap-6">
-        <Toast toasts={toasts} removeToast={removeToast} />
+        <Toast toasts={toasts} removeToast={removeToast} position="top" />
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">

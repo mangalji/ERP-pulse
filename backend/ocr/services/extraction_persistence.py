@@ -168,13 +168,6 @@ def persist_extraction(*, upload=None, document=None, batch=None, user=None, res
             document.company = company
             document.save(update_fields=['company', 'updated_at'])
 
-    from netsuite.models import blocking_ocr_postings
-    if blocking_ocr_postings(document.netsuite_postings.all()).exists():
-        raise ValueError(
-            'This document has a posting attempt. Reconcile it before editing; '
-            'posted bills need an explicit correction workflow.'
-        )
-
     # Defaults are assigned once, when the extraction is first saved. Existing
     # reviews retain their values and an explicit user edit is never replaced.
     if not document.versions.exists():

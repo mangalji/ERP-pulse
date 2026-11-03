@@ -6,7 +6,7 @@ from datetime import timedelta
 from celery import shared_task
 from django.utils import timezone
 
-from audit.models import AuditActivityType, AuditLog
+from audit.models import AuditActivityType, AuditLog, Notification
 
 
 logger = logging.getLogger(__name__)
@@ -26,3 +26,12 @@ def purge_expired_operational_audit_logs():
     ).delete()
     logger.info("Purged expired automated audit logs — deleted=%s cutoff=%s", deleted, cutoff.isoformat())
     return {"deleted": deleted, "cutoff": cutoff.isoformat()}
+
+
+@shared_task
+def purge_expired_notifications():
+    deleted, _ = Notification.objects.filter(
+        delete_after__isnull=False,
+        delete_after__lte=timezone.now(),
+    ).delete()
+    return {"deleted": deleted}

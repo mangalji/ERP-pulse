@@ -254,7 +254,11 @@ class EmailIntegrationService:
                 raise EmailIntegrationStateError("Only a connected mailbox can be active.")
             EmailIntegration.objects.filter(company_id=user.company_id, is_active=True).update(is_active=False)
             integration.is_active = True
-            integration.save(update_fields=["is_active", "updated_at"])
+            update_fields = ["is_active", "updated_at"]
+            if integration.initial_sync_from_at is not None and not integration.is_paused:
+                integration.next_sync_at = timezone.now()
+                update_fields.append("next_sync_at")
+            integration.save(update_fields=update_fields)
         return integration
 
     def check_initial_sync_ready(self, *, user: User, integration_id):

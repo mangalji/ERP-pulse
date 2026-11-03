@@ -406,12 +406,14 @@ class NetSuitePostOCRVendorBillView(APIView):
             logger.exception(
                 "NetSuite verification unavailable during Vendor Bill posting.",
             )
+            original_error = str(exc)
             return Response(
                 {
-                    "detail": str(exc),
-                    "code": "NETSUITE_VALIDATION_UNAVAILABLE",
+                    "detail": f"NetSuite rejected the Vendor Bill: {original_error}",
+                    "netsuite_error": original_error,
+                    "code": "NETSUITE_POSTING_REJECTED",
                 },
-                status=status.HTTP_502_BAD_GATEWAY,
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except ValueError as exc:
             return Response(

@@ -55,11 +55,16 @@ def setup_periodic_tasks(sender, **kwargs):
         sender.signature("audit.tasks.purge_expired_operational_audit_logs"),
         name='purge expired automated activity logs',
     )
+    sender.add_periodic_task(
+        timedelta(seconds=10),
+        sender.signature("audit.tasks.purge_expired_notifications"),
+        name='purge expired deleted notifications',
+    )
     # This is only a lightweight due-check.  Each mailbox's selected fetch
     # interval is enforced by the task itself, so provider APIs are not polled
     # every minute.
     sender.add_periodic_task(
-        timedelta(minutes=1),
+        timedelta(seconds=30),
         sender.signature("mail_integration.tasks.sync_due_mailboxes"),
         name="sync and process due email bills",
     )

@@ -16,6 +16,7 @@ import json
 import re
 import requests
 import uuid
+from decimal import Decimal, InvalidOperation
 from accounts.models import User
 from django.db import transaction
 from datetime import timedelta
@@ -1580,6 +1581,44 @@ class NetSuiteVendorBillPostingService:
 
         return value
 
+    @staticmethod
+    def _derive_invoice_total(line_items):
+        """Derive a positive invoice total from complete line financials only."""
+        if not isinstance(line_items, list) or not line_items:
+            return None
+
+        total = Decimal("0")
+        has_financial_line = False
+        for item in line_items:
+            if not isinstance(item, dict):
+                continue
+
+            def number(*keys):
+                for key in keys:
+                    value = item.get(key)
+                    if value not in (None, ""):
+                        try:
+                            return Decimal(str(value).replace(",", "").strip())
+                        except (InvalidOperation, TypeError, ValueError):
+                            return None
+                return None
+
+            line_total = number("total_amount")
+            if line_total is None:
+                subtotal = number("subtotal")
+                tax_amount = number("tax_amount") or Decimal("0")
+                if subtotal is not None:
+                    line_total = subtotal + tax_amount
+
+            if line_total is None:
+                return None
+            has_financial_line = True
+            total += line_total
+
+        if not has_financial_line or total <= 0:
+            return None
+        return int(total) if total == total.to_integral_value() else float(total)
+
     @timed_stage("netsuite.post_vendor_bill")
     def post_vendor_bill(self, *, document_id, user: User, connection_id=None) -> dict:
         """
@@ -1852,6 +1891,12 @@ class NetSuiteVendorBillPostingService:
                 )
                 if mapped_value is not None:
                     item_payload[target_field_id] = mapped_value
+                elif mapping.get("is_required", False):
+                    raise ValueError(
+                        f'Line {index}: NetSuite field '
+                        f'{mapping.get("target_field_label") or target_field_id} '
+                        "is required before posting. Add the value and validate again."
+                    )
 
             payload_items.append(item_payload)
 
@@ -1950,6 +1995,23 @@ class NetSuiteVendorBillPostingService:
             )
             if raw_value is None:
                 continue
+
+            # A missing OCR total is sometimes persisted as numeric zero.
+            # Never send that zero as userTotal when complete line totals can
+            # provide the real amount; omit it when no reliable total exists
+            # so NetSuite can calculate from the item lines instead.
+            if api_field_name == "userTotal":
+                try:
+                    is_zero_total = Decimal(str(raw_value)) == Decimal("0")
+                except (InvalidOperation, TypeError, ValueError):
+                    is_zero_total = False
+                if is_zero_total:
+                    derived_total = self._derive_invoice_total(
+                        data.get("line_items")
+                    )
+                    if derived_total is None:
+                        continue
+                    raw_value = derived_total
 
             table_config = validation_service.SELECT_FIELD_SUITEQL_TABLES.get(
                 target_field_id.strip().lower()
