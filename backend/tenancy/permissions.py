@@ -24,3 +24,19 @@ class IsCompanyUser(permissions.BasePermission):
 
 class CanManageEmployees(HasPermission):
     codes = ['employee.manage']
+
+
+class IsCompanyAdmin(permissions.BasePermission):
+    """Restrict company-wide settings changes to the Company Admin role."""
+
+    message = 'Only a Company Admin can change company settings.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and getattr(user, 'company_id', None)
+            and getattr(user, 'role', None) is not None
+            and user.role.name.casefold() == 'company admin'
+        )

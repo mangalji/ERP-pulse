@@ -288,12 +288,16 @@ class MeView(APIView):
 
 
 class ProfilePictureView(APIView):
-    """Serve an active user's uploaded profile picture."""
+    """Serve only the authenticated user's uploaded profile picture."""
 
-    authentication_classes = []
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, user_id):
+        # A profile image is personal data.  Do not let a known/leaked user
+        # UUID become a public image URL or an account-enumeration oracle.
+        if request.user.id != user_id:
+            raise Http404
+
         try:
             user = User.objects.get(id=user_id, is_active=True)
         except User.DoesNotExist as exc:

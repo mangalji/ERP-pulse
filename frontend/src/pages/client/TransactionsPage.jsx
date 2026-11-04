@@ -26,29 +26,6 @@ function collectTransactionContexts(items, contexts = []) {
   return contexts
 }
 
-function TransactionPagination({ pagination, recordsLength, working, onPageChange }) {
-  const start = pagination.count === 0 ? 0 : pagination.offset + 1
-  const end = Math.min(pagination.offset + recordsLength, pagination.count)
-
-  return (
-    <div className="grid grid-cols-2 items-center gap-x-3 gap-y-3 border-t border-[var(--color-border)] px-3 py-3 text-sm text-[var(--color-muted)] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4">
-      <span className="col-span-2 min-w-0 text-center text-xs leading-5 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:text-sm">
-        Showing {start}-{end} of {pagination.count}
-      </span>
-      <div className="flex min-w-0 justify-start sm:col-start-1 sm:row-start-1">
-        <Button type="button" onClick={() => onPageChange(pagination.previousOffset)} disabled={pagination.previousOffset === null || working}>
-          Previous
-        </Button>
-      </div>
-      <div className="flex min-w-0 justify-end sm:col-start-3 sm:row-start-1">
-        <Button type="button" onClick={() => onPageChange(pagination.nextOffset)} disabled={pagination.nextOffset === null || working}>
-          Next
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 export default function TransactionsPage() {
   const [searchParams] = useSearchParams()
 

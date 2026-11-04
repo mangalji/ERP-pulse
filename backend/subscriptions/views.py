@@ -14,7 +14,7 @@ from audit.services import audit_service
 from common.pagination import paginated_response
 from common.common_utils import success_response
 from tenancy.models import Company
-from subscriptions.permissions import IsSuperAdminOrCompanyAdmin
+from subscriptions.permissions import IsSuperAdminOrCompanyAdmin, IsSuperAdminOrInternalUser
 from subscriptions.serializers import PlanSerializer, SubscriptionSerializer
 from subscriptions.services import subscription_service
 from superadmin.models import Plan
@@ -25,6 +25,8 @@ class SubscriptionViewSet(viewsets.ViewSet):
     def get_permissions(self):
         if self.action in ['my_subscription']:
             return [IsAuthenticated()]
+        if self.action == 'my_transactions':
+            return [IsSuperAdminOrInternalUser()]
         return [IsSuperAdminOrCompanyAdmin()]
 
     @action(detail=False, methods=['get'], url_path='my')
@@ -48,7 +50,7 @@ class SubscriptionViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='my-transactions')
     def my_transactions(self, request):
-        """GET /api/v1/subscriptions/my-transactions/ — client company transactions."""
+        """GET /api/v1/subscriptions/my-transactions/ — internal billing view."""
         company = getattr(request.user, 'company', None)
         if not company:
             return Response({'detail': 'No company associated with user.'}, status=status.HTTP_404_NOT_FOUND)

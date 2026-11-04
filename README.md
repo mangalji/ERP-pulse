@@ -26,7 +26,7 @@ The platform includes a company workspace for administrators and employees, plus
 | AI configuration | Company-level provider and model configuration for Google Gemini, OpenAI, and Anthropic |
 | NetSuite | OAuth connections, employee connection assignments, field mapping, live reference validation, Vendor Bill posting, and background batch jobs |
 | Email automation | Zoho Mail and Gmail connections, scheduled fetching, message staging and deduplication, vendor-bill processing, and validation/posting results |
-| Access management | Company-scoped access, roles, invitations, JWT authentication, email OTP, and company lifecycle controls |
+| Access management | Company-scoped access, Company Admin promotion/demotion, invitations with mobile confirmation, JWT authentication, password recovery, email OTP, and company lifecycle controls |
 | Administration | Subscription plans, tenant administration, configurable navigation, notifications, audit records, and operational monitoring |
 
 ## Processing workflow
@@ -35,7 +35,7 @@ The platform includes a company workspace for administrators and employees, plus
 
 1. Select an extraction template and upload documents.
 2. Extract structured header and line-item data using the company's AI configuration.
-3. Apply template defaults and enrich mapped references from NetSuite.
+3. Apply template defaults and enrich missing mapped references from NetSuite.
 4. Review and save the extracted data; calculate applicable line totals and taxes.
 5. Validate vendor, item, and other mapped references against the connected NetSuite account.
 6. Post a validated Vendor Bill and retain its internal ID and NetSuite record link in history.
@@ -48,13 +48,22 @@ The default mailbox interval is **5 minutes**. Celery Beat checks for due mailbo
 
 ### Field precedence and NetSuite references
 
-- Configured template defaults replace AI-extracted values for their fields.
+- Configured template defaults replace AI-extracted values for ordinary fields. **Location is a source-first exception:** an AI-extracted Location from a PDF, image, or vendor email is retained; the template Location is used only when no Location was extracted.
 - Missing mapped subsidiary and location values can be filled from an unambiguously matched vendor's NetSuite record. Existing values are preserved by this vendor fallback.
 - When subsidiary and currency are mapped, the subsidiary's base currency replaces the extracted or template currency. Posting fetches currency again using the final resolved subsidiary and sends the NetSuite currency internal ID.
 - A failed subsidiary-currency lookup during enrichment clears the old currency value. A failed lookup during posting prevents the bill from being submitted.
 - A missing invoice number receives a database-allocated `vendor_bill_inv_<number>` on initial save. Location is resolved through extraction, configuration, or vendor enrichment; there is no hard-coded location default.
 
 Reference lookup and posting depend on the connected account's records, permissions, and transaction rules.
+
+### Account, invitation, and company status rules
+
+- New company users are created as pending accounts and receive an invitation. Invitation acceptance requires the invitee to enter the original national mobile number saved by the administrator; the country calling code is never entered or changed by the invitee.
+- A company must have a completed paid plan and be explicitly activated before its company users can log in, accept invitations, use integrations, fetch mailbox messages, or process data.
+- Super Admin users can create company users but cannot promote or demote existing company users. Company Admins manage promotion/demotion within their own company; they cannot alter their own role.
+- Designation and department are required when creating new employees. Each company has an editable department catalogue seeded with `HR`, `NetSuite`, `IT Support`, and `Development`.
+- Password recovery is only for an active, email-verified account that has already completed initial password setup. Pending, inactive, suspended, or unknown accounts receive no reset OTP. A password reset does not bypass invitation mobile confirmation.
+- The reset page requires the email state produced by the Forgot Password page; direct navigation returns the user to the recovery form.
 
 ## Architecture
 
@@ -159,6 +168,10 @@ NETSUITE_REDIRECT_URI=http://localhost:8000/api/v1/netsuite/callback/
 EMAIL_OAUTH_REDIRECT_URI=http://localhost:8000/api/v1/email/callback/
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
+# Optional server-side email deliverability verification. Never expose these
+# values to the frontend or commit them.
+ABSTRACT_EMAIL_VALIDATION_API_KEY=
+HUNTER_API_KEY=
 ```
 
 Generate the two keys separately:
@@ -230,6 +243,7 @@ Open `http://localhost:5173`. Configure the company, AI provider, NetSuite conne
 | `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` | Browser origins and frontend URL |
 | `NETSUITE_REDIRECT_URI`, `EMAIL_OAUTH_REDIRECT_URI` | Provider-registered OAuth callbacks |
 | `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `BREVO_API_KEY` | Outbound delivery for OTPs and invitations; separate from mailbox OAuth |
+| `ABSTRACT_EMAIL_VALIDATION_API_KEY`, `HUNTER_API_KEY` | Server-side email deliverability verification. Abstract is attempted first; Hunter is used when Abstract fails or its quota is unavailable. |
 | `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker and result service |
 | `OCR_EXECUTION_MODE` | Job execution strategy: `auto`, `celery`, `thread`, `inline`, or `external` |
 | `OCR_STORAGE_BACKEND` | Document storage: `auto`, `local`, `db`, or `s3` |
@@ -283,7 +297,7 @@ Run backend checks from `backend/` with the virtual environment active:
 
 ```powershell
 python manage.py check
-python manage.py test netsuite.tests ocr.tests mail_integration.tests --noinput
+python manage.py test accounts.tests common.tests invitations.tests invitations.test_permissions ocr.tests mail_integration.tests netsuite.tests superadmin.tests --noinput
 ```
 
 For the full suite, use a dedicated PostgreSQL test server and the repository's test settings. The test user must be able to create the separate test database:
@@ -304,7 +318,7 @@ npm run lint
 npm run build
 ```
 
-Integration acceptance checks should cover login, a document upload, mapped-field validation, and a Vendor Bill posted to a NetSuite sandbox. For email changes, also check scheduled fetching, duplicate handling, and failure visibility in history. Mocked unit tests do not verify account-specific NetSuite permissions or provider behavior.
+Integration acceptance checks should cover login, invitation acceptance with the saved mobile number, password recovery for an active account and rejection for a pending account, a document upload, mapped-field validation, and a Vendor Bill posted to a NetSuite sandbox. For email changes, also check scheduled fetching, duplicate handling, disconnect/reconnect behavior, and failure visibility in history. Mocked unit tests do not verify account-specific NetSuite permissions or provider behavior.
 
 ## Deployment and operations
 
@@ -342,6 +356,7 @@ Additional deployment notes are available in [DEPLOY.md](DEPLOY.md) and [DEPLOY_
 | Email passes its displayed due time | Next one-minute scheduler check, worker queue, connection state, and provider response |
 | Sync reports `checked: 0` | No mailbox met the active, connected, unpaused, initialized, and due filters |
 | Mailbox requires authorization | Reconnect through provider OAuth to restore valid credentials |
+| Forgot Password says the account is unregistered or inactive | Use the invitation flow for a pending employee; reactivate the company/account through an administrator before requesting a reset OTP |
 | Currency enrichment or posting fails | Subsidiary mapping, subsidiary record, currency availability, and SuiteQL permissions |
 | NetSuite rejects a reference | Record status, subsidiary compatibility, field mapping, and integration-role permissions |
 | Uploaded files disappear after a restart | Storage persistence and shared access between API and workers |

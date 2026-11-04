@@ -155,3 +155,4 @@ backend/data.py
 zoho_test.py
 backend/celerybeat*
 REVERSE_ENGINEERING_QA_CHECKLIST.md
+output/

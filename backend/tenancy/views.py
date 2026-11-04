@@ -27,7 +27,7 @@ from tenancy.serializers import (
     UpdateEmployeeSerializer,
 )
 from tenancy.services import ClientPortalService
-from tenancy.permissions import IsCompanyUser, CanManageEmployees
+from tenancy.permissions import IsCompanyUser, CanManageEmployees, IsCompanyAdmin
 
 client_portal_service = ClientPortalService()
 
@@ -246,7 +246,12 @@ class ClientRoleListView(APIView):
     the current user's company. Never exposes another company's roles.
     """
 
-    permission_classes = [IsAuthenticated, IsCompanyUser]
+    def get_permissions(self):
+        # Every company user may read the displayed profile, but editing
+        # company-wide settings is reserved for the Company Admin role.
+        if self.request.method == 'PATCH':
+            return [IsAuthenticated(), IsCompanyUser(), IsCompanyAdmin()]
+        return [IsAuthenticated(), IsCompanyUser()]
 
     def get(self, request):
         roles = client_portal_service.list_assignable_roles(company=request.user.company)

@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.conf import settings
 from django.core.cache import cache
 from django.test import TestCase
+from django.urls import reverse
 from rest_framework.test import APIClient
 from common.throttles import (
     LoginPasswordEmailThrottle,
@@ -121,6 +122,25 @@ class AuthenticationSecurityTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+    def test_profile_picture_is_private_to_the_authenticated_owner(self):
+        other_user = User.objects.create_user(
+            email="other-picture@example.com",
+            password="StrongPassword@123",
+            first_name="Other",
+            last_name="User",
+            is_active=True,
+            is_email_verified=True,
+        )
+        picture_url = reverse('profile-picture', kwargs={'user_id': other_user.id})
+
+        unauthenticated = APIClient()
+        self.assertEqual(unauthenticated.get(picture_url).status_code, 401)
+
+        self.client.force_authenticate(user=self.user)
+        # A 404 deliberately avoids confirming whether another user's image
+        # exists when their UUID becomes known.
+        self.assertEqual(self.client.get(picture_url).status_code, 404)
 
     @patch("accounts.views.authentication_service.otp_service.generate_and_send_otp")
     def test_forgot_password_allows_only_an_active_completed_account(self, send_otp):
