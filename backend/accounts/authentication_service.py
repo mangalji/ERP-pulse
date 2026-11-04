@@ -3,6 +3,7 @@ import logging
 from accounts.exceptions import (
     AccountNotVerifiedException,
     InvalidCredentialsException,
+    PasswordResetUnavailableException,
     UserAlreadyExistsException,
 )
 from accounts.models import OTP, User
@@ -53,18 +54,47 @@ class AuthenticationService:
     # Password Reset
     # -----------------------------------------------------------------
 
+    @staticmethod
+    def _password_reset_unavailable() -> None:
+        raise PasswordResetUnavailableException(
+            'Your email is not registered or the account is inactive. Please contact your administrator.'
+        )
+
+    def _get_password_reset_eligible_user(self, *, email: str):
+        """Return only an already-activated account eligible for recovery.
+
+        An invitation is the only route for a pending employee to set their
+        first password and confirm their original mobile number. Allowing
+        Forgot Password before invitation completion would bypass that flow.
+        """
+        user = self.user_repository.get_by_email(email)
+        if (
+            user is None
+            or not user.is_active
+            or not user.is_email_verified
+            or not user.has_usable_password()
+        ):
+            self._password_reset_unavailable()
+        try:
+            self._ensure_user_company_operational(user=user)
+        except InvalidCredentialsException:
+            self._password_reset_unavailable()
+        return user
+
+    def request_password_reset(self, *, email: str) -> dict:
+        user = self._get_password_reset_eligible_user(email=email)
+        self.otp_service.generate_and_send_otp(
+            user=user,
+            purpose=OTP.Purpose.PASSWORD_RESET,
+        )
+        return {'email': user.email}
+
     def reset_password(self, *, email: str, otp_code: str, password: str) -> dict:
         """
         Verify PASSWORD_RESET OTP and update the user's password.
         Returns email on success.
         """
-        user = self.user_repository.get_by_email(email)
-        if user is None:
-            # Don't reveal whether email exists
-            logger.info('Password reset attempted for unknown email=%s.', email)
-            return {'email': email}
-
-        self._ensure_user_company_operational(user=user)
+        user = self._get_password_reset_eligible_user(email=email)
         self.otp_service.verify_otp(
             user=user, purpose=OTP.Purpose.PASSWORD_RESET, submitted_code=otp_code
         )

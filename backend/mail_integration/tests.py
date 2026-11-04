@@ -64,12 +64,13 @@ class EmailValidationFlowTests(SimpleTestCase):
 
 
 class SenderEmailVendorResolutionTests(SimpleTestCase):
+    @patch("mail_integration.pipeline.company_lifecycle_service.is_operational", return_value=True)
     @patch("mail_integration.pipeline.audit_service.log")
     @patch("mail_integration.pipeline.ai_extractor.extract_email_text")
     @patch("mail_integration.pipeline.NetSuiteValidationService")
     @patch("mail_integration.pipeline.NetSuiteConnectionRepository")
     def test_unmatched_sender_is_terminal_without_an_ai_request(
-        self, repository, validation_service, extract_email, audit_log,
+        self, repository, validation_service, extract_email, audit_log, is_operational,
     ):
         """Ordinary mailbox traffic must never consume an AI extraction call."""
         user = Mock()
@@ -109,11 +110,12 @@ class SenderEmailVendorResolutionTests(SimpleTestCase):
         audit_log.assert_called_once()
 
     @patch("mail_integration.pipeline.audit_service.log")
+    @patch("mail_integration.pipeline.company_lifecycle_service.is_operational", return_value=True)
     @patch("mail_integration.pipeline.ai_extractor.extract_email_text")
     @patch("mail_integration.pipeline.NetSuiteValidationService")
     @patch("mail_integration.pipeline.NetSuiteConnectionRepository")
     def test_matched_vendor_normal_email_is_terminal_after_one_ai_classification(
-        self, repository, validation_service, extract_email, audit_log,
+        self, repository, validation_service, extract_email, is_operational, audit_log,
     ):
         """A vendor follow-up must not become an OCR bill merely because its sender matches."""
         user = Mock()
@@ -311,10 +313,11 @@ class EmailRefreshFailureTests(SimpleTestCase):
             integration.save = Mock()
             failure = EmailIntegrationOAuthError("failed", authorization_required=requires_auth)
             with self.subTest(requires_auth=requires_auth), \
-                 patch.object(EmailIntegration.objects, "get", return_value=integration), \
+                 patch.object(EmailIntegration.objects, "select_related", return_value=Mock(get=Mock(return_value=integration))), \
                  patch.object(EmailIntegration.objects, "filter"), \
                  patch("mail_integration.sync.audit_service.log"), \
                  patch.object(EmailIntegration, "company", new_callable=PropertyMock, return_value=Mock()), \
+                 patch("mail_integration.sync.company_lifecycle_service.is_operational", return_value=True), \
                  patch.object(EmailSyncService, "_refresh_access_token_if_needed", side_effect=failure):
                 with self.assertRaises(EmailIntegrationOAuthError):
                     EmailSyncService().sync_integration(integration_id=integration.id)
@@ -333,10 +336,11 @@ class EmailRefreshFailureTests(SimpleTestCase):
             access_token_expires_at=timezone.now() + timedelta(hours=1), provider_metadata=integration.provider_metadata)
         mailbox = Mock()
         mailbox.iter_messages_since.return_value = []
-        with patch.object(EmailIntegration.objects, "get", return_value=integration), \
+        with patch.object(EmailIntegration.objects, "select_related", return_value=Mock(get=Mock(return_value=integration))), \
              patch.object(EmailIntegration.objects, "filter"), \
              patch("mail_integration.sync.audit_service.log"), \
              patch.object(EmailIntegration, "company", new_callable=PropertyMock, return_value=Mock()), \
+             patch("mail_integration.sync.company_lifecycle_service.is_operational", return_value=True), \
              patch("mail_integration.sync.EmailOAuthClient") as client, \
              patch("mail_integration.sync.mailbox_client_for", return_value=mailbox), \
              patch.object(EmailSyncService, "_advance_terminal_dedupe"):
@@ -360,7 +364,7 @@ class EmailRefreshFailureTests(SimpleTestCase):
 
     def test_error_connection_never_fetches(self):
         integration = EmailIntegration(status="ERROR", is_active=True)
-        with patch.object(EmailIntegration.objects, "get", return_value=integration), \
+        with patch.object(EmailIntegration.objects, "select_related", return_value=Mock(get=Mock(return_value=integration))), \
              patch("mail_integration.sync.mailbox_client_for") as mailbox:
             self.assertEqual(EmailSyncService().sync_integration(integration_id=integration.id), 0)
         mailbox.assert_not_called()

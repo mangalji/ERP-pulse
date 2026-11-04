@@ -241,6 +241,30 @@ class NetSuiteConnectionRepository:
                 "updated_at",
             ]
         )
+        from audit.models import AuditAction, AuditActivityType, AuditModule, AuditStatus
+        from audit.services import audit_service
+
+        audit_service.log(
+            module=AuditModule.NETSUITE,
+            action=AuditAction.CONNECT,
+            entity="NetSuiteConnection",
+            entity_id=str(connection.id),
+            company=connection.company,
+            user=None,
+            activity_type=AuditActivityType.AUTOMATED,
+            status=AuditStatus.FAILED,
+            new_value={
+                "event": "token_refresh_failed",
+                "account_name": connection.netsuite_account_id,
+                "client_name": connection.client_name,
+                "reason": error_message[:1000],
+            },
+            detail={
+                "summary": "NetSuite token refresh failed; reauthorization is required.",
+                "connection_id": str(connection.id),
+                "reason": error_message[:1000],
+            },
+        )
         from audit.integration_alerts import report_integration_failure
         from audit.models import IntegrationFailureAlert
 

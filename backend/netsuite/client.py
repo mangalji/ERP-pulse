@@ -24,9 +24,12 @@ NetSuite endpoints exist and how to call them" — public method
 signatures are unchanged from before the split.
 """
 
+import base64
+import binascii
+import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as datetime_timezone
 
 from django.conf import settings
 from django.utils import timezone
@@ -50,6 +53,25 @@ class NetSuiteTokenSet:
     access_token: str
     refresh_token: str
     access_token_expires_at: datetime
+    refresh_token_expires_at: datetime | None
+
+
+def _jwt_expiry(token: str | None) -> datetime | None:
+    """Read the provider-issued expiry claim without trusting it for auth.
+
+    NetSuite's OAuth tokens are JWTs.  We use ``exp`` solely for displaying
+    and scheduling the per-integration reauthorization deadline; NetSuite
+    remains the authority when it accepts or rejects a refresh request.
+    """
+    if not token:
+        return None
+    try:
+        payload = token.split('.')[1]
+        payload += '=' * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload)).get('exp')
+        return datetime.fromtimestamp(float(exp), tz=datetime_timezone.utc) if exp else None
+    except (IndexError, ValueError, TypeError, json.JSONDecodeError, binascii.Error):
+        return None
 
 
 class NetSuiteAuthClient:
@@ -402,8 +424,10 @@ class NetSuiteAuthClient:
         payload = response.json()
         expires_in = payload.get('expires_in', 3600)
 
+        refresh_token = payload.get('refresh_token', data.get('refresh_token'))
         return NetSuiteTokenSet(
             access_token=payload['access_token'],
-            refresh_token=payload.get('refresh_token', data.get('refresh_token')),
+            refresh_token=refresh_token,
             access_token_expires_at=timezone.now() + timedelta(seconds=expires_in),
+            refresh_token_expires_at=_jwt_expiry(refresh_token),
         )

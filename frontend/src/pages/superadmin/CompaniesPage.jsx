@@ -17,7 +17,6 @@ import {
   EMAIL_MAX_LENGTH,
   validateEmail,
   validateCompanyText,
-  validateCompanyCode,
   validatePhone,
   PHONE_MAX_DIGITS,
 } from '../../utils/formValidation.js'
@@ -25,17 +24,14 @@ import { formatDate } from '../../utils/formatDate.js'
 
 const PAGE_SIZE = 10
 const COMPANY_NAME_MAX_LENGTH = 100
-const COMPANY_CODE_MAX_LENGTH = 20
-
 const EMPTY_FORM = {
   name: '',
-  code: '',
   contact_email: '',
   contact_phone: '',
-  contact_phone_country_code: '+91',
+  contact_phone_country_code: '',
   country: '',
-  industry: '',
-  company_size: '',
+  other_country_name: '',
+  other_country_code: '',
   city: '',
 }
 
@@ -203,8 +199,6 @@ export default function CompaniesPage() {
       contact_email: prefill.contact_email || '',
       contact_phone: prefill.contact_phone || '',
       country: prefill.country || '',
-      industry: prefill.industry || '',
-      company_size: prefill.company_size || '',
       city: prefill.city || '',
     })
     setCreateOpen(true)
@@ -254,10 +248,6 @@ export default function CompaniesPage() {
       message = validateCompanyText(value, 'Company name')
     }
 
-    if (field === 'code') {
-      message = validateCompanyCode(value)
-    }
-
     if (field === 'contact_email') {
       message = validateEmail(value)
     }
@@ -287,6 +277,8 @@ export default function CompaniesPage() {
       ...prev,
       country,
       contact_phone_country_code: selected?.dialCode || '',
+      other_country_name: country === 'OTHER' ? prev.other_country_name : '',
+      other_country_code: country === 'OTHER' ? prev.other_country_code : '',
     }))
 
     const phoneError = validatePhone(form.contact_phone, country)
@@ -304,21 +296,36 @@ export default function CompaniesPage() {
     }))
   }
 
+  const handleOtherCountryCodeChange = (value) => {
+    const code = value.replace(/[^+\d]/g, '').replace(/(?!^)\+/g, '')
+    setForm((prev) => ({
+      ...prev,
+      other_country_code: code,
+      contact_phone_country_code: code,
+    }))
+    setTouched((prev) => ({ ...prev, other_country_code: true }))
+  }
+
   // ─────────────────────────────────────────────────────────────
   // Validate entire create form
   // ─────────────────────────────────────────────────────────────
   const isFormValid = () => {
     const errors = {
       name: validateCompanyText(form.name, 'Company name'),
-      code: validateCompanyCode(form.code),
       contact_email: validateEmail(form.contact_email),
-      country: form.country ? '' : 'Please select a country.',
+      country:
+        !form.country
+          ? 'Please select a country.'
+          : form.country === 'OTHER' && !form.other_country_name.trim()
+            ? 'Please enter the country name.'
+            : form.country === 'OTHER' && !/^\+[1-9]\d{0,2}$/.test(form.other_country_code.trim())
+              ? 'Enter a valid country calling code, e.g. +91.'
+              : '',
       contact_phone: validatePhone(form.contact_phone, form.country),
     }
 
     setTouched({
       name: true,
-      code: true,
       contact_email: true,
       country: true,
       contact_phone: true,
@@ -418,12 +425,20 @@ export default function CompaniesPage() {
     setSaving(true)
 
     try {
+      const { other_country_name, other_country_code, ...companyForm } = form
       const created = await superadminApi.createCompany({
-        ...form,
+        ...companyForm,
         name: form.name.trim(),
-        code: form.code.trim(),
         contact_email: form.contact_email.trim().toLowerCase(),
         contact_phone: form.contact_phone.trim(),
+        country:
+          form.country === 'OTHER'
+            ? other_country_name.trim()
+            : form.country,
+        contact_phone_country_code:
+          form.country === 'OTHER'
+            ? other_country_code.trim()
+            : form.contact_phone_country_code,
       })
 
       addToast('Company created successfully')
@@ -1076,34 +1091,6 @@ export default function CompaniesPage() {
                   )}
                 </div>
 
-                {/* Company code */}
-                <div>
-                  <Input
-                    label="Code"
-                    value={form.code}
-                    maxLength={COMPANY_CODE_MAX_LENGTH}
-                    onChange={(e) =>
-                      updateField(
-                        'code',
-                        e.target.value
-                      )
-                    }
-                  />
-
-                  {touched.code && (
-                    <p
-                      className={`mt-1 text-xs ${
-                        fieldErrors.code
-                          ? 'text-red-600'
-                          : 'text-green-600'
-                      }`}
-                    >
-                      {fieldErrors.code ||
-                        '✓ Valid company code.'}
-                    </p>
-                  )}
-                </div>
-
                 {/* Email */}
                 <div>
                   <Input
@@ -1157,10 +1144,10 @@ export default function CompaniesPage() {
                         key={country.value}
                         value={country.value}
                       >
-                        {country.label} (
-                        {country.dialCode})
+                        {country.label}
                       </option>
                     ))}
+                    <option value="OTHER">Other</option>
                   </select>
 
                   {touched.country && (
@@ -1176,6 +1163,26 @@ export default function CompaniesPage() {
                     </p>
                   )}
                 </label>
+
+                {form.country === 'OTHER' && (
+                  <>
+                    <Input
+                      label="Country name"
+                      value={form.other_country_name}
+                      onChange={(e) =>
+                        updateField('other_country_name', e.target.value)
+                      }
+                      placeholder="Enter country name"
+                    />
+                    <Input
+                      label="Country calling code"
+                      value={form.other_country_code}
+                      onChange={(e) => handleOtherCountryCodeChange(e.target.value)}
+                      maxLength={4}
+                      placeholder="e.g. +91"
+                    />
+                  </>
+                )}
 
                 {/* Phone - full width */}
                 <div className="sm:col-span-2">
@@ -1225,56 +1232,6 @@ export default function CompaniesPage() {
                         Enter Phone Number. Country is used only for the calling code.
                       </p>
                     )}
-                </div>
-
-                {/* Industry */}
-                <div>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                      Industry
-                    </span>
-                    <select
-                      value={form.industry}
-                      onChange={(e) =>
-                        updateField('industry', e.target.value)
-                      }
-                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                    >
-                      <option value="">Select industry</option>
-                      <option value="TECHNOLOGY">Technology</option>
-                      <option value="MANUFACTURING">Manufacturing</option>
-                      <option value="RETAIL">Retail</option>
-                      <option value="FINANCE">Finance</option>
-                      <option value="HEALTHCARE">Healthcare</option>
-                      <option value="LOGISTICS">Logistics</option>
-                      <option value="ECOMMERCE">E-commerce</option>
-                      <option value="SERVICES">Professional Services</option>
-                      <option value="OTHER">Other</option>
-                    </select>
-                  </label>
-                </div>
-
-                {/* Company Size */}
-                <div>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                      Company Size
-                    </span>
-                    <select
-                      value={form.company_size}
-                      onChange={(e) =>
-                        updateField('company_size', e.target.value)
-                      }
-                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                    >
-                      <option value="">Select size</option>
-                      <option value="1-10">1-10 employees</option>
-                      <option value="11-50">11-50 employees</option>
-                      <option value="51-200">51-200 employees</option>
-                      <option value="201-500">201-500 employees</option>
-                      <option value="500+">500+ employees</option>
-                    </select>
-                  </label>
                 </div>
 
                 {/* City */}

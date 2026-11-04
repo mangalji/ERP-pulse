@@ -19,12 +19,11 @@ import uuid
 from decimal import Decimal, InvalidOperation
 from accounts.models import User
 from django.db import transaction
-from datetime import timedelta
 from django.core.cache import cache
 from django.conf import settings
 from django.utils import timezone
 from netsuite.client import NetSuiteAuthClient
-from netsuite.constants import NETSUITE_MAX_TOKEN_ROTATION_HOURS, NetSuiteRecordType
+from netsuite.constants import NetSuiteRecordType
 from netsuite.exceptions import (
     NetSuiteStateMismatchException, 
     NetSuiteConnectionNotFoundException, 
@@ -39,7 +38,7 @@ from netsuite.oauth import (
     resolve_user_id_from_state,
 )
 from netsuite.repositories import NetSuiteConnectionRepository
-from audit.models import AuditAction, AuditModule
+from audit.models import AuditAction, AuditModule, AuditStatus
 from audit.services import audit_service
 from netsuite.token_manager import NetSuiteTokenManager
 from netsuite.vendor_bill_baseline import VENDOR_BILL_BASELINE_FIELDS
@@ -347,6 +346,24 @@ class NetSuiteConnectionService:
             raise NetSuiteConnectionNotFoundException(
                 "NetSuite connection not found or not accessible."
             )
+        audit_service.log(
+            module=AuditModule.NETSUITE,
+            action=AuditAction.CONNECT,
+            entity="NetSuiteConnection",
+            entity_id=str(connection.id),
+            company=connection.company,
+            user=user,
+            status=AuditStatus.INFO,
+            new_value={
+                "event": "reconnect_started",
+                "account_name": connection.netsuite_account_id,
+                "client_name": connection.client_name,
+            },
+            detail={
+                "summary": "NetSuite reconnection authorization started.",
+                "connection_id": str(connection.id),
+            },
+        )
         return self.get_authorization_url(user=user, connection=connection)
 
     def handle_callback(self, *, code: str, state: str) -> User:
@@ -372,6 +389,7 @@ class NetSuiteConnectionService:
         )
         if connection is None:
             raise NetSuiteConnectionNotFoundException("connection not found.")
+        is_reconnect = connection.status in {"error", "disconnected"}
         try:
             client = NetSuiteAuthClient(
                 account_id=connection.netsuite_account_id,
@@ -385,12 +403,10 @@ class NetSuiteConnectionService:
                 access_token=token_set.access_token,
                 refresh_token=token_set.refresh_token,
                 access_token_expires_at=token_set.access_token_expires_at,
-                # NetSuite forces re-authorization this long after consent,
-                # however often the refresh token is rotated.
-                refresh_token_expires_at=(
-                    timezone.now()
-                    + timedelta(hours=NETSUITE_MAX_TOKEN_ROTATION_HOURS)
-                ),
+                # Derived from this integration's provider-issued token, not
+                # a global setting: every customer can choose a different
+                # NetSuite refresh-token validity period.
+                refresh_token_expires_at=token_set.refresh_token_expires_at,
             )
             if user.current_netsuite_connection_id is None:
                 user.current_netsuite_connection = connection
@@ -408,9 +424,16 @@ class NetSuiteConnectionService:
                 company=connection.company,
                 user=user,
                 new_value={
-                    "event": "oauth_completed",
+                    "event": "reconnect_completed" if is_reconnect else "oauth_completed",
                     "account_name": connection.netsuite_account_id,
                     "client_name": connection.client_name,
+                },
+                detail={
+                    "summary": (
+                        "NetSuite connection reauthorized successfully."
+                        if is_reconnect else "NetSuite connection authorized successfully."
+                    ),
+                    "connection_id": str(connection.id),
                 },
             )
 
@@ -444,10 +467,19 @@ class NetSuiteConnectionService:
                 company=connection.company,
                 user=user,
                 new_value={
-                    "event": "oauth_failed",
+                    "event": "reconnect_failed" if is_reconnect else "oauth_failed",
                     "account_name": connection.netsuite_account_id,
                     "client_name": connection.client_name,
                     "detail": str(exc)[:1000],
+                },
+                status=AuditStatus.FAILED,
+                detail={
+                    "summary": (
+                        "NetSuite reconnection failed."
+                        if is_reconnect else "NetSuite connection authorization failed."
+                    ),
+                    "connection_id": str(connection.id),
+                    "reason": str(exc)[:1000],
                 },
             )
             raise
@@ -548,6 +580,10 @@ class NetSuiteConnectionService:
             client_name:str,
             ):
         self._ensure_user_company_operational(user=user)
+        if not self._is_company_admin(user):
+            raise PermissionError(
+                "Only Company Admin can rename NetSuite connections."
+            )
         connection = self.repository.get_by_id(user,connection_id)
 
         if connection is None:
@@ -637,6 +673,12 @@ class NetSuiteConnectionService:
             "access_token_expires_at", "refresh_token_expires_at",
             "last_error", "consecutive_failures", "updated_at",
         ])
+
+        # A manual disconnect is an explicit reset by the Company Admin.
+        # Do not retain employee-to-connection assignments when this account
+        # is connected again. Token-expiry and reconnect paths intentionally
+        # do not call this deletion so their assignments remain intact.
+        EmployeeConnection.objects.filter(connection=connection).delete()
 
         if user.current_netsuite_connection_id == connection.id:
             user.current_netsuite_connection = None
@@ -918,6 +960,7 @@ class NetSuiteConnectionService:
                 entity_id=str(connection.id),
                 company=connection.company,
                 user=connection.user,
+                status=AuditStatus.FAILED,
                 new_value={
                     "event": "oauth_failed",
                     "account_name": connection.netsuite_account_id,

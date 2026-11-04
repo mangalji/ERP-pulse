@@ -11,5 +11,6 @@ export const emailIntegrationApi = {
   pause: (id) => apiClient.post(`${root}${id}/pause/`).then(unwrap),
   resume: (id) => apiClient.post(`${root}${id}/resume/`).then(unwrap),
   disconnect: (id) => apiClient.post(`${root}${id}/disconnect/`).then(unwrap),
+  delete: (id) => apiClient.delete(`${root}${id}/`).then(unwrap),
   reconnect: (id) => apiClient.post(`${root}${id}/reconnect/`).then(unwrap),
 }

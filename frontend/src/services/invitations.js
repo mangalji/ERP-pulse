@@ -14,4 +14,7 @@ export const invitationApi = {
   accept: (payload) =>
     apiClient.post(INVITATION_ENDPOINTS.accept, payload).then(unwrap),
 
+  verifyEmail: (email) =>
+    apiClient.post(INVITATION_ENDPOINTS.verifyEmail, { email }).then(unwrap),
+
 }

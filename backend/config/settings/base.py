@@ -209,6 +209,12 @@ OPENAI_MODEL = config(
     default="gpt-4o-mini",
 )
 
+# External verification is server-only; never pass either key to the frontend.
+ABSTRACT_EMAIL_VALIDATION_API_KEY = config(
+    "ABSTRACT_EMAIL_VALIDATION_API_KEY", default=""
+).strip()
+HUNTER_API_KEY = config("HUNTER_API_KEY", default="").strip()
+
 NETSUITE_REDIRECT_URI = config(
     "NETSUITE_REDIRECT_URI",
     default="",

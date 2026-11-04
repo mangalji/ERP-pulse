@@ -71,12 +71,12 @@ class EmailOAuthCallbackView(APIView):
         if not data.get("code"):
             from mail_integration.exceptions import EmailIntegrationStateError
             raise EmailIntegrationStateError("The email provider did not return an authorization code.")
-        from mail_integration.exceptions import EmailRefreshTokenMissingError
         try:
             service.complete_oauth(code=data["code"], state=data["state"])
-        except EmailRefreshTokenMissingError as exc:
-            # complete_oauth rolls back on failure; record the error afterwards.
-            service.mark_oauth_failed(state=data["state"], error_message=str(exc))
+        except Exception:
+            # complete_oauth persists the failed state/audit entry after its
+            # transaction rolls back. OAuth callbacks must return the user to
+            # the application rather than exposing a provider-side 500 page.
             return redirect(
                 f"{settings.FRONTEND_URL.rstrip('/')}/#/app/integrations/email?email=failed"
             )
@@ -129,6 +129,17 @@ class EmailIntegrationDisconnectView(APIView):
     def post(self, request, integration_id):
         integration = EmailIntegrationService().disconnect(user=request.user, integration_id=integration_id)
         return success_response(message="Mailbox disconnected.", data=EmailIntegrationSerializer(integration).data)
+
+
+class EmailIntegrationDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, integration_id):
+        EmailIntegrationService().delete_disconnected(
+            user=request.user,
+            integration_id=integration_id,
+        )
+        return success_response(message="Disconnected mailbox deleted.")
 
 
 class EmailIntegrationInitialSyncView(APIView):

@@ -53,6 +53,16 @@ class LoginResendEmailThrottle(EmailThrottle):
 class RegisterOTPThrottle(AnonRateThrottle):
     scope = 'register_otp'
 
+
+class InvitationValidateThrottle(AnonRateThrottle):
+    """Rate-limit public invitation lookups separately from OTP attempts."""
+    scope = 'invitation_validate'
+
+
+class EmailVerificationThrottle(UserRateThrottle):
+    """Protect third-party email-verification credits from authenticated abuse."""
+    scope = 'email_verification'
+
 class DashboardThrottle(UserRateThrottle):
     scope = 'dashboard'
 

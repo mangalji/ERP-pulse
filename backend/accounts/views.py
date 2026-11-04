@@ -352,8 +352,7 @@ class ForgotPasswordView(APIView):
     """
     POST /api/v1/auth/forgot-password/
 
-    Initiates password reset flow: validates email exists, sends PASSWORD_RESET OTP.
-    Returns same response whether email exists or not (security: don't reveal registered emails).
+    Sends a PASSWORD_RESET OTP only for an active, invitation-completed account.
     """
 
     permission_classes = [AllowAny]
@@ -364,24 +363,10 @@ class ForgotPasswordView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
 
-        user = authentication_service.user_repository.get_by_email(email)
-        if user:
-            try: 
-                authentication_service._ensure_user_company_operational(
-                    user=user
-                )
-                authentication_service.otp_service.generate_and_send_otp(
-                    user=user, purpose=OTP.Purpose.PASSWORD_RESET
-                )
-            except Exception:
-                # Keep the existing security behavior:
-                # never reveal whether the email exists or why access is blocked.
-                pass
-
-        # Always return success -- never reveal whether email is registered
+        result = authentication_service.request_password_reset(email=email)
         return success_response(
-            message='If this email is registered, a password reset code has been sent to it.',
-            data={'email': email},
+            message='A password reset code has been sent to your email.',
+            data=result,
         )
 
 

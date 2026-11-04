@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import InvitationCard from '../../components/invitations/InvitationCard.jsx'
@@ -23,6 +23,7 @@ export default function InvitationAcceptPage() {
   const [mobileNumber, setMobileNumber] = useState('')
   const [resendLoading, setResendLoading] = useState(false)
   const [resendSecondsRemaining, setResendSecondsRemaining] = useState(60)
+  const validatedTokenRef = useRef('')
 
   useEffect(() => {
     if (!token) {
@@ -30,6 +31,12 @@ export default function InvitationAcceptPage() {
       setError('Invalid invitation link.')
       return
     }
+
+    // React Strict Mode replays effects in development. Validating a public
+    // invitation once per token avoids duplicate network calls and prevents
+    // a harmless page load from consuming the invitation throttle budget.
+    if (validatedTokenRef.current === token) return
+    validatedTokenRef.current = token
 
     invitationApi
       .validate(token)
@@ -212,6 +219,7 @@ export default function InvitationAcceptPage() {
               <PasswordSetupForm
                 onSubmit={handleRequestOtp}
                 isLoading={isSubmitting}
+                maskedMobileNumber={invitation?.masked_mobile_number}
               />
             </>
           )}

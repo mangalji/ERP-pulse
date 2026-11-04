@@ -11,18 +11,18 @@ export const COUNTRY_OPTIONS = [
   { value: 'JP', label: 'Japan', dialCode: '+81', minDigits: 10, maxDigits: 10, example: '9012345678' },
 ]
 
-export const NAME_MAX_LENGTH = 20
+export const NAME_MAX_LENGTH = 40
 export const EMAIL_MAX_LENGTH = 40
 
-const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$/
+const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ']+$/
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const REPEATED_CHARACTER_REGEX = /(.)\1{4,}/u
 const ALL_SAME_CHARACTER_REGEX = /^(.)\1*$/u
-export function validateName(value, label = 'Name') {
+export function validateName(value, label = 'Name', required = true) {
   const valueTrimmed = value.trim()
 
   if (!valueTrimmed) {
-    return `${label} is required.`
+    return required ? `${label} is required.` : ''
   }
 
   if (valueTrimmed.length < 2) {
@@ -34,7 +34,7 @@ export function validateName(value, label = 'Name') {
   }
 
   if (!NAME_REGEX.test(valueTrimmed)) {
-    return `${label} may contain letters, spaces, hyphens, and apostrophes only.`
+    return `${label} may contain letters and apostrophes only.`
   }
 
   const compact = valueTrimmed.replace(/[^A-Za-z0-9]/g, '')

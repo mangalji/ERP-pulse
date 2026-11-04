@@ -21,6 +21,9 @@ export const superadminApi = {
   permanentlyDeleteCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPermanentlyDelete(id)).then(unwrap),
   restoreCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyRestore(id)).then(unwrap),
   permanentlyDeletedCompanies: (params) => apiClient.get(`${SUPERADMIN_ENDPOINTS.companies}permanently-deleted/`,{params}).then(unwrap),
+  listCompanyDepartments: (companyId) => apiClient.get(`${SUPERADMIN_ENDPOINTS.companies}${companyId}/departments/`).then(unwrap),
+  createCompanyDepartment: (companyId, name) => apiClient.post(`${SUPERADMIN_ENDPOINTS.companies}${companyId}/departments/`, { name }).then(unwrap),
+  deleteCompanyDepartment: (companyId, departmentId) => apiClient.delete(`${SUPERADMIN_ENDPOINTS.companies}${companyId}/departments/${departmentId}/`).then(unwrap),
 
   // ── Plans ────────────────────────────────────────────────────
   listPlans: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.plans, { params }).then(unwrap),

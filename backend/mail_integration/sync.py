@@ -20,6 +20,7 @@ from mail_integration.client import EmailOAuthClient
 from mail_integration.exceptions import EmailIntegrationOAuthError, EmailIntegrationStateError, EmailMailboxFetchError
 from mail_integration.mailbox import IncomingMailboxMessage, mailbox_client_for
 from mail_integration.models import EmailIntegration, EmailMessage
+from tenancy.services import company_lifecycle_service
 
 
 logger = logging.getLogger(__name__)
@@ -93,8 +94,10 @@ class EmailSyncService:
 
     @timed_stage("email.fetch_mailbox")
     def sync_integration(self, *, integration_id) -> int:
-        integration = EmailIntegration.objects.get(id=integration_id)
+        integration = EmailIntegration.objects.select_related("company").get(id=integration_id)
         if integration.status != EmailIntegration.Status.CONNECTED or not integration.is_active or integration.is_paused:
+            return 0
+        if not company_lifecycle_service.is_operational(company=integration.company):
             return 0
         if integration.initial_sync_from_at is None:
             raise EmailIntegrationStateError("Initial email sync is not configured.")
@@ -144,7 +147,17 @@ class EmailSyncService:
                 cursor=resume_cursor,
                 on_page_completed=save_page_checkpoint,
             ):
-                if not EmailIntegration.objects.filter(pk=integration.id, status=EmailIntegration.Status.CONNECTED, is_active=True, is_paused=False).exists():
+                if (
+                    not EmailIntegration.objects.filter(
+                        pk=integration.id,
+                        status=EmailIntegration.Status.CONNECTED,
+                        is_active=True,
+                        is_paused=False,
+                    ).exists()
+                    or not company_lifecycle_service.is_operational(
+                        company=integration.company
+                    )
+                ):
                     return staged
                 returned += 1
                 if message.received_at:

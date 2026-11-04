@@ -6,7 +6,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from accounts.models import User
-from audit.models import AuditAction, AuditModule
+from audit.models import AuditAction, AuditModule, AuditStatus
 from audit.services import audit_service
 from mail_integration.client import EmailOAuthClient
 from mail_integration.exceptions import (
@@ -136,18 +136,18 @@ class EmailIntegrationService:
             raise EmailIntegrationStateError("Invalid OAuth state parameter.") from exc
 
         self._ensure_operational(user=user)
-        with transaction.atomic():
-            integration = self._get_for_user(
-                user=user,
-                integration_id=payload["integration_id"],
-                lock=True,
-            )
-            if integration.provider != payload["provider"]:
-                raise EmailIntegrationStateError("OAuth provider does not match the mailbox.")
-            if not is_company_admin(user):
-                raise EmailIntegrationStateError("The authorizing user can no longer manage email integrations.")
+        try:
+            with transaction.atomic():
+                integration = self._get_for_user(
+                    user=user,
+                    integration_id=payload["integration_id"],
+                    lock=True,
+                )
+                if integration.provider != payload["provider"]:
+                    raise EmailIntegrationStateError("OAuth provider does not match the mailbox.")
+                if not is_company_admin(user):
+                    raise EmailIntegrationStateError("The authorizing user can no longer manage email integrations.")
 
-            try:
                 oauth_client = EmailOAuthClient(integration=integration)
                 token_set = oauth_client.exchange_code(code=code)
                 authorized_email, identity_metadata = oauth_client.authorized_mailbox_identity(
@@ -164,41 +164,45 @@ class EmailIntegrationService:
                     raise EmailRefreshTokenMissingError(
                         "The email provider did not issue a refresh token. Reconnect and approve access again."
                     )
-            except Exception as exc:
-                integration.status = EmailIntegration.Status.ERROR
-                integration.last_error = str(exc)[:2000]
-                integration.save(update_fields=["status", "last_error", "updated_at"])
-                raise
-
-            integration.access_token = token_set.access_token
-            integration.refresh_token = token_set.refresh_token or integration.refresh_token
-            integration.access_token_expires_at = token_set.access_token_expires_at
-            integration.provider_metadata = {
-                **token_set.provider_metadata,
-                **identity_metadata,
-                "authorized_mailbox_email": authorized_email,
-            }
-            integration.status = EmailIntegration.Status.CONNECTED
-            integration.last_error = ""
-            integration.consecutive_failures = 0
-            if not EmailIntegration.objects.filter(
-                company_id=user.company_id,
-                is_active=True,
-            ).exclude(pk=integration.pk).exists():
-                integration.is_active = True
-            integration.save(
-                update_fields=[
-                    "access_token",
-                    "refresh_token",
-                    "access_token_expires_at",
-                    "provider_metadata",
-                    "status",
-                    "last_error",
-                    "consecutive_failures",
-                    "is_active",
-                    "updated_at",
-                ]
+                integration.access_token = token_set.access_token
+                integration.refresh_token = token_set.refresh_token or integration.refresh_token
+                integration.access_token_expires_at = token_set.access_token_expires_at
+                integration.provider_metadata = {
+                    **token_set.provider_metadata,
+                    **identity_metadata,
+                    "authorized_mailbox_email": authorized_email,
+                }
+                integration.status = EmailIntegration.Status.CONNECTED
+                integration.last_error = ""
+                integration.consecutive_failures = 0
+                if not EmailIntegration.objects.filter(
+                    company_id=user.company_id,
+                    is_active=True,
+                ).exclude(pk=integration.pk).exists():
+                    integration.is_active = True
+                integration.save(
+                    update_fields=[
+                        "access_token",
+                        "refresh_token",
+                        "access_token_expires_at",
+                        "provider_metadata",
+                        "status",
+                        "last_error",
+                        "consecutive_failures",
+                        "is_active",
+                        "updated_at",
+                    ]
+                )
+        except Exception as exc:
+            # The OAuth work above is atomic. Persist the failure only after
+            # that transaction has rolled back, otherwise the ERROR state and
+            # audit record are rolled back with the failed token exchange.
+            self._mark_oauth_failed(
+                user=user,
+                payload=payload,
+                error_message=str(exc),
             )
+            raise
 
         from audit.integration_alerts import mark_integration_healthy
         from audit.models import IntegrationFailureAlert
@@ -225,18 +229,45 @@ class EmailIntegrationService:
             user = User.objects.select_related("company").get(id=payload["user_id"])
         except User.DoesNotExist as exc:
             raise EmailIntegrationStateError("Invalid OAuth state parameter.") from exc
+        self._mark_oauth_failed(
+            user=user,
+            payload=payload,
+            error_message=error_message,
+        )
+
+    def _mark_oauth_failed(self, *, user: User, payload: dict, error_message: str) -> None:
         integration = self._get_for_user(user=user, integration_id=payload["integration_id"])
         if integration.provider != payload["provider"]:
             raise EmailIntegrationStateError("OAuth provider does not match the mailbox.")
         integration.status = EmailIntegration.Status.ERROR
         integration.last_error = error_message[:2000]
         integration.save(update_fields=["status", "last_error", "updated_at"])
+        # Unit-level callers may use an unsaved integration to validate the
+        # OAuth state transition. Only persisted connections have an audit or
+        # failure-alert identity to record.
+        if integration._state.adding:
+            return
+        audit_service.log(
+            module=AuditModule.EMAIL,
+            action=AuditAction.CONNECT,
+            entity="EmailIntegration",
+            entity_id=str(integration.id),
+            company=user.company,
+            user=user,
+            status=AuditStatus.FAILED,
+            new_value={
+                "event": "oauth_failed",
+                "provider": integration.provider,
+                "mailbox": integration.mailbox_email,
+            },
+            detail={"summary": "Email OAuth authorization failed.", "reason": integration.last_error},
+        )
         from audit.integration_alerts import report_integration_failure
         from audit.models import IntegrationFailureAlert
         report_integration_failure(
             integration_type=IntegrationFailureAlert.IntegrationType.EMAIL,
             connection_id=str(integration.id),
-            company=integration.company,
+            company=user.company,
             owner=integration.created_by,
             connection_label=integration.display_name or integration.mailbox_email,
             provider=integration.provider,
@@ -315,6 +346,37 @@ class EmailIntegrationService:
             integration.last_error = ""
             integration.save(update_fields=["status", "is_active", "is_paused", "access_token", "refresh_token", "access_token_expires_at", "initial_sync_from_at", "last_successful_sync_at", "provider_cursor", "next_sync_at", "last_error", "updated_at"])
         return integration
+
+    def delete_disconnected(self, *, user: User, integration_id):
+        """Permanently remove a mailbox only after it has been disconnected."""
+        self._ensure_operational(user=user)
+        if not is_company_admin(user):
+            raise PermissionError("Only Company Admin can manage email integrations.")
+        with transaction.atomic():
+            integration = self._get_for_user(
+                user=user,
+                integration_id=integration_id,
+                lock=True,
+            )
+            if integration.status != EmailIntegration.Status.DISCONNECTED:
+                raise EmailIntegrationStateError(
+                    "Disconnect this mailbox before deleting it."
+                )
+            audit_service.log(
+                module=AuditModule.EMAIL,
+                action=AuditAction.DELETE,
+                entity="EmailIntegration",
+                entity_id=str(integration.id),
+                company=integration.company,
+                user=user,
+                old_value={
+                    "mailbox_email": integration.mailbox_email,
+                    "provider": integration.provider,
+                    "status": integration.status,
+                },
+                detail={"summary": "Disconnected email integration deleted."},
+            )
+            integration.delete()
 
     def configure_initial_sync(self, *, user: User, integration_id, initial_sync_from_at):
         integration = self.check_initial_sync_ready(user=user, integration_id=integration_id)

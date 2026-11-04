@@ -20,7 +20,7 @@ export default function ForgotPasswordPage() {
     setIsSubmitting(true)
     try {
       const result = await forgotPassword(email)
-      const msg = result.message || 'If this email is registered, a password reset code has been sent to it.'
+      const msg = result.message || 'A password reset code has been sent to your email.'
       setSuccess(msg)
       // Auto-redirect to reset code page after a short delay
       setTimeout(() => {

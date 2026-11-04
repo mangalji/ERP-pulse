@@ -3,9 +3,10 @@ from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import MethodNotAllowed, ValidationError
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from common.pagination import paginated_response
@@ -23,7 +24,7 @@ from superadmin.serializers import (
     CompanyUpdateSerializer,
 )
 from superadmin.services import SuperAdminService
-from tenancy.models import Company, CompanyDeletionHistory, CompanySuspensionReason
+from tenancy.models import Company, CompanyDeletionHistory, CompanyDepartment, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
 from subscriptions.services import subscription_service
 from invitations.models import Invitation
@@ -115,46 +116,133 @@ class CompanyViewSet(viewsets.ModelViewSet):
             data=serializer.data,
         )
 
+    @staticmethod
+    def _ensure_departments(company):
+        existing = CompanyDepartment.objects.filter(company=company)
+        if not existing.exists():
+            CompanyDepartment.objects.bulk_create(
+                [
+                    CompanyDepartment(company=company, name=name)
+                    for name in ('HR', 'NetSuite', 'IT Support', 'Development')
+                ]
+            )
+
+    @action(detail=True, methods=['get', 'post'], url_path='departments')
+    def departments(self, request, pk=None):
+        company = self.get_object()
+        self._ensure_departments(company)
+        if request.method == 'GET':
+            departments = CompanyDepartment.objects.filter(
+                company=company,
+                is_active=True,
+                is_deleted=False,
+            ).order_by('name')
+            return success_response(
+                message='Departments fetched successfully.',
+                data=[{'id': str(item.id), 'name': item.name} for item in departments],
+            )
+
+        name = str(request.data.get('name') or '').strip()
+        if not name or len(name) > 150:
+            raise ValidationError('Enter a department name up to 150 characters.')
+        item = CompanyDepartment.objects.filter(company=company, name__iexact=name).first()
+        if item is None:
+            item = CompanyDepartment.objects.create(
+                company=company,
+                name=name,
+                created_by=request.user,
+                updated_by=request.user,
+            )
+        elif not item.is_active:
+            item.is_active, item.is_deleted, item.deleted_at = True, False, None
+            item.save(update_fields=['is_active', 'is_deleted', 'deleted_at', 'updated_at'])
+        return success_response(
+            message='Department saved successfully.',
+            data={'id': str(item.id), 'name': item.name},
+        )
+
+    @action(detail=True, methods=['delete'], url_path=r'departments/(?P<department_id>[^/.]+)')
+    def delete_department(self, request, pk=None, department_id=None):
+        company = self.get_object()
+        item = CompanyDepartment.objects.filter(
+            pk=department_id,
+            company=company,
+            is_active=True,
+            is_deleted=False,
+        ).first()
+        if item is None:
+            return Response({'detail': 'Department not found.'}, status=status.HTTP_404_NOT_FOUND)
+        item.is_active = False
+        item.save(update_fields=['is_active', 'updated_at'])
+        return success_response(message='Department removed successfully.')
+
     @action(detail=True, methods=['post'])
     def suspend(self, request, pk=None):
-        company = self.get_object()
-        company.status = Company.Status.SUSPENDED
-        company.suspension_reason = CompanySuspensionReason.MANUAL
-        company.save(update_fields=['status','suspension_reason'])
+        with transaction.atomic():
+            company = Company.objects.select_for_update().get(pk=pk)
+            old_state = {
+                'status': company.status,
+                'suspension_reason': company.suspension_reason,
+            }
+            company.status = Company.Status.SUSPENDED
+            company.suspension_reason = CompanySuspensionReason.MANUAL
+            company.save(update_fields=['status','suspension_reason','updated_at'])
+            audit_service.log(
+                module=AuditModule.COMPANY,
+                action=AuditAction.UPDATE,
+                entity='Company lifecycle',
+                entity_id=str(company.id),
+                company=company,
+                user=request.user,
+                old_value=old_state,
+                new_value={
+                    'status': company.status,
+                    'suspension_reason': company.suspension_reason,
+                },
+            )
         
         return success_response(message='Company suspended successfully.', data={'id': str(company.id),'status':company.status})
 
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
-        company = self.get_object()
-        if company.is_deleted:
-            raise ValidationError(
-                {'detail': 'A deleted company must be restored before activation.'}
-            )
-        # previous_reason = company.suspension_reason
-        company.suspension_reason = CompanySuspensionReason.NONE
-        effective_status = company_lifecycle_service.get_effective_status(
-            company=company
-            )
-        if effective_status != Company.Status.ACTIVE:
-            company.status = Company.Status.SUSPENDED
-            company.suspension_reason = CompanySuspensionReason.PLAN
-            
-        company.save(update_fields=['status','suspension_reason'])
-        raise ValidationError(
-            {
-                "detail":(
-                    'Company cannot be activated because its subscription'
-                    'is not currently valid.'
+        with transaction.atomic():
+            company = Company.objects.select_for_update().get(pk=pk)
+            if company.is_deleted:
+                raise ValidationError(
+                    {'detail': 'A deleted company must be restored before activation.'}
                 )
-            }
-        )
-        company.status = Company.Status.ACTIVE
-        company.suspension_reason = CompanySuspensionReason.NONE
+            if not company_lifecycle_service.can_activate(company=company):
+                raise ValidationError(
+                    {
+                        'detail': (
+                            'Please assign a plan and complete its transaction '
+                            'before activating this company.'
+                        )
+                    }
+                )
 
-        company.save(
-            update_fields=['status', 'suspension_reason']
-        )
+            old_state = {
+                'status': company.status,
+                'suspension_reason': company.suspension_reason,
+            }
+            company.status = Company.Status.ACTIVE
+            company.suspension_reason = CompanySuspensionReason.NONE
+            company.save(
+                update_fields=['status', 'suspension_reason', 'updated_at']
+            )
+            audit_service.log(
+                module=AuditModule.COMPANY,
+                action=AuditAction.UPDATE,
+                entity='Company lifecycle',
+                entity_id=str(company.id),
+                company=company,
+                user=request.user,
+                old_value=old_state,
+                new_value={
+                    'status': company.status,
+                    'suspension_reason': company.suspension_reason,
+                },
+            )
 
         return success_response(message='Company activated successfully.', data={'id': str(company.id),'status':company.status})
 
@@ -494,6 +582,20 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     search_fields = ['email', 'first_name', 'last_name', 'employee_id', 'designation', 'department']
     ordering_fields = ['first_name', 'last_name', 'created_at']
     ordering = ['first_name', 'last_name']
+    # Super Admin employee administration deliberately has only the explicit
+    # create/activate/deactivate/invitation actions below.  Keeping DRF's
+    # default PATCH/PUT/DELETE routes exposed would bypass their validation,
+    # company-lifecycle and audit services.
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def create(self, request, *args, **kwargs):
+        """Block DRF's generic user creation route.
+
+        Creation must go through ``create_employee`` so the invitation,
+        lifecycle, field validation and Employee-only role policy are all
+        applied together.
+        """
+        raise MethodNotAllowed('POST')
 
     def list(self,request,*args,**kwargs):
         """Return paginated employees in the standard success envelope."""
@@ -556,11 +658,16 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         company_id = request.data.get('company_id')
         mobile_number = request.data.get('mobile_number')
         country = request.data.get('country')
-        gender = request.data.get('gender')
+        designation = request.data.get('designation', '')
+        department = request.data.get('department', '')
         role = request.data.get("role")
 
-        if role not in ["admin","employee"]:
-            raise ValidationError("Invalid role selected.")
+        # Super Admin can make an initial Employee or Company Admin invite,
+        # but cannot use this endpoint to alter an existing user's role.
+        if role not in {"employee", "company_admin"}:
+            raise ValidationError(
+                "Select either the Employee or Company Admin role."
+            )
 
         if not email:
             return Response({'detail': 'email is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -576,7 +683,8 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 request=request,
                 mobile_number=mobile_number,
                 country=country,
-                gender=gender,
+                designation=designation,
+                department=department,
             )
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -636,37 +744,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             )
         return success_response(message='Employee activated successfully.', data=UserSerializer(employee).data)
 
-    @action(detail=True, methods=['post'])
-    def assign_role(self, request, pk=None):
-        role_id = request.data.get('role_id')
-        if not role_id:
-            return Response({'detail': 'role_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            result = superadmin_service.assign_user_role(user_id=pk, role_id=role_id)
-        except ValueError as exc:
-            return Response(
-                {
-                    'detail': str(exc)
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return success_response(message='Employee role assigned successfully.', data={'created': result['created']})
-
-    @action(detail=True, methods=['post'])
-    def remove_role(self, request, pk=None):
-        role_id = request.data.get('role_id')
-        if not role_id:
-            return Response({'detail': 'role_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            result = superadmin_service.remove_user_role(user_id=pk, role_id=role_id)
-        except ValueError as exc:
-            return Response(
-                {
-                    'detail': str(exc)
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return success_response(message='Employee role removed successfully.', data={'deleted': result['deleted']})
 
 
 class DashboardViewSet(viewsets.ViewSet):

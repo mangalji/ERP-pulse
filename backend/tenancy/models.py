@@ -146,6 +146,29 @@ class Company(BaseModel):
     def __str__(self):
         return f"{self.name} ({self.code})"
 
+
+class CompanyDepartment(BaseModel):
+    """A department option managed independently by each company."""
+
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.CASCADE,
+        related_name='department_options',
+    )
+    name = models.CharField(max_length=150)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'company_department'
+        constraints = [
+            models.UniqueConstraint(
+                Lower('name'),
+                'company',
+                name='unique_company_department_name_ci',
+            ),
+        ]
+        ordering = ['name']
+
 class CompanyDeletionHistory(BaseModel):
     """
     Minimal record retained after a company is permanently deleted.

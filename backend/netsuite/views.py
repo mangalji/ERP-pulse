@@ -134,6 +134,10 @@ class NetSuiteConnectionDetailView(APIView):
     permission_classes = [IsAuthenticated]
     
     def patch(self,request,connection_id):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied(
+                "Only Company Admin can rename NetSuite connections."
+            )
         serializer = NetSuiteConnectionRenameSerializer(
             data=request.data
         )    

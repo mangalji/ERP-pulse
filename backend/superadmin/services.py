@@ -196,20 +196,21 @@ class SuperAdminService:
             "deleted": deleted,
         }
 
-    def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None, mobile_number=None, country=None, gender=None):
+    def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None, mobile_number=None, country=None, designation='', department=''):
         """Create a client-company user through the shared invitation flow."""
+        role_names = {
+            'employee': 'Employee',
+            'company_admin': 'Company Admin',
+        }
+        role_name = role_names.get(role)
+        if role_name is None:
+            raise ValueError('Select either the Employee or Company Admin role.')
         if not company_id:
             raise ValueError('company_id is required.')
         company = Company.objects.filter(pk=company_id).first()
         if company is None or company.is_deleted:
             raise ValueError('Company not found.')
 
-        role_name = {
-            'admin': 'Company Admin',
-            'employee': 'Employee',
-        }.get(role)
-        if not role_name:
-            raise ValueError('Invalid role selected.')
         selected_role = Role.objects.filter(
             name__iexact=role_name,
             company__isnull=True,
@@ -225,8 +226,9 @@ class SuperAdminService:
             last_name=last_name,
             mobile_number=mobile_number,
             country=country,
-            gender=gender,
             role_id=selected_role.id,
+            designation=designation,
+            department=department,
             request=request,
         )
 
@@ -264,12 +266,12 @@ class SuperAdminService:
             if len(first_name) < 2:
                 raise ValueError("First name must contain at least 2 characters.")
 
-            if len(first_name) > 20:
-                raise ValueError("First name must not exceed 20 characters.")
+            if len(first_name) > 40:
+                raise ValueError("First name must not exceed 40 characters.")
 
-            if not re.fullmatch(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$", first_name):
+            if not re.fullmatch(r"^[A-Za-zÀ-ÖØ-öø-ÿ']+$", first_name):
                 raise ValueError(
-                    "First name may contain letters, spaces, hyphens, and apostrophes only."
+                    "First name may contain letters and apostrophes only."
                 )
 
             user.first_name = first_name
@@ -278,15 +280,15 @@ class SuperAdminService:
         if 'last_name' in data and data['last_name'] is not None:
             last_name = data['last_name'].strip()
 
-            if len(last_name) < 2:
+            if last_name and len(last_name) < 2:
                 raise ValueError("Last name must contain at least 2 characters.")
 
-            if len(last_name) > 20:
-                raise ValueError("Last name must not exceed 20 characters.")
+            if len(last_name) > 40:
+                raise ValueError("Last name must not exceed 40 characters.")
 
-            if not re.fullmatch(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$", last_name):
+            if last_name and not re.fullmatch(r"^[A-Za-zÀ-ÖØ-öø-ÿ']+$", last_name):
                 raise ValueError(
-                    "Last name may contain letters, spaces, hyphens, and apostrophes only."
+                    "Last name may contain letters and apostrophes only."
                 )
 
             user.last_name = last_name

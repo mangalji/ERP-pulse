@@ -442,7 +442,44 @@ function normalizeEditedData(data, configuredFields) {
 // ---------------------------------------------------------------------------
 
 function isBatchFileEligible(result) {
-  return Boolean(result && (result.document_id || result.upload_id) && result.data)
+  return Boolean(
+    result &&
+    (result.document_id || result.upload_id) &&
+    result.data &&
+    !getVendorBillExtractionIssue(result),
+  )
+}
+
+function hasExtractedText(value) {
+  return value !== null && value !== undefined && String(value).trim() !== ''
+}
+
+/**
+ * A manually uploaded file is only useful as a Vendor Bill when the OCR
+ * result identifies its vendor, subsidiary, and at least one bill item.
+ * Keep this separate from NetSuite validation: this is a source-document
+ * check, before a user can review, edit, or post an extracted result.
+ */
+function getVendorBillExtractionIssue(result) {
+  if (
+    !result ||
+    String(result.status || '').toUpperCase() !== 'COMPLETED' ||
+    !result.data ||
+    typeof result.data !== 'object'
+  ) {
+    return null
+  }
+
+  const missing = []
+  if (!hasExtractedText(result.data.vendor_name)) missing.push('vendor name')
+  if (!hasExtractedText(result.data.subsidiary)) missing.push('subsidiary')
+
+  const hasItem = Array.isArray(result.data.line_items) && result.data.line_items.some(
+    (lineItem) => lineItem && hasExtractedText(lineItem.item),
+  )
+  if (!hasItem) missing.push('item')
+
+  return missing.length ? missing : null
 }
 
 // A file is ready to post only when its latest validation succeeded and it has
@@ -907,6 +944,7 @@ export default function OcrPage() {
   const restoredSessionStateRef = useRef(false)
   const restoredResultKeyRef = useRef(null)
   const initialResultEffectSkippedRef = useRef(false)
+  const invalidVendorBillAlertRef = useRef('')
 
   const connectionId = connection?.id || null  
   const selectedTemplate = useMemo(
@@ -917,6 +955,23 @@ export default function OcrPage() {
   )
 
   const activeResult = results[activeIndex] ?? null
+  const activeVendorBillIssue = getVendorBillExtractionIssue(activeResult)
+  const isInvalidVendorBill = Boolean(activeVendorBillIssue)
+
+  useEffect(() => {
+    if (!isInvalidVendorBill) return
+
+    const resultKey = String(
+      activeResult?.upload_id || activeResult?.document_id || activeResult?.filename || activeIndex,
+    )
+    if (invalidVendorBillAlertRef.current === resultKey) return
+
+    invalidVendorBillAlertRef.current = resultKey
+    const filename = activeResult?.filename || 'This file'
+    alert(
+      `Attached PDF "${filename}" is not a valid vendor bill. Missing: ${activeVendorBillIssue.join(', ')}. Only the file preview is available.`,
+    )
+  }, [activeIndex, activeResult?.document_id, activeResult?.filename, activeResult?.upload_id, activeVendorBillIssue, isInvalidVendorBill])
 
   const isBatchMode = ocrMode === 'multiple'
   const batchEligibleResults = useMemo(
@@ -2945,7 +3000,7 @@ const goNext = () => {
         {(selectedFiles.length > 0 || results.length > 0) && (
           <>
             <div
-              className="grid gap-4 lg:grid-cols-2"
+              className={`grid gap-4 ${isInvalidVendorBill ? '' : 'lg:grid-cols-2'}`}
               style={{ '--ocr-workspace-height': `${workspaceHeight}px` }}
             >
             {/* Left: preview */}
@@ -3061,6 +3116,9 @@ const goNext = () => {
               </div>
             </Card>
 
+            {/* Invalid source documents stay preview-only. */}
+            {!isInvalidVendorBill && (
+            <>
             {/* Right: OCR review */}
             <Card className="flex h-[480px] min-h-0 flex-col overflow-hidden lg:h-[var(--ocr-workspace-height)]">
               <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border)] p-4">
@@ -3317,11 +3375,15 @@ const goNext = () => {
                 </div>
               )}
             </Card>
+            </>
+            )}
             </div>
-            <WorkspaceResizeHandle
-              onPointerDown={startResizing}
-              onKeyDown={resizeWithKeyboard}
-            />
+            {!isInvalidVendorBill && (
+              <WorkspaceResizeHandle
+                onPointerDown={startResizing}
+                onKeyDown={resizeWithKeyboard}
+              />
+            )}
           </>
         )}
 

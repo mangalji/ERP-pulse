@@ -10,8 +10,11 @@ thin.
 
 from __future__ import annotations
 
+import re
+
 from django.db import transaction
 from django.db.models import Q
+from django.core.cache import cache
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -30,6 +33,20 @@ class ClientPortalService:
     def _ensure_company_operational(self, *, company):
         company_lifecycle_service.ensure_operational(
             company=company
+        )
+
+    @staticmethod
+    def _is_company_admin(user) -> bool:
+        """Role transitions are reserved for Company Admins, not any
+        custom role which happens to include ``employee.manage``.
+        """
+        return bool(
+            getattr(user, 'is_superuser', False)
+            or (
+                getattr(user, 'company_id', None)
+                and getattr(user, 'role', None) is not None
+                and user.role.name.casefold() == 'company admin'
+            )
         )
 
     # ── Employees ─────────────────────────────────────────────
@@ -54,7 +71,6 @@ class ClientPortalService:
             last_name=data.get('last_name'),
             mobile_number=data.get('mobile_number'),
             country=data.get('country'),
-            gender=data.get('gender'),
             role_id=data.get('role_id'),
             designation=data.get('designation', ''),
             department=data.get('department', ''),
@@ -107,17 +123,33 @@ class ClientPortalService:
         for field in ('first_name', 'last_name', 'designation', 'department'):
             if field in data and data[field] is not None:
                 value = data[field].strip() if isinstance(data[field], str) else data[field]
-                if field in ('first_name', 'last_name') and not value:
-                    raise ValueError(f'{field.replace("_", " ").title()} is required.')
+                if field == 'first_name' and not value:
+                    raise ValueError('First name is required.')
+                if field in ('first_name', 'last_name') and value:
+                    if len(value) < 2:
+                        raise ValueError(f'{field.replace("_", " ").title()} must contain at least 2 characters.')
+                    if len(value) > 40:
+                        raise ValueError(f'{field.replace("_", " ").title()} must not exceed 40 characters.')
+                    if not re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿ']+", value):
+                        raise ValueError(f'{field.replace("_", " ").title()} may contain letters and apostrophes only.')
+                    if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", value):
+                        raise ValueError(f'{field.replace("_", " ").title()} must contain at least one letter.')
+                if field == 'department' and value:
+                    from tenancy.models import CompanyDepartment
+                    if not CompanyDepartment.objects.filter(
+                        company=company,
+                        name__iexact=value,
+                        is_active=True,
+                        is_deleted=False,
+                    ).exists():
+                        raise ValueError('Select a department configured for this company.')
                 setattr(employee, field, value)
                 update_fields.append(field)
 
-        if 'gender' in data:
-            gender = data.get('gender')
-            if gender not in dict(Gender.choices):
-                raise ValueError('Invalid gender selected.')
-            employee.gender = gender
-            update_fields.append('gender')
+        if not (employee.designation or '').strip():
+            raise ValueError('Designation is required when editing an employee.')
+        if not (employee.department or '').strip():
+            raise ValueError('Department is required when editing an employee.')
 
         if 'country' in data or 'mobile_number' in data:
             new_country = (data.get('country') or employee.country or '').strip().upper()
@@ -149,9 +181,21 @@ class ClientPortalService:
         # Handle role update if provided
         role_id = data.get('role_id')
         if role_id is not None:
+            if not self._is_company_admin(acting_user):
+                raise PermissionError('Only Company Admin can change employee roles.')
+            if employee.id == acting_user.id:
+                raise ValueError('You cannot change your own role.')
             role = self._validate_role(company=company, role_id=role_id)
+            if (
+                role.company_id is not None
+                or role.name.casefold() not in {'company admin', 'employee'}
+            ):
+                raise ValueError(
+                    'Employees can only be promoted to Company Admin or demoted to Employee.'
+                )
             employee.role = role
             employee.save(update_fields=['role'])
+            self._clear_role_permission_cache(employee=employee)
 
         audit_service.log(
             module=AuditModule.EMPLOYEE,
@@ -166,6 +210,7 @@ class ClientPortalService:
                 'last_name': employee.last_name,
                 'designation': employee.designation,
                 'department': employee.department,
+                'role_id': str(employee.role_id) if employee.role_id else None,
             },
         )
         return employee
@@ -243,16 +288,35 @@ class ClientPortalService:
             raise ValueError('Role does not belong to your company.')
         return role
 
+    @staticmethod
+    def _clear_role_permission_cache(*, employee):
+        cache.delete(f'rbac:permissions:{employee.id}')
+
     @transaction.atomic
     def assign_role(self, *, company, employee_id, role_id, acting_user):
         self._ensure_company_operational(company=company)
+        if not self._is_company_admin(acting_user):
+            raise PermissionError('Only Company Admin can change employee roles.')
         employee = self.get_employee(company=company, employee_id=employee_id)
         role = self._validate_role(company=company, role_id=role_id)
 
+        if employee.id == acting_user.id:
+            raise ValueError('You cannot change your own role.')
+
+        if (
+            role.company_id is not None
+            or role.name.casefold() not in {'company admin', 'employee'}
+        ):
+            raise ValueError(
+                'Employees can only be promoted to Company Admin or demoted to Employee.'
+            )
+
         changed = employee.role_id != role.id
+        previous_role_id = employee.role_id
         if changed:
             employee.role = role
             employee.save(update_fields=['role'])
+            self._clear_role_permission_cache(employee=employee)
 
         audit_service.log(
             module=AuditModule.RBAC,
@@ -261,47 +325,16 @@ class ClientPortalService:
             entity_id=str(employee.id),
             company=company,
             user=acting_user,
+            old_value={'role_id': str(previous_role_id) if previous_role_id else None},
             new_value={'user_id': str(employee.id), 'role_id': str(role.id), 'changed': changed},
         )
         return {'created': changed, 'user': employee}
 
     @transaction.atomic
     def remove_role(self, *, company, employee_id, role_id, acting_user):
-        self._ensure_company_operational(company=company)
-
-        employee = self.get_employee(
-            company=company,
-            employee_id=employee_id,
+        raise ValueError(
+            'Roles cannot be removed. Assign the Employee role to demote a Company Admin.'
         )
-
-        role = self._validate_role(
-            company=company,
-            role_id=role_id,
-        )
-
-        deleted = employee.role_id == role.id
-
-        if deleted:
-            employee.role = None
-            employee.save(update_fields=['role'])
-
-        audit_service.log(
-            module=AuditModule.RBAC,
-            action=AuditAction.UPDATE,
-            entity='User',
-            entity_id=str(employee.id),
-            company=company,
-            user=acting_user,
-            new_value={
-                'user_id': str(employee.id),
-                'role_id': str(role.id),
-                'deleted': deleted,
-            },
-        )
-
-        return {
-            'deleted': deleted,
-        }
 
     # ── Company settings ──────────────────────────────────────
 
@@ -488,6 +521,30 @@ class CompanyLifecycleService:
 
         return plan
 
+    def has_valid_paid_subscription(self, *, company):
+        """Return whether the company's assigned plan has been paid for."""
+        if not company.plan_id:
+            return False
+
+        today = timezone.now().date()
+        if company.plan_start_date and company.plan_start_date > today:
+            return False
+        if company.plan_end_date and company.plan_end_date < today:
+            return False
+
+        # Import locally to avoid a tenancy -> superadmin import cycle.
+        from superadmin.models import PaymentStatus, Transaction, TransactionStatus
+
+        return Transaction.objects.filter(
+            company_id=company.id,
+            plan_id=company.plan_id,
+            payment_status=PaymentStatus.SUCCESS,
+            transaction_status=TransactionStatus.COMPLETED,
+        ).exists()
+
+    def can_activate(self, *, company):
+        return not company.is_deleted and self.has_valid_paid_subscription(company=company)
+
     def get_effective_status(self, *, company):
         """
         Determine whether the company is operational.
@@ -508,15 +565,12 @@ class CompanyLifecycleService:
         if company.suspension_reason == CompanySuspensionReason.MANUAL:
             return Company.Status.SUSPENDED
 
-        today = timezone.now().date()
-
-        if not company.plan_id:
+        # Activation is explicit. A valid plan alone must not turn a
+        # suspended company back on in the background.
+        if company.status != Company.Status.ACTIVE:
             return Company.Status.SUSPENDED
 
-        if company.plan_start_date and company.plan_start_date > today:
-            return Company.Status.SUSPENDED
-
-        if company.plan_end_date and company.plan_end_date < today:
+        if not self.has_valid_paid_subscription(company=company):
             return Company.Status.SUSPENDED
 
         return Company.Status.ACTIVE

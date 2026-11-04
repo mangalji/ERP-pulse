@@ -84,6 +84,14 @@ REST_FRAMEWORK = {
             "THROTTLE_REGISTER_OTP",
             default="5/min",
         ),
+        "invitation_validate": config(
+            "THROTTLE_INVITATION_VALIDATE",
+            default="60/min",
+        ),
+        "email_verification": config(
+            "THROTTLE_EMAIL_VERIFICATION",
+            default="30/min",
+        ),
         
         "dashboard": config(
             "THROTTLE_DASHBOARD",

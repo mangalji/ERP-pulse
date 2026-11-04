@@ -6,13 +6,11 @@ from .models import Invitation, InvitationStatus
 from accounts.models import User
 
 
-# Keep invitation-specific mobile validation intentionally limited to
-# number shape here. The selected country already belongs to the User record
-# because the administrator sets it during employee creation. The service
-# should normalize/validate the mobile against that stored country.
+# The country and dialling code are administrator-controlled and already
+# stored on the invited User. Invitees enter only the national mobile number.
 mobile_number_validator = RegexValidator(
-    regex=r"^\+?[1-9]\d{6,14}$",
-    message="Enter a valid mobile number.",
+    regex=r"^[0-9]{7,15}$",
+    message="Enter your mobile number using digits only, without a country code.",
 )
 
 
@@ -66,8 +64,9 @@ class RequestInvitationOTPSerializer(serializers.Serializer):
     - country
     - gender
 
-    The invitee only supplies the password at this step.
-    Mobile number is handled during final acceptance.
+    The invitee supplies their password and confirms the mobile number that
+    was entered by the administrator. The service matches that number before
+    sending an activation OTP.
     """
 
     token = serializers.UUIDField()
@@ -81,6 +80,12 @@ class RequestInvitationOTPSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(
         write_only=True,
         max_length=128,
+    )
+
+    mobile_number = serializers.CharField(
+        write_only=True,
+        max_length=15,
+        validators=[mobile_number_validator],
     )
 
     def validate(self, attrs):
@@ -101,7 +106,8 @@ class AcceptInvitationSerializer(serializers.Serializer):
     fields. First name, last name, country, and gender are intentionally
     absent.
 
-    The invitee may optionally provide/update only the mobile number.
+    The invitee must confirm the administrator-recorded mobile number. It is
+    not editable during invitation acceptance.
     """
     token = serializers.UUIDField()
 
@@ -125,13 +131,14 @@ class AcceptInvitationSerializer(serializers.Serializer):
 
     mobile_number = serializers.CharField(
         write_only=True,
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-        max_length=20,
+        max_length=15,
         validators=[mobile_number_validator],
     )
 
 
 class InvitationValidateSerializer(serializers.Serializer):
     token = serializers.UUIDField()
+
+
+class EmailDeliverabilitySerializer(serializers.Serializer):
+    email = serializers.EmailField(max_length=40)

@@ -128,6 +128,16 @@ class AIConfigurationService:
         if not api_key:
             raise ValueError("API key is required.")
 
+        existing_configuration = self.get_configuration(company=company)
+        if (
+            existing_configuration is not None
+            and existing_configuration.is_active
+            and existing_configuration.provider != provider
+        ):
+            raise ValueError(
+                "Disconnect the current AI provider before connecting a new provider."
+            )
+
         provider_client = build_provider(
             provider=provider,
             api_key=api_key,

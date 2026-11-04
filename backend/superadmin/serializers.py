@@ -1,5 +1,6 @@
 import re
 from common.contact_validation import normalize_phone
+from common.email_verification import ensure_email_deliverable
 from rest_framework import serializers
 from .models import (
     Plan, 
@@ -34,7 +35,6 @@ class CompanySerializer(serializers.ModelSerializer):
             "id",
             "created_at",
             "updated_at",
-            "contact_phone_country_code",
             "status",
             "suspension_reason",
             "plan",
@@ -44,6 +44,7 @@ class CompanySerializer(serializers.ModelSerializer):
         extra_kwargs = {
         "code": {
             "validators": [],
+            "required": False,
         },
     }
 
@@ -53,8 +54,21 @@ class CompanySerializer(serializers.ModelSerializer):
         name = (attrs.get("name") or "").strip()
         code = (attrs.get("code") or "").strip()
         email = (attrs.get("contact_email") or "").strip()
-        country = (attrs.get("country") or "").strip().upper()
+        country_input = (attrs.get("country") or "").strip()
+        country = country_input.upper()
         phone = (attrs.get("contact_phone") or "").strip()
+
+        if is_create and not code and name:
+            base = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-").upper() or "COMPANY"
+            base = base[:20]
+            candidate = base
+            suffix = 2
+            while Company.objects.filter(code__iexact=candidate).exists():
+                suffix_text = f"-{suffix}"
+                candidate = f"{base[:20 - len(suffix_text)]}{suffix_text}"
+                suffix += 1
+            code = candidate
+            attrs["code"] = code
         # Prevent duplicate company identity.
         # Name and code are compared case-insensitively.
         name_queryset = Company.objects.filter(
@@ -88,11 +102,6 @@ class CompanySerializer(serializers.ModelSerializer):
             if not name:
                 raise serializers.ValidationError({
                     "name": "Company name is required."
-                })
-
-            if not code:
-                raise serializers.ValidationError({
-                    "code": "Company code is required."
                 })
 
             if not email:
@@ -144,6 +153,14 @@ class CompanySerializer(serializers.ModelSerializer):
                     "contact_email": "Contact email must not exceed 40 characters."
                 })
 
+            if is_create:
+                try:
+                    ensure_email_deliverable(email)
+                except ValueError as exc:
+                    raise serializers.ValidationError({
+                        "contact_email": str(exc)
+                    }) from exc
+
             attrs["contact_email"] = email
 
         # Country + phone
@@ -158,19 +175,38 @@ class CompanySerializer(serializers.ModelSerializer):
                     "contact_phone": "Contact phone is required."
                 })
 
-            try:
-                normalized = normalize_phone(
-                    phone=phone,
-                    country=country,
-                )
-            except ValueError as exc:
-                raise serializers.ValidationError({
-                    "contact_phone": str(exc)
-                }) from exc
+            if len(country) == 2 and country.isalpha():
+                try:
+                    normalized = normalize_phone(
+                        phone=phone,
+                        country=country,
+                    )
+                except ValueError as exc:
+                    raise serializers.ValidationError({
+                        "contact_phone": str(exc)
+                    }) from exc
 
-            attrs["contact_phone"] = normalized.number
-            attrs["country"] = normalized.country_code
-            attrs["contact_phone_country_code"] = normalized.dial_code
+                attrs["contact_phone"] = normalized.number
+                attrs["country"] = normalized.country_code
+                attrs["contact_phone_country_code"] = normalized.dial_code
+            else:
+                custom_code = (attrs.get("contact_phone_country_code") or "").strip()
+                digits = "".join(character for character in phone if character.isdigit())
+                if not re.fullmatch(r"\+[1-9]\d{0,2}", custom_code):
+                    raise serializers.ValidationError({
+                        "contact_phone_country_code": "Enter a valid country calling code, e.g. +91."
+                    })
+                if len(digits) < 7 or len(digits) > 15:
+                    raise serializers.ValidationError({
+                        "contact_phone": "Phone number must contain between 7 and 15 digits."
+                    })
+                if len(custom_code[1:]) + len(digits) > 15:
+                    raise serializers.ValidationError({
+                        "contact_phone": "The international phone number cannot exceed 15 digits."
+                    })
+                attrs["country"] = country_input
+                attrs["contact_phone"] = digits
+                attrs["contact_phone_country_code"] = custom_code
 
         return attrs
 
@@ -192,6 +228,32 @@ class CompanyUpdateSerializer(serializers.ModelSerializer):
             'contact_phone',
             'country',
         ]
+        read_only_fields = (
+            'code',
+            'contact_email',
+            'contact_phone_country_code',
+        )
+
+    def validate(self, attrs):
+        country = (attrs.get('country') or '').strip().upper()
+        phone = (attrs.get('contact_phone') or '').strip()
+
+        if not country and not phone:
+            return attrs
+        if not country:
+            raise serializers.ValidationError({'country': 'Country is required.'})
+        if not phone:
+            raise serializers.ValidationError({'contact_phone': 'Contact phone is required.'})
+
+        try:
+            normalized = normalize_phone(phone=phone, country=country)
+        except ValueError as exc:
+            raise serializers.ValidationError({'contact_phone': str(exc)}) from exc
+
+        attrs['contact_phone'] = normalized.number
+        attrs['country'] = normalized.country_code
+        attrs['contact_phone_country_code'] = normalized.dial_code
+        return attrs
 
 
 class PlanDetailSerializer(serializers.ModelSerializer):
@@ -238,6 +300,9 @@ class UserSerializer(serializers.ModelSerializer):
             "id",
             "created_at",
             "updated_at",
+            "is_staff",
+            "is_active",
+            "company",
         )
 
 class SuperAdminEmployeeSerializer(serializers.ModelSerializer):
@@ -315,6 +380,8 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
     netsuite_account_id = serializers.SerializerMethodField()
     netsuite_environment = serializers.SerializerMethodField()
     netsuite_last_sync = serializers.SerializerMethodField()
+    netsuite_connections = serializers.SerializerMethodField()
+    netsuite_connection_count = serializers.SerializerMethodField()
     transactions = serializers.SerializerMethodField()
 
     class Meta:
@@ -325,6 +392,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'user_count', 'active_user_count',
             'current_plan', 'admin_email',
             'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
+            'netsuite_connections', 'netsuite_connection_count',
             'transactions', 'suspension_reason',
         ]
         read_only_fields = fields
@@ -365,19 +433,43 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
         }
 
     def get_netsuite_connected(self, obj):
-        return obj.netsuite_connections.filter(is_active=True).exists()
+        return obj.netsuite_connections.filter(is_active=True, status='connected').exists()
+
+    def _current_netsuite_connection(self, obj):
+        return obj.netsuite_connections.filter(
+            is_active=True,
+            status='connected',
+        ).order_by('-updated_at').first()
 
     def get_netsuite_account_id(self, obj):
-        conn = obj.netsuite_connections.filter(is_active=True).first()
+        conn = self._current_netsuite_connection(obj)
         return conn.netsuite_account_id if conn else None
 
     def get_netsuite_environment(self, obj):
-        conn = obj.netsuite_connections.filter(is_active=True).first()
+        conn = self._current_netsuite_connection(obj)
         return conn.get_environment_display() if conn and conn.environment else None
 
     def get_netsuite_last_sync(self, obj):
-        conn = obj.netsuite_connections.filter(is_active=True).first()
+        conn = self._current_netsuite_connection(obj)
         return conn.last_synced_at if conn else None
+
+    def get_netsuite_connection_count(self, obj):
+        return obj.netsuite_connections.count()
+
+    def get_netsuite_connections(self, obj):
+        return [
+            {
+                'id': str(connection.id),
+                'client_name': connection.client_name,
+                'netsuite_account_id': connection.netsuite_account_id,
+                'environment': connection.get_environment_display(),
+                'status': connection.status,
+                'is_current': bool(connection.is_active and connection.status == 'connected'),
+                'last_synced_at': connection.last_synced_at,
+                'connected_at': connection.connected_at,
+            }
+            for connection in obj.netsuite_connections.all().order_by('-updated_at')
+        ]
 
     def get_transactions(self, obj):
         transactions = obj.transactions.all()[:10]

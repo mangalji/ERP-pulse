@@ -50,3 +50,8 @@ class MaxOTPAttemptsExceededException(Exception):
 class OTPEmailDeliveryException(Exception):
     """Raised when an OTP email could not be sent."""
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+class PasswordResetUnavailableException(Exception):
+    """Raised when an account is not eligible for password recovery."""
+    status_code = status.HTTP_400_BAD_REQUEST

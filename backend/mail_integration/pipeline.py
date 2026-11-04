@@ -25,6 +25,7 @@ from ocr.models import DocumentType, OCRBatch, OCRDocument, OCRDocumentStatus
 from ocr.ai_extraction_service import ai_extractor
 from ocr.services.extraction_persistence import persist_extraction
 from audit.notifications import automated_activity, notify
+from tenancy.services import company_lifecycle_service
 
 logger = logging.getLogger(__name__)
 LEASE_MINUTES = 15
@@ -44,6 +45,8 @@ class EmailBillPipeline:
                 integration__is_active=True,
                 integration__is_paused=False,
                 integration__status=EmailIntegration.Status.CONNECTED,
+                integration__company__status="ACTIVE",
+                integration__company__is_deleted=False,
             )
             .select_related("integration", "integration__created_by", "integration__ocr_template", "integration__company")
             .order_by("received_at", "created_at")[:limit]
@@ -84,6 +87,10 @@ class EmailBillPipeline:
                 .first()
             )
             if message is None:
+                return None
+            if not company_lifecycle_service.is_operational(
+                company=message.integration.company
+            ):
                 return None
             if not EmailIntegration.objects.filter(pk=message.integration_id, is_active=True, is_paused=False, status=EmailIntegration.Status.CONNECTED).exists():
                 return None
@@ -138,6 +145,19 @@ class EmailBillPipeline:
         if message is None:
             return "deferred"
         integration = message.integration
+        # A suspension can happen after the message was claimed. Release the
+        # lease before doing any NetSuite/OCR work so the company is fully
+        # quiescent until it is explicitly activated again.
+        if not company_lifecycle_service.is_operational(company=integration.company):
+            EmailMessage.objects.filter(
+                pk=message.id,
+                lease_owner=message.lease_owner,
+            ).update(
+                lease_owner="",
+                lease_expires_at=None,
+                updated_at=timezone.now(),
+            )
+            return "deferred"
         user = integration.created_by
         template = integration.ocr_template
         if user is None or template is None:

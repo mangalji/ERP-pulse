@@ -737,8 +737,10 @@ def _apply_template_default_values(
 ) -> dict[str, Any]:
     """Apply configured template values after extraction.
 
-    A configured default is intentional business configuration, not a fallback:
-    it always replaces the AI-extracted value for that field.
+    Template values remain intentional overrides for all ordinary fields.
+    Location is different: a location directly extracted from a bill document
+    or vendor email is source evidence and must take precedence. Its template
+    value is therefore used only when AI did not find a location.
     """
     header_defaults, line_defaults = _configured_field_defaults(requested_fields)
     if not header_defaults and not line_defaults:
@@ -746,6 +748,8 @@ def _apply_template_default_values(
 
     result = dict(data)
     for key, value in header_defaults.items():
+        if key == "location" and not _is_empty_extracted_value(result.get(key)):
+            continue
         result[key] = value
 
     if line_defaults and isinstance(result.get("line_items"), list):
@@ -756,6 +760,8 @@ def _apply_template_default_values(
                     **{
                         key: value
                         for key, value in line_defaults.items()
+                        if key != "location"
+                        or _is_empty_extracted_value(line.get(key))
                     },
                 }
                 if isinstance(line, dict)
@@ -847,8 +853,9 @@ For each line, return only values that the message supports:
 The mailbox received date is supplied by the application and is always the
 invoice date. Extract a due date only when the email explicitly provides one.
 Vendor identity is supplied by the matched NetSuite vendor, so do not infer or
-replace it from email text. Subsidiary and location are optional email values
-and may be populated later from the matched vendor.
+replace it from email text. Subsidiary is optional and may be populated later
+from the matched vendor. If the email explicitly states a NetSuite Location,
+branch, site, or warehouse, extract that Location; otherwise return null.
 
 {extraction_contract}
 

@@ -11,7 +11,6 @@ from rest_framework import serializers
 from common.contact_validation import normalize_phone
 from invitations.status import get_user_invitation_status
 from rbac.models import Role
-from accounts.models import Gender
 from tenancy.models import Company
 
 User = get_user_model()
@@ -140,14 +139,13 @@ class CreateEmployeeSerializer(serializers.Serializer):
     """Validates input for creating a company employee via invitation."""
 
     email = serializers.EmailField(required=True)
-    first_name = serializers.CharField(required=False, allow_blank=True)
-    last_name = serializers.CharField(required=False, allow_blank=True)
+    first_name = serializers.CharField(required=True, allow_blank=False, max_length=40)
+    last_name = serializers.CharField(required=False, allow_blank=True, max_length=40)
     mobile_number = serializers.CharField(required=True,max_length=20)
     country = serializers.CharField(required=True,max_length=2)
-    gender = serializers.ChoiceField(choices=Gender.choices,required=True)
-    designation = serializers.CharField(required=False, allow_blank=True)
-    department = serializers.CharField(required=False, allow_blank=True)
-    role_id = serializers.UUIDField(required=False, allow_null=True)
+    designation = serializers.CharField(required=True, allow_blank=False, max_length=150)
+    department = serializers.CharField(required=True, allow_blank=False, max_length=150)
+    role_id = serializers.UUIDField(required=True)
 
     def validate(self,attrs):
         return normalize_employee_phone(attrs)
@@ -156,11 +154,6 @@ class UpdateEmployeeSerializer(serializers.ModelSerializer):
     """Validates PATCH input for updating a company employee."""
 
     role_id = serializers.UUIDField(required=False, allow_null=True)
-    gender = serializers.ChoiceField(
-        choices=Gender.choices,
-        required=False,
-        allow_null=True,
-    )
     country = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -180,7 +173,6 @@ class UpdateEmployeeSerializer(serializers.ModelSerializer):
             'last_name',
             "mobile_number",
             "country",
-            "gender",
             'designation',
             'department',
             'role_id',

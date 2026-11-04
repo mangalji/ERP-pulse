@@ -9,7 +9,7 @@ from accounts.models import Gender
 from invitations.models import Invitation, InvitationStatus
 from invitations.services import invitation_service
 from rbac.models import Role
-from superadmin.models import Plan
+from superadmin.models import PaymentStatus, Plan, Transaction, TransactionStatus
 from tenancy.models import Company, CompanyStatus
 
 
@@ -18,6 +18,11 @@ User = get_user_model()
 
 class SharedCompanyInvitationFlowTests(TestCase):
     def setUp(self):
+        self.email_verification = patch(
+            'invitations.services.ensure_email_deliverable'
+        )
+        self.email_verification.start()
+        self.addCleanup(self.email_verification.stop)
         plan = Plan.objects.create(name='Invitation test plan')
         self.company = Company.objects.create(
             name='Invitation Test Company',
@@ -37,6 +42,16 @@ class SharedCompanyInvitationFlowTests(TestCase):
             is_active=True,
             is_email_verified=True,
         )
+        Transaction.objects.create(
+            company=self.company,
+            plan=plan,
+            transaction_id='INVITATION-TEST-TXN',
+            original_amount=0,
+            total_amount=0,
+            payment_status=PaymentStatus.SUCCESS,
+            transaction_status=TransactionStatus.COMPLETED,
+            assigned_by=self.actor,
+        )
 
     @patch.object(invitation_service, '_send_invitation_email', return_value=True)
     def test_creates_pending_company_user_and_invitation(self, send_email):
@@ -51,7 +66,7 @@ class SharedCompanyInvitationFlowTests(TestCase):
             role_id=self.role.id,
             mobile_number='+919999999999',
             designation='Analyst',
-            department='Operations',
+            department='HR',
         )
 
         user = result['user']
@@ -86,6 +101,9 @@ class SharedCompanyInvitationFlowTests(TestCase):
                 country='IN',
                 gender=Gender.PREFER_NOT_TO_SAY,
                 role_id=super_admin_role.id,
+                mobile_number='+919999999998',
+                designation='Analyst',
+                department='HR',
             )
 
         self.assertFalse(

@@ -13,8 +13,9 @@ from common.email_service import send_email
 from accounts.models import OTP
 from accounts.services import OTPService
 from common.contact_validation import normalize_phone
+from common.email_verification import ensure_email_deliverable
 from tenancy.services import company_lifecycle_service
-from tenancy.models import Company
+from tenancy.models import Company, CompanyDepartment
 from rbac.models import Role
 from urllib.parse import urlsplit
 from .models import Invitation, InvitationStatus
@@ -45,6 +46,31 @@ class InvitationService:
             return user
         return None
 
+    @staticmethod
+    def _is_configured_department(*, company, department: str) -> bool:
+        """Validate against the company's editable department catalogue.
+
+        Older companies have no catalogue rows until they first manage
+        departments. Seed the documented defaults once for those companies,
+        but do not resurrect defaults after an admin has deliberately removed
+        every department.
+        """
+        departments = CompanyDepartment.objects.filter(company=company)
+        if not departments.exists():
+            CompanyDepartment.objects.bulk_create(
+                [
+                    CompanyDepartment(company=company, name=name)
+                    for name in ('HR', 'NetSuite', 'IT Support', 'Development')
+                ],
+                ignore_conflicts=True,
+            )
+            departments = CompanyDepartment.objects.filter(company=company)
+        return departments.filter(
+            name__iexact=department,
+            is_active=True,
+            is_deleted=False,
+        ).exists()
+
     def create_company_user_and_invite(
         self,
         *,
@@ -54,8 +80,8 @@ class InvitationService:
         first_name,
         last_name,
         country,
-        gender,
         role_id,
+        gender=None,
         mobile_number=None,
         designation='',
         department='',
@@ -75,6 +101,7 @@ class InvitationService:
             raise ValueError('Email is required.')
         if len(normalized_email) > 40:
             raise ValueError('Email must not exceed 40 characters.')
+        ensure_email_deliverable(normalized_email)
         if User.objects.filter(email__iexact=normalized_email).exists():
             raise ValueError('A user with this email already exists.')
 
@@ -82,28 +109,43 @@ class InvitationService:
         last_name = (last_name or '').strip()
         if not first_name:
             raise ValueError('First name is required.')
-        if not last_name:
-            raise ValueError('Last name is required.')
-        if len(first_name) > 20:
-            raise ValueError('First name must not exceed 20 characters.')
-        if len(last_name) > 20:
-            raise ValueError('Last name must not exceed 20 characters.')
+        if len(first_name) < 2:
+            raise ValueError('First name must contain at least 2 characters.')
+        if len(first_name) > 40:
+            raise ValueError('First name must not exceed 40 characters.')
+        if last_name and len(last_name) < 2:
+            raise ValueError('Last name must contain at least 2 characters.')
+        if len(last_name) > 40:
+            raise ValueError('Last name must not exceed 40 characters.')
 
-        name_pattern = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]+$")
+        name_pattern = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ']+$")
         if not name_pattern.fullmatch(first_name):
             raise ValueError(
-                'First name may contain letters, spaces, hyphens, and apostrophes only.'
+                'First name may contain letters and apostrophes only.'
             )
-        if not name_pattern.fullmatch(last_name):
+        if last_name and not name_pattern.fullmatch(last_name):
             raise ValueError(
-                'Last name may contain letters, spaces, hyphens, and apostrophes only.'
+                'Last name may contain letters and apostrophes only.'
             )
+        if not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", first_name):
+            raise ValueError('First name must contain at least one letter.')
+        if last_name and not re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", last_name):
+            raise ValueError('Last name must contain at least one letter.')
 
         country = (country or '').strip().upper()
         if not country:
             raise ValueError('Country is required.')
-        if gender not in dict(User._meta.get_field('gender').choices):
-            raise ValueError('Invalid gender selected.')
+        designation = (designation or '').strip()
+        department = (department or '').strip()
+        if not designation:
+            raise ValueError('Designation is required.')
+        if not department:
+            raise ValueError('Department is required.')
+        if not self._is_configured_department(
+            company=company,
+            department=department,
+        ):
+            raise ValueError('Select a department configured for this company.')
 
         if not role_id:
             raise ValueError('Role is required.')
@@ -117,16 +159,17 @@ class InvitationService:
 
         normalized_phone = None
         phone_country_code = ''
-        if mobile_number:
-            try:
-                normalized = normalize_phone(phone=mobile_number, country=country)
-            except ValueError as exc:
-                raise ValueError(str(exc)) from exc
-            normalized_phone = normalized.number
-            country = normalized.country_code
-            phone_country_code = normalized.dial_code
-            if User.objects.filter(mobile_number=normalized_phone).exists():
-                raise ValueError('A user with this mobile number already exists.')
+        if not mobile_number:
+            raise ValueError('Mobile number is required.')
+        try:
+            normalized = normalize_phone(phone=mobile_number, country=country)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        normalized_phone = normalized.number
+        country = normalized.country_code
+        phone_country_code = normalized.dial_code
+        if User.objects.filter(mobile_number=normalized_phone).exists():
+            raise ValueError('A user with this mobile number already exists.')
 
         with transaction.atomic():
             user = User(
@@ -136,9 +179,8 @@ class InvitationService:
                 mobile_number=normalized_phone,
                 country=country,
                 phone_country_code=phone_country_code,
-                gender=gender,
-                designation=(designation or '').strip(),
-                department=(department or '').strip(),
+                designation=designation,
+                department=department,
                 company=company,
                 role=role,
                 is_active=False,
@@ -296,6 +338,7 @@ class InvitationService:
         Resend an existing invitation email.
         """
         invitation = self._get_invitation_or_error(invitation_id)
+        company_lifecycle_service.ensure_operational(company=invitation.company)
 
         if invitation.status != InvitationStatus.PENDING:
             raise ValueError('Only pending invitations can be sent.')
@@ -332,6 +375,7 @@ class InvitationService:
         """
 
         invitation = self._get_invitation_or_error(invitation_id)
+        company_lifecycle_service.ensure_operational(company=invitation.company)
 
         if invitation.status not in {
             InvitationStatus.PENDING, InvitationStatus.EXPIRED
@@ -388,9 +432,39 @@ class InvitationService:
             invitation.save(update_fields=['status'])
             raise ValueError('This invitation has expired.')
 
+        company_lifecycle_service.ensure_operational(company=invitation.company)
+
         return invitation
 
-    def request_invitation_otp(self,token,password):
+    @staticmethod
+    def _validate_original_mobile_number(*, user, mobile_number):
+        """Match an invitee's national number to the pre-created user record.
+
+        The country and dialling code are never accepted from the invitation
+        page. Keeping this comparison against the persisted normalized number
+        prevents an invitee from substituting a different phone number.
+        """
+        entered = ''.join(character for character in str(mobile_number or '') if character.isdigit())
+        if not entered:
+            raise ValueError('Mobile number is required.')
+        if not user.country or not user.mobile_number:
+            raise ValueError(
+                'A mobile number or country is not configured for this user. '
+                'Please contact your administrator.'
+            )
+
+        try:
+            normalized = normalize_phone(phone=entered, country=user.country)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+        if normalized.number != user.mobile_number:
+            raise ValueError(
+                'The mobile number does not match the number registered by your administrator. '
+                'Enter your original mobile number without the country code.'
+            )
+
+    def request_invitation_otp(self, token, password, mobile_number):
         """
         Validate an invitation and send an OTP before activating
         the pre-created user account.
@@ -415,10 +489,41 @@ class InvitationService:
 
         if user.has_usable_password():
             raise ValueError("This user already has a password. Please use the normal login or password reset flow.")
+
+        self._validate_original_mobile_number(
+            user=user,
+            mobile_number=mobile_number,
+        )
         
         # Send a separate OTP for invitation/account activation.
         self.otp_service.generate_and_send_otp(user=user,purpose=OTP.Purpose.INVITATION)
         return user
+
+    @staticmethod
+    def get_masked_invitation_mobile_number(*, invitation) -> str:
+        """Return only the final four national digits for the public invite UI."""
+        user = User.objects.filter(
+            email__iexact=invitation.email,
+            company_id=invitation.company_id,
+        ).only('mobile_number', 'phone_country_code').first()
+        if user is None or not user.mobile_number:
+            return ''
+
+        stored_digits = ''.join(
+            character for character in str(user.mobile_number) if character.isdigit()
+        )
+        dial_code_digits = ''.join(
+            character for character in str(user.phone_country_code or '')
+            if character.isdigit()
+        )
+        national_digits = (
+            stored_digits[len(dial_code_digits):]
+            if dial_code_digits and stored_digits.startswith(dial_code_digits)
+            else stored_digits
+        )
+        if len(national_digits) <= 4:
+            return '*' * len(national_digits)
+        return f"{'*' * (len(national_digits) - 4)}{national_digits[-4:]}"
 
     def resend_invitation_otp(self, token):
         """
@@ -467,8 +572,9 @@ class InvitationService:
         Verify the invitation OTP and complete account activation.
 
         Administrator-controlled fields (first name, last name, country,
-        gender, company and role) are already stored on the pre-created User.
-        The invitee can only provide/update their mobile number.
+        mobile number, company and role) are already stored on the
+        pre-created User. The invitee must confirm, not update, their mobile
+        number before activation.
         """
         invitation = self.validate_token(token)
         company_lifecycle_service.ensure_operational(
@@ -493,45 +599,17 @@ class InvitationService:
                 "This user account is already active."
             )
 
+        self._validate_original_mobile_number(
+            user=user,
+            mobile_number=mobile_number,
+        )
+
         # Verify the invitation-specific OTP.
         self.otp_service.verify_otp(
             user=user,
             purpose=OTP.Purpose.INVITATION,
             submitted_code=otp,
         )
-
-        normalized_mobile = None
-        normalized_phone_country_code = None
-
-        if mobile_number:
-            if not user.country:
-                raise ValueError(
-                    "A country is not configured for this user. "
-                    "Please contact your administrator."
-                )
-
-            try:
-                normalized_phone = normalize_phone(
-                    phone=mobile_number,
-                    country=user.country,
-                )
-            except ValueError as exc:
-                raise ValueError(str(exc)) from exc
-
-            # User.mobile_number is unique in the current schema.
-            duplicate_mobile = (
-                User.objects
-                .filter(mobile_number=normalized_phone.number)
-                .exclude(pk=user.pk)
-                .exists()
-            )
-            if duplicate_mobile:
-                raise ValueError(
-                    "This mobile number is already associated with another user."
-                )
-
-            normalized_mobile = normalized_phone.number
-            normalized_phone_country_code = normalized_phone.dial_code
 
         with transaction.atomic():
             # Password is saved ONLY after successful OTP verification.
@@ -544,14 +622,6 @@ class InvitationService:
                 "is_active",
                 "is_email_verified",
             ]
-
-            if normalized_mobile is not None:
-                user.mobile_number = normalized_mobile
-                user.phone_country_code = normalized_phone_country_code
-                update_fields.extend([
-                    "mobile_number",
-                    "phone_country_code",
-                ])
 
             user.save(update_fields=update_fields)
 
@@ -585,7 +655,7 @@ class InvitationService:
                 "user_id": str(user.id),
                 "is_active": True,
                 "is_email_verified": True,
-                "mobile_number_updated": normalized_mobile is not None,
+                "mobile_number_confirmed": True,
             },
         )
 

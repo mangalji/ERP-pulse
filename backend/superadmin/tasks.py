@@ -51,17 +51,19 @@ def sync_company_subscription_statuses():
                 ):
                     expired_plan_count += 1
                 
-                effective_status = (
-                    company_lifecycle_service.get_effective_status(
-                        company=company
-                    )
-                )
-
-                new_reason = (
-                    CompanySuspensionReason.NONE
-                    if effective_status == Company.Status.ACTIVE
-                    else CompanySuspensionReason.PLAN
-                )
+                # Background reconciliation may suspend an invalid
+                # subscription, but it must never auto-activate a company.
+                # Activation is an explicit Super Admin action.
+                if company_lifecycle_service.has_valid_paid_subscription(
+                    company=company
+                ):
+                    if company.status == Company.Status.SUSPENDED:
+                        continue
+                    effective_status = Company.Status.ACTIVE
+                    new_reason = CompanySuspensionReason.NONE
+                else:
+                    effective_status = Company.Status.SUSPENDED
+                    new_reason = CompanySuspensionReason.PLAN
 
                 if (
                     company.status != effective_status

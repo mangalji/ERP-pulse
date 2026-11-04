@@ -42,6 +42,8 @@ export const NETSUITE_ENDPOINTS = {
 export const CLIENT_ENDPOINTS = {
   me: '/client/me/',
   employees: '/client/employees/',
+  departments: '/client/departments/',
+  department: (id) => `/client/departments/${id}/`,
   employee: (id) => `/client/employees/${id}/`,
   employeeActivate: (id) => `/client/employees/${id}/activate/`,
   employeeDeactivate: (id) => `/client/employees/${id}/deactivate/`,
@@ -65,8 +67,6 @@ export const SUPERADMIN_ENDPOINTS = {
   employeeCreate: '/superadmin/employees/create_employee/',
   employeeDeactivate: (id) => `/superadmin/employees/${id}/deactivate/`,
   employeeActivate: (id) => `/superadmin/employees/${id}/activate/`,
-  employeeAssignRole: (id) => `/superadmin/employees/${id}/assign_role/`,
-  employeeRemoveRole: (id) => `/superadmin/employees/${id}/remove_role/`,
   dashboardSummary: '/superadmin/dashboard/summary/',
   companyAssignPlanPending: (id) => `/superadmin/companies/${id}/assign-plan-pending/`,
   companyCompleteTransaction: (id) => `/superadmin/companies/${id}/complete-transaction/`,
@@ -79,6 +79,7 @@ export const INVITATION_ENDPOINTS = {
   requestOtp: '/invitations/request-otp/',
   resendOtp: '/invitations/resend-otp/',
   accept: '/invitations/accept/',
+  verifyEmail: '/invitations/verify-email/',
   send: (id) => `/invitations/${id}/send/`,
   resend: (id) => `/invitations/${id}/resend/`,
 }

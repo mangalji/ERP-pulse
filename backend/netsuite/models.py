@@ -113,7 +113,6 @@ class NetSuiteConnection(models.Model):
     def __str__(self):
         return f"{self.client_name} ({self.user.email})"
 
-
 class EmployeeConnection(models.Model):
     """
     Assigns a company employee to a specific NetSuite connection.

@@ -33,7 +33,11 @@ const passwordRules = [
   },
 ]
 
-export default function PasswordSetupForm({ onSubmit, isLoading }) {
+export default function PasswordSetupForm({
+  onSubmit,
+  isLoading,
+  maskedMobileNumber,
+}) {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [mobileNumber, setMobileNumber] = useState('')
@@ -161,6 +165,11 @@ export default function PasswordSetupForm({ onSubmit, isLoading }) {
       </div>
 
       <div className="flex flex-col gap-1">
+        <p className="text-xs text-[var(--color-muted)]">
+          {maskedMobileNumber
+            ? `Please enter your mobile number which has last digits ${maskedMobileNumber}, without the country/STD code.`
+            : 'Enter your original mobile number without the country/STD code.'}
+        </p>
         <Input
           label="Mobile number"
           type="tel"
@@ -168,7 +177,7 @@ export default function PasswordSetupForm({ onSubmit, isLoading }) {
           onChange={(e) => handleMobileChange(e.target.value)}
           onBlur={() => setMobileTouched(true)}
           maxLength={15}
-          placeholder="Enter your mobile number"
+          placeholder="Enter your original mobile number"
           required
         />
 

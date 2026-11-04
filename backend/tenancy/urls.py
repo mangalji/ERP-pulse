@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from tenancy.views import (
     ClientMeView,
     ClientRoleListView,
+    CompanyDepartmentView,
     CompanyEmployeeViewSet,
     CompanySettingsView,
 )
@@ -13,6 +14,8 @@ router.register(r'employees', CompanyEmployeeViewSet, basename='client-employee'
 urlpatterns = [
     path('me/', ClientMeView.as_view(), name='client-me'),
     path('roles/', ClientRoleListView.as_view(), name='client-roles'),
+    path('departments/', CompanyDepartmentView.as_view(), name='client-departments'),
+    path('departments/<uuid:pk>/', CompanyDepartmentView.as_view(), name='client-department'),
     path('settings/', CompanySettingsView.as_view(), name='client-settings'),
     path('', include(router.urls)),
 ]

@@ -35,6 +35,7 @@ export default function CompanyDetailPage() {
   const [error, setError] = useState('')
   const [confirm, setConfirm] = useState(null)
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false)
+  const [connectionsOpen, setConnectionsOpen] = useState(false)
 
   const [editOpen, setEditOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -42,7 +43,6 @@ export default function CompanyDetailPage() {
 
   const [editForm, setEditForm] = useState({
     name: '',
-    code: '',
     contact_email: '',
     contact_phone_country_code: '',
     contact_phone: '',
@@ -91,13 +91,18 @@ export default function CompanyDetailPage() {
   }
 
   const openEdit = () => {
+    const storedPhoneDigits = (company.contact_phone || '').replace(/\D/g, '')
+    const dialCodeDigits = (company.contact_phone_country_code || '').replace(/\D/g, '')
+
     setEditForm({
       name: company.name || '',
-      code: company.code || '',
       contact_email: company.contact_email || '',
       contact_phone_country_code:
         company.contact_phone_country_code || '',
-      contact_phone: company.contact_phone || '',
+      contact_phone:
+        dialCodeDigits && storedPhoneDigits.startsWith(dialCodeDigits)
+          ? storedPhoneDigits.slice(dialCodeDigits.length)
+          : storedPhoneDigits,
       country: company.country || '',
     })
 
@@ -111,26 +116,11 @@ export default function CompanyDetailPage() {
     setEditError('')
 
     const name = editForm.name.trim()
-    const code = editForm.code.trim()
-    const contactEmail = editForm.contact_email.trim()
-    const phone = editForm.contact_phone.trim()
+    const phone = editForm.contact_phone.replace(/\D/g, '')
     const country = editForm.country.trim()
 
     if (!name) {
       setEditError('Company name is required.')
-      return
-    }
-
-    if (!code) {
-      setEditError('Company code is required.')
-      return
-    }
-
-    if (
-      contactEmail &&
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)
-    ) {
-      setEditError('Please enter a valid contact email.')
       return
     }
 
@@ -139,10 +129,6 @@ export default function CompanyDetailPage() {
     try {
       await superadminApi.updateCompany(company.id, {
         name,
-        code,
-        contact_email: contactEmail,
-        contact_phone_country_code:
-          editForm.contact_phone_country_code.trim(),
         contact_phone: phone,
         country,
       })
@@ -274,7 +260,6 @@ export default function CompanyDetailPage() {
         {/* Header */}
         <PageHeader
           title={company.name}
-          subtitle={company.code}
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={company.status} />
@@ -332,16 +317,6 @@ export default function CompanyDetailPage() {
 
               <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
                 {company.name}
-              </p>
-            </div>
-
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
-                Company Code
-              </p>
-
-              <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
-                {company.code}
               </p>
             </div>
 
@@ -626,13 +601,9 @@ export default function CompanyDetailPage() {
                 <Button
                   size="sm"
                   intent="secondary"
-                  onClick={() =>
-                    navigate(
-                      `/admin/companies/${company.id}/netsuite`,
-                    )
-                  }
+                  onClick={() => setConnectionsOpen(true)}
                 >
-                  Manage NetSuite
+                  Check all connections ({company.netsuite_connection_count || 0})
                 </Button>
               }
             >
@@ -684,6 +655,40 @@ export default function CompanyDetailPage() {
                 </div>
               </div>
             </SectionCard>
+
+
+        {connectionsOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setConnectionsOpen(false)} />
+            <Card className="relative max-h-[80vh] w-full max-w-3xl overflow-y-auto p-6">
+              <div className="mb-5 flex items-start justify-between">
+                <div>
+                  <h2 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">NetSuite connections</h2>
+                  <p className="mt-1 text-sm text-[var(--color-muted)]">{company.netsuite_connection_count || 0} connection{company.netsuite_connection_count === 1 ? '' : 's'} for {company.name}. Read-only for Super Admin.</p>
+                </div>
+                <button type="button" onClick={() => setConnectionsOpen(false)} className="rounded-lg p-2 text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)]" aria-label="Close">✕</button>
+              </div>
+              {(company.netsuite_connections || []).length === 0 ? (
+                <p className="text-sm text-[var(--color-muted)]">No NetSuite connections for this company.</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {company.netsuite_connections.map((connection) => (
+                    <div key={connection.id} className="rounded-lg border border-[var(--color-border)] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-[var(--color-ink)]">{connection.client_name || 'Unnamed connection'}</p>
+                          <p className="mt-1 text-sm text-[var(--color-muted)]">{connection.netsuite_account_id} · {connection.environment || '—'}</p>
+                        </div>
+                        <div className="flex gap-2"><StatusBadge status={connection.status} />{connection.is_current && <span className="rounded-full bg-[var(--color-positive-soft)] px-2 py-1 text-xs font-medium text-[var(--color-positive)]">Current connection</span>}</div>
+                      </div>
+                      <p className="mt-3 text-xs text-[var(--color-muted)]">Last sync: {connection.last_synced_at ? formatDateTime(connection.last_synced_at) : '—'}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
 
         {/* Edit Company Modal */}
         {editOpen && (
@@ -744,29 +749,6 @@ export default function CompanyDetailPage() {
                   </label>
                 </div>
 
-                {/* Company Code */}
-                <div>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                      Company Code
-                    </span>
-
-                    <input
-                      type="text"
-                      value={editForm.code}
-                      onChange={(e) =>
-                        setEditForm((prev) => ({
-                          ...prev,
-                          code: e.target.value,
-                        }))
-                      }
-                      required
-                      maxLength={20}
-                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                    />
-                  </label>
-                </div>
-
                 {/* Country */}
                 <div>
                   <label className="flex flex-col gap-1.5">
@@ -805,8 +787,7 @@ export default function CompanyDetailPage() {
                             key={country.value}
                             value={country.value}
                           >
-                            {country.label} (
-                            {country.dialCode})
+                            {country.label}
                           </option>
                         ),
                       )}
@@ -824,15 +805,10 @@ export default function CompanyDetailPage() {
                     <input
                       type="email"
                       value={editForm.contact_email}
-                      onChange={(e) =>
-                        setEditForm((prev) => ({
-                          ...prev,
-                          contact_email:
-                            e.target.value,
-                        }))
-                      }
-                      maxLength={100}
-                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                      readOnly
+                      disabled
+                      maxLength={40}
+                      className="cursor-not-allowed rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3.5 py-2.5 text-sm text-[var(--color-ink-soft)] outline-none"
                     />
                   </label>
                 </div>
@@ -849,15 +825,9 @@ export default function CompanyDetailPage() {
                       value={
                         editForm.contact_phone_country_code
                       }
-                      onChange={(e) =>
-                        setEditForm((prev) => ({
-                          ...prev,
-                          contact_phone_country_code:
-                            e.target.value,
-                        }))
-                      }
-                      maxLength={6}
-                      className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                      readOnly
+                      disabled
+                      className="cursor-not-allowed rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3.5 py-2.5 text-sm text-[var(--color-ink-soft)] outline-none"
                     />
                   </label>
                 </div>
@@ -876,13 +846,10 @@ export default function CompanyDetailPage() {
                         setEditForm((prev) => ({
                           ...prev,
                           contact_phone:
-                            e.target.value.replace(
-                              /[^\d\s()+-]/g,
-                              '',
-                            ),
+                            e.target.value.replace(/\D/g, ''),
                         }))
                       }
-                      maxLength={20}
+                      maxLength={15}
                       className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                     />
                   </label>

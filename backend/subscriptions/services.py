@@ -43,7 +43,9 @@ class SubscriptionService:
 
         today = timezone.now().date()
 
-        if not company.plan_id:
+        from tenancy.services import company_lifecycle_service
+
+        if not company_lifecycle_service.has_valid_paid_subscription(company=company):
             return None
 
         if company.plan_start_date and company.plan_start_date > today:
@@ -267,16 +269,25 @@ class SubscriptionService:
         company.plan = plan
         company.plan_start_date = today
         company.plan_end_date = end_date
-        company.status = Company.Status.ACTIVE
-        company.suspension_reason = 'NONE'
+        # Completing payment makes the plan valid, but an initially
+        # suspended company still requires explicit activation. Preserve an
+        # existing active company during a renewal and preserve manual
+        # suspension.
+        if company.suspension_reason == 'MANUAL':
+            company.status = Company.Status.SUSPENDED
+        elif company.status != Company.Status.ACTIVE:
+            company.status = Company.Status.SUSPENDED
+            company.suspension_reason = 'PLAN'
+        else:
+            company.suspension_reason = 'NONE'
 
         company.save(
             update_fields=[
                 'plan',
                 'plan_start_date',
                 'plan_end_date',
-                'status',
                 'suspension_reason',
+                'status',
             ]
         )
 

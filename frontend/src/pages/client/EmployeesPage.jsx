@@ -8,8 +8,8 @@ import Input from '../../components/ui/Input.jsx'
 import EmptyState from '../../components/ui/EmptyState.jsx'
 import ErrorState from '../../components/ui/ErrorState.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
-import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { clientApi } from '../../services/client.js'
+import { invitationApi } from '../../services/invitations.js'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import {
   COUNTRY_OPTIONS,
@@ -20,12 +20,10 @@ import {
   validateName,
   validatePhone,
   PHONE_MAX_DIGITS,
-  validateGender,
 } from '../../utils/formValidation.js'
 
 export default function EmployeesPage() {
   const { user } = useAuth()
-  const { toasts, addToast, removeToast } = useToast()
   const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -33,7 +31,10 @@ export default function EmployeesPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
   const [roles, setRoles] = useState([])
-  const [form, setForm] = useState({email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', gender: '', role_id: '', designation: '', department: ''})
+  const [form, setForm] = useState({email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', role_id: '', designation: '', department: ''})
+  const [departments, setDepartments] = useState([])
+  const [departmentName, setDepartmentName] = useState('')
+  const [editingDepartments, setEditingDepartments] = useState(false)
   const [touched, setTouched] = useState({})
   const [fieldErrors, setFieldErrors] = useState({})
   const [editingEmployee, setEditingEmployee] = useState(null)
@@ -56,9 +57,11 @@ export default function EmployeesPage() {
 
   if (field === 'email') error = validateEmail(value)
   if (field === 'first_name') error = validateName(value, 'First Name')
-  if (field === 'last_name') error = validateName(value, 'Last Name')
+  if (field === 'last_name') error = validateName(value, 'Last Name', false)
   if (field === 'mobile_number') error = validatePhone(value, form.country)
-  if (field === 'gender') error = validateGender(value)
+  if (field === 'designation') error = value.trim() ? '' : 'Designation is required.'
+  if (field === 'department') error = value ? '' : 'Department is required.'
+  if (field === 'role_id') error = value ? '' : 'Role is required.'
 
   setFieldErrors((prev) => ({
     ...prev,
@@ -70,10 +73,12 @@ const isFormValid = () => {
   const errors = {
     email: validateEmail(form.email),
     first_name: validateName(form.first_name, 'First Name'),
-    last_name: validateName(form.last_name, 'Last Name'),
+    last_name: validateName(form.last_name, 'Last Name', false),
     country: form.country ? '' : 'Please select a country.',
     mobile_number: validatePhone(form.mobile_number, form.country),
-    gender: validateGender(form.gender),
+    role_id: form.role_id ? '' : 'Role is required.',
+    designation: form.designation.trim() ? '' : 'Designation is required.',
+    department: form.department ? '' : 'Department is required.',
   }
 
   setTouched({
@@ -82,13 +87,34 @@ const isFormValid = () => {
     last_name: true,
     country: true,
     mobile_number: true,
-    gender: true,
+    role_id: true,
+    designation: true,
+    department: true,
   })
 
   setFieldErrors(errors)
 
   return !Object.values(errors).some(Boolean)
 }
+
+  const verifyEmailOnBlur = async () => {
+    const email = form.email.trim()
+    const localError = validateEmail(email)
+    if (localError) return
+
+    try {
+      const result = await invitationApi.verifyEmail(email)
+      if (result.should_block) {
+        setTouched((prev) => ({ ...prev, email: true }))
+        setFieldErrors((prev) => ({
+          ...prev,
+          email: 'Please enter a valid, active email address.',
+        }))
+      }
+    } catch {
+      // Final server-side verification on submit remains authoritative.
+    }
+  }
 function hasEmployeePassword(employee) {
   if (typeof employee?.has_password === 'boolean') {
     return employee.has_password
@@ -120,10 +146,20 @@ function hasEmployeePassword(employee) {
     }
   }, [])
 
+  const loadDepartments = useCallback(async () => {
+    try {
+      const data = await clientApi.listDepartments()
+      setDepartments(data.results || data || [])
+    } catch {
+      setDepartments([])
+    }
+  }, [])
+
   useEffect(() => {
     loadEmployees()
     loadRoles()
-  }, [loadEmployees, loadRoles])
+    loadDepartments()
+  }, [loadEmployees, loadRoles, loadDepartments])
 
   const filtered = employees.filter((e) =>
     `${e.first_name || ''} ${e.last_name || ''} ${e.email || ''}`.toLowerCase().includes(searchTerm.toLowerCase()),
@@ -136,6 +172,43 @@ function hasEmployeePassword(employee) {
       return role ? role.name : ''
     })
     return roleNames.filter(Boolean).join(', ') || '—'
+  }
+
+  const getPrimaryRoleName = (employee) => {
+    const assignedRole = employee.roles?.[0]
+    if (!assignedRole) return ''
+    return (
+      assignedRole.role__name ||
+      roles.find((role) => String(role.id) === String(assignedRole.role_id))?.name ||
+      ''
+    )
+  }
+
+  const handleRoleTransition = async (employee, roleName) => {
+    if (String(employee.id) === String(user?.id)) {
+      alert('You cannot change your own role.')
+      return
+    }
+
+    const role = roles.find(
+      (item) => String(item.name).trim().toLowerCase() === roleName.toLowerCase(),
+    )
+    if (!role) {
+      alert(`${roleName} role is not configured.`)
+      return
+    }
+
+    try {
+      await clientApi.assignEmployeeRole(employee.id, role.id)
+      alert(
+        roleName === 'Company Admin'
+          ? 'Employee promoted to Company Admin.'
+          : 'Company Admin demoted to Employee.',
+      )
+      loadEmployees()
+    } catch (err) {
+      alert(err.payload?.detail || err.payload?.message || err.message || 'Role update failed')
+    }
   }
 
   const handleCountryChange = (country) => {
@@ -162,11 +235,33 @@ function hasEmployeePassword(employee) {
     }))
   }
 
+  const addDepartment = async () => {
+    const name = departmentName.trim()
+    if (!name) return
+    try {
+      await clientApi.createDepartment(name)
+      setDepartmentName('')
+      await loadDepartments()
+    } catch (err) {
+      alert(err.payload?.detail || err.payload?.message || err.message || 'Failed to add department')
+    }
+  }
+
+  const removeDepartment = async (department) => {
+    if (!window.confirm(`Remove ${department.name}?`)) return
+    try {
+      await clientApi.deleteDepartment(department.id)
+      if (form.department === department.name) updateField('department', '')
+      await loadDepartments()
+    } catch (err) {
+      alert(err.payload?.detail || err.payload?.message || err.message || 'Failed to remove department')
+    }
+  }
+
   const handleCreate = async (event) => {
     event.preventDefault()
 
-    if (!form.role_id) {
-      addToast('Please select a role', 'error')
+    if (!isFormValid()) {
       return
     }
 
@@ -179,17 +274,21 @@ function hasEmployeePassword(employee) {
         mobile_number: form.mobile_number,
         country: form.country,
         phone_country_code: form.phone_country_code,
-        gender: form.gender,
-        role_id: form.role_id || undefined,
+        role_id: form.role_id,
         designation: form.designation,
         department: form.department,
       })
-      addToast('Employee invitation sent successfully', 'success')
+      alert('Employee invitation sent successfully')
       setShowCreate(false)
-      setForm({email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', gender: '', role_id: '', designation: '', department: '', })
+      setForm({email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', role_id: '', designation: '', department: '', })
       loadEmployees()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to create employee', 'error')
+      alert(
+        err.payload?.detail ||
+        err.payload?.message ||
+        err.message ||
+        'Failed to create employee',
+      )
     } finally {
       setCreating(false)
     }
@@ -199,29 +298,28 @@ function hasEmployeePassword(employee) {
     try {
       if (employee.is_active) {
         await clientApi.deactivateEmployee(employee.id)
-        addToast('Employee deactivated', 'success')
+        alert('Employee deactivated')
       } else {
         await clientApi.activateEmployee(employee.id)
-        addToast('Employee activated', 'success')
+        alert('Employee activated')
       }
       loadEmployees()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Action failed', 'error')
+      alert(err.payload?.message || err.message || 'Action failed')
     }
   }
 
   const handleResendInvitation = async (employee, isNewInvitation = false) => {
     try {
       await clientApi.resendEmployeeInvitation(employee.id)
-      addToast(
+      alert(
         isNewInvitation
           ? 'Invitation sent successfully'
           : 'Invitation resent successfully',
-        'success'
       )
       loadEmployees()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to resend invitation', 'error')
+      alert(err.payload?.message || err.message || 'Failed to resend invitation')
     }
   }
 
@@ -236,7 +334,6 @@ function hasEmployeePassword(employee) {
       mobile_number: emp.mobile_number || '',
       country: emp.country || 'IN',
       phone_country_code: emp.phone_country_code || '+91',
-      gender: emp.gender || '',
       role_id: emp.roles?.[0]?.role_id ? String(emp.roles[0].role_id) : '',
       designation: emp.designation || '',
       department: emp.department || '',
@@ -259,16 +356,14 @@ function hasEmployeePassword(employee) {
         mobile_number: form.mobile_number,
         country: form.country,
         phone_country_code: form.phone_country_code,
-        gender: form.gender,
-        role_id: form.role_id || undefined,
         designation: form.designation,
         department: form.department,
       })
-      addToast('Employee updated successfully', 'success')
+      alert('Employee updated successfully')
       setEditingEmployee(null)
       loadEmployees()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Failed to update employee', 'error')
+      alert(err.payload?.message || err.message || 'Failed to update employee')
     } finally {
       setEditing(false)
     }
@@ -318,12 +413,13 @@ function hasEmployeePassword(employee) {
             <form onSubmit={handleCreate} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input
                 id="empEmail"
-                label="Email"
+                label={<><span className="text-red-600">*</span> Email</>}
                 type="email"
                 required
                 maxLength={EMAIL_MAX_LENGTH}
                 value={form.email}
                 onChange={(e) => updateField('email', e.target.value)}
+                onBlur={verifyEmailOnBlur}
               />
               {touched.email && (
   <p className={`text-xs ${fieldErrors.email ? 'text-red-600' : 'text-green-600'}`}>
@@ -332,7 +428,8 @@ function hasEmployeePassword(employee) {
 )}
               <Input
                 id="empFirst"
-                label="First name"
+                label={<><span className="text-red-600">*</span> First name</>}
+                required
                 value={form.first_name}
                 onChange={(e) => updateField('first_name', e.target.value)}
                 maxLength={NAME_MAX_LENGTH}
@@ -355,10 +452,11 @@ function hasEmployeePassword(employee) {
                 </p>
               )}
               <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">Role</span>
+                <span className="text-sm font-medium text-[var(--color-ink-soft)]"><span className="text-red-600">*</span> Role</span>
                 <select
                   value={form.role_id}
-                  onChange={(e) => setForm({ ...form, role_id: e.target.value })}
+                  onChange={(e) => updateField('role_id', e.target.value)}
+                  required
                   className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                 >
                   <option value="">Select a role</option>
@@ -369,7 +467,7 @@ function hasEmployeePassword(employee) {
               </label>
               <label className="flex flex-col gap-1.5">
   <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-    Country
+    <span className="text-red-600">*</span> Country
   </span>
 
   <select
@@ -396,7 +494,7 @@ function hasEmployeePassword(employee) {
   />
 
   <Input
-    label="Mobile Number"
+    label={<><span className="text-red-600">*</span> Mobile Number</>}
     type="tel"
     value={form.mobile_number}
     onChange={(e) =>
@@ -415,41 +513,27 @@ function hasEmployeePassword(employee) {
 )}
 </div>
 
-<label className="flex flex-col gap-1.5">
-  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-    Gender
-  </span>
-
-  <select
-    value={form.gender}
-    onChange={(e) =>
-      setForm({
-        ...form,
-        gender: e.target.value,
-      })
-    }
-    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-    required
-  >
-    <option value="">Select gender</option>
-    <option value="MALE">Male</option>
-    <option value="FEMALE">Female</option>
-    <option value="OTHER">Other</option>
-    <option value="PREFER_NOT_TO_SAY">Prefer not to say</option>
-  </select>
-</label>
               <Input
                 id="empDesignation"
-                label="Designation"
+                label={<><span className="text-red-600">*</span> Designation</>}
+                required
                 value={form.designation}
                 onChange={(e) => setForm({ ...form, designation: e.target.value })}
               />
-              <Input
-                id="empDepartment"
-                label="Department"
-                value={form.department}
-                onChange={(e) => setForm({ ...form, department: e.target.value })}
-              />
+              <label className="relative flex flex-col gap-1.5">
+                <span className="flex items-center justify-between text-sm font-medium text-[var(--color-ink-soft)]"><span><span className="text-red-600">*</span> Department</span><button type="button" onClick={() => setEditingDepartments((value) => !value)} className="text-[var(--color-primary)] underline">Edit</button></span>
+                <select value={form.department} onChange={(e) => updateField('department', e.target.value)} required className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]">
+                  <option value="">Select department</option>
+                  {departments.map((department) => <option key={department.id} value={department.name}>{department.name}</option>)}
+                </select>
+                {editingDepartments && (
+                  <div className="absolute left-full top-0 z-20 ml-3 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl">
+                    <div className="mb-3 flex items-center justify-between"><strong>Edit departments</strong><button type="button" onClick={() => setEditingDepartments(false)} aria-label="Close department editor">×</button></div>
+                    <div className="mb-3 flex gap-2"><input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} placeholder="New department" maxLength={150} className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" /><Button type="button" size="sm" onClick={addDepartment}>Add</Button></div>
+                    <div className="max-h-44 space-y-1 overflow-y-auto">{departments.map((department) => <div key={department.id} className="flex items-center justify-between rounded bg-[var(--color-canvas)] px-2 py-1 text-sm"><span>{department.name}</span><button type="button" onClick={() => removeDepartment(department)} className="text-red-600">Remove</button></div>)}</div>
+                  </div>
+                )}
+              </label>
               <div className="flex gap-2 sm:col-span-2">
                 <Button type="submit" isLoading={creating}>
                   Send Invitation
@@ -549,53 +633,27 @@ function hasEmployeePassword(employee) {
   )}
 </div>
 
-<label className="flex flex-col gap-1.5">
-  <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-    Gender
-  </span>
-
-  <select
-    value={form.gender}
-    onChange={(e) => updateField('gender', e.target.value)}
-    className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-  >
-    <option value="">Select gender</option>
-    <option value="MALE">Male</option>
-    <option value="FEMALE">Female</option>
-    <option value="OTHER">Other</option>
-    <option value="PREFER_NOT_TO_SAY">Prefer not to say</option>
-  </select>
-  {touched.gender && (
-    <p className={`text-xs ${fieldErrors.gender ? 'text-red-600' : 'text-green-600'}`}>
-      {fieldErrors.gender || '✓ Gender selected.'}
-    </p>
-  )}
-</label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">Role</span>
-                <select
-                  value={form.role_id}
-                  onChange={(e) => setForm({ ...form, role_id: e.target.value })}
-                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                >
-                  <option value="">Select a role</option>
-                  {roles.map((role) => (
-                    <option key={role.id} value={role.id}>{role.name}</option>
-                  ))}
-                </select>
-              </label>
               <Input
                 id="editEmpDesignation"
-                label="Designation"
+                label={<><span className="text-red-600">*</span> Designation</>}
+                required
                 value={form.designation}
                 onChange={(e) => setForm({ ...form, designation: e.target.value })}
               />
-              <Input
-                id="editEmpDepartment"
-                label="Department"
-                value={form.department}
-                onChange={(e) => setForm({ ...form, department: e.target.value })}
-              />
+              <label className="relative flex flex-col gap-1.5">
+                <span className="flex items-center justify-between text-sm font-medium text-[var(--color-ink-soft)]"><span><span className="text-red-600">*</span> Department</span><button type="button" onClick={() => setEditingDepartments((value) => !value)} className="text-[var(--color-primary)] underline">Edit</button></span>
+                <select value={form.department} onChange={(e) => updateField('department', e.target.value)} required className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]">
+                  <option value="">Select department</option>
+                  {departments.map((department) => <option key={department.id} value={department.name}>{department.name}</option>)}
+                </select>
+                {editingDepartments && (
+                  <div className="absolute left-full top-0 z-20 ml-3 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl">
+                    <div className="mb-3 flex items-center justify-between"><strong>Edit departments</strong><button type="button" onClick={() => setEditingDepartments(false)} aria-label="Close department editor">×</button></div>
+                    <div className="mb-3 flex gap-2"><input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} placeholder="New department" maxLength={150} className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" /><Button type="button" size="sm" onClick={addDepartment}>Add</Button></div>
+                    <div className="max-h-44 space-y-1 overflow-y-auto">{departments.map((department) => <div key={department.id} className="flex items-center justify-between rounded bg-[var(--color-canvas)] px-2 py-1 text-sm"><span>{department.name}</span><button type="button" onClick={() => removeDepartment(department)} className="text-red-600">Remove</button></div>)}</div>
+                  </div>
+                )}
+              </label>
               <div className="flex gap-2 sm:col-span-2">
                 <Button type="submit" isLoading={editing}>
                   Save Changes
@@ -718,6 +776,23 @@ function hasEmployeePassword(employee) {
                       !hasPassword &&
                       ['PENDING', 'EXPIRED', 'NONE'].includes(invitationStatus)
                     const isNewInvitation = invitationStatus === 'NONE'
+                    const roleName = String(getPrimaryRoleName(employee)).trim().toLowerCase()
+                    const roleTransition =
+                      String(employee.id) === String(user?.id)
+                        ? null
+                        : roleName === 'employee'
+                          ? {
+                              target: 'Company Admin',
+                              label: 'Promote to Admin',
+                              className: 'text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]',
+                            }
+                          : roleName === 'company admin'
+                            ? {
+                                target: 'Employee',
+                                label: 'Demote to Employee',
+                                className: 'text-[var(--color-netsuite)] hover:bg-[var(--color-netsuite-soft)]',
+                              }
+                            : null
 
                     return (
                     <tr key={employee.id} className="border-b border-[var(--color-border)] last:border-0">
@@ -755,6 +830,14 @@ function hasEmployeePassword(employee) {
                           >
                             Edit
                           </button>
+                          {roleTransition && (
+                            <button
+                              onClick={() => handleRoleTransition(employee, roleTransition.target)}
+                              className={`rounded-md px-2 py-1 text-xs font-medium ${roleTransition.className}`}
+                            >
+                              {roleTransition.label}
+                            </button>
+                          )}
                           {canSendInvitation && (
                             <button
                               onClick={() => handleResendInvitation(employee)}
@@ -770,16 +853,36 @@ function hasEmployeePassword(employee) {
                           )}
                         </div>
                         ) : canSendInvitation ? (
-                          <button
-                            onClick={() => handleResendInvitation(employee, isNewInvitation)}
-                            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
-                          >
-                            {isNewInvitation ? 'Send Invitation' : 'Resend Invitation'}
-                          </button>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {roleTransition && (
+                              <button
+                                onClick={() => handleRoleTransition(employee, roleTransition.target)}
+                                className={`rounded-md px-2 py-1 text-xs font-medium ${roleTransition.className}`}
+                              >
+                                {roleTransition.label}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleResendInvitation(employee, isNewInvitation)}
+                              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                            >
+                              {isNewInvitation ? 'Send Invitation' : 'Resend Invitation'}
+                            </button>
+                          </div>
                         ) : (
-                          <span className="text-xs text-[var(--color-muted)]">
-                            Awaiting password setup
-                          </span>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {roleTransition && (
+                              <button
+                                onClick={() => handleRoleTransition(employee, roleTransition.target)}
+                                className={`rounded-md px-2 py-1 text-xs font-medium ${roleTransition.className}`}
+                              >
+                                {roleTransition.label}
+                              </button>
+                            )}
+                            <span className="text-xs text-[var(--color-muted)]">
+                              Awaiting password setup
+                            </span>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -792,7 +895,6 @@ function hasEmployeePassword(employee) {
         </Card>
       </div>
 
-      <Toast toasts={toasts} removeToast={removeToast} />
     </ClientLayout>
   )
 }

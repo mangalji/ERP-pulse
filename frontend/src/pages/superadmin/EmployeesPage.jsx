@@ -9,9 +9,9 @@ import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Input from '../../components/ui/Input.jsx'
-import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
-import {COUNTRY_OPTIONS, NAME_MAX_LENGTH, EMAIL_MAX_LENGTH, getCountryRule, validateEmail, validateName, validatePhone, validateGender} from '../../utils/formValidation.js'
+import { invitationApi } from '../../services/invitations.js'
+import {COUNTRY_OPTIONS, NAME_MAX_LENGTH, EMAIL_MAX_LENGTH, getCountryRule, validateEmail, validateName, validatePhone} from '../../utils/formValidation.js'
 
 const PAGE_SIZE = 10
 
@@ -22,13 +22,13 @@ const EMPTY_EMPLOYEE = {
   mobile_number: '',
   country: 'IN',
   phone_country_code: '+91',
-  gender: '',
-  role:'admin',
+  role:'employee',
   company_id: '',
+  designation: '',
+  department: '',
 }
 
 export default function EmployeesPage() {
-  const { toasts, addToast, removeToast } = useToast()
 
   const [rows, setRows] = useState([])
   const [count, setCount] = useState(0)
@@ -38,6 +38,10 @@ export default function EmployeesPage() {
   const [offset, setOffset] = useState(0)
 
   const [companies, setCompanies] = useState([])
+  const [departments, setDepartments] = useState([])
+  const [editingDepartments, setEditingDepartments] = useState(false)
+  const [departmentName, setDepartmentName] = useState('')
+  const [departmentsSaving, setDepartmentsSaving] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_EMPLOYEE)
   const [touched, setTouched] = useState({})
@@ -72,12 +76,68 @@ export default function EmployeesPage() {
     load()
   }, [load])
 
+  useEffect(() => {
+    let cancelled = false
+    if (!createOpen || !form.company_id) {
+      setDepartments([])
+      return () => { cancelled = true }
+    }
+    superadminApi.listCompanyDepartments(form.company_id)
+      .then((data) => {
+        if (!cancelled) setDepartments(data || [])
+      })
+      .catch(() => {
+        if (!cancelled) setDepartments([])
+      })
+    return () => { cancelled = true }
+  }, [createOpen, form.company_id])
+
   const loadCompanies = async () => {
     try {
       const data = await superadminApi.listCompanies({ limit: 100 })
       setCompanies(data.results || [])
     } catch {
       setCompanies([])
+    }
+  }
+
+  const refreshDepartments = async () => {
+    if (!form.company_id) return
+    try {
+      const data = await superadminApi.listCompanyDepartments(form.company_id)
+      setDepartments(data.results || data || [])
+    } catch (err) {
+      setDepartments([])
+      alert(err.payload?.detail || err.payload?.message || err.message || 'Failed to load departments')
+    }
+  }
+
+  const addDepartment = async () => {
+    const name = departmentName.trim()
+    if (!name || !form.company_id) return
+    setDepartmentsSaving(true)
+    try {
+      await superadminApi.createCompanyDepartment(form.company_id, name)
+      setDepartmentName('')
+      await refreshDepartments()
+    } catch (err) {
+      alert(err.payload?.detail || err.payload?.message || err.message || 'Failed to add department')
+    } finally {
+      setDepartmentsSaving(false)
+    }
+  }
+
+  const removeDepartment = async (department) => {
+    if (!form.company_id || !window.confirm(`Remove ${department.name}?`)) return
+    setDepartmentsSaving(true)
+    try {
+      await superadminApi.deleteCompanyDepartment(form.company_id, department.id)
+      if (form.department === department.name) updateField('department', '')
+      await refreshDepartments()
+    } catch (err) {
+      alert(err.payload?.detail || err.payload?.message || err.message || 'Failed to remove department')
+    } finally {
+      setDepartmentsSaving(false)
     }
   }
 
@@ -134,15 +194,11 @@ export default function EmployeesPage() {
   }
 
   if (field === 'last_name') {
-    error = validateName(value, 'Last Name')
+    error = validateName(value, 'Last Name', false)
   }
 
   if (field === 'mobile_number') {
     error = validatePhone(value, form.country)
-  }
-
-  if (field === 'gender') {
-    error = validateGender(value)
   }
 
   setFieldErrors((prev) => ({
@@ -155,10 +211,15 @@ const isFormValid = () => {
   const errors = {
     email: validateEmail(form.email),
     first_name: validateName(form.first_name, 'First Name'),
-    last_name: validateName(form.last_name, 'Last Name'),
+    last_name: validateName(form.last_name, 'Last Name', false),
     mobile_number: validatePhone(form.mobile_number, form.country),
-    gender: validateGender(form.gender),
     country: form.country ? '' : 'Please select a country.',
+    company_id: form.company_id ? '' : 'Please select a company.',
+    role: ['employee', 'company_admin'].includes(form.role)
+      ? ''
+      : 'Please select a role.',
+    designation: form.designation.trim() ? '' : 'Designation is required.',
+    department: form.department.trim() ? '' : 'Department is required.',
   }
 
   setTouched({
@@ -166,14 +227,37 @@ const isFormValid = () => {
     first_name: true,
     last_name: true,
     mobile_number: true,
-    gender: true,
     country: true,
+    company_id: true,
+    role: true,
+    designation: true,
+    department: true,
   })
 
   setFieldErrors(errors)
 
   return !Object.values(errors).some(Boolean)
 }
+
+  const verifyEmailOnBlur = async () => {
+    const email = form.email.trim()
+    const localError = validateEmail(email)
+    if (localError) return
+
+    try {
+      const result = await invitationApi.verifyEmail(email)
+      if (result.should_block) {
+        setTouched((prev) => ({ ...prev, email: true }))
+        setFieldErrors((prev) => ({
+          ...prev,
+          email: 'Please enter a valid, active email address.',
+        }))
+      }
+    } catch {
+      // Creation also verifies server-side; a transient lookup failure must
+      // not make the form unusable.
+    }
+  }
 
   const handleCreate = async () => {
     setFormError('')
@@ -182,16 +266,6 @@ const isFormValid = () => {
   return
 }
 
-  if (!form.company_id) {
-    setFormError('Please select a company.')
-    return
-  }
-
-  if (!form.role) {
-    setFormError('Please select a role.')
-    return
-  }
-
     setSaving(true)
     try {
       await superadminApi.createEmployee({
@@ -199,7 +273,7 @@ const isFormValid = () => {
         company_id: form.company_id || undefined,
         role: form.role,
       })
-      addToast('Invitation sent successfully')
+      alert('Invitation sent successfully')
       setCreateOpen(false)
       setForm(EMPTY_EMPLOYEE)
       setFormError('')
@@ -222,27 +296,14 @@ const isFormValid = () => {
     try {
       if (employee.is_active) {
         await superadminApi.deactivateEmployee(employee.id)
-        addToast('Employee deactivated')
+        alert('Employee deactivated')
       } else {
         await superadminApi.activateEmployee(employee.id)
-        addToast('Employee activated')
+        alert('Employee activated')
       }
       load()
     } catch (err) {
-      addToast(err.payload?.message || err.message || 'Action failed', 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleToggleAdmin = async (employee) => {
-    setSaving(true)
-    try {
-      await superadminApi.updateEmployee(employee.id, { is_staff: !employee.is_staff })
-      addToast(employee.is_staff ? 'Admin privileges revoked' : 'Promoted to admin')
-      load()
-    } catch (err) {
-      addToast(err.payload?.message || err.message || 'Action failed', 'error')
+      alert(err.payload?.message || err.message || 'Action failed')
     } finally {
       setSaving(false)
     }
@@ -254,15 +315,14 @@ const isFormValid = () => {
     try {
       await superadminApi.resendEmployeeInvitation(employee.id)
   
-      addToast('Invitation resent successfully')
+      alert('Invitation resent successfully')
       load()
     } catch (err) {
-      addToast(
+      alert(
         err.payload?.message ||
         err.payload?.detail ||
         err.message ||
         'Failed to resend invitation',
-        'error'
       )
     } finally {
       setSaving(false)
@@ -364,21 +424,6 @@ if (isCompanySuspended) {
 
   return (
     <div className="flex items-center gap-1">
-      {/* {!row.is_staff && ( */}
-      {String(row.role || '').trim().toLowerCase() === 'employee' && (
-        <button
-          onClick={() =>
-            setConfirm({
-              employee: row,
-              action: 'promote',
-            })
-          }
-          className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
-        >
-          Promote Admin
-        </button>
-      )}
-
       {row.is_active ? (
         <button
           onClick={() =>
@@ -467,7 +512,7 @@ if (isCompanySuspended) {
             <div className="relative w-full max-w-3xl max-h-[calc(100vh-80px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
             <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">Create User</h3>
             <div className="mt-4 flex flex-col gap-4">
-              <Input label="Email" type="email" maxLength={EMAIL_MAX_LENGTH} value={form.email} onChange={(e) => updateField('email', e.target.value)} />
+              <Input label={<><span className="text-red-600">*</span> Email</>} type="email" required maxLength={EMAIL_MAX_LENGTH} value={form.email} onChange={(e) => updateField('email', e.target.value)} onBlur={verifyEmailOnBlur} />
                 {touched.email && (
                   <p className={`text-xs ${fieldErrors.email ? 'text-red-600' : 'text-green-600'}`}>
                     {fieldErrors.email || '✓ Valid email address.'}
@@ -476,7 +521,8 @@ if (isCompanySuspended) {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <Input
-                    label="First Name"
+                    label={<><span className="text-red-600">*</span> First Name</>}
+                    required
                     maxLength={NAME_MAX_LENGTH}
                     value={form.first_name}
                     onChange={(e) => updateField('first_name', e.target.value)}
@@ -504,7 +550,7 @@ if (isCompanySuspended) {
               <div className="grid grid-cols-2 gap-4">
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                    Country
+                    <span className="text-red-600">*</span> Country
                   </span>
                     
                   <select
@@ -522,31 +568,6 @@ if (isCompanySuspended) {
                   </select>
                 </label>
               </div>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                  Gender
-                </span>
-                  
-                <select
-                  value={form.gender}
-                  onChange={(e) =>
-                    updateField('gender', e.target.value 
-                    )
-                  }
-                  className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                >
-                  <option value="">Select gender</option>
-                  <option value="MALE">Male</option>
-                  <option value="FEMALE">Female</option>
-                  <option value="OTHER">Other</option>
-                  <option value="PREFER_NOT_TO_SAY">Prefer not to say</option>
-                </select>
-                {touched.gender && (
-  <p className={`text-xs ${fieldErrors.gender ? 'text-red-600' : 'text-green-600'}`}>
-    {fieldErrors.gender || '✓ Gender selected.'}
-  </p>
-)}
-              </label>
               <div className="grid grid-cols-[100px_1fr] gap-2">
                 <Input
                   label="Code"
@@ -555,7 +576,8 @@ if (isCompanySuspended) {
                   className="bg-[var(--color-canvas)]"
                 />
                 <Input
-                  label="Mobile Number"
+                  label={<><span className="text-red-600">*</span> Mobile Number</>}
+                  required
                   type="tel"
                   maxLength={getCountryRule(form.country)?.maxDigits || 15}
                   value={form.mobile_number}
@@ -573,36 +595,50 @@ if (isCompanySuspended) {
                 )}
               </div>
                 <label className="flex flex-col gap-1.5">
-                  <span className="text-sm font-medium text-[var(--color-ink-soft)]">Company</span>
+                  <span className="text-sm font-medium text-[var(--color-ink-soft)]"><span className="text-red-600">*</span> Company</span>
                   <select
                   value={form.company_id}
-                  onChange={(e) => setForm({ ...form, company_id: e.target.value })}
+                  onChange={(e) => {
+                    setEditingDepartments(false)
+                    setForm((prev) => ({ ...prev, company_id: e.target.value, department: '' }))
+                  }}
                   className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                   >
-                    <option value="">AGSuite Internal User</option>
+                    <option value="">Select company</option>
                     {companies.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                 </label>
               <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-                Role
-                </span>
-
-                <select value={form.role} onChange={(e) => setForm({...form, role: e.target.value})}
+                <span className="text-sm font-medium text-[var(--color-ink-soft)]"><span className="text-red-600">*</span> Role</span>
+                <select
+                  required
+                  value={form.role}
+                  onChange={(e) => updateField('role', e.target.value)}
                   className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
-                  >
-                  <option value="employee">
-                      Employee
-                  </option>
-                
-                  <option value="admin">
-                      Company Admin
-                  </option>
-                
+                >
+                  <option value="employee">Employee</option>
+                  <option value="company_admin">Company Admin</option>
                 </select>
               </label>
+              <Input label={<><span className="text-red-600">*</span> Designation</>} required maxLength={150} value={form.designation} onChange={(e) => updateField('designation', e.target.value)} />
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+                <label className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="flex items-center justify-between text-sm font-medium text-[var(--color-ink-soft)]"><span><span className="text-red-600">*</span> Department</span><button type="button" disabled={!form.company_id} onClick={() => setEditingDepartments((value) => !value)} className="text-[var(--color-primary)] underline disabled:cursor-not-allowed disabled:opacity-50">Edit</button></span>
+                  <select required value={form.department} onChange={(e) => updateField('department', e.target.value)} className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]">
+                    <option value="">Select department</option>
+                    {departments.map((department) => <option key={department.id || department.name} value={department.name}>{department.name}</option>)}
+                  </select>
+                </label>
+                {editingDepartments && form.company_id && (
+                  <div className="w-full shrink-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 lg:w-80">
+                    <div className="mb-3 flex items-center justify-between"><strong>Edit departments</strong><button type="button" onClick={() => setEditingDepartments(false)} aria-label="Close department editor">×</button></div>
+                    <div className="mb-3 flex gap-2"><input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDepartment() } }} placeholder="New department" maxLength={150} className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" /><Button type="button" size="sm" isLoading={departmentsSaving} onClick={addDepartment}>Add</Button></div>
+                    <div className="max-h-44 space-y-1 overflow-y-auto">{departments.map((department) => <div key={department.id || department.name} className="flex items-center justify-between rounded bg-[var(--color-surface)] px-2 py-1 text-sm"><span>{department.name}</span><button type="button" disabled={departmentsSaving} onClick={() => removeDepartment(department)} className="text-red-600 disabled:opacity-50">Remove</button></div>)}</div>
+                  </div>
+                )}
+              </div>
               {formError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
                   {formError}
@@ -621,9 +657,7 @@ if (isCompanySuspended) {
         open={!!confirm}
         title={
           confirm
-            ? confirm.action === 'promote'
-              ? 'Promote to Admin?'
-              : confirm.action === 'resend'
+            ? confirm.action === 'resend'
                 ? 'Resend Invitation?'
               : confirm.action === 'activate'
                 ? 'Activate employee?'
@@ -632,18 +666,13 @@ if (isCompanySuspended) {
         }
         message={
           confirm
-            ? confirm.action === 'promote'
-              ? `Are you sure you want to promote ${confirm.employee.email} to Company Admin?`
-              // : `Are you sure you want to ${confirm.action} ${confirm.employee.email}?`
-              : confirm.action === 'resend'
+            ? confirm.action === 'resend'
                 ? `Resend the invitation to ${confirm.employee.email}?`
                 : `Are you sure you want to ${confirm.action} ${confirm.employee.email}?`
             : ''
         }
         confirmLabel={
-          confirm?.action === 'promote'
-            ? 'Promote Admin'
-            : confirm?.action === 'resend'
+          confirm?.action === 'resend'
               ? 'Resend Invitation'
             : confirm?.action === 'activate'
               ? 'Activate'
@@ -652,9 +681,7 @@ if (isCompanySuspended) {
         intent={confirm?.action === 'deactivate' ? 'primary' : 'primary'}
         onConfirm={() => {
           if (!confirm) return 
-          if (confirm.action==='promote'){
-            handleToggleAdmin(confirm.employee)
-          } else if (confirm.action === 'resend'){
+          if (confirm.action === 'resend'){
             handleResendInvitation(confirm.employee)
           } else {
             toggleActive(confirm.employee)
@@ -665,7 +692,6 @@ if (isCompanySuspended) {
         loading={saving}
       />
 
-      <Toast toasts={toasts} removeToast={removeToast} />
     </AdminLayout>
   )
 

@@ -82,6 +82,11 @@ export default function AIIntegrationPage() {
   }, [])
 
   const changeProvider = (provider) => {
+    if (connected && savedProvider && provider !== savedProvider) {
+      alert('Please disconnect the current AI connection before selecting a new provider.')
+      return
+    }
+
     const firstModel = models?.[provider]?.[0]?.value || ''
 
     setForm((current) => ({
@@ -279,6 +284,17 @@ export default function AIIntegrationPage() {
   }
 
   const handleReset = () => {
+    if (connected) {
+      setForm((current) => ({
+        ...current,
+        provider: savedProvider,
+        api_key: '',
+      }))
+      setMessage('')
+      setError('')
+      return
+    }
+
     setForm({
       provider: '',
       model: '',
@@ -380,30 +396,28 @@ export default function AIIntegrationPage() {
                 </p>
               </div>
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--color-ink)]">
-                  API Key
-                </label>
+              {!connected && (
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-[var(--color-ink)]">
+                    API Key
+                  </label>
 
-                <input
-                  type="password"
-                  value={form.api_key}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      api_key: event.target.value,
-                    }))
-                  }
-                  placeholder={
-                    apiKeySet
-                      ? 'Saved securely — enter a new key to replace it'
-                      : 'Enter provider API key'
-                  }
-                  autoComplete="new-password"
-                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
-                  disabled={busy !== ''}
-                />
-              </div>
+                  <input
+                    type="password"
+                    value={form.api_key}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        api_key: event.target.value,
+                      }))
+                    }
+                    placeholder="Enter provider API key"
+                    autoComplete="new-password"
+                    className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                    disabled={busy !== ''}
+                  />
+                </div>
+              )}
 
               {lastTestedAt && (
                 <p className="text-xs text-[var(--color-muted)]">

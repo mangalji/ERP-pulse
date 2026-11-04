@@ -9,6 +9,8 @@ from common.throttles import (
     LoginPasswordIPThrottle,
 )
 from accounts.models import User
+from accounts.authentication_service import AuthenticationService
+from accounts.exceptions import PasswordResetUnavailableException
 
 class AuthenticationSecurityTests(TestCase):
     def setUp(self):
@@ -119,3 +121,61 @@ class AuthenticationSecurityTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+    @patch("accounts.views.authentication_service.otp_service.generate_and_send_otp")
+    def test_forgot_password_allows_only_an_active_completed_account(self, send_otp):
+        response = self.client.post(
+            "/api/v1/auth/forgot-password/",
+            {"email": self.user.email},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        send_otp.assert_called_once()
+
+        inactive = User.objects.create_user(
+            email="pending-reset@example.com",
+            password=None,
+            first_name="Pending",
+            is_active=False,
+            is_email_verified=False,
+        )
+        response = self.client.post(
+            "/api/v1/auth/forgot-password/",
+            {"email": inactive.email},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["message"],
+            "Your email is not registered or the account is inactive. Please contact your administrator.",
+        )
+        self.assertEqual(send_otp.call_count, 1)
+
+        response = self.client.post(
+            "/api/v1/auth/forgot-password/",
+            {"email": "missing-reset@example.com"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(send_otp.call_count, 1)
+
+    @patch("accounts.authentication_service.OTPService.verify_otp")
+    def test_reset_endpoint_cannot_bypass_pending_invitation(self, verify_otp):
+        pending = User.objects.create_user(
+            email="pending-invitation@example.com",
+            password=None,
+            first_name="Pending",
+            is_active=False,
+            is_email_verified=False,
+        )
+
+        with self.assertRaises(PasswordResetUnavailableException):
+            AuthenticationService().reset_password(
+                email=pending.email,
+                otp_code="123456",
+                password="StrongPassword@123",
+            )
+
+        pending.refresh_from_db()
+        self.assertFalse(pending.has_usable_password())
+        verify_otp.assert_not_called()

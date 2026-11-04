@@ -45,6 +45,13 @@ apiClient.interceptors.request.use(async (config) => {
 let isRefreshing = false
 let pendingRequests = []
 
+const isPublicInvitationRoute = () => {
+  const hashRoute = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.pathname
+  return hashRoute.startsWith('/invitation/')
+}
+
 const resolvePending = (error) => {
   pendingRequests.forEach((cb) => cb(error))
   pendingRequests = []
@@ -71,6 +78,12 @@ apiClient.interceptors.response.use(
     }
 
     if (!is401 || isRefreshEndPoint || isAuthEndpoint) return Promise.reject(error)
+
+    // An invitation is a public, unauthenticated flow. A new invitee has no
+    // refresh token yet, so attempting a token refresh here can only fail.
+    // More importantly, do not turn that expected failure into a login
+    // redirect while they are setting up their account.
+    if (isPublicInvitationRoute()) return Promise.reject(error)
 
     if (isRefreshing) {
       return new Promise((resolve, reject) => {

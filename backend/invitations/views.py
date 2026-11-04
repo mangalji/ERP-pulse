@@ -10,18 +10,20 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from common.throttles import RegisterOTPThrottle
+from common.throttles import EmailVerificationThrottle, InvitationValidateThrottle, RegisterOTPThrottle
 from common.pagination import paginated_response
 from common.common_utils import success_response
 from .models import Invitation
-from .permissions import IsSuperAdmin
+from .permissions import CanVerifyInvitationEmail, IsSuperAdmin
 from .serializers import (
     AcceptInvitationSerializer,
     InvitationSerializer,
     InvitationValidateSerializer,
     RequestInvitationOTPSerializer,
+    EmailDeliverabilitySerializer,
 )
 from .services import invitation_service
+from common.email_verification import verify_email_deliverability
 
 
 class InvitationViewSet(viewsets.ViewSet):
@@ -30,6 +32,8 @@ class InvitationViewSet(viewsets.ViewSet):
     """
 
     def get_permissions(self):
+        if self.action == 'verify_email':
+            return [CanVerifyInvitationEmail()]
         if self.action in ['validate', 'request_otp', 'accept']:
             return [AllowAny()]
         if self.action in ['send', 'resend', 'list_invitations', 'retrieve_invitation']:
@@ -37,9 +41,29 @@ class InvitationViewSet(viewsets.ViewSet):
         return [IsAuthenticated()]
 
     def get_throttles(self):
-        if self.action in ['request_otp', 'accept', 'validate']:
+        if self.action == 'verify_email':
+            return [EmailVerificationThrottle()]
+        if self.action in ['request_otp', 'accept']:
             return [RegisterOTPThrottle()]
+        if self.action == 'validate':
+            return [InvitationValidateThrottle()]
         return super().get_throttles()
+
+    @action(detail=False, methods=['post'], url_path='verify-email')
+    def verify_email(self, request):
+        """Authenticated preflight used when an administrator leaves Email."""
+        serializer = EmailDeliverabilitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = verify_email_deliverability(serializer.validated_data['email'])
+        return success_response(
+            message='Email verification completed.',
+            data={
+                'status': result['status'],
+                'provider': result['provider'],
+                'is_deliverable': result['is_deliverable'],
+                'should_block': result['should_block'],
+            },
+        )
 
     @action(detail=False, methods=['get'], url_path='list')
     def list_invitations(self, request):
@@ -156,9 +180,15 @@ class InvitationViewSet(viewsets.ViewSet):
         
         try:
             invitation = invitation_service.validate_token(token)
+            invitation_data = InvitationSerializer(invitation).data
+            invitation_data['masked_mobile_number'] = (
+                invitation_service.get_masked_invitation_mobile_number(
+                    invitation=invitation,
+                )
+            )
             return success_response(
                 message='Invitation is valid.',
-                data=InvitationSerializer(invitation).data,
+                data=invitation_data,
             )
         except ValueError as exc:
             return Response(
@@ -179,6 +209,7 @@ class InvitationViewSet(viewsets.ViewSet):
             user = invitation_service.request_invitation_otp(
                 token=serializer.validated_data['token'],
                 password=serializer.validated_data['password'],
+                mobile_number=serializer.validated_data['mobile_number'],
             )
 
             return success_response(
@@ -241,8 +272,7 @@ class InvitationViewSet(viewsets.ViewSet):
                 token=serializer.validated_data['token'],
                 password=serializer.validated_data['password'],
                 otp=serializer.validated_data['otp'],
-                # first_name=serializer.validated_data['first_name'],
-                # last_name=serializer.validated_data['last_name'],
+                mobile_number=serializer.validated_data['mobile_number'],
             )
             return success_response(
                 message='Invitation accepted successfully. You can now log in.',

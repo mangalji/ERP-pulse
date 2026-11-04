@@ -17,6 +17,7 @@ from accounts.serializers import UserSerializer
 from common.pagination import paginated_response
 from common.common_utils import success_response
 from invitations.models import Invitation
+from tenancy.models import CompanyDepartment
 from tenancy.serializers import (
     ClientRoleSerializer,
     CompanyEmployeeSerializer,
@@ -144,12 +145,15 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
         company = self._company(request)
         serializer = UpdateEmployeeSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        employee = client_portal_service.update_employee(
-            company=company,
-            employee_id=pk,
-            acting_user=request.user,
-            **serializer.validated_data,
-        )
+        try:
+            employee = client_portal_service.update_employee(
+                company=company,
+                employee_id=pk,
+                acting_user=request.user,
+                **serializer.validated_data,
+            )
+        except PermissionError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
         return success_response(
             message='Employee updated successfully.',
             data=CompanyEmployeeSerializer(employee).data,
@@ -190,6 +194,8 @@ class CompanyEmployeeViewSet(viewsets.ViewSet):
             result = client_portal_service.assign_role(
                 company=company, employee_id=pk, role_id=role_id, acting_user=request.user,
             )
+        except PermissionError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return success_response(
@@ -248,6 +254,56 @@ class ClientRoleListView(APIView):
             message='Roles fetched successfully.',
             data=ClientRoleSerializer(roles, many=True).data,
         )
+
+
+class CompanyDepartmentView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyUser, CanManageEmployees]
+    DEFAULTS = ('HR', 'NetSuite', 'IT Support', 'Development')
+
+    def _list(self, company):
+        records = CompanyDepartment.objects.filter(company=company)
+        if not records.exists():
+            CompanyDepartment.objects.bulk_create(
+                [CompanyDepartment(company=company, name=name) for name in self.DEFAULTS]
+            )
+        return CompanyDepartment.objects.filter(company=company, is_active=True, is_deleted=False).order_by('name')
+
+    def get(self, request):
+        client_portal_service._ensure_company_operational(company=request.user.company)
+        return success_response(message='Departments fetched successfully.', data=[
+            {'id': str(row.id), 'name': row.name} for row in self._list(request.user.company)
+        ])
+
+    def post(self, request):
+        company = request.user.company
+        client_portal_service._ensure_company_operational(company=company)
+        name = str(request.data.get('name') or '').strip()
+        if not name or len(name) > 150:
+            return Response({'detail': 'Enter a department name up to 150 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+        item = CompanyDepartment.objects.filter(
+            company=company,
+            name__iexact=name,
+        ).first()
+        if item is None:
+            item = CompanyDepartment.objects.create(
+                company=company,
+                name=name,
+                created_by=request.user,
+                updated_by=request.user,
+            )
+        if not item.is_active:
+            item.is_active, item.is_deleted, item.deleted_at = True, False, None
+            item.save(update_fields=['is_active', 'is_deleted', 'deleted_at', 'updated_at'])
+        return success_response(message='Department saved successfully.', data={'id': str(item.id), 'name': item.name})
+
+    def delete(self, request, pk):
+        client_portal_service._ensure_company_operational(company=request.user.company)
+        item = CompanyDepartment.objects.filter(pk=pk, company=request.user.company, is_active=True).first()
+        if not item:
+            return Response({'detail': 'Department not found.'}, status=status.HTTP_404_NOT_FOUND)
+        item.is_active = False
+        item.save(update_fields=['is_active', 'updated_at'])
+        return success_response(message='Department removed successfully.')
 
 
 class CompanySettingsView(APIView):

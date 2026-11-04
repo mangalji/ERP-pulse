@@ -9,6 +9,7 @@ from mail_integration.views import (
     EmailIntegrationPauseView,
     EmailIntegrationResumeView,
     EmailIntegrationDisconnectView,
+    EmailIntegrationDeleteView,
     EmailIntegrationReconnectView,
     EmailOAuthCallbackView,
 )
@@ -24,5 +25,6 @@ urlpatterns = [
     path("integrations/<uuid:integration_id>/pause/", EmailIntegrationPauseView.as_view(), name="email-integration-pause"),
     path("integrations/<uuid:integration_id>/resume/", EmailIntegrationResumeView.as_view(), name="email-integration-resume"),
     path("integrations/<uuid:integration_id>/disconnect/", EmailIntegrationDisconnectView.as_view(), name="email-integration-disconnect"),
+    path("integrations/<uuid:integration_id>/", EmailIntegrationDeleteView.as_view(), name="email-integration-delete"),
     path("integrations/<uuid:integration_id>/reconnect/", EmailIntegrationReconnectView.as_view(), name="email-integration-reconnect"),
 ]

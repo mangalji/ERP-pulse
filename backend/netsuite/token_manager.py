@@ -90,9 +90,6 @@ class NetSuiteTokenManager:
         if self._token_is_usable(connection):
             return connection.access_token
 
-        invalid_grant_error = None
-        access_token = None
-
         try:
             with transaction.atomic():
                 locked_connection = self.repository.get_locked(connection.id)
@@ -102,22 +99,16 @@ class NetSuiteTokenManager:
 
                 return self._refresh(locked_connection)
 
-        except NetSuiteTokenExchangeException  as exc:
+        except NetSuiteTokenExchangeException as exc:
+            # The outer handler runs after the failed atomic block rolls
+            # back, so the invalid state and its audit event are persisted
+            # exactly once (including connections that have no token).
             if str(exc).startswith("NETSUITE_INVALID_GRANT:"):
-                invalid_grant_error  = exc
-            else:
-                raise
-
-        if invalid_grant_error is not None:
-            self.repository.mark_token_invalid(
-                connection,
-                error_message=self._invalid_grant_message(),
-            )
-            raise invalid_grant_error
-
-    
-        # return self._refresh(locked_connection)
-        return access_token
+                self.repository.mark_token_invalid(
+                    connection,
+                    error_message=self._invalid_grant_message(),
+                )
+            raise
 
     def _refresh(self, connection) -> str:
         """
@@ -161,13 +152,8 @@ class NetSuiteTokenManager:
             message = str(exc)
 
             if message.startswith("NETSUITE_INVALID_GRANT:"):
-                self.repository.mark_token_invalid(
-                    connection,
-                    error_message=(
-                        "NetSuite refresh token is no longer valid. "
-                        "Re-authorization is required."
-                    ),
-                )
+                # get_valid_access_token owns the one post-rollback state
+                # transition/audit record for an invalid refresh token.
                 raise
 
             self.repository.record_sync_failure(
@@ -203,10 +189,13 @@ class NetSuiteTokenManager:
                     access_token=token_set.access_token,
                     refresh_token=token_set.refresh_token,
                     access_token_expires_at=token_set.access_token_expires_at,
-                    # NetSuiteTokenSet currently does not expose a refresh-token
-                    # expiry timestamp. Preserve the existing value until the
-                    # client model explicitly supports one.
-                    refresh_token_expires_at=connection.refresh_token_expires_at,
+                    # Refresh tokens rotate. Persist the expiry supplied by
+                    # the newly issued token so each NetSuite integration can
+                    # keep its own configured validity period.
+                    refresh_token_expires_at=(
+                        token_set.refresh_token_expires_at
+                        or connection.refresh_token_expires_at
+                    ),
                 )
                 break
 

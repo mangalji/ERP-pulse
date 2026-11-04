@@ -41,7 +41,7 @@ class OCRExtractionDefaultsTests(SimpleTestCase):
 
 
 class OCRTemplateDefaultValueTests(SimpleTestCase):
-    def test_defaults_override_ai_values_for_header_and_line_fields(self):
+    def test_location_default_is_only_used_when_ai_did_not_extract_location(self):
         template = {
             "standard_fields": ["location", "currency", "quantity"],
             "standard_field_overrides": {
@@ -52,7 +52,7 @@ class OCRTemplateDefaultValueTests(SimpleTestCase):
             "custom_fields": [],
         }
         extracted = {
-            "location": None,
+            "location": "Mumbai Warehouse",
             "currency": "USD",
             "line_items": [
                 {"item": "Service A", "quantity": None},
@@ -62,10 +62,24 @@ class OCRTemplateDefaultValueTests(SimpleTestCase):
 
         result = _apply_template_default_values(extracted, template)
 
-        self.assertEqual(result["location"], "Pune")
+        self.assertEqual(result["location"], "Mumbai Warehouse")
         self.assertEqual(result["currency"], "INR")
         self.assertEqual(result["line_items"][0]["quantity"], 1)
         self.assertEqual(result["line_items"][1]["quantity"], 1)
+
+    def test_location_default_fills_missing_file_or_email_location(self):
+        template = {
+            "standard_fields": ["location"],
+            "standard_field_overrides": {
+                "location": {"default_value": "Pune", "scope": "header"},
+            },
+            "custom_fields": [],
+        }
+
+        self.assertEqual(
+            _apply_template_default_values({"location": None}, template)["location"],
+            "Pune",
+        )
 
     def test_invalid_default_value_is_rejected_when_template_is_saved(self):
         with self.assertRaisesMessage(ValueError, 'Default Value for field "invoice_date"'):

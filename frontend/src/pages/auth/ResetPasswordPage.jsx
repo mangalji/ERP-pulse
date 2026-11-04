@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import AuthLayout from '../../components/layout/AuthLayout.jsx'
 import Input from '../../components/ui/Input.jsx'
@@ -17,8 +17,18 @@ export default function ResetPasswordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
 
+  useEffect(() => {
+    if (!email) {
+      navigate('/forgot-password', { replace: true })
+    }
+  }, [email, navigate])
+
   const handleSubmit = async (event) => {
     event.preventDefault()
+    if (!email) {
+      navigate('/forgot-password', { replace: true })
+      return
+    }
     setError('')
 
     if (password !== confirmPassword) {
