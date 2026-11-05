@@ -9,6 +9,26 @@ import Input from '../../components/ui/Input.jsx'
 import Button from '../../components/ui/Button.jsx'
 import { invitationApi } from '../../services/invitations.js'
 
+function getInvitationErrorMessage(error, fallback) {
+  const response = error?.payload || error?.response?.data || {}
+  const message = response.message || response.detail
+
+  if (message) return String(message)
+
+  const fieldErrors = response.errors
+  if (fieldErrors && typeof fieldErrors === 'object') {
+    const firstError = Object.values(fieldErrors).flat(Infinity)[0]
+    if (firstError) return String(firstError)
+  }
+
+  // Axios uses this generic text when the API response was not available.
+  if (error?.message && !/^Request failed with status code \d+$/i.test(error.message)) {
+    return error.message
+  }
+
+  return fallback
+}
+
 export default function InvitationAcceptPage() {
   const { token } = useParams()
   const { toasts, addToast, removeToast } = useToast()
@@ -45,7 +65,7 @@ export default function InvitationAcceptPage() {
         setStatus('valid')
       })
       .catch((err) => {
-        setError(err.payload?.message || err.message || 'Invalid invitation.')
+        setError(getInvitationErrorMessage(err, 'Invalid invitation.'))
         setStatus('expired')
       })
   }, [token])
@@ -65,7 +85,12 @@ export default function InvitationAcceptPage() {
     setIsSubmitting(true)
     setError('')
     try{
-      await invitationApi.requestOtp({token, password: submittedPassword, confirm_password})
+      await invitationApi.requestOtp({
+        token,
+        password: submittedPassword,
+        confirm_password,
+        mobile_number,
+      })
       setPassword(submittedPassword)
       setMobileNumber(mobile_number || '')
       setOtp('')
@@ -77,9 +102,7 @@ export default function InvitationAcceptPage() {
       )
     }
     catch (err){
-      setError(
-        err.payload?.message || err.message || 'Failed to send OTP.'
-      )
+      setError(getInvitationErrorMessage(err, 'Failed to send OTP.'))
       }
      finally {
       setIsSubmitting(false)
@@ -109,11 +132,7 @@ export default function InvitationAcceptPage() {
         'success'
       )
     } catch (err){
-      setError(
-        err.payload?.message ||
-        err.message ||
-        'Invalid OTP or failed to activate account.'
-      )
+      setError(getInvitationErrorMessage(err, 'Invalid OTP or failed to activate account.'))
     } finally {
       setIsSubmitting(false)
     }
@@ -135,11 +154,7 @@ export default function InvitationAcceptPage() {
         'success'
       )
     } catch (err) {
-      setError(
-        err.payload?.message ||
-        err.message ||
-        'Failed to resend OTP.'
-      )
+      setError(getInvitationErrorMessage(err, 'Failed to resend OTP.'))
     } finally {
       setResendLoading(false)
     }

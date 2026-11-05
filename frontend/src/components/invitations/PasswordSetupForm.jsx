@@ -176,6 +176,8 @@ export default function PasswordSetupForm({
           value={mobileNumber}
           onChange={(e) => handleMobileChange(e.target.value)}
           onBlur={() => setMobileTouched(true)}
+          inputMode="numeric"
+          pattern="[0-9]{7,15}"
           maxLength={15}
           placeholder="Enter your original mobile number"
           required
@@ -190,8 +192,8 @@ export default function PasswordSetupForm({
             }`}
           >
             {mobileValid && mobileDigits.length > 0
-              ? '✓ Valid mobile number format.'
-              : '✕ Enter a valid mobile number.'}
+              ? '✓ Valid mobile number format (7–15 digits).'
+              : '✕ Enter 7–15 digits only, without the country/STD code.'}
           </p>
         )}
       </div>
