@@ -2731,6 +2731,15 @@ useEffect(() => {
     selectedFiles[activeIndex]?.previewUrl ??
     null
 
+  // Results saved by older OCR page sessions may not include preview_url.
+  // The upload ID is enough to securely request the same authenticated
+  // preview after a reload, so do not leave the preview pane blank.
+  const activePreviewEndpoint =
+    activeResult?.preview_url ||
+    (activeResult?.upload_id
+      ? `/ocr/extract/uploads/${activeResult.upload_id}/preview/`
+      : null)
+
   useEffect(() => {
     let cancelled = false
     let objectUrl = null
@@ -2739,13 +2748,13 @@ useEffect(() => {
       setPreviewError('')
       setRemotePreviewUrl(null)
 
-      if (!activeResult?.preview_url) {
+      if (!activePreviewEndpoint) {
         return
       }
 
       try {
         const response = await apiClient.get(
-          activeResult.preview_url,
+          activePreviewEndpoint,
           { responseType: 'blob' },
         )
 
@@ -2774,7 +2783,7 @@ useEffect(() => {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [activeResult?.preview_url])
+  }, [activePreviewEndpoint])
 
   const canSlide = (results.length > 0 ? results.length : selectedFiles.length) > 1
 
@@ -3083,7 +3092,7 @@ const goNext = () => {
 
                 {!previewError &&
                   !activeFile &&
-                  !activeResult?.preview_url && (
+                  !activePreviewEndpoint && (
                     <p className="text-sm text-[var(--color-muted)]">
                       Select a file to preview it.
                     </p>

@@ -445,9 +445,10 @@ def _canonical_config(requested_fields: Any) -> dict:
         
         normalized_custom.append(
             {
-                "key": _slugify_field_key(
-                    str(custom.get("key") or label)
-                ),
+                # Keep cache identity aligned with the AI field contract.
+                # The visible label is authoritative; legacy hidden keys can
+                # contain only the first character typed by the user.
+                "key": _slugify_field_key(label),
                 "label": label,
                 "description": str(custom.get("questionaire") or custom.get("description") or "").strip(),
                 "scope": str(custom.get("scope") or "header").strip().lower(),
@@ -1491,6 +1492,15 @@ def process_single_ocr_upload(
             scope=scope,
         )
 
+        if result is not None:
+            logger.info(
+                "AI EXTRACTION DEBUG | source=file | upload=%s | "
+                "CACHE HIT\nCACHED TEMPLATE-MAPPED RESULT:\n%s\n"
+                "RAW AI RESPONSE: unavailable (not retained in the extraction cache)",
+                upload.id,
+                json.dumps(result, ensure_ascii=False, indent=2, default=str),
+            )
+
         if result is None:
             result = _perform_ocr_extraction_sync(
                 upload,
@@ -1786,9 +1796,12 @@ def execute_upload_job(
                     )
         else:
             logger.info(
-                "OCR result cache hit — upload=%s file_hash=%s",
+                "AI EXTRACTION DEBUG | source=file | upload=%s file_hash=%s | "
+                "CACHE HIT\nCACHED TEMPLATE-MAPPED RESULT:\n%s\n"
+                "RAW AI RESPONSE: unavailable (not retained in the extraction cache)",
                 upload.id,
                 upload.file_hash,
+                json.dumps(result, ensure_ascii=False, indent=2, default=str),
             )
         # IMPORTANT: AI extraction is a review-stage result. It is kept as
         # the upload's live result (Redis + PostgreSQL) and is only

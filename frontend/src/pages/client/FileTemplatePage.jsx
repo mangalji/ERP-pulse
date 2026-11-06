@@ -209,10 +209,21 @@ function normalizeDescriptionText(value) {
   return String(value ?? '').trim()
 }
 
+function createCustomFieldKey(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
 function normalizeCustomField(field, index = 0) {
   return {
     id: field?.id || createFieldId(`custom-${index}`),
-    key: field?.key || field?.label || '',
+    // Custom-field keys are internal AI/JSON keys and are intentionally not
+    // editable in the UI. Always derive them from the full visible label so
+    // typing "memo" cannot leave a stale first-character key such as "m".
+    key: createCustomFieldKey(field?.label) || field?.key || '',
     original_key: null,
     label: field?.label || field?.key || '',
     description:
@@ -1224,7 +1235,7 @@ const handleRefreshNetSuiteFields = async () => {
       })
 
     const serializeCustomField = (field) => ({
-      key: field.key?.trim() || field.label?.trim(),
+      key: createCustomFieldKey(field.label) || field.key?.trim(),
 
       netsuite_field_id:
         field.netsuite_field_id?.trim() || '',
@@ -1807,12 +1818,15 @@ const handleRefreshNetSuiteFields = async () => {
                                 <input
                                   type="text"
                                   value={field.label}
-                                  onChange={(event) => updateField(field.id, {
-                                    label: event.target.value,
-                                    ...(!field.standard ? {
-                                      key: field.key || event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''),
-                                    } : {}),
-                                  })}
+                                  onChange={(event) => {
+                                    const label = event.target.value
+                                    updateField(field.id, {
+                                      label,
+                                      ...(!field.standard ? {
+                                        key: createCustomFieldKey(label),
+                                      } : {}),
+                                    })
+                                  }}
                                   placeholder="Field name"
                                   className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm outline-none focus:border-[var(--color-primary)]"
                                 />

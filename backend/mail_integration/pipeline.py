@@ -5,6 +5,7 @@ from __future__ import annotations
 from common.timing import timed_stage
 
 import hashlib
+import json
 import logging
 import uuid
 from datetime import timedelta
@@ -180,6 +181,14 @@ class EmailBillPipeline:
             )
             if not sender_vendor.get("matched"):
                 reason = sender_vendor.get("reason") or "vendor_email_not_found"
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=email | message=%s | "
+                    "AI SKIPPED | reason=%s | sender=%s | subject=%s",
+                    message.id,
+                    reason,
+                    message.sender_email or "unknown",
+                    (message.subject or "")[:250],
+                )
                 if reason in {"vendor_email_not_found", "sender_email_missing"}:
                     self._mark_terminal(
                         message_id=message.id,
@@ -218,10 +227,31 @@ class EmailBillPipeline:
             # data without a second AI request, while sender resolution still
             # occurs above.
             if message.is_vendor_bill is True and isinstance(message.ai_extracted_data_json, dict):
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=email | message=%s | "
+                    "AI SKIPPED | reason=already_extracted_cached_result\n"
+                    "CACHED TEMPLATE-MAPPED RESULT:\n%s\n"
+                    "RAW AI RESPONSE: unavailable (not retained in the existing cache)",
+                    message.id,
+                    json.dumps(
+                        message.ai_extracted_data_json,
+                        ensure_ascii=False,
+                        indent=2,
+                        default=str,
+                    ),
+                )
                 data = dict(message.ai_extracted_data_json)
                 data.update(sender_vendor_data)
                 self._notify_vendor_bill_detected(message)
             else:
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=email | message=%s | "
+                    "AI STARTING | sender=%s | subject=%s | template=%s",
+                    message.id,
+                    message.sender_email or "unknown",
+                    (message.subject or "")[:250],
+                    template.name,
+                )
                 classification = ai_extractor.extract_email_text(
                     message.normalized_body or message.raw_body,
                     requested_fields=template.fields_config,

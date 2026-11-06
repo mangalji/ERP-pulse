@@ -41,6 +41,39 @@ class OCRExtractionDefaultsTests(SimpleTestCase):
 
 
 class OCRTemplateDefaultValueTests(SimpleTestCase):
+    def test_custom_field_uses_its_complete_label_not_a_stale_hidden_key(self):
+        template = {
+            "standard_fields": [],
+            "custom_fields": [{
+                "key": "m",
+                "label": "memo",
+                "description": "Memo for the bill.",
+                "data_type": "text",
+                "scope": "header",
+            }],
+        }
+
+        header_fields, _, _, _, _ = resolve_field_config(template)
+
+        self.assertEqual(header_fields, {"memo": "Memo for the bill."})
+
+    def test_custom_default_uses_complete_label_key(self):
+        template = {
+            "standard_fields": [],
+            "custom_fields": [{
+                "key": "r",
+                "label": "Rupees in Word",
+                "description": "Amount written in words.",
+                "data_type": "text",
+                "scope": "header",
+                "default_value": "Ten Rupees Only",
+            }],
+        }
+
+        result = _apply_template_default_values({}, template)
+
+        self.assertEqual(result["rupees_in_word"], "Ten Rupees Only")
+
     def test_location_default_is_only_used_when_ai_did_not_extract_location(self):
         template = {
             "standard_fields": ["location", "currency", "quantity"],

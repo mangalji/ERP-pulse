@@ -87,7 +87,6 @@ def normalize_extraction_payload(result: dict) -> dict:
         'invoice_date': _nullable_date(data.get('invoice_date')),
         'due_date': _nullable_date(data.get('due_date')),
         'vendor_name': _nullable_string(data.get('vendor_name')),
-        # 'customer_name': _nullable_string(data.get('customer_name')),
         'subsidiary': _nullable_string(data.get('subsidiary')),
         'currency': _nullable_string(data.get('currency')),
         'subtotal': _nullable_decimal(data.get('subtotal')),
@@ -99,7 +98,8 @@ def normalize_extraction_payload(result: dict) -> dict:
 
 @transaction.atomic
 def persist_extraction(*, upload=None, document=None, batch=None, user=None, result: dict = None, reviewed_result: dict | None = None, allow_company_admin=False):
-    """Persist one extraction as an immutable OCR document version.
+    """
+    Persist one extraction as an immutable OCR document version.
 
     The complete original AI JSON is retained in ``normalized_json``.
     When ``reviewed_result`` is provided, the user-approved/edited JSON is

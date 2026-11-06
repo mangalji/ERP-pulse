@@ -14,6 +14,7 @@ OpenCV preprocessing pipeline are intentionally outside this service.
 
 from __future__ import annotations
 
+import json
 import re
 from common.timing import timed_stage
 
@@ -514,7 +515,11 @@ def resolve_field_config(
         if not label:
             raise ValueError(f"custom_fields[{idx}] must have a non-empty label or key")
         
-        key = _slugify_field_key(str(custom.get("key") or label))
+        # The user-facing label is the source of truth for custom JSON keys.
+        # Older UI versions could persist only the first typed character in
+        # ``key`` (for example key="m", label="memo").  Do not let that
+        # stale hidden value change the AI contract.
+        key = _slugify_field_key(label)
         
         if key in reserved_keys:
             raise ValueError(f"Custom field '{label}' conflicts with a standard field name ('{key}').")
@@ -724,7 +729,7 @@ def _configured_field_defaults(
                 label=label,
             )
             if value is not None:
-                key = _slugify_field_key(str(custom.get("key") or label))
+                key = _slugify_field_key(label)
                 target = line_defaults if custom.get("scope") == "line" else header_defaults
                 target[key] = value
 
@@ -1014,15 +1019,37 @@ class AIExtractor:
 
         for attempt in range(effective_max_retries + 1):
             try:
+                # Log before the provider call so the precise prompt remains
+                # visible even when the provider is unavailable or times out.
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=file | request_id=%s | "
+                    "file=%s | provider=%s | model=%s\nPROMPT:\n%s",
+                    request_id,
+                    path.name,
+                    provider.__class__.__name__,
+                    getattr(provider, "model", "unknown"),
+                    prompt,
+                )
+                provider_result = provider.generate_json(
+                    file_path=path,
+                    mime_type=media_type,
+                    prompt=prompt,
+                    schema=schema,
+                    timeout=effective_timeout,
+                    seed=42,
+                )
+                # Development diagnostic: prints the exact final prompt and
+                # unmodified provider text to the backend terminal.  Do not
+                # move this data to frontend/API responses or persistence.
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=file | request_id=%s | "
+                    "RAW AI RESPONSE:\n%s\nPARSED AI RESPONSE:\n%s",
+                    request_id,
+                    getattr(provider, "last_raw_response", ""),
+                    json.dumps(provider_result, ensure_ascii=False, indent=2, default=str),
+                )
                 result = _normalize_result(
-                    provider.generate_json(
-                        file_path=path,
-                        mime_type=media_type,
-                        prompt=prompt,
-                        schema=schema,
-                        timeout=effective_timeout,
-                        seed=42,
-                    ),
+                    provider_result,
                     header_keys,
                     line_keys,
                     include_line_items,
@@ -1036,6 +1063,12 @@ class AIExtractor:
                 )
                 result = apply_calculated_values(result)
                 result = _apply_template_default_values(result, requested_fields)
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=file | request_id=%s | "
+                    "TEMPLATE-MAPPED RESULT:\n%s",
+                    request_id,
+                    json.dumps(result, ensure_ascii=False, indent=2, default=str),
+                )
 
                 if company is not None:
                     from audit.integration_alerts import mark_ai_healthy
@@ -1205,8 +1238,27 @@ class AIExtractor:
         start = time.perf_counter()
         for attempt in range(effective_max_retries + 1):
             try:
+                # Same ordering as file OCR: emit the final prompt before a
+                # provider call that may fail before returning any response.
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=email | request_id=%s | "
+                    "provider=%s | model=%s\nPROMPT:\n%s",
+                    request_id,
+                    provider.__class__.__name__,
+                    getattr(provider, "model", "unknown"),
+                    prompt,
+                )
                 response = provider.generate_structured_json(
                     prompt=prompt, schema=schema, timeout=effective_timeout
+                )
+                # Same local terminal diagnostic as file extraction.  Email
+                # content is already part of ``prompt`` for this flow.
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=email | request_id=%s | "
+                    "RAW AI RESPONSE:\n%s\nPARSED AI RESPONSE:\n%s",
+                    request_id,
+                    getattr(provider, "last_raw_response", ""),
+                    json.dumps(response, ensure_ascii=False, indent=2, default=str),
                 )
                 if not isinstance(response, dict):
                     raise GeminiValidationException("AI email extraction did not return a JSON object.")
@@ -1229,6 +1281,12 @@ class AIExtractor:
                     data,
                     header_keys,
                     email_received_at=email_received_at,
+                )
+                logger.info(
+                    "AI EXTRACTION DEBUG | source=email | request_id=%s | "
+                    "TEMPLATE-MAPPED RESULT:\n%s",
+                    request_id,
+                    json.dumps(data, ensure_ascii=False, indent=2, default=str),
                 )
                 if company is not None:
                     from audit.integration_alerts import mark_ai_healthy

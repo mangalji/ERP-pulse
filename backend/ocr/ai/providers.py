@@ -103,6 +103,9 @@ class AIProvider(ABC):
     def __init__(self, *, api_key: str, model: str) -> None:
         self.api_key = api_key
         self.model = model
+        # Kept in memory only for the current extraction.  The caller uses it
+        # for local terminal diagnostics; no raw provider output is persisted.
+        self.last_raw_response = ""
 
     @staticmethod
     def _raise_status_error(
@@ -459,9 +462,8 @@ class GoogleProvider(AIProvider):
                 Path(file_path).name,
                 elapsed_seconds,
             )
-            return _parse_json_text(
-                getattr(response, "text", "") or ""
-            )
+            self.last_raw_response = getattr(response, "text", "") or ""
+            return _parse_json_text(self.last_raw_response)
 
 
         except errors.APIError as exc:
@@ -519,9 +521,8 @@ class GoogleProvider(AIProvider):
                 ),
             )
 
-            return _parse_json_text(
-                getattr(response, "text", "") or ""
-            )
+            self.last_raw_response = getattr(response, "text", "") or ""
+            return _parse_json_text(self.last_raw_response)
 
         except AIProviderError:
             raise
@@ -680,9 +681,8 @@ class OpenAIProvider(AIProvider):
             error_message="OpenAI returned an unexpected response.",
         )
 
-        return _parse_json_text(
-            body.get("output_text", "")
-        )
+        self.last_raw_response = body.get("output_text", "") or ""
+        return _parse_json_text(self.last_raw_response)
 
     def generate_structured_json(
         self,
@@ -730,9 +730,8 @@ class OpenAIProvider(AIProvider):
             error_message="OpenAI returned an unexpected response.",
         )
 
-        return _parse_json_text(
-            body.get("output_text", "")
-        )
+        self.last_raw_response = body.get("output_text", "") or ""
+        return _parse_json_text(self.last_raw_response)
 
 
 class AnthropicProvider(AIProvider):
@@ -927,7 +926,8 @@ class AnthropicProvider(AIProvider):
             if isinstance(item, dict) and item.get("type") == "text"
         ]
 
-        return _parse_json_text("".join(text_parts))
+        self.last_raw_response = "".join(text_parts)
+        return _parse_json_text(self.last_raw_response)
 
     def generate_structured_json(
         self,
@@ -983,7 +983,8 @@ class AnthropicProvider(AIProvider):
             if isinstance(item, dict) and item.get("type") == "text"
         ]
 
-        return _parse_json_text("".join(text_parts))
+        self.last_raw_response = "".join(text_parts)
+        return _parse_json_text(self.last_raw_response)
 
 
 PROVIDER_CLASSES = {
