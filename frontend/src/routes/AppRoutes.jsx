@@ -220,7 +220,7 @@ export default function AppRoutes() {
       />
       <Route path="/app/notifications" element={<ProtectedRoute requiredRole="client"><NotificationsPage /></ProtectedRoute>} />
       <Route path="/app/integrations/email" element={
-        <ProtectedRoute requiredRole="client"><EmailIntegrationsPage /></ProtectedRoute>
+        <ProtectedRoute requiredRole="companyAdmin"><EmailIntegrationsPage /></ProtectedRoute>
       } />
       <Route
         path="/app/ocr"

@@ -48,6 +48,19 @@ def standard_exception_handler(exc, context):
             'data': {},
         }
         return response
+
+    # Domain services use Python's built-in PermissionError so they stay
+    # independent of DRF.  It is an expected authorization denial, never an
+    # application failure, and must therefore be returned as HTTP 403.
+    if isinstance(exc, PermissionError):
+        return Response(
+            {
+                'success': False,
+                'message': str(exc) or 'You do not have permission to perform this action.',
+                'data': {},
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
     
     status_code = getattr(exc,'status_code',None)
     if status_code is not None:

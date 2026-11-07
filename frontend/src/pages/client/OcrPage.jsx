@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext.jsx'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
@@ -11,7 +12,7 @@ import { aiIntegrationApi } from '../../services/aiIntegration.js'
 import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandle.jsx'
 import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
-import { isNetSuiteReauthJob } from '../../utils/netsuiteErrors.js'
+import { isCompanyAdminUser, isNetSuiteReauthJob } from '../../utils/netsuiteErrors.js'
 import { getPreviewErrorMessage } from '../../utils/ocrPreviewError.js'
 import { preventOcrNumberStep, blurOcrNumberOnWheel } from '../../utils/ocrNumericInput.js'
 
@@ -881,6 +882,8 @@ function getFileCategory(file) {
 
 export default function OcrPage() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const canManageEmailIntegration = isCompanyAdminUser(user)
 
   const clearSelectedFilesAfterExtraction = useCallback(() => {
     setSelectedFiles((current) => {
@@ -2918,9 +2921,11 @@ const goNext = () => {
                   Choose Files
                 </Button>
 
-                <Button type="button" onClick={() => navigate('/app/integrations/email')}>
-                  Email
-                </Button>
+                {canManageEmailIntegration && (
+                  <Button type="button" onClick={() => navigate('/app/integrations/email')}>
+                    Email
+                  </Button>
+                )}
 
                 {!!selectedFiles.length && (
                   <>
