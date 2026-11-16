@@ -3,7 +3,7 @@ from django.dispatch import receiver
 from django.db import transaction
 from functools import wraps
 import logging
-from audit.models import AuditLog
+from audit.models import AuditLog, AuditStatus
 from audit.notifications import document_label, notify
 from ocr.models import OCRDocumentVersion, OCRValidationResult, OCRUpload
 from netsuite.models import NetSuiteOCRPosting, NetSuiteConnection
@@ -28,8 +28,28 @@ def safe_event(func):
 def audit_event(sender, instance, created, **kwargs):
     if not created or not instance.user_id or not instance.company_id:
         return
-    if instance.action in ('create', 'update', 'delete', 'login', 'connect', 'disconnect'):
-        notify(instance.user_id, instance.company_id, f'{instance.entity}: {instance.action} successful.', activity_type='manual', actor_id=instance.user_id)
+    if instance.action not in ('create', 'update', 'delete', 'login', 'connect', 'disconnect'):
+        return
+
+    # An audit action alone does not mean that the operation succeeded. In
+    # particular, a failed NetSuite OAuth callback is still recorded with
+    # action='connect', so status must decide the notification text.
+    if instance.status == AuditStatus.SUCCESS:
+        message = f'{instance.entity}: {instance.action} successful.'
+    elif instance.status == AuditStatus.FAILED:
+        message = f'{instance.entity}: {instance.action} failed.'
+    else:
+        # INFO events such as reconnect_started are operational audit entries,
+        # not completed actions, so they must not produce a success toast.
+        return
+
+    notify(
+        instance.user_id,
+        instance.company_id,
+        message,
+        activity_type='manual',
+        actor_id=instance.user_id,
+    )
 
 
 @receiver(post_save, sender=OCRDocumentVersion)

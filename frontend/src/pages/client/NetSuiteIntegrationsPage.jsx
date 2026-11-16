@@ -20,7 +20,6 @@ export default function NetSuiteIntegrationsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState(null)
   const [assigningId, setAssigningId] = useState(null)
   const [companyEmployees, setCompanyEmployees] = useState([])
   const loadData = useCallback(async () => {
@@ -181,7 +180,7 @@ export default function NetSuiteIntegrationsPage() {
             <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">NetSuite Integration</h1>
             <p className="mt-1 text-sm text-[var(--color-muted)]">Manage your company's NetSuite connections.</p>
           </div>
-          <Button onClick={() => { setEditingId(null); setShowForm(true); }}>New Connection</Button>
+          <Button onClick={() => setShowForm(true)}>New Connection</Button>
         </div>
 
         {/* <Card className="p-4">
@@ -207,10 +206,10 @@ export default function NetSuiteIntegrationsPage() {
         {showForm && (
           <Card className="p-6">
             <h3 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
-              {editingId ? 'Edit Connection' : 'Create Connection'}
+              Create Connection
             </h3>
             <ConnectionForm onSubmit={handleCreate} isLoading={saving} />
-            <Button intent="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="mt-4">Cancel</Button>
+            <Button intent="secondary" onClick={() => setShowForm(false)} className="mt-4">Cancel</Button>
           </Card>
         )}
 
@@ -232,7 +231,6 @@ export default function NetSuiteIntegrationsPage() {
                 onAssign={handleAssign}
                 onRemoveEmployee={handleRemoveEmployee}
                 onDisconnect={handleDisconnect}
-                onEdit={(c) => { setEditingId(c.id); setShowForm(true); }}
                 employees={conn.employee_assignments || []}
               />
             ))}

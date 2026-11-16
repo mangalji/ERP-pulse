@@ -477,8 +477,8 @@ export default function ClientLayout({ children }) {
     : null
 
   return (
-    <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-[var(--color-canvas)]">
-      <header className="relative z-[150] border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+    <div className="flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[var(--color-canvas)]">
+      <header className="sticky top-0 z-[150] border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
         <div className="flex min-h-16 min-w-0 items-center justify-between gap-2 px-3 sm:gap-4 sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
             <NavLink to="/app" onClick={(event) => handleNavClick(event, '/app')} className="flex shrink-0 items-center gap-2" aria-label="Go to Dashboard">

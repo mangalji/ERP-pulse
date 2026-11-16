@@ -2,8 +2,9 @@ import { useState } from 'react'
 import Card from '../ui/Card.jsx'
 import Button from '../ui/Button.jsx'
 import Badge from '../ui/Badge.jsx'
+import { formatDateTime } from '../../utils/formatDate.js'
 
-export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onReconnect, canReconnect = true, onAssign, onDisconnect, onEdit, onRemoveEmployee, employees = [] }) {
+export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onReconnect, canReconnect = true, onAssign, onDisconnect, onRemoveEmployee, employees = [] }) {
   const assignedCount = employees.length
   const daysUntilReauth = connection.reauth_required_by
     ? Math.ceil(
@@ -64,6 +65,10 @@ return (
     <Card className="p-5">
       <div className="flex items-start justify-between">
         <div>
+          <p className="mb-1 text-xs text-[var(--color-muted)]">
+            Created: {formatDateTime(connection.connected_at)}
+          </p>
+
           <h3 className="font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
             {connection.client_name || 'Unnamed Connection'}
           </h3>
@@ -96,6 +101,7 @@ return (
                 Currently Using
               </Badge>
             )}
+
           </div>
 
           {connection.needs_reauth ? (
@@ -168,14 +174,6 @@ return (
             onClick={() => setShowAssigned(true)}
           >
             Assigned ({assignedCount})
-          </Button>
-
-          <Button
-            intent="secondary"
-            size="sm"
-            onClick={() => onEdit?.(connection)}
-          >
-            Edit
           </Button>
 
           {canReconnect && connection.status !== 'disconnected' && (
