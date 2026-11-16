@@ -7,6 +7,7 @@ from common.timing import timed_stage
 import hashlib
 import json
 import logging
+import time
 import uuid
 from datetime import timedelta
 
@@ -165,6 +166,7 @@ class EmailBillPipeline:
             self._defer(message.id, ValueError("Mailbox requires an owner and OCR template before processing."))
             return "deferred"
         try:
+            ai_extraction_duration_ms = 0
             # Sender email is the first and only vendor-bill gate.  AI is not
             # called until the sender has an active vendor record in NetSuite.
             # This avoids AI cost for ordinary mailbox traffic and makes the
@@ -252,12 +254,14 @@ class EmailBillPipeline:
                     (message.subject or "")[:250],
                     template.name,
                 )
+                ai_started = time.perf_counter()
                 classification = ai_extractor.extract_email_text(
                     message.normalized_body or message.raw_body,
                     requested_fields=template.fields_config,
                     company=integration.company,
                     email_received_at=message.received_at,
                 )
+                ai_extraction_duration_ms = int(round((time.perf_counter() - ai_started) * 1000))
                 if classification.get("is_vendor_bill") is not True:
                     self._mark_terminal(
                         message_id=message.id,
@@ -296,6 +300,7 @@ class EmailBillPipeline:
                 ).update(
                     is_vendor_bill=True,
                     ai_extracted_data_json=data,
+                    ai_extraction_duration_ms=ai_extraction_duration_ms,
                     vendor_bill_notification_sent=True,
                 )
                 if classified:
@@ -424,6 +429,8 @@ class EmailBillPipeline:
                     result=data,
                     allow_company_admin=True,
                 )
+                document.ai_extraction_duration_ms = locked.ai_extraction_duration_ms
+                document.save(update_fields=["ai_extraction_duration_ms", "updated_at"])
                 batch.status = OCRBatch.Status.COMPLETED
                 batch.completed_at = timezone.now()
                 batch.save(update_fields=["status", "completed_at"])

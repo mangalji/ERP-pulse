@@ -246,6 +246,7 @@ def _build_upload_result(upload):
         ),
         "filename": upload.original_filename,
         "status": upload.status,
+        "ai_extraction_duration_ms": upload.ai_extraction_duration_ms,
         "data": live_data if live_data is not None else version.normalized_json if version else None,
         "error": (
             upload.failure_reason
@@ -560,6 +561,15 @@ class OCRHistoryListView(APIView):
 
         status_filter = str(request.query_params.get("status", "")).strip().upper()
         batch_queryset = _visible_batch_queryset(request.user).order_by("-created_at")
+        validated_documents = OCRValidationResult.objects.filter(
+            Q(document__batch_id=OuterRef("pk"))
+            | Q(document__upload__batch_id=OuterRef("pk"))
+        )
+        # History begins after a validation attempt. A raw AI extraction or an
+        # unvalidated upload remains in the review workspace, not in history.
+        batch_queryset = batch_queryset.annotate(
+            history_has_validation=Exists(validated_documents),
+        ).filter(history_has_validation=True)
         if status_filter in {"NOT_VALIDATED", "VALIDATED", "POSTED"}:
             documents = OCRDocument.objects.filter(Q(batch_id=OuterRef("pk")) | Q(upload__batch_id=OuterRef("pk")))
             latest_validation = OCRValidationResult.objects.filter(
@@ -620,6 +630,7 @@ class OCRHistoryListView(APIView):
             docs = [upload.document for upload in uploads if getattr(upload, "document", None)] or list(batch.ordered_documents)
             if not docs:
                 continue
+            batch.ensure_history_number()
             is_multiple = batch.processing_mode == OCRBatch.ProcessingMode.MULTIPLE or len(docs) > 1
             doc_validations = [validations.get(doc.id) for doc in docs]
             doc_postings = [postings.get((doc.id, latest_version[doc.id].id)) for doc in docs if latest_version.get(doc.id)]
@@ -646,6 +657,11 @@ class OCRHistoryListView(APIView):
             errors = [error for item in doc_validations if item for error in (item.errors or [])]
             records = [{"document_id": str(item.document_id), "internal_id": item.netsuite_record_id, "url": netsuite_vendor_bill_url(account_id=item.connection.netsuite_account_id, record_id=item.netsuite_record_id)} for item in doc_postings if item and item.status == "posted" and item.netsuite_record_id]
             first = docs[0]
+            ai_durations = [
+                document.ai_extraction_duration_ms
+                for document in docs
+                if document.ai_extraction_duration_ms is not None
+            ]
             results.append({
                 "type": "batch" if is_multiple else "single", "batch_id": str(batch.id), "history_number": batch.history_number,
                 "document_id": None if is_multiple else str(first.id), "document_ids": [str(doc.id) for doc in docs],
@@ -657,6 +673,7 @@ class OCRHistoryListView(APIView):
                 "validation_status": record_status, "validation_errors": errors,
                 "validation_id": str(next((item.id for item in reversed(doc_validations) if item), "")) or None,
                 "validation_updated_at": max((item.created_at for item in doc_validations if item), default=None),
+                "ai_extraction_duration_ms": sum(ai_durations) if ai_durations else None,
                 "validated_count": valid_count, "posted_count": posted_count, "netsuite_records": records,
                 "netsuite_account_ids": account_ids,
             })

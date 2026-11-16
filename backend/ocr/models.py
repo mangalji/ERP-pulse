@@ -53,6 +53,8 @@ class OCRBatch(models.Model):
         unique=True,
         editable=False,
         db_index=True,
+        null=True,
+        blank=True,
     )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -151,19 +153,28 @@ class OCRBatch(models.Model):
         return f'OCRBatch {self.id} ({self.status})'
 
     def save(self, *args, **kwargs):
-        if self._state.adding and self.history_number is None:
-            # Lock the latest row while allocating. A deleted number is never
-            # considered because allocation always advances from the maximum.
-            with transaction.atomic():
+        return super().save(*args, **kwargs)
+
+    def ensure_history_number(self):
+        """Allocate a permanent number only when the batch enters history."""
+        if self.history_number is not None:
+            return self.history_number
+
+        with transaction.atomic():
+            locked = type(self).objects.select_for_update().get(pk=self.pk)
+            if locked.history_number is None:
                 latest = (
-                    type(self).objects.select_for_update()
+                    type(self).objects
+                    .select_for_update()
+                    .exclude(history_number__isnull=True)
                     .order_by("-history_number")
                     .first()
                 )
-                self.history_number = (latest.history_number if latest else 0) + 1
-                return super().save(*args, **kwargs)
+                locked.history_number = (latest.history_number if latest else 0) + 1
+                locked.save(update_fields=["history_number"])
+            self.history_number = locked.history_number
 
-        return super().save(*args, **kwargs)
+        return self.history_number
 
 
 class OCRExtractionTemplate(models.Model):
@@ -281,6 +292,7 @@ class OCRUpload(models.Model):
     processing_started_at = models.DateTimeField(null=True, blank=True)
     processing_completed_at = models.DateTimeField(null=True, blank=True)
     processing_duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    ai_extraction_duration_ms = models.PositiveIntegerField(null=True, blank=True)
     failure_reason = models.TextField(null=True, blank=True)
     # Stable machine-readable failure category (see ocr.error_taxonomy).
     failure_code = models.CharField(max_length=32, blank=True, default="")
@@ -427,6 +439,7 @@ class OCRDocument(models.Model):
     processing_started_at = models.DateTimeField(null=True, blank=True)
     processing_completed_at = models.DateTimeField(null=True, blank=True)
     processing_duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    ai_extraction_duration_ms = models.PositiveIntegerField(null=True, blank=True)
     failure_reason = models.TextField(null=True, blank=True)
     processing_metadata = models.JSONField(
         default=dict,
@@ -569,6 +582,16 @@ class OCRValidationResult(models.Model):
 
     def __str__(self) -> str:
         return f'Validation {self.document_id} — {self.status}'
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+
+        document = self.document
+        batch = document.batch
+        if batch is None and document.upload_id:
+            batch = document.upload.batch
+        if batch is not None:
+            batch.ensure_history_number()
 
 class AIConfiguration(models.Model):
     """One company-scoped AI provider configuration used by OCR."""

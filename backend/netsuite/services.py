@@ -493,7 +493,6 @@ class NetSuiteConnectionService:
             self,*,
             user:User,
             client_name:str,
-            environment:str,
             client_id:str,
             client_secret:str,
             netsuite_account_id:str,
@@ -521,7 +520,6 @@ class NetSuiteConnectionService:
                 user=user,
                 company_id=company_id,
                 client_name=client_name,
-                environment=environment,
                 client_id=client_id,
                 client_secret=client_secret,
             )
@@ -546,7 +544,6 @@ class NetSuiteConnectionService:
                 user=user,
                 client_name=client_name,
                 client_id=client_id,
-                environment=environment,
                 client_secret=client_secret,
                 netsuite_account_id=netsuite_account_id,
                 company_id=company_id,
@@ -644,7 +641,6 @@ class NetSuiteConnectionService:
                 "event": "deleted",
                 "account_name": connection.netsuite_account_id,
                 "client_name": connection.client_name,
-                "environment": connection.environment,
             },
         )
 

@@ -1,21 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
-import Badge from '../../components/ui/Badge.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
 import ErrorState from '../../components/ui/ErrorState.jsx'
-import EmptyState from '../../components/ui/EmptyState.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import { clientApi } from '../../services/client.js'
-import { formatDate, formatDateTime } from '../../utils/formatDate.js'
+import { formatDate } from '../../utils/formatDate.js'
 import { ActiveEmailReconnectNotice } from '../../components/EmailReconnectBanner.jsx'
 import { isCompanyAdminUser } from '../../utils/netsuiteErrors.js'
 
 export default function DashboardPage() {
   const { user } = useAuth()
-  const isCompanyAdmin = (user?.roles || []).includes('company_admin')
   const [summary, setSummary] = useState(null)
-  const [activity, setActivity] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -23,12 +19,8 @@ export default function DashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryData, activityData] = await Promise.all([
-        clientApi.getExecutiveSummary(),
-        clientApi.getActivityFeed(10),
-      ])
+      const summaryData = await clientApi.getExecutiveSummary()
       setSummary(summaryData)
-      setActivity(activityData)
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load dashboard')
     } finally {
@@ -83,8 +75,6 @@ const kpis = useMemo(() => {
     },
   ]
 }, [summary])
-  const activityItems = activity || []
-
   return (
     <ClientLayout title="Dashboard" breadcrumb="Dashboard">
       <div className="flex flex-col gap-6">

@@ -814,6 +814,11 @@ export default function DataExtractionHistoryPage() {
 
                         <div className="text-sm text-[var(--color-muted)]">
                           {formatDate(item.created_at)}
+                          <div className="mt-1 text-xs text-[var(--color-muted)]">
+                            AI: {item.ai_extraction_duration_ms == null
+                              ? '--'
+                              : `${(item.ai_extraction_duration_ms / 1000).toFixed(2)} sec`}
+                          </div>
                         </div>
 
                         <div

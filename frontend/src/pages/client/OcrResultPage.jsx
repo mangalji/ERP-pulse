@@ -1550,10 +1550,10 @@ function getFileCategory(file) {
                         }}
                       >
                         <option value="">
-                          {validating
-                            ? 'Validating...'
-                            : posting
-                              ? 'Posting...'
+                          {posting
+                            ? 'Posting...'
+                            : validating
+                              ? 'Validating...'
                               : saving
                                 ? 'Saving...'
                                 : 'Actions'}

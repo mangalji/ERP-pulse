@@ -215,12 +215,16 @@ def persist_extraction(*, upload=None, document=None, batch=None, user=None, res
     document.processing_duration_ms = (
         upload.processing_duration_ms if upload is not None else None
     )
+    document.ai_extraction_duration_ms = (
+        upload.ai_extraction_duration_ms if upload is not None else None
+    )
     document.failure_reason = None
     document.save(update_fields=[
         'current_version',
         'status',
         'processing_completed_at',
         'processing_duration_ms',
+        'ai_extraction_duration_ms',
         'failure_reason',
         'updated_at',
     ])

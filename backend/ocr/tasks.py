@@ -321,8 +321,10 @@ def _perform_ocr_extraction(
 
             page_paths = _normalize_to_page_paths(adapter, upload, original_path)
             page_results = []
+            ai_duration_ms = 0.0
 
             for page_index, page_path in enumerate(page_paths, start=1):
+                ai_started = time.perf_counter()
                 result = _extract_single_page(
                     upload,
                     page_path,
@@ -330,9 +332,11 @@ def _perform_ocr_extraction(
                     page_index,
                     deadline_monotonic,
                 )
+                ai_duration_ms += (time.perf_counter() - ai_started) * 1000
                 _validate_extraction_result(result, page_index=page_index)
                 page_results.append(result)
 
+            upload._ai_extraction_duration_ms = int(round(ai_duration_ms))
             return _merge_page_extraction_results(page_results)
 
         finally:
@@ -1291,6 +1295,9 @@ def _persist_success(
     upload.processing_duration_ms = int(
         (completed_at - (started_at or completed_at)).total_seconds() * 1000
     )
+    ai_duration_ms = getattr(upload, "_ai_extraction_duration_ms", None)
+    if ai_duration_ms is not None:
+        upload.ai_extraction_duration_ms = ai_duration_ms
     upload.failure_reason = None
     upload.failure_code = ""
     upload.lease_owner = ""
@@ -1304,6 +1311,7 @@ def _persist_success(
             "status",
             "processing_completed_at",
             "processing_duration_ms",
+            "ai_extraction_duration_ms",
             "failure_reason",
             "failure_code",
             "lease_owner",

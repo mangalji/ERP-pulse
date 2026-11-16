@@ -1599,7 +1599,6 @@ useEffect(() => {
   setDiagnosticError('')
   setValidating(true)
   let saveCompleted = false
-  setValidating(true)
 
   try {
     const savedResult = await handleSave()
@@ -3351,10 +3350,10 @@ const goNext = () => {
             }}
           >
             <option value="">
-              {validating
-               ? (batchProgress || 'Validating...')
-              : posting
+              {posting
                 ? (batchProgress || 'Posting...')
+                : validating
+                  ? (batchProgress || 'Validating...')
                   : saving
                     ? 'Saving...'
                     : 'Actions'}

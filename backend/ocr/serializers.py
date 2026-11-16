@@ -89,6 +89,7 @@ class OCRHistoryFileSerializer(serializers.Serializer):
     version_number = serializers.IntegerField(allow_null=True)
     filename = serializers.CharField()
     status = serializers.CharField()
+    ai_extraction_duration_ms = serializers.IntegerField(allow_null=True, required=False)
     data = serializers.JSONField(allow_null=True)
     error = serializers.CharField(allow_null=True, allow_blank=True)
 
@@ -112,6 +113,7 @@ class OCRHistoryEntrySerializer(serializers.Serializer):
     source_type = serializers.CharField(allow_null=True, allow_blank=True)
     source_metadata = serializers.JSONField(required=False, default=dict)
     created_at = serializers.DateTimeField()
+    ai_extraction_duration_ms = serializers.IntegerField(allow_null=True, required=False)
     owner_id = serializers.CharField(allow_null=True, allow_blank=True)
     owner_name = serializers.CharField(allow_null=True, allow_blank=True)
     validation_status = serializers.CharField(allow_null=True, allow_blank=True)

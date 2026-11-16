@@ -3,7 +3,7 @@ from .base import *
 DEBUG = False
 
 from .database import PRODUCTION_DATABASE
-
+from decouple import config
 if not PRODUCTION_DATABASE:
     raise RuntimeError(
         'DATABASE_URL is not set. Production requires a real database '
@@ -33,10 +33,12 @@ JWT_AUTH_COOKIE_SECURE = os.environ.get("JWT_AUTH_COOKIE_SECURE", "True").lower(
 
 # Redirect all HTTP to HTTPS
 # SECURE_SSL_REDIRECT = True
-SECURE_SSL_REDIRECT = os.environ.get(
+SECURE_SSL_REDIRECT = config(
     "SECURE_SSL_REDIRECT",
-    "True",
-).lower() in ("true", "1", "yes")
+    default=True,
+    cast=bool,
+    )
+# ).lower() in ("true", "1", "yes")
 
 # HSTS: tell browsers to always use HTTPS for this domain
 SECURE_HSTS_SECONDS = 31536000  # 1 year

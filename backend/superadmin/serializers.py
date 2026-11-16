@@ -378,7 +378,6 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
     admin_email = serializers.SerializerMethodField()
     netsuite_connected = serializers.SerializerMethodField()
     netsuite_account_id = serializers.SerializerMethodField()
-    netsuite_environment = serializers.SerializerMethodField()
     netsuite_last_sync = serializers.SerializerMethodField()
     netsuite_connections = serializers.SerializerMethodField()
     netsuite_connection_count = serializers.SerializerMethodField()
@@ -391,7 +390,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'country', 'created_at', 'updated_at',
             'user_count', 'active_user_count',
             'current_plan', 'admin_email',
-            'netsuite_connected', 'netsuite_account_id', 'netsuite_environment', 'netsuite_last_sync',
+            'netsuite_connected', 'netsuite_account_id', 'netsuite_last_sync',
             'netsuite_connections', 'netsuite_connection_count',
             'transactions', 'suspension_reason',
         ]
@@ -445,10 +444,6 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
         conn = self._current_netsuite_connection(obj)
         return conn.netsuite_account_id if conn else None
 
-    def get_netsuite_environment(self, obj):
-        conn = self._current_netsuite_connection(obj)
-        return conn.get_environment_display() if conn and conn.environment else None
-
     def get_netsuite_last_sync(self, obj):
         conn = self._current_netsuite_connection(obj)
         return conn.last_synced_at if conn else None
@@ -462,7 +457,6 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
                 'id': str(connection.id),
                 'client_name': connection.client_name,
                 'netsuite_account_id': connection.netsuite_account_id,
-                'environment': connection.get_environment_display(),
                 'status': connection.status,
                 'is_current': bool(connection.is_active and connection.status == 'connected'),
                 'last_synced_at': connection.last_synced_at,

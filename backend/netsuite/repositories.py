@@ -314,7 +314,6 @@ class NetSuiteConnectionRepository:
     *,
     user:User,
     client_name: str,
-    environment: str,
     client_id: str,
     client_secret: str,
     netsuite_account_id: str,
@@ -324,7 +323,6 @@ class NetSuiteConnectionRepository:
         user=user,
         company_id=company_id,
         client_name=client_name,
-        environment=environment,
         client_id=client_id,
         client_secret=client_secret,
         netsuite_account_id=netsuite_account_id,
@@ -349,14 +347,12 @@ class NetSuiteConnectionRepository:
         user: User,
         company_id,
         client_name: str,
-        environment: str,
         client_id: str,
         client_secret: str,
     ) -> NetSuiteConnection:
         connection.user = user
         connection.company_id = company_id
         connection.client_name = client_name
-        connection.environment = environment
         connection.client_id = client_id
         connection.client_secret = client_secret
     

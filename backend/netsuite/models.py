@@ -7,11 +7,6 @@ from common.crypto import EncryptedTextField
 
 class NetSuiteConnection(models.Model):
 
-    ENVIRONMENT_CHOICES = [
-        ("sandbox", "Sandbox"),
-        ("production", "Production"),
-    ]
-
     STATUS_CHOICES = [
         ("pending", "Pending"),
         ("connected", "Connected"),
@@ -44,12 +39,6 @@ class NetSuiteConnection(models.Model):
         related_name='netsuite_connections',
     )
     client_name = models.CharField(max_length=255,null=True,blank=True)
-    environment = models.CharField(
-        max_length=20,
-        choices=ENVIRONMENT_CHOICES,
-        null=True,
-        blank=True,
-    )
     client_id = models.CharField(max_length=255,null=True,blank=True)
     client_secret = EncryptedTextField(null=True,blank=True)
     netsuite_account_id = models.CharField(max_length=50)

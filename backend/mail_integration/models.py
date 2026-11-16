@@ -107,6 +107,7 @@ class EmailMessage(models.Model):
     is_vendor_bill = models.BooleanField(null=True, blank=True, db_index=True)
     vendor_bill_notification_sent = models.BooleanField(default=False)
     ai_extracted_data_json = models.JSONField(null=True, blank=True)
+    ai_extraction_duration_ms = models.PositiveIntegerField(null=True, blank=True)
     # Terminal rows are retained briefly so an overlapping mailbox sync cannot
     # stage and send the same provider message through AI again.
     dedupe_syncs_remaining = models.PositiveSmallIntegerField(null=True, blank=True, db_index=True)

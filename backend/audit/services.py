@@ -138,7 +138,6 @@ class AuditService:
                 "active_connection": True,
                 "connection_id": str(connection.id),
                 "account_id": connection.netsuite_account_id,
-                "environment": connection.environment,
                 "connection_status": connection.status,
                 "client_name": connection.client_name or None,
             }

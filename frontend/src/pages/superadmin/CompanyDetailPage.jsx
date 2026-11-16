@@ -634,16 +634,6 @@ export default function CompanyDetailPage() {
                   
                 <div className="rounded-lg border border-[var(--color-border)] p-4">
                   <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
-                    Environment
-                  </p>
-                  
-                  <p className="mt-1 text-sm font-semibold text-[var(--color-ink)]">
-                    {company.netsuite_environment || '—'}
-                  </p>
-                </div>
-                  
-                <div className="rounded-lg border border-[var(--color-border)] p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
                     Last Sync
                   </p>
                   
@@ -677,7 +667,7 @@ export default function CompanyDetailPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="font-medium text-[var(--color-ink)]">{connection.client_name || 'Unnamed connection'}</p>
-                          <p className="mt-1 text-sm text-[var(--color-muted)]">{connection.netsuite_account_id} · {connection.environment || '—'}</p>
+                          <p className="mt-1 text-sm text-[var(--color-muted)]">{connection.netsuite_account_id}</p>
                         </div>
                         <div className="flex gap-2"><StatusBadge status={connection.status} />{connection.is_current && <span className="rounded-full bg-[var(--color-positive-soft)] px-2 py-1 text-xs font-medium text-[var(--color-positive)]">Current connection</span>}</div>
                       </div>

@@ -31,9 +31,6 @@ class NetSuiteCallbackSerializer(serializers.Serializer):
 
 class NetSuiteConnectionCreateSerializer(serializers.Serializer):
     client_name= serializers.CharField(max_length=255)
-    environment = serializers.ChoiceField(
-        choices=["sandbox","production"]
-    )
     client_id = serializers.CharField(min_length=1, max_length=500)
     client_secret = serializers.CharField(min_length=1, max_length=500)
     netsuite_account_id = serializers.CharField(
@@ -133,7 +130,6 @@ class NetSuiteConnectionListSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "client_name",
-            "environment",
             "netsuite_account_id",
             "status",
             "is_active",

@@ -238,8 +238,13 @@ export default function OcrBatchHistoryPage() {
                   </p>
 
                   <p className="mt-1 text-xs text-[var(--color-muted)]">
-                    
                     {String(file.status || '').toUpperCase()}
+                  </p>
+
+                  <p className="mt-1 text-xs text-[var(--color-muted)]">
+                    AI extraction: {file.ai_extraction_duration_ms == null
+                      ? '--'
+                      : `${(file.ai_extraction_duration_ms / 1000).toFixed(2)} sec`}
                   </p>
                 </div>
 

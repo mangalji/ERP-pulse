@@ -126,7 +126,7 @@ return (
                     </h2>
 
                     <p className="mt-1 text-sm text-[var(--color-muted)]">
-                      {connection.netsuite_account_id} · {connection.environment}
+                      {connection.netsuite_account_id}
                     </p>
 
                     <div className="mt-2 flex flex-wrap items-center gap-2">

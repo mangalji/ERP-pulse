@@ -1,12 +1,12 @@
 """
-Notebook-compatible Gemini document extraction service.
+document AI extraction service.
 
 This service ports the extraction logic from the approved Colab prototype
 into the AGSuite ERP application without changing the existing OCR upload
 storage layer or the asynchronous IDP pipeline.
 
 Step 1 scope:
-    PDF/image -> Gemini -> structured JSON
+    PDF/image -> AI -> structured JSON
 
 NetSuite mapping/posting, Excel generation, Celery, and the existing
 OpenCV preprocessing pipeline are intentionally outside this service.
@@ -47,85 +47,110 @@ MEDIA_TYPES = {
     ".webp": "image/webp",
 }
 
+# FIELD_DESCRIPTIONS = {
+#     "invoice_number":( # field_id = tranid
+#         "Invoice number or ID printed on the supplier invoice. "
+#         "Do not use a purchase order number or vendor ID."
+#         ),
+#     "invoice_date": ( # field_id = trandate
+#         "Invoice issue date, normalized format YYYY-MM-DD when unambiguous."
+#         ),
+#     "due_date": ( # field_id = duedate
+#         "Payment due date, normalized to YYYY-MM-DD when stated. "
+#         "Do not calculate or guess a missing due date, except for the "
+#         "single-date fallback explicitly stated in the extraction rules."
+#         ),
+#     "vendor_name": ( # field_id = entity
+#         "Name of the vendor or supplier issuing the invoice."
+#         ),
+#     "subsidiary": ( # field_id = subsidiary
+#         "Company subsidiary or business unit, only when explicitly "
+#         "identified. Do not guess."
+#         ),
+#     "location": (
+#         "NetSuite Location, branch, site, or warehouse for this Vendor Bill. "
+#         "Use the exact name only when explicitly stated on the invoice. "
+#         "Do not infer a Location from an address or guess a default; return "
+#         "null when the invoice does not identify one."
+#     ),
+#     "currency": ( # field_id = currency
+#         "Three-letter currency code, such as USD, INR, or EUR. "
+#         "Return null if the currency cannot be identified reliably."
+#         ),
+#     "total_tax_amount":( # field_id = taxtotal
+#         "Total tax amount for the entire invoice. Use the invoice-level "
+#         "tax total when shown; otherwise sum line-item taxes only when "
+#         "all relevant line tax amounts are available. "
+#         "Return a number without a currency symbol."
+#         ),
+#     "amount": ( # field_id = usertotal
+#         "Grand total of the entire invoice after discounts and including "
+#         "applicable taxes and charges, as shown on the invoice. "
+#         "Return a number without a currency symbol. Do not substitute "
+#         "an individual line amount."
+#         ),
+# }
+
+# LINE_ITEM_FIELDS = {
+#     "item": ( # field_id = item
+#         "Product, service, or charge name/description for this specific "
+#         "invoice line. Do not combine separate line items."
+#         ),
+#     "quantity": ( # field_id = quantity
+#         "Quantity for this line item. Return a number; do not guess "
+#         "if the quantity is not shown."
+#         ),
+#     "unit_price": ( # field_id = rate
+#         "Price per unit for this line item as printed on the invoice. "
+#         "Return a number without a currency symbol; do not calculate "
+#         "a missing unit price."
+#         ),
+#     "subtotal": ( # field_id = amount
+#         "This line item's amount before tax, after any stated line-level "
+#         "discounts. This is not the invoice-level subtotal. "
+#         "Return a number without a currency symbol."
+#         ),
+#     "tax_amount": ( # field_id = tax1amt
+#         "Tax amount attributable to this specific line item, not the "
+#         "tax total for the entire invoice. Return a number without "
+#         "a currency symbol."
+#         ),
+#     "tax_rate": ( # field_id = taxrate1
+#         "Tax rate for this line item, expressed as a percentage when "
+#         "explicitly stated, for example 18 for 18%. Do not guess "
+#         "a missing rate."
+#         ),
+#     "total_amount":( # field_id = grossamt
+#         "Final amount for this specific line item, including its "
+#         "applicable taxes and line-level charges after discounts. "
+#         "This is not the invoice grand total. Return a number "
+#         "without a currency symbol."
+#         )
+# }
+
+# File-upload extraction field contract. The original field prompts above are
+# intentionally retained for email extraction and backward compatibility.
+# These shorter, stricter descriptions are used only by the file-upload flow.
 FIELD_DESCRIPTIONS = {
-    "invoice_number":( # field_id = tranid
-        "Invoice number or ID printed on the supplier invoice. "
-        "Do not use a purchase order number or vendor ID."
-        ),
-    "invoice_date": ( # field_id = trandate
-        "Invoice issue date, normalized format YYYY-MM-DD when unambiguous."
-        ),
-    "due_date": ( # field_id = duedate
-        "Payment due date, normalized to YYYY-MM-DD when stated. "
-        "Do not calculate or guess a missing due date, except for the "
-        "single-date fallback explicitly stated in the extraction rules."
-        ),
-    "vendor_name": ( # field_id = entity
-        "Name of the vendor or supplier issuing the invoice."
-        ),
-    "subsidiary": ( # field_id = subsidiary
-        "Company subsidiary or business unit, only when explicitly "
-        "identified. Do not guess."
-        ),
-    "location": (
-        "NetSuite Location, branch, site, or warehouse for this Vendor Bill. "
-        "Use the exact name only when explicitly stated on the invoice. "
-        "Do not infer a Location from an address or guess a default; return "
-        "null when the invoice does not identify one."
-    ),    
-    "currency": ( # field_id = currency
-        "Three-letter currency code, such as USD, INR, or EUR. "
-        "Return null if the currency cannot be identified reliably."
-        ),
-    "total_tax_amount":( # field_id = taxtotal
-        "Total tax amount for the entire invoice. Use the invoice-level "
-        "tax total when shown; otherwise sum line-item taxes only when "
-        "all relevant line tax amounts are available. "
-        "Return a number without a currency symbol."
-        ),
-    "amount": ( # field_id = usertotal
-        "Grand total of the entire invoice after discounts and including "
-        "applicable taxes and charges, as shown on the invoice. "
-        "Return a number without a currency symbol. Do not substitute "
-        "an individual line amount."
-        ),
+    "invoice_number": "Invoice number or ID. Exclude PO number or vendor ID.",
+    "invoice_date": "Invoice issue date in YYYY-MM-DD format.",
+    "due_date": "Payment due date in YYYY-MM-DD format. Do not calculate.",
+    "vendor_name": "Vendor or supplier name.",
+    "subsidiary": "Explicitly identified company subsidiary or business unit only.",
+    "location": "Explicitly stated NetSuite Location, branch, site, or warehouse. Do not infer from address.",
+    "currency": "Three-letter currency code, such as USD, EUR, or INR.",
+    "total_tax_amount": "Total tax amount for the entire invoice.",
+    "amount": "Grand total including taxes and charges.",
 }
 
 LINE_ITEM_FIELDS = {
-    "item": ( # field_id = item
-        "Product, service, or charge name/description for this specific "
-        "invoice line. Do not combine separate line items."
-        ),
-    "quantity": ( # field_id = quantity
-        "Quantity for this line item. Return a number; do not guess "
-        "if the quantity is not shown."
-        ),
-    "unit_price": ( # field_id = rate
-        "Price per unit for this line item as printed on the invoice. "
-        "Return a number without a currency symbol; do not calculate "
-        "a missing unit price."
-        ),
-    "subtotal": ( # field_id = amount
-        "This line item's amount before tax, after any stated line-level "
-        "discounts. This is not the invoice-level subtotal. "
-        "Return a number without a currency symbol."
-        ),
-    "tax_amount": ( # field_id = tax1amt
-        "Tax amount attributable to this specific line item, not the "
-        "tax total for the entire invoice. Return a number without "
-        "a currency symbol."
-        ),
-    "tax_rate": ( # field_id = taxrate1
-        "Tax rate for this line item, expressed as a percentage when "
-        "explicitly stated, for example 18 for 18%. Do not guess "
-        "a missing rate."
-        ),
-    "total_amount":( # field_id = grossamt
-        "Final amount for this specific line item, including its "
-        "applicable taxes and line-level charges after discounts. "
-        "This is not the invoice grand total. Return a number "
-        "without a currency symbol."
-        )
+    "item": "Product, service, or charge name/description.",
+    "quantity": "Line quantity.",
+    "unit_price": "Price per unit.",
+    "subtotal": "Line amount before tax, after line discounts.",
+    "tax_amount": "Tax amount for this specific line.",
+    "tax_rate": "Tax rate percentage, such as 18 for 18%.",
+    "total_amount": "Final line amount including taxes and charges.",
 }
 
 FIELD_LABELS = {
@@ -442,6 +467,9 @@ def _slugify_field_key(label: str) -> str:
 
 def resolve_field_config(
     requested_fields: dict[str, Any] | None,
+    *,
+    field_descriptions: dict[str, str] | None = None,
+    line_item_fields: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str], bool, dict[str, str], dict[str, str]]:
     """Resolve the mandatory template into the exact AI field contract."""
     if not isinstance(requested_fields, dict) or not requested_fields:
@@ -459,22 +487,25 @@ def resolve_field_config(
     if not selected_standard and not custom_fields:
         raise ValueError("Extraction template must contain at least one field.")
 
+    header_catalog = field_descriptions or FIELD_DESCRIPTIONS
+    line_catalog = line_item_fields or LINE_ITEM_FIELDS
+
     header_fields: dict[str, str] = {}
     line_fields: dict[str, str] = {}
     header_types: dict[str, str] = {}
     line_types: dict[str, str] = {}
-    reserved_keys = frozenset(FIELD_DESCRIPTIONS) | frozenset(LINE_ITEM_FIELDS) | {"line_items"}
+    reserved_keys = frozenset(header_catalog) | frozenset(line_catalog) | {"line_items"}
 
     for raw_key in selected_standard:
         key = str(raw_key).strip()
         if not key or key == "line_items":
             continue
-        if key in FIELD_DESCRIPTIONS:
-            description = FIELD_DESCRIPTIONS[key]
+        if key in header_catalog:
+            description = header_catalog[key]
             data_type = FIELD_DATA_TYPES.get(key, "text")
             default_scope = "header"
-        elif key in LINE_ITEM_FIELDS:
-            description = LINE_ITEM_FIELDS[key]
+        elif key in line_catalog:
+            description = line_catalog[key]
             data_type = LINE_ITEM_DATA_TYPES.get(key, "text")
             default_scope = "line"
         else:
@@ -778,155 +809,168 @@ def _apply_template_default_values(
     return result
 
 
-def _apply_email_received_date_fallback(
+def apply_invoice_date_fallback(
     data: dict[str, Any],
     header_keys: tuple[str, ...],
     *,
-    email_received_at: datetime | None,
+    source: str,
+    email_received_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Apply the mailbox receipt date as the invoice date for email input.
-
-    The email receipt time is application-owned evidence, unlike a value
-    inferred by the model. The automated-email workflow defines the mailbox
-    receipt date as the invoice date, so it deliberately overrides an AI
-    extracted value and a template default. A source-provided due date remains
-    untouched and optional.
-    """
+    """Apply a source-specific invoice-date fallback only when date is absent."""
     if "invoice_date" not in header_keys:
         return data
-    if email_received_at is None:
+    if not _is_empty_extracted_value(data.get("invoice_date")):
         return data
 
-    received_date = (
-        timezone.localtime(email_received_at).date()
-        if timezone.is_aware(email_received_at)
-        else email_received_at.date()
-    )
-    data["invoice_date"] = received_date.isoformat()
-    return data
+    result = dict(data)
+    if source == "email":
+        if email_received_at is None:
+            return data
+        fallback_date = (
+            timezone.localtime(email_received_at).date()
+            if timezone.is_aware(email_received_at)
+            else email_received_at.date()
+        )
+    elif source == "file":
+        fallback_date = timezone.localdate()
+    else:
+        return data
+
+    result["invoice_date"] = fallback_date.isoformat()
+    return result
 
 
-def _build_email_vendor_bill_prompt(*, extraction_contract: str, email_body: str) -> str:
-    """Build the email-only extraction instruction without changing file OCR.
+# LEGACY FILE PROMPT — retained as comments per request; not executed.
+# def build_prompt_legacy(...):
+#     field_lines = "\n".join(
+#         f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
+#         for key, description in header_fields.items()
+#     )
+#     # The old prompt rendered these verbose line-item rules:
+#     # - Extract EVERY clearly separated source row that is visibly present.
+#     # - Preserve source-row order; never merge, collapse, skip, duplicate, or summarize.
+#     # - Read each line field from its own source cell/column.
+#     # - Do not copy missing values from another row, header, footer, or nearby column.
+#     # - Leave derived subtotal, tax, or total fields null when not explicitly shown.
+#     # - Recount visible source rows before finalizing.
+#     old_date_fallback_rule = (
+#         "Single-date fallback: preserve the source date as due_date and set "
+#         "invoice_date to the processing/reference date."
+#     )
+#     return f"""You are the PRIMARY extraction stage of a production business-document extraction system.
+# Read the attached document in full. Layouts vary widely across invoices, receipts,
+# purchase orders, vouchers, credit notes, debit notes, and other business documents.
+#
+# Top-level fields requested by the user's template:
+# {field_lines}
+#
+# Rules:
+# - Respond with ONLY one valid JSON object.
+# - Use EXACTLY the requested field names and structure; do not add extra keys.
+# - Extract only the fields listed in the configured template.
+# - NEVER invent, assume, calculate, or guess a requested value.
+# - Use null when a value is missing, unreadable, ambiguous, or unsupported.
+# - Follow the declared datatype for every field.
+# {old_date_fallback_rule}
+# """
 
-    NetSuite sender-email resolution has already established the vendor before
-    this prompt is used.  A known vendor can still send ordinary messages, so
-    this one email-specific request both classifies the message and extracts
-    data only when the message is a vendor-bill instruction.
-    """
-    return f"""You are assessing an email from a known NetSuite vendor for a possible Vendor Bill.
-The sender has already been matched to an active NetSuite vendor, but that alone
-does NOT mean this particular message is a vendor bill.
 
-First decide whether the message represents a concrete billable purchase,
-invoice, order, supply request, charge, or payment request. Return
-"is_vendor_bill": true only when all of the following are supported by the
-email:
-1. there is clear transaction or procurement intent;
-2. at least one specific product or service is being requested, supplied, or
-   billed; and
-3. at least one commercial detail is present for a line: quantity, rate/price,
-   amount, or an explicit statement that the line is free or zero-value.
-
-Return "is_vendor_bill": false for ordinary follow-ups, reminders, delivery
-status questions, availability or price enquiries, general discussions, or
-messages that merely reference a prior invoice/order without requesting,
-supplying, or billing a concrete line. When false, return data as null and do
-not attempt extraction.
-
-When true, extract the information present in the email body into the
-configured schema. Email messages can be invoices, purchase instructions,
-short requests, conversational prose, tables, or a mixture of formats.
-
-Identify every distinct product or service line that is explicitly supported by
-the message, even when the information is written naturally rather than in
-columns.
-Where the configured extraction contract refers to visible source rows, cells,
-or columns, interpret that for an email as each separately described product or
-service in prose or a table. Do not require a tabular layout.
-
-For each line, return only values that the message supports:
-- identify the product or service name;
-- extract quantity when stated; a missing quantity is valid for services;
-- extract a unit rate or price when stated; a missing price is valid for a
-  no-charge item or service;
-- preserve an explicit line amount; when a requested amount is not explicitly
-  present, leave that field empty rather than deriving it;
-- do not use zero for a missing number unless the message explicitly states
-  that the line is free or has a zero value.
-
-The mailbox received date is supplied by the application and is always the
-invoice date. Extract a due date only when the email explicitly provides one.
-Vendor identity is supplied by the matched NetSuite vendor, so do not infer or
-replace it from email text. Subsidiary is optional and may be populated later
-from the matched vendor. If the email explicitly states a NetSuite Location,
-branch, site, or warehouse, extract that Location; otherwise return null.
-
-{extraction_contract}
-
-EMAIL BODY START
-{email_body}
-EMAIL BODY END
-"""
-
-def build_prompt(
+def build_file_prompt(
     header_fields: dict[str, str],
     line_fields: dict[str, str],
     include_line_items: bool,
     header_types: dict[str, str],
     line_types: dict[str, str],
     *,
-    fallback_invoice_date: str | None = None,
+    source: str = "file",
 ) -> str:
-    """Build the extraction prompt entirely from the resolved template contract."""
+    """Build the new upload-file prompt; the legacy prompt remains above."""
     field_lines = "\n".join(
         f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
         for key, description in header_fields.items()
     )
+
     if include_line_items:
         item_lines = "\n".join(
             f'  - "{key}": {description}{_type_format_hint(line_types.get(key, "text"))}'
             for key, description in line_fields.items()
         )
-        line_items_section = f"\nLine-item fields:\n{item_lines}\n"
-        line_item_rules = """- Extract EVERY clearly separated source row that is visibly present in the document.
-- Preserve source-row order; each line_items entry must correspond to one visible source row.
-- Never merge, collapse, skip, duplicate, or summarize separate rows.
-- Read each requested line field from its own corresponding source cell/column for that row.
-- Do not fill a missing line field by copying a value from another row, header, footer, or nearby column.
-- Extract only values that are directly supported by the source. Do not perform arithmetic for subtotal, tax, or totals; leave a derived field null when it is not explicitly shown. The application calculates derived financial fields deterministically after extraction.
-- If a requested line field has no directly supported value in that source row, return null for that field.
-- Preserve complete visible row information only within the fields the template requested.
-- Before finalizing, recount visible source rows and compare that count with line_items."""
+        line_section = f"\nLine-item fields:\n{item_lines}\n"
+        line_rules = """- Extract every visible row in source order; do not merge, skip, duplicate, or summarize rows.
+- Extract only explicitly stated values; return null if a value is missing or unclear."""
     else:
-        line_items_section = ""
-        line_item_rules = "- Do not return line_items because no line fields were requested."
-    date_fallback_rule = ""
-    if {"invoice_date", "due_date"}.issubset(header_fields):
-        reference_date = fallback_invoice_date or timezone.localdate().isoformat()
-        date_fallback_rule = f"""- Single-date fallback: apply this only when the source explicitly contains exactly one relevant bill/invoice date and does not explicitly contain a second invoice/bill or due date. Preserve that source date as `due_date` and set `invoice_date` to `{reference_date}`. This is the current date for a file or the email's received date for an email. Do not apply this fallback when both dates are explicitly present, and never overwrite an explicitly stated date.
-"""
-    return f"""You are the PRIMARY extraction stage of a production business-document extraction system.
-Read the attached document in full. Layouts vary widely across invoices, receipts, purchase orders, vouchers, credit notes, debit notes, and other business documents.
+        line_section = ""
+        line_rules = "- Do not return line_items because no line-item fields were requested."
 
-Top-level fields requested by the user's template:
+    date_rule = ""
+    if "invoice_date" in header_fields:
+        if source == "email":
+            date_rule = "- If invoice_date is not explicitly present, return null. The backend assigns the email received date after extraction."
+        else:
+            date_rule = "- If invoice_date is not explicitly present, return null. The backend assigns today's date after extraction."
+    if "due_date" in header_fields:
+        date_rule += "\n- If due_date is not explicitly present, return null."
+
+    source_instruction = (
+        "Read the entire email body before responding."
+        if source == "email"
+        else "Read the entire uploaded document before responding."
+    )
+
+    return f"""Extract business document data into the exact requested JSON schema.
+{source_instruction}
+
+Requested header fields:
 {field_lines}
-{line_items_section}
+{line_section}
 Rules:
-- Respond with ONLY one valid JSON object.
-- Use EXACTLY the requested field names and structure; do not add extra keys.
-- The configured template is the complete field contract. Extract only the fields listed above.
-- Use each field's questionaire/instruction as the definition of what information to extract.
-- NEVER invent, assume, calculate, or guess a requested value.
-- Extract a value only when it is directly supported by the source document for that exact field.
-- Do not derive one field from another field, even when the arithmetic seems obvious.
-- Do not substitute a nearby or similarly named value when the requested field's own value is absent.
-- Use null when the requested value is missing, unreadable, ambiguous, or cannot be directly matched to source evidence.
-- Inspect the entire document before deciding a field is null.
-- Follow the declared datatype for every field.
-{date_fallback_rule}{line_item_rules}
-- Do not output fields merely because other information is visible in the document; unrequested fields must be omitted.
-- The final JSON must contain exactly the header fields and line-item fields defined by this template.
+- Respond with only one valid JSON object.
+- Use exactly the requested field names and structure; do not add extra keys.
+- Extract only values explicitly supported by the document.
+- Use null for missing, unreadable, ambiguous, or unsupported values.
+- Never invent, assume, infer, calculate, or guess values.
+- Numeric fields must contain numbers only, without currency symbols or separators.
+- Dates must use YYYY-MM-DD format.
+{date_rule}
+{line_rules}
+"""
+
+
+def build_email_prompt(
+    header_fields: dict[str, str],
+    line_fields: dict[str, str],
+    include_line_items: bool,
+    header_types: dict[str, str],
+    line_types: dict[str, str],
+    *,
+    email_body: str,
+) -> str:
+    """Build the email prompt with vendor classification plus file rules."""
+    extraction_prompt = build_file_prompt(
+        header_fields,
+        line_fields,
+        include_line_items,
+        header_types,
+        line_types,
+        source="email",
+    )
+
+    return f"""You are an email vendor-bill extraction assistant.
+
+First classify the email:
+- Set "is_vendor_bill" to true only when the email contains clear billing, purchase, supply, charge, or payment intent and at least one specific product or service line.
+- For ordinary conversations, follow-ups, delivery updates, enquiries, or vague references, set "is_vendor_bill" to false and "data" to null.
+
+For a vendor bill, return one JSON object with "is_vendor_bill": true and place
+the extracted fields inside "data". The matched NetSuite vendor supplies vendor
+identity; do not replace it from email text.
+
+Apply this extraction contract to the email body:
+{extraction_prompt}
+
+EMAIL BODY START
+{email_body}
+EMAIL BODY END
 """
 
 class AIExtractor:
@@ -959,7 +1003,11 @@ class AIExtractor:
             include_line_items,
             header_types,
             line_types,
-        ) = resolve_field_config(requested_fields)
+        ) = resolve_field_config(
+            requested_fields,
+            field_descriptions=FIELD_DESCRIPTIONS,
+            line_item_fields=LINE_ITEM_FIELDS,
+        )
 
         effective_timeout = self.timeout if timeout is None else timeout
         effective_max_retries = (
@@ -984,7 +1032,7 @@ class AIExtractor:
             header_types,
             line_types,
         )
-        prompt = build_prompt(
+        prompt = build_file_prompt(
             header_fields,
             line_fields,
             include_line_items,
@@ -1030,6 +1078,9 @@ class AIExtractor:
                     getattr(provider, "model", "unknown"),
                     prompt,
                 )
+                # logger.info(
+                #     "Current AI provider=%s | model=%s",provider.__class__.__name__,getattr(provider, "model", "unknown"),
+                # )
                 provider_result = provider.generate_json(
                     file_path=path,
                     mime_type=media_type,
@@ -1063,6 +1114,11 @@ class AIExtractor:
                 )
                 result = apply_calculated_values(result)
                 result = _apply_template_default_values(result, requested_fields)
+                result = apply_invoice_date_fallback(
+                    result,
+                    header_keys,
+                    source="file",
+                )
                 logger.info(
                     "AI EXTRACTION DEBUG | source=file | request_id=%s | "
                     "TEMPLATE-MAPPED RESULT:\n%s",
@@ -1214,22 +1270,12 @@ class AIExtractor:
             },
             "required": ["is_vendor_bill", "data"],
         }
-        extraction_prompt = build_prompt(
+        prompt = build_email_prompt(
             header_fields,
             line_fields,
             include_line_items,
             header_types,
             line_types,
-            fallback_invoice_date=(
-                timezone.localtime(email_received_at).date().isoformat()
-                if email_received_at and timezone.is_aware(email_received_at)
-                else email_received_at.date().isoformat()
-                if email_received_at
-                else None
-            ),
-        )
-        prompt = _build_email_vendor_bill_prompt(
-            extraction_contract=extraction_prompt,
             email_body=email_body,
         )
         provider = ai_configuration_service.resolve_provider(company=company)
@@ -1277,9 +1323,10 @@ class AIExtractor:
                 data = _apply_datatype_normalization(data, header_types, line_types, line_keys)
                 data = apply_calculated_values(data)
                 data = _apply_template_default_values(data, requested_fields)
-                data = _apply_email_received_date_fallback(
+                data = apply_invoice_date_fallback(
                     data,
                     header_keys,
+                    source="email",
                     email_received_at=email_received_at,
                 )
                 logger.info(
