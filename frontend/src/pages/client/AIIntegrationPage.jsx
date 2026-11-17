@@ -3,6 +3,7 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Badge from '../../components/ui/Badge.jsx'
+import Input from '../../components/ui/Input.jsx'
 import { aiIntegrationApi } from '../../services/aiIntegration.js'
 import { formatDateTime } from '../../utils/formatDate.js'
 
@@ -397,26 +398,20 @@ export default function AIIntegrationPage() {
               </div>
 
               {!connected && (
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-[var(--color-ink)]">
-                    API Key
-                  </label>
-
-                  <input
-                    type="password"
-                    value={form.api_key}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        api_key: event.target.value,
-                      }))
-                    }
-                    placeholder="Enter provider API key"
-                    autoComplete="new-password"
-                    className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
-                    disabled={busy !== ''}
-                  />
-                </div>
+                <Input
+                  label="API Key"
+                  type="password"
+                  value={form.api_key}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      api_key: event.target.value,
+                    }))
+                  }
+                  placeholder="Enter provider API key"
+                  autoComplete="new-password"
+                  disabled={busy !== ''}
+                />
               )}
 
               {lastTestedAt && (
