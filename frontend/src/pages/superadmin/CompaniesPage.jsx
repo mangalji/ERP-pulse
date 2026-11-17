@@ -89,6 +89,7 @@ export default function CompaniesPage() {
   // Confirmation dialog
   // ─────────────────────────────────────────────────────────────
   const [confirm, setConfirm] = useState(null)
+  const [suspensionDescription, setSuspensionDescription] = useState('')
 
   // ─────────────────────────────────────────────────────────────
   // Load active companies
@@ -218,17 +219,6 @@ export default function CompaniesPage() {
   // ─────────────────────────────────────────────────────────────
   // Sorting
   // ─────────────────────────────────────────────────────────────
-  const toggleSort = (field) => {
-    if (sortBy === field) {
-      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortBy(field)
-      setSortOrder('asc')
-    }
-
-    setOffset(0)
-  }
-
   // ─────────────────────────────────────────────────────────────
   // Search
   // ─────────────────────────────────────────────────────────────
@@ -457,6 +447,17 @@ export default function CompaniesPage() {
 
       await load()
       navigate(`/admin/companies/${created.id}`)
+      try {
+        await superadminApi.sendCreatedEmail(created.id)
+      } catch (err) {
+        addToast(
+          err?.payload?.detail ||
+            err?.payload?.message ||
+            err?.message ||
+            'Company created, but the creation email could not be sent.',
+          'error',
+        )
+      }
     } catch (err) {
       console.error('Create company failed:', err)
 
@@ -481,19 +482,33 @@ export default function CompaniesPage() {
   // ─────────────────────────────────────────────────────────────
   // Generic company action
   // ─────────────────────────────────────────────────────────────
-  const runAction = async (action, company) => {
+  const runAction = async (action, company, reason = '', notify = null) => {
     setConfirm(null)
+    setSuspensionDescription('')
 
     try {
-      await action(company)
-
-      addToast('Action completed successfully')
+      await action(company, reason)
 
       await Promise.all([
         load(),
         loadSoftDeleted(),
         loadPermanentlyDeleted(),
       ])
+
+      addToast('Action completed successfully')
+      if (notify) {
+        try {
+          await notify(company)
+        } catch (err) {
+          addToast(
+            err?.payload?.detail ||
+              err?.payload?.message ||
+              err?.message ||
+              'Status updated, but the email could not be sent.',
+            'error',
+          )
+        }
+      }
     } catch (err) {
       addToast(
         err?.payload?.detail ||
@@ -603,6 +618,7 @@ export default function CompaniesPage() {
                     superadminApi.activateCompany(row.id),
                   company: row,
                   label: 'Activate',
+                  notify: () => superadminApi.sendActivationEmail(row.id),
                 })
               }
               className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-positive)] hover:bg-[var(--color-positive-soft)]"
@@ -611,14 +627,17 @@ export default function CompaniesPage() {
             </button>
           ) : (
             <button
-              onClick={() =>
+              onClick={() => {
+                setSuspensionDescription('')
                 setConfirm({
-                  action: () =>
-                    superadminApi.suspendCompany(row.id),
+                  action: (_company, reason) =>
+                    superadminApi.suspendCompany(row.id, reason),
                   company: row,
                   label: 'Suspend',
+                  requiresSuspensionReason: true,
+                  notify: () => superadminApi.sendSuspensionEmail(row.id),
                 })
-              }
+              }}
               className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-netsuite)] hover:bg-[var(--color-netsuite-soft)]"
             >
               Suspend
@@ -815,15 +834,34 @@ export default function CompaniesPage() {
         {/* Active / Suspended Companies */}
         {/* ─────────────────────────────────────────────────────── */}
         <Card className="p-5">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <SearchBox
-              value={search}
-              onChange={handleSearch}
-              placeholder="Search active companies..."
-            />
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+            <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
+                <span className="whitespace-nowrap">Sort by</span>
+                <select
+                  value={sortBy}
+                  onChange={(event) => {
+                    setSortBy(event.target.value)
+                    setSortOrder('asc')
+                    setOffset(0)
+                  }}
+                  className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                >
+                  <option value="name">Name</option>
+                  <option value="created_at">Created</option>
+                  <option value="status">Status</option>
+                </select>
+            </label>
 
-            <span className="text-xs text-[var(--color-muted)]">
-              {count} result{count !== 1 ? 's' : ''}
+            <div className="flex justify-center">
+              <SearchBox
+                value={search}
+                onChange={handleSearch}
+                placeholder="Search active companies..."
+              />
+            </div>
+
+            <span className="text-xs text-[var(--color-muted)] sm:text-right">
+              {count} compan{count !== 1 ? 'ies' : 'y'}
             </span>
           </div>
 
@@ -1022,33 +1060,6 @@ export default function CompaniesPage() {
           )}
         </Card>
 
-        {/* Sort hint */}
-        <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-          <button
-            onClick={() => toggleSort('name')}
-            className="font-medium text-[var(--color-primary)] hover:underline"
-          >
-            Sort by name
-          </button>
-
-          <span>·</span>
-
-          <button
-            onClick={() => toggleSort('created_at')}
-            className="font-medium text-[var(--color-primary)] hover:underline"
-          >
-            Sort by created
-          </button>
-
-          <span>·</span>
-
-          <button
-            onClick={() => toggleSort('status')}
-            className="font-medium text-[var(--color-primary)] hover:underline"
-          >
-            Sort by status
-          </button>
-        </div>
       </div>
 
       {/* ───────────────────────────────────────────────────────── */}
@@ -1293,15 +1304,38 @@ export default function CompaniesPage() {
         }
         confirmLabel={confirm?.label}
         intent="primary"
+        confirmDisabled={Boolean(confirm?.requiresSuspensionReason && !suspensionDescription.trim())}
         onConfirm={() =>
           confirm &&
           runAction(
             confirm.action,
-            confirm.company
+            confirm.company,
+            suspensionDescription.trim(),
+            confirm.notify,
           )
         }
-        onCancel={() => setConfirm(null)}
-      />
+        onCancel={() => {
+          setConfirm(null)
+          setSuspensionDescription('')
+        }}
+      >
+        {confirm?.requiresSuspensionReason && (
+          <label className="mt-4 flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+              Suspension reason
+            </span>
+            <textarea
+              value={suspensionDescription}
+              onChange={(event) => setSuspensionDescription(event.target.value)}
+              placeholder="Enter the reason for suspending this company"
+              maxLength={2000}
+              rows={4}
+              autoFocus
+              className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+            />
+          </label>
+        )}
+      </ConfirmDialog>
 
       <Toast
         toasts={toasts}

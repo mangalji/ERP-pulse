@@ -37,6 +37,7 @@ class CompanySerializer(serializers.ModelSerializer):
             "updated_at",
             "status",
             "suspension_reason",
+            "suspension_description",
             "plan",
             "plan_start_date",
             "plan_end_date",
@@ -392,7 +393,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'current_plan', 'admin_email',
             'netsuite_connected', 'netsuite_account_id', 'netsuite_last_sync',
             'netsuite_connections', 'netsuite_connection_count',
-            'transactions', 'suspension_reason',
+            'transactions', 'suspension_reason', 'suspension_description',
         ]
         read_only_fields = fields
 

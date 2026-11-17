@@ -15,8 +15,11 @@ export const superadminApi = {
   getCompany: (id) => apiClient.get(`${SUPERADMIN_ENDPOINTS.companies}${id}/`).then(unwrap),
   createCompany: (payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companies, payload).then(unwrap),
   updateCompany: (id, payload) => apiClient.patch(`${SUPERADMIN_ENDPOINTS.companies}${id}/`, payload).then(unwrap),
-  suspendCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companySuspend(id)).then(unwrap),
+  suspendCompany: (id, suspension_description) => apiClient.post(SUPERADMIN_ENDPOINTS.companySuspend(id), { suspension_description }).then(unwrap),
   activateCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyActivate(id)).then(unwrap),
+  sendSuspensionEmail: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companySendSuspensionEmail(id)).then(unwrap),
+  sendActivationEmail: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companySendActivationEmail(id)).then(unwrap),
+  sendCreatedEmail: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companySendCreatedEmail(id)).then(unwrap),
   softDeleteCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companySoftDelete(id)).then(unwrap),
   permanentlyDeleteCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyPermanentlyDelete(id)).then(unwrap),
   restoreCompany: (id) => apiClient.post(SUPERADMIN_ENDPOINTS.companyRestore(id)).then(unwrap),
@@ -35,6 +38,7 @@ export const superadminApi = {
   // ── Company Plans (subscriptions) ────────────────────────────
   assignPlanPending: (companyId, payload) => apiClient.post(SUPERADMIN_ENDPOINTS.companyAssignPlanPending(companyId),  payload).then(unwrap),
   completeTransaction: (companyId, transactionId) => apiClient.post(SUPERADMIN_ENDPOINTS.companyCompleteTransaction(companyId),{ transaction_id: transactionId }).then(unwrap),
+  sendTransactionEmail: (companyId, transactionId) => apiClient.post(SUPERADMIN_ENDPOINTS.companySendTransactionEmail(companyId), { transaction_id: transactionId }).then(unwrap),
   fetchCompanyTransactions: (companyId) => apiClient.get(`/superadmin/companies/${companyId}/transactions/`).then(unwrap),
 
   // ── Employees ────────────────────────────────────────────────

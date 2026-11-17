@@ -59,6 +59,9 @@ export const SUPERADMIN_ENDPOINTS = {
   companyStats: '/superadmin/companies/stats/',
   companySuspend: (id) => `/superadmin/companies/${id}/suspend/`,
   companyActivate: (id) => `/superadmin/companies/${id}/activate/`,
+  companySendSuspensionEmail: (id) => `/superadmin/companies/${id}/send-suspension-email/`,
+  companySendActivationEmail: (id) => `/superadmin/companies/${id}/send-activation-email/`,
+  companySendCreatedEmail: (id) => `/superadmin/companies/${id}/send-created-email/`,
   companySoftDelete: (id) => `/superadmin/companies/${id}/soft_delete/`,
   companyPermanentlyDelete: (id) => `/superadmin/companies/${id}/permanently-delete/`,
   companyRestore: (id) => `/superadmin/companies/${id}/restore/`,
@@ -70,6 +73,7 @@ export const SUPERADMIN_ENDPOINTS = {
   dashboardSummary: '/superadmin/dashboard/summary/',
   companyAssignPlanPending: (id) => `/superadmin/companies/${id}/assign-plan-pending/`,
   companyCompleteTransaction: (id) => `/superadmin/companies/${id}/complete-transaction/`,
+  companySendTransactionEmail: (id) => `/superadmin/companies/${id}/send-transaction-email/`,
 }
 
 export const INVITATION_ENDPOINTS = {

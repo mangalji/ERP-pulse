@@ -11,7 +11,7 @@ from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
 from common.pagination import paginated_response
 from common.common_utils import success_response
-from superadmin.models import Plan, PlanStatus
+from superadmin.models import Plan, PlanStatus, Transaction
 from superadmin.permissions import IsSuperAdmin
 from superadmin.serializers import (
     CompanySerializer,
@@ -24,6 +24,12 @@ from superadmin.serializers import (
     CompanyUpdateSerializer,
 )
 from superadmin.services import SuperAdminService
+from superadmin.notifications import (
+    send_company_activated_email,
+    send_company_created_email,
+    send_company_suspended_email,
+    send_transaction_completed_email,
+)
 from tenancy.models import Company, CompanyDeletionHistory, CompanyDepartment, CompanySuspensionReason
 from tenancy.services import company_lifecycle_service
 from subscriptions.services import subscription_service
@@ -178,6 +184,16 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def suspend(self, request, pk=None):
+        description = str(request.data.get('suspension_description') or '').strip()
+        if not description:
+            raise ValidationError(
+                {'suspension_description': 'A suspension reason is required.'}
+            )
+        if len(description) > 2000:
+            raise ValidationError(
+                {'suspension_description': 'Suspension reason must not exceed 2000 characters.'}
+            )
+
         with transaction.atomic():
             company = Company.objects.select_for_update().get(pk=pk)
             old_state = {
@@ -186,7 +202,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
             }
             company.status = Company.Status.SUSPENDED
             company.suspension_reason = CompanySuspensionReason.MANUAL
-            company.save(update_fields=['status','suspension_reason','updated_at'])
+            company.suspension_description = description
+            company.save(update_fields=['status', 'suspension_reason', 'suspension_description', 'updated_at'])
             audit_service.log(
                 module=AuditModule.COMPANY,
                 action=AuditAction.UPDATE,
@@ -200,7 +217,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
                     'suspension_reason': company.suspension_reason,
                 },
             )
-        
+
         return success_response(message='Company suspended successfully.', data={'id': str(company.id),'status':company.status})
 
     @action(detail=True, methods=['post'])
@@ -245,6 +262,28 @@ class CompanyViewSet(viewsets.ModelViewSet):
             )
 
         return success_response(message='Company activated successfully.', data={'id': str(company.id),'status':company.status})
+
+    @action(detail=True, methods=['post'], url_path='send-suspension-email')
+    def send_suspension_email(self, request, pk=None):
+        company = self.get_object()
+        if company.status != Company.Status.SUSPENDED or not company.suspension_description:
+            raise ValidationError({'detail': 'A suspended company with a reason is required.'})
+        send_company_suspended_email(company.id, company.suspension_description)
+        return success_response(message='Suspension email sent successfully.')
+
+    @action(detail=True, methods=['post'], url_path='send-activation-email')
+    def send_activation_email(self, request, pk=None):
+        company = self.get_object()
+        if company.status != Company.Status.ACTIVE:
+            raise ValidationError({'detail': 'An active company is required.'})
+        send_company_activated_email(company.id)
+        return success_response(message='Activation email sent successfully.')
+
+    @action(detail=True, methods=['post'], url_path='send-created-email')
+    def send_created_email(self, request, pk=None):
+        company = self.get_object()
+        send_company_created_email(company.id)
+        return success_response(message='Company creation email sent successfully.')
 
     @action(detail=True, methods=['post'])
     def soft_delete(self, request, pk=None):
@@ -361,6 +400,24 @@ class CompanyViewSet(viewsets.ModelViewSet):
             message='Transaction completed and plan assigned successfully.',
             data=TransactionSerializer(transaction_record).data,
         )
+
+    @action(detail=True, methods=['post'], url_path='send-transaction-email')
+    def send_transaction_email(self, request, pk=None):
+        company = self.get_object()
+        transaction_id = request.data.get('transaction_id')
+        transaction_record = (
+            Transaction.objects.filter(
+                company=company,
+                payment_status='SUCCESS',
+                transaction_status='COMPLETED',
+            )
+            .filter(Q(id=transaction_id) | Q(transaction_id=transaction_id))
+            .first()
+        )
+        if not transaction_record:
+            raise ValidationError({'detail': 'A completed transaction is required.'})
+        send_transaction_completed_email(transaction_record.id)
+        return success_response(message='Transaction email sent successfully.')
 
     @action(detail=True,methods=['post'],url_path='assign-plan-pending',)
     def assign_plan_pending(self, request, pk=None):

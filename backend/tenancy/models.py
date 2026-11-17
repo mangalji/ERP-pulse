@@ -47,6 +47,11 @@ class Company(BaseModel):
     code = models.CharField(max_length=50, unique=True, db_index=True, help_text="Unique immutable company identifier.")
     status = models.CharField(max_length=20,choices=CompanyStatus.choices,default=CompanyStatus.SUSPENDED,db_index=True)
     suspension_reason = models.CharField(max_length=20,choices=CompanySuspensionReason.choices,default=CompanySuspensionReason.NONE,db_index=True)
+    suspension_description = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Additional explanation entered by the Super Admin for a manual suspension.",
+    )
     contact_email = models.EmailField(
         blank=True,
         null=True,

@@ -24,9 +24,9 @@ The platform includes a company workspace for administrators and employees, plus
 | --- | --- |
 | Document processing | PDF and image extraction, multiple-file and ZIP uploads, configurable templates, header and line-item fields, document review and version history |
 | AI configuration | Company-level provider and model configuration for Google Gemini, OpenAI, and Anthropic |
-| NetSuite | OAuth connections, employee connection assignments, field mapping, live reference validation, Vendor Bill posting, and background batch jobs |
+| NetSuite | OAuth connections, employee connection assignments, field mapping, live reference validation, Vendor Bill posting, background batch jobs, and existing-connection reauthorization |
 | Email automation | Zoho Mail and Gmail connections, scheduled fetching, message staging and deduplication, vendor-bill processing, and validation/posting results |
-| Access management | Company-scoped access, Company Admin promotion/demotion, invitations with mobile confirmation, JWT authentication, password recovery, email OTP, and company lifecycle controls |
+| Access management | Company-scoped access, Company Admin promotion/demotion, invitations with mobile confirmation, JWT authentication, password recovery, email OTP, password visibility controls, and company lifecycle controls |
 | Administration | Subscription plans, tenant administration, configurable navigation, notifications, audit records, and operational monitoring |
 
 ## Processing workflow
@@ -64,6 +64,20 @@ Reference lookup and posting depend on the connected account's records, permissi
 - Designation and department are required when creating new employees. Each company has an editable department catalogue seeded with `HR`, `NetSuite`, `IT Support`, and `Development`.
 - Password recovery is only for an active, email-verified account that has already completed initial password setup. Pending, inactive, suspended, or unknown accounts receive no reset OTP. A password reset does not bypass invitation mobile confirmation.
 - The reset page requires the email state produced by the Forgot Password page; direct navigation returns the user to the recovery form.
+- Password and credential inputs provide a show/hide control. OTP resend cooldown messages update their remaining seconds live and indicate when another request can be made.
+
+### Company lifecycle notifications
+
+- Suspending a company requires a Super Admin-entered description. The existing `MANUAL`, `PLAN`, and `DELETED` suspension reason values remain unchanged; the description is stored separately in `suspension_description`.
+- After the status update is reflected in the Super Admin UI, the frontend makes a separate Super Admin-only request to send the notification email. This keeps status updates responsive and does not require Celery for these lifecycle notifications.
+- Suspension and activation emails are sent only to the company's Company Admin users, not employees. The contact address in these emails is the active platform-level Super Admin address; the configured sender address remains separate.
+- Company creation sends a notification to the company's contact email. Completing a subscription transaction sends Company Admins the plan and transaction details. Assigning a plan without completing its transaction does not send that email.
+
+### NetSuite reauthorization
+
+- The NetSuite integration card shows a reconnect warning when the provider-issued refresh token has five days or less remaining. It also shows Reconnect when authorization has expired or the connection is disconnected or in an error state.
+- Reconnect does not create a second integration. It reuses the existing connection and stored client credentials, opens a fresh NetSuite OAuth authorization flow, exchanges the returned authorization code for new access and refresh tokens, and updates the existing connection record.
+- While the refresh token remains valid, the backend can refresh short-lived access tokens without user interaction. Reauthorization is required after refresh-token expiry, revocation, or an invalid-grant response.
 
 ## Architecture
 

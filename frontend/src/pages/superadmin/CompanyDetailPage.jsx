@@ -34,6 +34,7 @@ export default function CompanyDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [confirm, setConfirm] = useState(null)
+  const [suspensionDescription, setSuspensionDescription] = useState('')
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
 
@@ -72,13 +73,27 @@ export default function CompanyDetailPage() {
     void loadCompany()
   }, [loadCompany])
 
-  const runAction = async (action) => {
+  const runAction = async (action, reason = '', notify = null) => {
     setConfirm(null)
+    setSuspensionDescription('')
 
     try {
-      await action()
-      addToast('Action completed successfully')
+      await action(reason)
       await loadCompany()
+      addToast('Action completed successfully')
+      if (notify) {
+        try {
+          await notify()
+        } catch (err) {
+          addToast(
+            err?.payload?.detail ||
+              err?.payload?.message ||
+              err?.message ||
+              'Status updated, but the email could not be sent.',
+            'error',
+          )
+        }
+      }
     } catch (err) {
       addToast(
         err.payload?.message ||
@@ -204,7 +219,7 @@ export default function CompanyDetailPage() {
 
   const actionHandler = isSuspended
     ? () => superadminApi.activateCompany(company.id)
-    : () => superadminApi.suspendCompany(company.id)
+    : (reason) => superadminApi.suspendCompany(company.id, reason)
 
   const suspensionReasonLabel = (() => {
     switch (company.suspension_reason) {
@@ -295,10 +310,17 @@ export default function CompanyDetailPage() {
                 size="sm"
                 intent="secondary"
                 onClick={() =>
-                  setConfirm({
-                    action: actionHandler,
-                    label: actionLabel,
-                  })
+                  (() => {
+                    if (!isSuspended) setSuspensionDescription('')
+                    setConfirm({
+                      action: actionHandler,
+                      label: actionLabel,
+                      requiresSuspensionReason: !isSuspended,
+                      notify: isSuspended
+                        ? () => superadminApi.sendActivationEmail(company.id)
+                        : () => superadminApi.sendSuspensionEmail(company.id),
+                    })
+                  })()
                 }
               >
                 {actionLabel}
@@ -338,6 +360,11 @@ export default function CompanyDetailPage() {
               <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
                 {suspensionReasonLabel}
               </p>
+              {company.suspension_description && (
+                <p className="mt-1 text-sm text-[var(--color-muted)]">
+                  {company.suspension_description}
+                </p>
+              )}
             </div>
           </div>
 
@@ -1028,12 +1055,37 @@ export default function CompanyDetailPage() {
           }
           confirmLabel={confirm?.label}
           intent="primary"
+          confirmDisabled={Boolean(confirm?.requiresSuspensionReason && !suspensionDescription.trim())}
           onConfirm={() =>
             confirm &&
-            runAction(confirm.action)
+            runAction(
+              confirm.action,
+              suspensionDescription.trim(),
+              confirm.notify,
+            )
           }
-          onCancel={() => setConfirm(null)}
-        />
+          onCancel={() => {
+            setConfirm(null)
+            setSuspensionDescription('')
+          }}
+        >
+          {confirm?.requiresSuspensionReason && (
+            <label className="mt-4 flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-[var(--color-ink-soft)]">
+                Suspension reason
+              </span>
+              <textarea
+                value={suspensionDescription}
+                onChange={(event) => setSuspensionDescription(event.target.value)}
+                placeholder="Enter the reason for suspending this company"
+                maxLength={2000}
+                rows={4}
+                autoFocus
+                className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+              />
+            </label>
+          )}
+        </ConfirmDialog>
       </div>
     </AdminLayout>
   )

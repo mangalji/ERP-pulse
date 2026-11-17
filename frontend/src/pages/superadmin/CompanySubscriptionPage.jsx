@@ -215,13 +215,27 @@ export default function CompanySubscriptionPage() {
           pendingTransaction.transaction_id
         )
 
+        await loadData()
         addToast(
           'Transaction completed and plan assigned successfully.',
           'success'
         )
-
-        await loadData()
         navigate(`/admin/companies/${id}`)
+
+        try {
+          await superadminApi.sendTransactionEmail(
+            id,
+            pendingTransaction.id || pendingTransaction.transaction_id,
+          )
+        } catch (err) {
+          addToast(
+            err?.payload?.detail ||
+              err?.payload?.message ||
+              err?.message ||
+              'Transaction completed, but the email could not be sent.',
+            'error',
+          )
+        }
       } catch (err) {
         addToast(
           err.payload?.message ||

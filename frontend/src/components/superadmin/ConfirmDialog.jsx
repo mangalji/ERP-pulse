@@ -12,6 +12,8 @@ export default function ConfirmDialog({
   cancelLabel = 'Cancel',
   intent = 'primary',
   loading = false,
+  confirmDisabled = false,
+  children,
   onConfirm,
   onCancel,
 }) {
@@ -23,11 +25,12 @@ export default function ConfirmDialog({
       <div className="relative w-full max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
         <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">{title}</h3>
         {message && <p className="mt-2 text-sm text-[var(--color-muted)]">{message}</p>}
+        {children}
         <div className="mt-6 flex justify-end gap-2">
           <Button intent="secondary" onClick={onCancel} disabled={loading}>
             {cancelLabel}
           </Button>
-          <Button intent={intent} onClick={onConfirm} isLoading={loading}>
+          <Button intent={intent} onClick={onConfirm} isLoading={loading} disabled={confirmDisabled}>
             {confirmLabel}
           </Button>
         </div>
