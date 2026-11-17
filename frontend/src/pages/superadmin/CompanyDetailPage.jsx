@@ -352,20 +352,22 @@ export default function CompanyDetailPage() {
               </div>
             </div>
 
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
-                Suspension Reason
-              </p>
-
-              <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
-                {suspensionReasonLabel}
-              </p>
-              {company.suspension_description && (
-                <p className="mt-1 text-sm text-[var(--color-muted)]">
-                  {company.suspension_description}
+            {company.status === 'SUSPENDED' && (
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">
+                  Suspension Reason
                 </p>
-              )}
-            </div>
+
+                <p className="mt-1 text-sm font-medium text-[var(--color-ink-soft)]">
+                  {suspensionReasonLabel}
+                </p>
+                {company.suspension_description && (
+                  <p className="mt-1 text-sm text-[var(--color-muted)]">
+                    {company.suspension_description}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-5 border-t border-[var(--color-border)] pt-5 md:grid-cols-2">
