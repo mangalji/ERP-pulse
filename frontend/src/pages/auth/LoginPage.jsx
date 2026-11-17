@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import AuthLayout from '../../components/layout/AuthLayout.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Button from '../../components/ui/Button.jsx'
+import CooldownMessage from '../../components/ui/CooldownMessage.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 
 export default function LoginPage() {
@@ -35,7 +36,7 @@ export default function LoginPage() {
             role="alert"
             className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
           >
-            {localError}
+            <CooldownMessage message={localError} />
           </div>
         )}
         <Input

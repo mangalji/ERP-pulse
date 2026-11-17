@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
@@ -7,6 +7,9 @@ import SectionCard from '../../components/superadmin/SectionCard.jsx'
 import Skeleton from '../../components/ui/Skeleton.jsx'
 import Button from '../../components/ui/Button.jsx'
 import { superadminApi } from '../../services/superadmin.js'
+import { getCachedData, setCachedData } from '../../utils/pageCache.js'
+
+const CACHE_KEY = 'superadmin:dashboard:summary'
 
 const statIcons = {
   companies: (
@@ -55,25 +58,30 @@ const statIcons = {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const [summary, setSummary] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const cached = useRef(getCachedData(CACHE_KEY)).current
+  const [summary, setSummary] = useState(cached ?? null)
+  const [loading, setLoading] = useState(!cached)
   const [error, setError] = useState(null)
 
-  const loadDashboard = async () => {
-    setLoading(true)
+  // `silent`: skip the loading flag so a cached dashboard shows instantly
+  // while this re-fetches the latest numbers in the background.
+  const loadDashboard = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const data = await superadminApi.getDashboardSummary()
       setSummary(data)
+      setCachedData(CACHE_KEY, data)
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load dashboard')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
   useEffect(() => {
-    loadDashboard()
+    loadDashboard({ silent: Boolean(cached) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const stats = useMemo(() => {

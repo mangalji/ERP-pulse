@@ -3,6 +3,8 @@
  * Pulse's own indigo action color; "netsuite" is reserved for anything
  * that initiates or touches a NetSuite action (see index.css token notes).
  */
+import { buttonHandlers } from '../../motion/interactions.js'
+
 const INTENT_STYLES = {
   primary:
     'bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] focus-visible:outline-[var(--color-primary)]',
@@ -30,6 +32,11 @@ export default function Button({
   type = 'button',
   ...rest
 }) {
+  const fx = buttonHandlers()
+  const compose = (name) => (e) => {
+    fx[name]?.(e)
+    rest[name]?.(e)
+  }
   return (
     <button
       type={type}
@@ -39,6 +46,10 @@ export default function Button({
         disabled:cursor-not-allowed disabled:opacity-60
         ${INTENT_STYLES[intent]} ${SIZE_STYLES[size]} ${className}`}
       {...rest}
+      onMouseMove={compose('onMouseMove')}
+      onMouseLeave={compose('onMouseLeave')}
+      onMouseDown={compose('onMouseDown')}
+      onMouseUp={compose('onMouseUp')}
     >
       {isLoading && (
         <span

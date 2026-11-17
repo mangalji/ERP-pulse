@@ -3,6 +3,10 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import ThemeToggle from './ThemeToggle.jsx'
 import ProfileAvatar from '../ui/ProfileAvatar.jsx'
+import PageTransition from '../../motion/PageTransition.jsx'
+import Popover from '../../motion/Popover.jsx'
+import AmbientBackground from '../../motion/AmbientBackground.jsx'
+import { gsap, useGSAP, prefersReducedMotion, EASE, hasPlayedShell, markShellPlayed } from '../../motion/gsap.js'
 
 const NAV_ITEMS = [
   { to: '/admin', label: 'Dashboard', icon: DashboardIcon, end: true },
@@ -25,6 +29,17 @@ export default function AdminLayout({ title, breadcrumb, children }) {
   const [collapsed, setCollapsed] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userMenuRef = useRef(null)
+  const shell = useRef(null)
+
+  // One-time shell intro: sidebar nav cascades in, header drops down.
+  // Guarded so it plays once per tab, not on every page's AdminLayout remount.
+  useGSAP(() => {
+    if (prefersReducedMotion() || hasPlayedShell('admin-shell')) return
+    markShellPlayed('admin-shell')
+    gsap.timeline({ defaults: { ease: EASE } })
+      .fromTo('.shell-nav-item', { x: -20, opacity: 0 }, { x: 0, opacity: 1, stagger: 0.07, duration: 0.6, clearProps: 'all' }, 0.1)
+      .fromTo('.shell-header', { y: -30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, clearProps: 'all' }, 0)
+  }, { scope: shell })
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -52,7 +67,8 @@ export default function AdminLayout({ title, breadcrumb, children }) {
   )
 
   return (
-    <div className="flex min-h-screen bg-[var(--color-canvas)]">
+    <div ref={shell} className="relative flex min-h-screen bg-[var(--color-canvas)]">
+      <AmbientBackground />
       {/* Mobile overlay */}
       {sidebarOpen && (
         <button
@@ -64,8 +80,8 @@ export default function AdminLayout({ title, breadcrumb, children }) {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col bg-[var(--color-sidebar)] px-4 py-6
-          transition-transform duration-200 lg:static lg:translate-x-0
+        className={`shell-sidebar fixed inset-y-0 left-0 z-40 flex flex-col bg-[var(--color-sidebar)] px-4 py-6
+          transition-[width] duration-300 max-lg:transition-transform lg:static lg:translate-x-0
           ${collapsed ? 'lg:w-20' : 'lg:w-64'}
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
@@ -104,7 +120,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
               end={end}
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                `shell-nav-item group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-200 ${
                   collapsed ? 'lg:justify-center lg:px-0' : ''
                 } ${
                   isActive
@@ -135,7 +151,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top navbar */}
-        <header className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
+        <header className="shell-header sticky top-0 z-20 flex min-h-16 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-6">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -166,7 +182,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
                 </svg>
               </button>
               {userMenuOpen && (
-                <div className="absolute right-0 mt-2 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2 shadow-lg">
+                <Popover className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2 shadow-xl">
                   <div className="px-4 py-3">
                     <p className="text-sm font-semibold text-[var(--color-ink)]">
                       {user ? `${user.first_name} ${user.last_name}`.trim() : 'User'}
@@ -187,7 +203,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
                   >
                     Logout
                   </button>
-                </div>
+                </Popover>
               )}
             </div>
           </div>
@@ -202,7 +218,7 @@ export default function AdminLayout({ title, breadcrumb, children }) {
           </nav>
         </div>
 
-        <main className="min-w-0 flex-1 px-3 py-4 sm:px-6 sm:py-6 lg:px-8">{children}</main>
+        <PageTransition className="relative z-10 min-w-0 flex-1 px-3 py-4 sm:px-6 sm:py-6 lg:px-8">{children}</PageTransition>
       </div>
     </div>
   )

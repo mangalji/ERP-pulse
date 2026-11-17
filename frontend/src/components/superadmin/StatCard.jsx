@@ -1,4 +1,5 @@
 import Card from '../ui/Card.jsx'
+import CountUp from '../../motion/CountUp.jsx'
 
 /**
  * Statistic card used on the superadmin dashboard.
@@ -6,12 +7,12 @@ import Card from '../ui/Card.jsx'
  */
 export default function StatCard({ label, value, icon, className = '' }) {
   return (
-    <Card className={`p-5 ${className}`}>
+    <Card interactive className={`p-5 ${className}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-medium text-[var(--color-muted)]">{label}</p>
           <p className="mt-2 font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
-            {value ?? '--'}
+            <CountUp value={value} />
           </p>
         </div>
         {icon && (

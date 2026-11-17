@@ -1,4 +1,24 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
+import { gsap, useGSAP, prefersReducedMotion } from '../../motion/gsap.js'
+
+function ToastItem({ toast, removeToast }) {
+  const ref = useRef(null)
+  useGSAP(() => {
+    if (prefersReducedMotion()) return
+    gsap.fromTo(ref.current, { autoAlpha: 0, x: 60, scale: 0.92 }, { autoAlpha: 1, x: 0, scale: 1, duration: 0.6, ease: 'back.out(1.6)' })
+  }, { scope: ref })
+  return (
+    <div
+      ref={ref}
+      className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 shadow-lg ${TOAST_STYLES[toast.type] || TOAST_STYLES.success}`}
+    >
+      <span className="min-w-0 flex-1 text-sm font-medium">{toast.message}</span>
+      <button onClick={() => removeToast(toast.id)} className="ml-auto shrink-0 text-xs opacity-70 hover:opacity-100">
+        Dismiss
+      </button>
+    </div>
+  )
+}
 
 const TOAST_STYLES = {
   success: 'bg-[var(--color-positive-soft)] text-[var(--color-positive)]',
@@ -13,15 +33,7 @@ export default function Toast({ toasts, removeToast, position = 'bottom' }) {
       ? 'fixed left-0 right-0 top-16 z-[180] flex w-full flex-col gap-2 px-2 sm:px-4'
       : 'fixed bottom-4 right-4 z-50 flex flex-col gap-2'}>
       {toasts.map((toast) => (
-        <div
-          key={toast.id}
-          className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 shadow-lg ${TOAST_STYLES[toast.type] || TOAST_STYLES.success}`}
-        >
-          <span className="min-w-0 flex-1 text-sm font-medium">{toast.message}</span>
-          <button onClick={() => removeToast(toast.id)} className="ml-auto shrink-0 text-xs opacity-70 hover:opacity-100">
-            Dismiss
-          </button>
-        </div>
+        <ToastItem key={toast.id} toast={toast} removeToast={removeToast} />
       ))}
     </div>
   )

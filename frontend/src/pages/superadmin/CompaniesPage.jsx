@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { getCachedData, setCachedData } from '../../utils/pageCache.js'
 import { useNavigate, useLocation } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
@@ -43,9 +44,13 @@ export default function CompaniesPage() {
   // ─────────────────────────────────────────────────────────────
   // Active / normal companies
   // ─────────────────────────────────────────────────────────────
-  const [rows, setRows] = useState([])
-  const [count, setCount] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const CACHE_KEY = 'superadmin:companies:active:default'
+  const cachedActive = useRef(getCachedData(CACHE_KEY)).current
+  const firstLoad = useRef(true)
+
+  const [rows, setRows] = useState(cachedActive?.rows ?? [])
+  const [count, setCount] = useState(cachedActive?.count ?? 0)
+  const [loading, setLoading] = useState(!cachedActive)
   const [error, setError] = useState(null)
 
   const [search, setSearch] = useState('')
@@ -89,7 +94,10 @@ export default function CompaniesPage() {
   // Load active companies
   // ─────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
-    setLoading(true)
+    const isDefaultQuery = search === '' && offset === 0 && sortBy === 'name' && sortOrder === 'asc'
+    const silent = firstLoad.current && isDefaultQuery && Boolean(cachedActive)
+    firstLoad.current = false
+    if (!silent) setLoading(true)
     setError(null)
 
     try {
@@ -103,6 +111,7 @@ export default function CompaniesPage() {
 
       setRows(data.results || [])
       setCount(data.count || 0)
+      if (isDefaultQuery) setCachedData(CACHE_KEY, { rows: data.results || [], count: data.count || 0 })
     } catch (err) {
       setError(
         err?.payload?.message ||
@@ -111,9 +120,9 @@ export default function CompaniesPage() {
           'Failed to load companies'
       )
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
-  }, [search, offset, sortBy, sortOrder])
+  }, [search, offset, sortBy, sortOrder, cachedActive])
 
   // ─────────────────────────────────────────────────────────────
   // Load soft-deleted companies

@@ -6,6 +6,9 @@ import { clientApi } from '../../services/client.js'
 import ThemeToggle from './ThemeToggle.jsx'
 import ProfileAvatar from '../ui/ProfileAvatar.jsx'
 import NotificationMenu from './NotificationMenu.jsx'
+import PageTransition from '../../motion/PageTransition.jsx'
+import AmbientBackground from '../../motion/AmbientBackground.jsx'
+import { gsap, useGSAP, prefersReducedMotion, EASE, hasPlayedShell, markShellPlayed } from '../../motion/gsap.js'
 /**
  * Reusable Client Company Portal layout.
  * Desktop keeps the original hover navigation.
@@ -15,6 +18,14 @@ export default function ClientLayout({ children }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const shell = useRef(null)
+  // Plays once per tab; later ClientLayout remounts (route changes) skip it.
+  useGSAP(() => {
+    if (prefersReducedMotion() || hasPlayedShell('client-shell')) return
+    markShellPlayed('client-shell')
+    gsap.timeline({ defaults: { ease: EASE } })
+      .fromTo('.shell-header', { y: -40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8, clearProps: 'all' })
+  }, { scope: shell })
   const refreshCounterRef = useRef(0)
 
   const [openMenuKey, setOpenMenuKey] = useState(null)
@@ -477,8 +488,9 @@ export default function ClientLayout({ children }) {
     : null
 
   return (
-    <div className="flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[var(--color-canvas)]">
-      <header className="sticky top-0 z-[150] border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+    <div ref={shell} className="relative flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[var(--color-canvas)]">
+      <AmbientBackground />
+      <header className="shell-header sticky top-0 z-[150] border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
         <div className="flex min-h-16 min-w-0 items-center justify-between gap-2 px-3 sm:gap-4 sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
             <NavLink to="/app" onClick={(event) => handleNavClick(event, '/app')} className="flex shrink-0 items-center gap-2" aria-label="Go to Dashboard">
@@ -618,7 +630,7 @@ export default function ClientLayout({ children }) {
           </div>
         </div>
       </header>
-      <main className="min-w-0 flex-1 px-1 py-1 sm:px-2 sm:py-2 lg:px-1">{children}</main>
+      <PageTransition className="relative z-10 min-w-0 flex-1 px-1 py-1 sm:px-2 sm:py-2 lg:px-1">{children}</PageTransition>
       {compactPortal}
     </div>
   )

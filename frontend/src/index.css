@@ -145,3 +145,26 @@ input.ocr-number-input::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
+
+/* ---- Motion layer (GSAP) ---- */
+.spotlight {
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.25s ease;
+  will-change: transform;
+}
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 70%);
+}
+.spotlight:hover { border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border)); }
+.spotlight:hover::before { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-blob { display: none; }
+}

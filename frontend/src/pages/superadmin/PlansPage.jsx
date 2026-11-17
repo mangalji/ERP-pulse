@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback, useRef } from 'react'
+import { getCachedData, setCachedData } from '../../utils/pageCache.js'
 import { useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
@@ -25,9 +26,13 @@ const EMPTY_PLAN = {
 export default function PlansPage() {
   const { toasts, addToast, removeToast } = useToast()
 
-  const [rows, setRows] = useState([])
-  const [count, setCount] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const CACHE_KEY = 'superadmin:plans:default'
+  const cached = useRef(getCachedData(CACHE_KEY)).current
+  const firstLoad = useRef(true)
+
+  const [rows, setRows] = useState(cached?.rows ?? [])
+  const [count, setCount] = useState(cached?.count ?? 0)
+  const [loading, setLoading] = useState(!cached)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
@@ -54,7 +59,10 @@ export default function PlansPage() {
   }
 
   const load = useCallback(async () => {
-    setLoading(true)
+    const isDefaultQuery = search === '' && offset === 0
+    const silent = firstLoad.current && isDefaultQuery && Boolean(cached)
+    firstLoad.current = false
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const data = await superadminApi.listPlans({
@@ -64,12 +72,13 @@ export default function PlansPage() {
       })
       setRows(data.results || [])
       setCount(data.count || 0)
+      if (isDefaultQuery) setCachedData(CACHE_KEY, { rows: data.results || [], count: data.count || 0 })
     } catch (err) {
       setError(err.payload?.message || err.message || 'Failed to load plans')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
-  }, [search, offset])
+  }, [search, offset, cached])
 
   useEffect(() => {
     load()

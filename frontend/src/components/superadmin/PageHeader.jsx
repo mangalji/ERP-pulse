@@ -4,7 +4,7 @@
  */
 export default function PageHeader({ title, subtitle, actions }) {
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div data-reveal className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
           {title}

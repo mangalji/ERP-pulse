@@ -1,3 +1,5 @@
+import { useRef } from 'react'
+import { gsap, useGSAP, prefersReducedMotion, EASE } from '../../motion/gsap.js'
 import EmptyState from '../ui/EmptyState.jsx'
 import LoadingState from './LoadingState.jsx'
 
@@ -18,6 +20,17 @@ export default function DataTable({
   emptyAction,
   emptyActionLabel,
 }) {
+  const tableRef = useRef(null)
+  useGSAP(
+    () => {
+      if (loading || error || prefersReducedMotion() || !tableRef.current) return
+      const trs = Array.from(tableRef.current.querySelectorAll('tbody tr')).slice(0, 12)
+      if (trs.length)
+        gsap.fromTo(trs, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.4, ease: EASE, stagger: 0.03, clearProps: 'transform,opacity' })
+    },
+    { scope: tableRef, dependencies: [rows, loading, error] },
+  )
+
   if (loading) {
     return <LoadingState rows={4} />
   }
@@ -56,7 +69,7 @@ export default function DataTable({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div ref={tableRef} className="overflow-x-auto">
       <table className="w-full min-w-[640px] text-left text-sm">
         <thead>
           <tr className="border-b border-[var(--color-border)]">
@@ -72,7 +85,7 @@ export default function DataTable({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row[rowKey]} className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-canvas)]">
+            <tr key={row[rowKey]} className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-primary-soft)] transition-colors">
               {columns.map((col) => (
                 <td key={col.key || col.header} className="px-4 py-3 text-[var(--color-ink)]">
                   {col.render ? col.render(row) : row[col.key]}

@@ -1,3 +1,4 @@
+import CountUp from '../../motion/CountUp.jsx'
 import { useState, useEffect, useMemo } from 'react'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
@@ -95,14 +96,14 @@ const kpis = useMemo(() => {
             {/* KPI Cards */}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {kpis.map((kpi) => (
-                  <Card key={kpi.id} className="p-5">
+                  <Card key={kpi.id} interactive className="p-5">
                     <p className="text-sm text-[var(--color-muted)]">{kpi.label}</p>
                 
                     {loading ? (
                       <Skeleton className="mt-2 h-8 w-20" />
                     ) : (
                       <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">
-                        {kpi.value}
+                        <CountUp value={kpi.value} />
                       </p>
                     )}
                   </Card>
