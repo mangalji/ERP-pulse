@@ -9,7 +9,7 @@ const NAV_ITEMS = [
   { to: '/admin/companies', label: 'Companies', icon: BuildingIcon },
   { to: '/admin/plans', label: 'Plans', icon: PlanIcon },
   { to: '/admin/employees', label: 'Employees', icon: EmployeesIcon },
-  { to: '/admin/settings', label: 'Settings', icon: GearIcon },
+  // { to: '/admin/profile', label: 'Settings', icon: GearIcon },
 ]
 
 /**
@@ -120,15 +120,6 @@ export default function AdminLayout({ title, breadcrumb, children }) {
         </nav>
 
         <div className="mt-4 flex flex-col gap-1">
-          {/* <button
-            onClick={() => setCollapsed((prev) => !prev)}
-            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-sidebar-ink)] hover:bg-[var(--color-sidebar-soft)] hover:text-white"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4.5 w-4.5 shrink-0">
-              <path d="M12 3v18M3 12h18" />
-            </svg>
-            {!collapsed && <span>Collapse</span>}
-          </button> */}
           <button
             onClick={handleLogout}
             className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--color-negative)] hover:bg-[var(--color-sidebar-soft)]"
@@ -184,11 +175,11 @@ export default function AdminLayout({ title, breadcrumb, children }) {
                   </div>
                   <div className="border-t border-[var(--color-border)]" />
                   <NavLink
-                    to="/admin/settings"
+                    to="/admin/profile"
                     onClick={() => setUserMenuOpen(false)}
                     className="block w-full px-4 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]"
                   >
-                    Settings
+                    Profile
                   </NavLink>
                   <button
                     onClick={handleLogout}

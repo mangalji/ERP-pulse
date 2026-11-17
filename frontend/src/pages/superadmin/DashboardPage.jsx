@@ -123,46 +123,6 @@ export default function DashboardPage() {
                 ))}
               </div>
             )}
-
-            {/* <SectionCard title="Recent Companies">
-              {loading ? (
-                <Skeleton className="h-40 w-full" />
-              ) : recentCompanies.length === 0 ? (
-                <EmptyState title="No companies yet" description="New company registrations will appear here." />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[560px] text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-[var(--color-border)]">
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Name</th>
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Code</th>
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Status</th>
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Created</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recentCompanies.map((company) => (
-                        <tr key={company.id} className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-canvas)]">
-                          <td className="px-4 py-3">
-                            <button
-                              onClick={() => navigate(`/admin/companies/${company.id}`)}
-                              className="font-medium text-[var(--color-primary)] hover:underline"
-                            >
-                              {company.name}
-                            </button>
-                          </td>
-                          <td className="px-4 py-3 text-[var(--color-ink-soft)]">{company.code}</td>
-                          <td className="px-4 py-3"><StatusBadge status={company.status} /></td>
-                          <td className="px-4 py-3 text-[var(--color-muted)]">
-                            {company.created_at ? formatDate(company.created_at) : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </SectionCard> */}
           </>
         )}
       </div>

@@ -48,9 +48,9 @@ export default function SettingsPage() {
   }
 
   return (
-    <AdminLayout title="Settings" breadcrumb="Settings">
+    <AdminLayout title="Profile" breadcrumb="Profile">
       <div className="flex flex-col gap-6">
-        <PageHeader title="Settings" subtitle="Manage your AGSuite super admin preferences." />
+        <PageHeader title="Profile" subtitle="Manage your AGSuite super admin preferences." />
 
         <SectionCard title="Profile" subtitle="Update your contact details.">
           <form className="flex max-w-2xl flex-col gap-4" onSubmit={handleSubmit}>

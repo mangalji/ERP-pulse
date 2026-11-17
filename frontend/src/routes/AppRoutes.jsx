@@ -174,7 +174,7 @@ export default function AppRoutes() {
         }
       />
       <Route
-        path="/admin/settings"
+        path="/admin/profile"
         element={
           <ProtectedRoute requiredRole="admin">
             <SuperAdminSettingsPage />
