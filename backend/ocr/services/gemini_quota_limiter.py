@@ -163,8 +163,8 @@ class GeminiQuotaLimiter:
 
     def __init__(self):
         self._db_tokens: set[str] = set()
-        self.active_key = "erp-pulse:ocr:gemini:active"
-        self.rpm_key = "erp-pulse:ocr:gemini:requests"
+        self.active_key = f"erp-pulse:ocr:ai:active:{company_id}:{provider}"
+        self.rpm_key = f"erp-pulse:ocr:ai:requests:{company_id}:{provider}"
 
         self.max_concurrency = max(
             1,

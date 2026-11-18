@@ -19,48 +19,31 @@ OCR_MAX_PAGES: int = config('OCR_MAX_PAGES', default=100, cast=int)
 OCR_PDF_DPI: int = config('OCR_PDF_DPI', default=300, cast=int)
 
 # ------------------------------------------------------------------
-# Image Processing
+# Chunked PDF mode
 # ------------------------------------------------------------------
+# Normal pipeline: every PDF page is rendered to a PNG at OCR_PDF_DPI and
+# sent as a SEPARATE AI request (N pages = N full API calls, each
+# repeating the whole prompt/schema). This mode instead splits the PDF
+# into page-range PDF chunks of OCR_PDF_CHUNK_PAGES pages each (e.g. a
+# 23-page PDF with the default chunk size becomes 3 chunks: pages 1-10,
+# 11-20, 21-23) and sends each chunk as ONE request — no local PyMuPDF
+# rasterization, no DPI setting, just a page-range copy. A PDF with
+# OCR_PDF_CHUNK_PAGES pages or fewer becomes a single chunk, i.e. a
+# single request for the whole document.
+#
+# Safety: if the split itself fails for any reason, the caller falls back
+# to the existing, unchanged per-page pipeline. A PDF whose page count
+# exceeds OCR_MAX_PAGES is still rejected either way.
+# Chunked mode is enabled by default; set OCR_PDF_WHOLE_DOCUMENT=False to
+# temporarily fall back to the legacy per-page image pipeline.
+OCR_PDF_WHOLE_DOCUMENT: bool = config(
+    'OCR_PDF_WHOLE_DOCUMENT', default=True, cast=bool
+)
 
-#: Target width (in pixels) for resized images sent to OCR.
-
-# OCR_TARGET_WIDTH: int = config('OCR_TARGET_WIDTH', default=2048, cast=int)
-
-# #: Minimum acceptable image width. Images below this are rejected.
-# OCR_MIN_IMAGE_WIDTH: int = config('OCR_MIN_IMAGE_WIDTH', default=256, cast=int)
-
-# #: Maximum image dimension (width or height) before rejection.
-# OCR_MAX_IMAGE_SIZE: int = config('OCR_MAX_IMAGE_SIZE', default=10000, cast=int)
-
-# #: Blur threshold — images with a blur score below this are
-# #: considered too blurry for reliable OCR.
-# OCR_BLUR_THRESHOLD: float = config('OCR_BLUR_THRESHOLD', default=100.0, cast=float)
-
-# #: Minimum acceptable contrast score. Images below this are
-# #: considered too low-contrast for reliable OCR.
-# OCR_MIN_CONTRAST: float = config('OCR_MIN_CONTRAST', default=20.0, cast=float)
-
-# #: Maximum noise score before the noise-removal stage is skipped
-
-# OCR_MAX_NOISE_SCORE: float = config('OCR_MAX_NOISE_SCORE', default=50.0, cast=float)
-
-# #: Gaussian blur kernel size for noise removal (must be odd, >= 3).
-# OCR_DENOISE_KERNEL_SIZE: int = config('OCR_DENOISE_KERNEL_SIZE', default=3, cast=int)
-
-# #: Adaptive threshold block size (must be odd, >= 3).
-# OCR_THRESHOLD_BLOCK_SIZE: int = config('OCR_THRESHOLD_BLOCK_SIZE', default=15, cast=int)
-
-# #: Adaptive threshold constant subtracted from the mean.
-# OCR_THRESHOLD_C: int = config('OCR_THRESHOLD_C', default=10, cast=int)
-
-# #: Maximum angle (in degrees) for deskew correction.
-# OCR_MAX_SKEW_ANGLE: float = config('OCR_MAX_SKEW_ANGLE', default=45.0, cast=float)
-
-# #: Angle step (in degrees) for skew detection search.
-# OCR_SKEW_ANGLE_STEP: float = config('OCR_SKEW_ANGLE_STEP', default=1.0, cast=float)
-
-# #: Sharpening kernel strength.
-# OCR_SHARPEN_STRENGTH: float = config('OCR_SHARPEN_STRENGTH', default=0.5, cast=float)
+#: Max pages per chunk PDF sent to the AI provider in one request.
+OCR_PDF_CHUNK_PAGES: int = config(
+    'OCR_PDF_CHUNK_PAGES', default=10, cast=int
+)
 
 # ------------------------------------------------------------------
 # Gemini API

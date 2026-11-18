@@ -883,6 +883,7 @@ def build_file_prompt(
     line_types: dict[str, str],
     *,
     source: str = "file",
+    document_context: dict[str, Any] | None = None,
 ) -> str:
     """Build the new upload-file prompt; the legacy prompt remains above."""
     field_lines = "\n".join(
@@ -911,14 +912,39 @@ def build_file_prompt(
     if "due_date" in header_fields:
         date_rule += "\n- If due_date is not explicitly present, return null."
 
-    source_instruction = (
-        "Read the entire email body before responding."
-        if source == "email"
-        else "Read the entire uploaded document before responding."
-    )
+    if source == "email":
+        source_instruction = "Read the entire email body before responding."
+    elif document_context:
+        source_instruction = (
+            "Read every page of the supplied PDF part before responding. "
+            "The part metadata identifies its position in the original document."
+        )
+    else:
+        source_instruction = "Read the entire uploaded document before responding."
+
+    context_section = ""
+    if document_context:
+        context_section = f"""
+DOCUMENT PART CONTEXT
+{json.dumps(document_context, ensure_ascii=False, indent=2, default=str)}
+
+This file is one part of a multi-part document. The Document ID identifies
+the same original PDF across requests; it does not contain the previous
+document content. Use the part number and page range to understand where
+this file belongs in the original document.
+
+For continuation parts:
+- Preserve valid values from the previous header context.
+- Never replace a previous valid value with null merely because it is not
+  visible in this part.
+- Extract only line items visible in the current part. Previous line-item
+  data is intentionally not included and must not be reconstructed.
+- Do not repeat line items from earlier parts.
+"""
 
     return f"""Extract business document data into the exact requested JSON schema.
 {source_instruction}
+{context_section}
 
 Requested header fields:
 {field_lines}
@@ -996,6 +1022,7 @@ class AIExtractor:
         company=None,
         timeout: float | None = None,
         max_retries: int | None = None,
+        document_context: dict[str, Any] | None = None,
     ) -> dict:
         (
             header_fields,
@@ -1038,6 +1065,7 @@ class AIExtractor:
             include_line_items,
             header_types,
             line_types,
+            document_context=document_context,
         )
 
         path = Path(file_path)
