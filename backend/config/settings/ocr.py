@@ -12,39 +12,18 @@ from decouple import config
 # PDF Processing
 # ------------------------------------------------------------------
 
-#: Maximum number of pages a PDF may have to be processed.
-OCR_MAX_PAGES: int = config('OCR_MAX_PAGES', default=100, cast=int)
+#: Maximum number of pages allowed in each individual PDF upload.
+#: This applies equally to Single mode, Multiple mode, and ZIP-expanded PDFs.
+OCR_MAX_PAGES: int = config('OCR_MAX_PAGES', default=5, cast=int)
 
 #: DPI (dots per inch) for PDF-to-image conversion.
 OCR_PDF_DPI: int = config('OCR_PDF_DPI', default=300, cast=int)
 
 # ------------------------------------------------------------------
-# Chunked PDF mode
+# PDF extraction mode
 # ------------------------------------------------------------------
-# Normal pipeline: every PDF page is rendered to a PNG at OCR_PDF_DPI and
-# sent as a SEPARATE AI request (N pages = N full API calls, each
-# repeating the whole prompt/schema). This mode instead splits the PDF
-# into page-range PDF chunks of OCR_PDF_CHUNK_PAGES pages each (e.g. a
-# 23-page PDF with the default chunk size becomes 3 chunks: pages 1-10,
-# 11-20, 21-23) and sends each chunk as ONE request — no local PyMuPDF
-# rasterization, no DPI setting, just a page-range copy. A PDF with
-# OCR_PDF_CHUNK_PAGES pages or fewer becomes a single chunk, i.e. a
-# single request for the whole document.
-#
-# Safety: if the split itself fails for any reason, the caller falls back
-# to the existing, unchanged per-page pipeline. A PDF whose page count
-# exceeds OCR_MAX_PAGES is still rejected either way.
-# Chunked mode is enabled by default; set OCR_PDF_WHOLE_DOCUMENT=False to
-# temporarily fall back to the legacy per-page image pipeline.
-OCR_PDF_WHOLE_DOCUMENT: bool = config(
-    'OCR_PDF_WHOLE_DOCUMENT', default=True, cast=bool
-)
-
-#: Max pages per chunk PDF sent to the AI provider in one request.
-OCR_PDF_CHUNK_PAGES: int = config(
-    'OCR_PDF_CHUNK_PAGES', default=5, cast=int
-)
-
+# PDFs are limited to five pages per file. Chunked extraction is no longer
+# used for new uploads; the standard page pipeline handles the accepted file.
 # ------------------------------------------------------------------
 # AI provider API
 # ------------------------------------------------------------------
@@ -89,7 +68,7 @@ OCR_AI_CONCURRENCY_LEASE_SECONDS: int = config(
     default=600,
     cast=int,
 )
-OCR_SINGLE_MAX_PAGES: int = config('OCR_SINGLE_MAX_PAGES', default=5, cast=int)
+OCR_SINGLE_MAX_PAGES: int = OCR_MAX_PAGES
 # Catalyst AppSail ends every request after 30s, so on that platform the inline
 # attempt must hand over to background processing well before that.
 ON_CATALYST: bool = bool(os.environ.get("X_ZOHO_CATALYST_LISTEN_PORT"))

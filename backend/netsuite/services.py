@@ -3409,8 +3409,6 @@ class NetSuiteFieldMappingService:
 
             # Development-safe fallback: retain the current hardcoded baseline
             # so the mapping screen still works while the live API is repaired.
-            # fields = self._build_standard_catalogue(record_type)
-
             normalized_fallback = self._merge_baseline_fields(
                 {
                     "body_fields": [],
@@ -3454,31 +3452,6 @@ class NetSuiteFieldMappingService:
                         "Unable to release NetSuite catalogue refresh cache lock"
                     )
 
-    def _build_standard_catalogue(self, record_type):
-        """Development fallback catalogue only; live metadata is preferred."""
-        body_fields = [
-            {'field_id': 'entity', 'label': 'Vendor', 'datatype': 'select', 'scope': 'body', 'is_required': True, 'is_custom': False, 'reference_type': 'vendor'},
-            {'field_id': 'tranid', 'label': 'Transaction ID / Reference', 'datatype': 'text', 'scope': 'body', 'is_required': False, 'is_custom': False},
-            {'field_id': 'trandate', 'label': 'Transaction Date', 'datatype': 'date', 'scope': 'body', 'is_required': True, 'is_custom': False},
-            {'field_id': 'duedate', 'label': 'Due Date', 'datatype': 'date', 'scope': 'body', 'is_required': False, 'is_custom': False},
-            {'field_id': 'currency', 'label': 'Currency', 'datatype': 'select', 'scope': 'body', 'is_required': True, 'is_custom': False},
-            {'field_id': 'memo', 'label': 'Memo', 'datatype': 'text', 'scope': 'body', 'is_required': False, 'is_custom': False},
-            {'field_id': 'otherrefnum', 'label': 'Other Reference Number', 'datatype': 'text', 'scope': 'body', 'is_required': False, 'is_custom': False},
-            {'field_id': 'subsidiary', 'label': 'Subsidiary', 'datatype': 'select', 'scope': 'body', 'is_required': True, 'is_custom': False},
-            {'field_id': 'location', 'label': 'Location', 'datatype': 'select', 'scope': 'body', 'is_required': False, 'is_custom': False},
-            {'field_id': 'department', 'label': 'Department', 'datatype': 'select', 'scope': 'body', 'is_required': False, 'is_custom': False},
-            {'field_id': 'class', 'label': 'Class', 'datatype': 'select', 'scope': 'body', 'is_required': False, 'is_custom': False},
-        ]
-        item_fields = [
-            {'field_id': 'item', 'label': 'Item', 'datatype': 'select', 'scope': 'column', 'is_required': True, 'is_custom': False, 'reference_type': 'item'},
-            {'field_id': 'description', 'label': 'Item Description', 'datatype': 'text', 'scope': 'column', 'is_required': False, 'is_custom': False},
-            {'field_id': 'quantity', 'label': 'Quantity', 'datatype': 'decimal', 'scope': 'column', 'is_required': True, 'is_custom': False},
-            {'field_id': 'rate', 'label': 'Rate', 'datatype': 'currency', 'scope': 'column', 'is_required': True, 'is_custom': False},
-            {'field_id': 'amount', 'label': 'Amount', 'datatype': 'currency', 'scope': 'column', 'is_required': False, 'is_custom': False},
-            {'field_id': 'custcol_hsnsac', 'label': 'HSN/SAC', 'datatype': 'text', 'scope': 'column', 'is_required': False, 'is_custom': True},
-        ]
-        return {'body': body_fields, 'column': item_fields}
-
 class NetSuiteValidationService:
     """
     Validate extracted OCR data against NetSuite reference data.
@@ -3520,24 +3493,6 @@ class NetSuiteValidationService:
         NetSuiteRecordType.SUBTOTAL_ITEM,
         NetSuiteRecordType.ITEM_GROUP,
     )
-    ITEM_SUITEQL_TABLES = {
-        NetSuiteRecordType.INVENTORY_ITEM: "inventoryitem",
-        NetSuiteRecordType.NON_INVENTORY_SALE_ITEM: "noninventoryitem",
-        NetSuiteRecordType.NON_INVENTORY_RESALE_ITEM: "noninventoryitem",
-        NetSuiteRecordType.NON_INVENTORY_PURCHASE_ITEM: "noninventoryitem",
-        NetSuiteRecordType.SERVICE_SALE_ITEM: "serviceitem",
-        NetSuiteRecordType.SERVICE_RESALE_ITEM: "serviceitem",
-        NetSuiteRecordType.SERVICE_PURCHASE_ITEM: "serviceitem",
-        NetSuiteRecordType.DESCRIPTION_ITEM: "descriptionitem",
-        NetSuiteRecordType.DISCOUNT_ITEM: "discountitem",
-        NetSuiteRecordType.KIT_ITEM: "kititem",
-        NetSuiteRecordType.ASSEMBLY_ITEM: "assemblyitem",
-        NetSuiteRecordType.MARKUP_ITEM: "markupitem",
-        NetSuiteRecordType.PAYMENT_ITEM: "paymentitem",
-        NetSuiteRecordType.SUBTOTAL_ITEM: "subtotalitem",
-        NetSuiteRecordType.ITEM_GROUP: "itemgroup",
-    }
-
     def __init__(self, repository=None, token_manager=None):
         self.repository = repository or NetSuiteConnectionRepository()
         self.token_manager = token_manager or NetSuiteTokenManager(

@@ -1359,6 +1359,52 @@ class OCRExtractView(APIView):
         return expanded
 
     @staticmethod
+    def _validate_pdf_page_limits(uploaded_files):
+        """Reject any individual PDF that exceeds the five-page limit."""
+        max_pages = int(getattr(settings, "OCR_MAX_PAGES", 5))
+        for uploaded_file in uploaded_files:
+            filename = (getattr(uploaded_file, "name", "") or "").lower()
+            content_type = (getattr(uploaded_file, "content_type", "") or "").lower()
+            is_pdf = filename.endswith(".pdf") or content_type == "application/pdf"
+            if not is_pdf:
+                continue
+
+            try:
+                uploaded_file.seek(0)
+                pdf_doc = get_fitz().open(
+                    stream=uploaded_file.read(),
+                    filetype="pdf",
+                )
+                page_count = pdf_doc.page_count
+                pdf_doc.close()
+                uploaded_file.seek(0)
+            except Exception:
+                logger.exception(
+                    "Unable to inspect OCR PDF page count — filename=%s",
+                    filename,
+                )
+                return {
+                    "detail": (
+                        f"The uploaded PDF '{getattr(uploaded_file, 'name', 'file')}' "
+                        "could not be read. Please upload a valid PDF."
+                    )
+                }
+
+            if page_count > max_pages:
+                return {
+                    "detail": (
+                        f"Each PDF can contain a maximum of {max_pages} pages. "
+                        f"'{getattr(uploaded_file, 'name', 'file')}' contains "
+                        f"{page_count} pages. Please split it into smaller PDFs."
+                    ),
+                    "filename": getattr(uploaded_file, "name", "file"),
+                    "page_count": page_count,
+                    "max_pages": max_pages,
+                }
+
+        return None
+
+    @staticmethod
     def _serialize_upload(upload):
         version = None
 
@@ -1507,6 +1553,10 @@ class OCRExtractView(APIView):
             )
 
             actual_files = self._expand_inputs(uploaded_files)
+
+            page_limit_error = self._validate_pdf_page_limits(actual_files)
+            if page_limit_error:
+                return Response(page_limit_error, status=status.HTTP_400_BAD_REQUEST)
 
             if mode == "single":
                 single_file = actual_files[0]
@@ -1989,7 +2039,7 @@ class OCRBatchStatusView(APIView):
 
 
 class OCRUploadRetryView(APIView):
-    """Retry only failed OCR parts for an existing upload."""
+    """Retry the complete OCR upload only when its extraction failed."""
 
     permission_classes = [IsAuthenticated]
 
@@ -2029,14 +2079,6 @@ class OCRUploadRetryView(APIView):
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                 )
 
-            parts = OCRExtractionPart.objects.filter(upload=upload)
-            parts.filter(status=OCRExtractionPart.Status.FAILED).update(
-                status=OCRExtractionPart.Status.PENDING,
-                error="",
-                started_at=None,
-                completed_at=None,
-                updated_at=timezone.now(),
-            )
             upload.status = OCRUpload.Status.UPLOADED
             upload.failure_reason = None
             upload.failure_code = ""

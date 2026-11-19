@@ -241,23 +241,6 @@ def _validate_extraction_result(result, *, page_index: int | None = None) -> Non
             f"OCR extractor returned invalid line_items{where}."
         )
 
-def _should_chunk_pdf(adapter) -> bool:
-    """
-    Whether this upload should use chunked PDF extraction instead of the
-    per-page PNG pipeline (see OCR_PDF_WHOLE_DOCUMENT in settings/ocr.py).
-
-    True only when the feature is enabled and this is a PDF. There is no
-    page-count or size ceiling here — unlike the old all-or-nothing
-    "whole document" prototype, chunking scales to any page count by
-    sending more (smaller) chunks, so it always applies to PDFs once the
-    flag is on. ``_split_pdf_into_chunks`` still falls back to the
-    per-page pipeline if the actual split fails for any reason.
-    """
-    if not getattr(settings, "OCR_PDF_WHOLE_DOCUMENT", False):
-        return False
-    return isinstance(adapter, PDFAdapter)
-
-
 def _source_page_count(upload) -> int:
     """Get the bill-processing unit count before a cache/AI fast path."""
     extension = str(getattr(upload, "extension", "") or "").lower().lstrip(".")
@@ -269,82 +252,19 @@ def _source_page_count(upload) -> int:
         return max(1, int(pdf_processor.get_page_count(original_path)))
 
 
-def _split_pdf_into_chunks(upload, original_path) -> tuple[list[str], int] | None:
-    """
-    Split ``original_path`` into page-range PDF chunks for chunked
-    extraction. Returns the chunk paths, or ``None`` if splitting failed
-    and the caller should fall back to the per-page pipeline.
-
-    A PDF that exceeds OCR_MAX_PAGES still raises PDFTooLargeException —
-    that limit is a hard cap, not something to silently fall back from.
-    """
-    from ocr.pdf_processor import pdf_processor
-    from ocr.exceptions import PDFTooLargeException
-
-    chunk_size = max(1, getattr(settings, "OCR_PDF_CHUNK_PAGES", 5))
-
-    try:
-        total_pages = pdf_processor.get_page_count(original_path)
-        chunks = pdf_processor.split_into_chunks(
-            original_path, str(upload.id), chunk_size
-        )
-    except PDFTooLargeException:
-        raise
-    except Exception:
-        logger.exception(
-            "PDF chunk-split failed for upload=%s; falling back to "
-            "per-page extraction.",
-            upload.id,
-        )
-        return None
-
-    logger.info(
-        "Chunked PDF extraction engaged for upload=%s — %d chunk(s) of "
-        "up to %d pages each (%s).",
-        upload.id,
-        len(chunks),
-        chunk_size,
-        original_path,
-    )
-    return [str(p) for p in chunks], total_pages
-
-
-def _ensure_extraction_parts(upload, *, total_parts: int, chunk_size: int, total_pages: int):
-    """Create stable part rows so retries can target only failed chunks."""
-    parts = []
-    for part_number in range(1, total_parts + 1):
-        page_start = ((part_number - 1) * chunk_size) + 1
-        page_end = min(page_start + chunk_size - 1, total_pages)
-        part, _ = OCRExtractionPart.objects.get_or_create(
-            upload=upload,
-            part_number=part_number,
-            defaults={"page_start": page_start, "page_end": page_end},
-        )
-        if part.page_start != page_start or part.page_end != page_end:
-            part.page_start = page_start
-            part.page_end = page_end
-            part.save(update_fields=["page_start", "page_end", "updated_at"])
-        parts.append(part)
-    return parts
-
-
 @timed_stage("ocr.prepare_pages")
 def _normalize_to_page_paths(adapter, upload, original_path) -> tuple[list[str], bool, int]:
-    """Run the document adapter and return the image/PDF paths for the AI."""
+    """Return one complete PDF path or normalized page paths for other files."""
 
-    if _should_chunk_pdf(adapter):
-        # Skip PyMuPDF page rendering entirely. Each chunk keeps the
-        # original PDF bytes for its page range (no DPI setting, no
-        # rasterization) and is handed to the AI provider as one request
-        # per chunk instead of one request per page.
-        # _extract_single_page() detects the .pdf extension explicitly,
-        # and _merge_page_extraction_results() already merges any number
-        # of results in order — so no other code path needs to change.
-        chunk_result = _split_pdf_into_chunks(upload, original_path)
-        if chunk_result is not None:
-            chunk_paths, total_pages = chunk_result
-            return chunk_paths, True, total_pages
-        # Fall through to the per-page pipeline below.
+    if isinstance(adapter, PDFAdapter):
+        # The upload boundary has already enforced the five-page limit.
+        # Send the original PDF as one provider request so each PDF is
+        # processed as a complete document; never split it into chunks or
+        # issue one AI request per page.
+        from ocr.pdf_processor import pdf_processor
+
+        total_pages = pdf_processor.get_page_count(original_path)
+        return [str(original_path)], False, total_pages
 
     normalized = adapter.normalize()
 

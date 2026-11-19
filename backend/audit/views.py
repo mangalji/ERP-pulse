@@ -5,7 +5,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from audit.models import AuditLog
-from tenancy.permissions import IsCompanyUser
 from superadmin.permissions import IsSuperAdmin
 
 
@@ -16,7 +15,7 @@ def _actor_name(user):
 class CompanyActivityLogView(APIView):
     """Existing activity-log endpoint with company/SuperAdmin scoping."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
 
     def get(self, request):
         try:
@@ -25,16 +24,10 @@ class CompanyActivityLogView(APIView):
         except (TypeError, ValueError):
             return Response({"detail": "offset and limit must be valid integers."}, status=400)
 
-        is_superadmin = IsSuperAdmin().has_permission(request, self)
-        if is_superadmin:
-            queryset = AuditLog.objects.select_related("user", "company")
-            company_search = (request.query_params.get("company") or "").strip()
-            if company_search:
-                queryset = queryset.filter(company__name__icontains=company_search)
-        else:
-            if not IsCompanyUser().has_permission(request, self) or not request.user.company_id:
-                return Response({"detail": "You do not have access to activity logs."}, status=403)
-            queryset = AuditLog.objects.filter(company=request.user.company).select_related("user", "company")
+        queryset = AuditLog.objects.select_related("user", "company")
+        company_search = (request.query_params.get("company") or "").strip()
+        if company_search:
+            queryset = queryset.filter(company__name__icontains=company_search)
         for field in ("module", "status", "activity_type"):
             value = (request.query_params.get(field) or "").strip()
             if value:

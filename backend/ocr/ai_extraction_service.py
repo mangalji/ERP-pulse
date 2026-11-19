@@ -840,41 +840,6 @@ def apply_invoice_date_fallback(
     return result
 
 
-# LEGACY FILE PROMPT — retained as comments per request; not executed.
-# def build_prompt_legacy(...):
-#     field_lines = "\n".join(
-#         f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
-#         for key, description in header_fields.items()
-#     )
-#     # The old prompt rendered these verbose line-item rules:
-#     # - Extract EVERY clearly separated source row that is visibly present.
-#     # - Preserve source-row order; never merge, collapse, skip, duplicate, or summarize.
-#     # - Read each line field from its own source cell/column.
-#     # - Do not copy missing values from another row, header, footer, or nearby column.
-#     # - Leave derived subtotal, tax, or total fields null when not explicitly shown.
-#     # - Recount visible source rows before finalizing.
-#     old_date_fallback_rule = (
-#         "Single-date fallback: preserve the source date as due_date and set "
-#         "invoice_date to the processing/reference date."
-#     )
-#     return f"""You are the PRIMARY extraction stage of a production business-document extraction system.
-# Read the attached document in full. Layouts vary widely across invoices, receipts,
-# purchase orders, vouchers, credit notes, debit notes, and other business documents.
-#
-# Top-level fields requested by the user's template:
-# {field_lines}
-#
-# Rules:
-# - Respond with ONLY one valid JSON object.
-# - Use EXACTLY the requested field names and structure; do not add extra keys.
-# - Extract only the fields listed in the configured template.
-# - NEVER invent, assume, calculate, or guess a requested value.
-# - Use null when a value is missing, unreadable, ambiguous, or unsupported.
-# - Follow the declared datatype for every field.
-# {old_date_fallback_rule}
-# """
-
-
 def build_file_prompt(
     header_fields: dict[str, str],
     line_fields: dict[str, str],
