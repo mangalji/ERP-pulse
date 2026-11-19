@@ -35,11 +35,13 @@ export default function CenterCategoriesPage() {
 
   const [loading, setLoading] = useState(true)
   const [savingCategory, setSavingCategory] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [editingCategoryId, setEditingCategoryId] = useState(null)
   const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [selectedIds, setSelectedIds] = useState([])
   const editingCategory = categories.find((category) => String(category.id) === String(editingCategoryId))
 
   const loadCategories = async (nextPage = page) => {
@@ -51,6 +53,7 @@ export default function CenterCategoriesPage() {
 
       const nextCategories = result?.results || []
       setCategories(nextCategories)
+      setSelectedIds([])
       setCenterTabs(result?.center_tabs || [])
       setPagination(result?.pagination || {
         ...EMPTY_PAGINATION,
@@ -192,6 +195,42 @@ export default function CenterCategoriesPage() {
       )
     } finally {
       setSavingCategory(false)
+    }
+  }
+
+  const toggleSelected = (id) => {
+    setSelectedIds((current) => (
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id]
+    ))
+  }
+
+  const toggleAll = () => {
+    const deletableIds = categories
+      .filter((category) => !category.system)
+      .map((category) => category.id)
+    setSelectedIds((current) => (
+      current.length === deletableIds.length ? [] : deletableIds
+    ))
+  }
+
+  const deleteSelected = async () => {
+    if (!selectedIds.length) return
+    if (!window.confirm(`Delete ${selectedIds.length} selected Center Categor${selectedIds.length === 1 ? 'y' : 'ies'} and their subtabs?`)) return
+
+    setDeleting(true)
+    setError('')
+    setMessage('')
+    try {
+      await clientApi.deleteCenterCategories(selectedIds)
+      setSelectedIds([])
+      setMessage('Selected Center Categories deleted successfully.')
+      await loadCategories(page)
+    } catch (err) {
+      setError(err?.payload?.message || err?.message || 'Unable to delete selected Center Categories.')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -381,10 +420,31 @@ export default function CenterCategoriesPage() {
         )}
 
         <div className="mt-5 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
+            <div className="text-sm font-semibold text-[var(--color-ink)]">Center Categories</div>
+            {selectedIds.length > 0 && (
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={deleteSelected}
+                className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-600 disabled:opacity-50"
+              >
+                {deleting ? 'Deleting...' : `Delete Selected (${selectedIds.length})`}
+              </button>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="border-b border-[var(--color-border)] bg-[var(--color-canvas)]">
                 <tr>
+                  <th className="w-10 px-4 py-3 text-left">
+                    <input
+                      type="checkbox"
+                      checked={categories.some((category) => !category.system) && selectedIds.length === categories.filter((category) => !category.system).length}
+                      onChange={toggleAll}
+                      aria-label="Select all custom Center Categories"
+                    />
+                  </th>
                   <th className="px-4 py-3 text-left font-semibold text-[var(--color-ink-soft)]">
                     Internal ID
                   </th>
@@ -413,7 +473,7 @@ export default function CenterCategoriesPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-8 text-center text-[var(--color-muted)]"
                     >
                       Loading Center Categories...
@@ -422,7 +482,7 @@ export default function CenterCategoriesPage() {
                 ) : categories.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-4 py-8 text-center text-[var(--color-muted)]"
                     >
                       No Center Categories found.
@@ -434,6 +494,15 @@ export default function CenterCategoriesPage() {
                       key={category.id}
                       className="border-b border-[var(--color-border)] last:border-b-0"
                     >
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(category.id)}
+                          disabled={category.system}
+                          onChange={() => toggleSelected(category.id)}
+                          aria-label={`Select ${category.name}`}
+                        />
+                      </td>
                       <td className="px-4 py-3 text-[var(--color-ink-soft)]">
                         {category.internal_id}
                       </td>

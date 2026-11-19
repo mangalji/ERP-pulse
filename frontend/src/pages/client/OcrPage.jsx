@@ -2747,7 +2747,13 @@ useEffect(() => {
 
   const retryExistingExtraction = async () => {
     const uploadId = activeResult?.upload_id
-    if (!uploadId || !currentBatchId || retryingUploadId || processing) return
+    if (
+      !uploadId ||
+      !currentBatchId ||
+      String(activeResult?.status || '').toUpperCase() !== 'FAILED' ||
+      retryingUploadId ||
+      processing
+    ) return
 
     setRetryingUploadId(uploadId)
     setError('')

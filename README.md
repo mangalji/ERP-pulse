@@ -8,6 +8,7 @@ The platform includes a company workspace for administrators and employees, plus
 
 - [Capabilities](#capabilities)
 - [Processing workflow](#processing-workflow)
+- [Usage limits and retention](#usage-limits-and-retention)
 - [Architecture](#architecture)
 - [Repository layout](#repository-layout)
 - [Local development](#local-development)
@@ -22,19 +23,19 @@ The platform includes a company workspace for administrators and employees, plus
 
 | Area | Capabilities |
 | --- | --- |
-| Document processing | PDF and image extraction, multiple-file and ZIP uploads, configurable templates, header and line-item fields, document review and version history |
+| Document processing | PDF and image extraction, multiple-file and ZIP uploads, configurable templates, header and line-item fields, document review and version history; each PDF is limited to five pages and is sent to the AI as one complete document |
 | AI configuration | Company-level provider and model configuration for Google Gemini, OpenAI, and Anthropic |
 | NetSuite | OAuth connections, employee connection assignments, field mapping, live reference validation, Vendor Bill posting, background batch jobs, and existing-connection reauthorization |
 | Email automation | Zoho Mail and Gmail connections, scheduled fetching, message staging and deduplication, vendor-bill processing, and validation/posting results |
 | Access management | Company-scoped access, Company Admin promotion/demotion, invitations with mobile confirmation, JWT authentication, password recovery, email OTP, password visibility controls, and company lifecycle controls |
-| Administration | Subscription plans, tenant administration, configurable navigation, notifications, audit records, and operational monitoring |
+| Administration | Subscription plans, tenant administration, configurable navigation, notifications, company-wide activity logs, processing usage limits, and operational monitoring |
 
 ## Processing workflow
 
 ### Document uploads
 
-1. Select an extraction template and upload documents.
-2. Extract structured header and line-item data using the company's AI configuration.
+1. Select an extraction template and upload documents. Single and Multiple modes accept PDF/image files; each individual PDF may contain no more than five pages. ZIP archives are checked file-by-file.
+2. Extract structured header and line-item data using the company's AI configuration. Each accepted PDF is submitted as one complete document request.
 3. Apply template defaults and enrich missing mapped references from NetSuite.
 4. Review and save the extracted data; calculate applicable line totals and taxes.
 5. Validate vendor, item, and other mapped references against the connected NetSuite account.
@@ -42,9 +43,34 @@ The platform includes a company workspace for administrators and employees, plus
 
 ### Automated email processing
 
-Connect a mailbox, select its extraction template, and choose an initial synchronization date and time. Background workers fetch and stage messages, identify vendor bills, and create document history records. Valid bills proceed through validation and posting; failures remain available for review.
+Connect a mailbox, select its extraction template, and configure the fetching schedule. The schedule is stored per mailbox and is user-configurable: single event, daily, weekly, monthly, or yearly execution; start date/time; repeat interval where applicable; selected weekdays or calendar pattern; and an optional end date. Background workers fetch and stage messages, identify vendor bills, and create document history records. Valid bills proceed through validation and posting; failures remain available for review.
 
-The default mailbox interval is **5 minutes**. Celery Beat checks for due mailboxes every **1 minute** and dispatches a separate health heartbeat every **30 seconds**. The displayed next-check time is the mailbox's eligibility time: execution occurs on the next scheduler check and may be delayed further by worker load or provider response time.
+There is no hardcoded five-minute mailbox processing interval. Celery Beat dispatches each mailbox according to its saved schedule. A separate scheduler-health heartbeat runs every 10 minutes and does not decide when a mailbox should fetch.
+
+### OCR retry behavior
+
+- A successful extraction is marked `COMPLETED` and is not manually retried.
+- Manual retry is available only for a failed upload and reprocesses the complete upload.
+- Temporary provider/network failures may still use the internal retry policy before the upload is marked failed.
+
+## Usage limits and retention
+
+Super Admins allocate two independent, company-level processing quotas during company creation and can modify them later from the company detail page:
+
+- **PDF/file pages:** consumed by the actual number of pages in each accepted PDF or image upload. A one-page PDF counts as one page; multiple files add their page counts together.
+- **Email bills:** consumed once for each vendor-bill email promoted into processing. Non-bill mailbox traffic does not consume an email-bill unit.
+
+Each quota has its own start and end date. Processing is allowed only while the relevant allocation period is active and unused capacity remains. A zero limit, exhausted limit, or expired period blocks the corresponding file or email processing. Current limits, consumed units, remaining units, and period status are visible to Company Admins and employees on the Processing Status page; only Super Admins can change allocations.
+
+### Activity logs
+
+The existing audit endpoint is shared by both scopes:
+
+```text
+GET /api/v1/audit/events/
+```
+
+Activity logs are available only in the Super Admin UI at `/admin/company-logs`. Super Admins see records for all companies, with company ID and company name included for filtering and identification. Company Admins and employees do not have activity-log access. Automated activity logs older than 30 days are purged once per day; manual activity logs are retained.
 
 ### Field precedence and NetSuite references
 
@@ -199,6 +225,7 @@ Replace the example SMTP/Brevo credentials with working development credentials.
 
 ```powershell
 cd backend
+python manage.py makemigrations
 python manage.py migrate
 python manage.py seed_rbac
 python manage.py createsuperuser
@@ -260,6 +287,9 @@ Open `http://localhost:5173`. Configure the company, AI provider, NetSuite conne
 | `ABSTRACT_EMAIL_VALIDATION_API_KEY`, `HUNTER_API_KEY` | Server-side email deliverability verification. Abstract is attempted first; Hunter is used when Abstract fails or its quota is unavailable. |
 | `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker and result service |
 | `OCR_EXECUTION_MODE` | Job execution strategy: `auto`, `celery`, `thread`, `inline`, or `external` |
+| `OCR_MAX_PAGES` | Maximum pages per individual PDF upload; the application default is `5` |
+| `OCR_MULTI_MAX_FILES` | Maximum number of files in Multiple mode |
+| `OCR_SINGLE_ASYNC`, `OCR_SINGLE_TIME_BUDGET_SECONDS` | Single-mode execution behavior and inline time budget |
 | `OCR_STORAGE_BACKEND` | Document storage: `auto`, `local`, `db`, or `s3` |
 | `OCR_S3_*` | S3 bucket, region, endpoint, and optional credentials |
 | `VITE_API_BASE_URL` | Frontend API endpoint, embedded at build time |
@@ -338,7 +368,7 @@ Integration acceptance checks should cover login, invitation acceptance with the
 
 Deploy the API, frontend, database, document storage, and required workers as separate operational components. Use persistent/shared document storage when running multiple instances. For automated email workflows, keep Redis, workers, and a single active Beat scheduler available.
 
-A release should apply database migrations, collect static assets, rebuild the frontend with the target API URL, and restart backend workers. Configure HTTPS, allowed hosts, browser origins, and provider callbacks for the target environment. Production uses `config.settings.production`; run `python manage.py check --deploy` with the production environment before rollout.
+A release should create/apply database migrations, collect static assets, rebuild the frontend with the target API URL, and restart backend workers. Configure HTTPS, allowed hosts, browser origins, and provider callbacks for the target environment. Production uses `config.settings.production`; run `python manage.py check --deploy` with the production environment before rollout. Do not rename application tables manually; use Django migrations so the database schema and migration history remain aligned.
 
 | Endpoint / command | Purpose |
 | --- | --- |
