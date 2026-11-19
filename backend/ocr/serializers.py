@@ -130,6 +130,8 @@ class OCRHistoryEntrySerializer(serializers.Serializer):
         required=False,
         default=list,
     )
+    template_id = serializers.UUIDField(allow_null=True, required=False)
+    template_name = serializers.CharField(allow_blank=True, required=False)
 
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import redis
 import uuid
+from datetime import date
 from pathlib import PurePosixPath
 from django.db.models import Q
 
@@ -25,7 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from common.common_utils import success_response
 from rest_framework.response import Response
-from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionTemplate, OCRValidationResult
+from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionPart, OCRExtractionTemplate, OCRValidationResult
 from netsuite.models import NetSuiteOCRPosting
 from netsuite.oauth import netsuite_vendor_bill_url
 from ocr.serializers import (
@@ -560,7 +561,29 @@ class OCRHistoryListView(APIView):
             return Response({"detail": "offset and limit must be valid integers."}, status=status.HTTP_400_BAD_REQUEST)
 
         status_filter = str(request.query_params.get("status", "")).strip().upper()
+        date_from = str(request.query_params.get("date_from", "")).strip()
+        date_to = str(request.query_params.get("date_to", "")).strip()
+        template_id = str(request.query_params.get("template_id", "")).strip()
+        try:
+            if date_from:
+                date_from = date.fromisoformat(date_from)
+            if date_to:
+                date_to = date.fromisoformat(date_to)
+        except ValueError:
+            return Response({"detail": "date_from and date_to must be valid ISO dates."}, status=status.HTTP_400_BAD_REQUEST)
+        if date_from and date_to and date_from > date_to:
+            return Response({"detail": "date_from cannot be later than date_to."}, status=status.HTTP_400_BAD_REQUEST)
+
         batch_queryset = _visible_batch_queryset(request.user).order_by("-created_at")
+        if date_from:
+            batch_queryset = batch_queryset.filter(created_at__date__gte=date_from)
+        if date_to:
+            batch_queryset = batch_queryset.filter(created_at__date__lte=date_to)
+        if template_id:
+            batch_queryset = batch_queryset.filter(
+                Q(extraction_template_id=template_id)
+                | Q(email_integration__ocr_template_id=template_id)
+            )
         validated_documents = OCRValidationResult.objects.filter(
             Q(document__batch_id=OuterRef("pk"))
             | Q(document__upload__batch_id=OuterRef("pk"))
@@ -601,7 +624,12 @@ class OCRHistoryListView(APIView):
         # status-filtered history scalable in the same way as All Data history.
         database_total = batch_queryset.count()
         batches = list(
-            batch_queryset.select_related("user", "netsuite_connection").prefetch_related(
+            batch_queryset.select_related(
+                "user",
+                "netsuite_connection",
+                "extraction_template",
+                "email_integration__ocr_template",
+            ).prefetch_related(
                 Prefetch("uploads", queryset=OCRUpload.objects.select_related("document").order_by("created_at"), to_attr="ordered_uploads"),
                 Prefetch("documents", queryset=OCRDocument.objects.prefetch_related("versions").order_by("created_at"), to_attr="ordered_documents"),
             )[offset:offset + limit]
@@ -676,6 +704,16 @@ class OCRHistoryListView(APIView):
                 "ai_extraction_duration_ms": sum(ai_durations) if ai_durations else None,
                 "validated_count": valid_count, "posted_count": posted_count, "netsuite_records": records,
                 "netsuite_account_ids": account_ids,
+                "template_id": str(
+                    getattr(batch, "extraction_template_id", None)
+                    or getattr(getattr(batch, "email_integration", None), "ocr_template_id", None)
+                    or ""
+                ) or None,
+                "template_name": (
+                    getattr(getattr(batch, "extraction_template", None), "name", None)
+                    or getattr(getattr(getattr(batch, "email_integration", None), "ocr_template", None), "name", None)
+                    or ""
+                ),
             })
         total = database_total
         page_results = results
@@ -1882,9 +1920,15 @@ class OCRBatchStatusView(APIView):
             live_data = _get_live_ocr_result(
                 str(upload.id)
             )
+            result_data = (
+                live_data
+                if live_data is not None
+                else (version.normalized_json if version else None)
+            ) if batch_status == OCRBatch.Status.COMPLETED else None
             results.append(
                 {
                     "status": upload.status,
+                    "batch_status": batch_status,
                     "upload_id": str(upload.id),
                     "document_id": (
                         str(document.id) if document else None
@@ -1894,20 +1938,14 @@ class OCRBatchStatusView(APIView):
                         version.version_number if version else None
                     ),
                     "filename": upload.original_filename,
+                    "retry_count": upload.retry_count,
+                    "retry_limit": int(getattr(settings, "OCR_MANUAL_RETRY_LIMIT", 4)),
                     "preview_url": (
                         f"/ocr/extract/"
                         f"uploads/{upload.id}/preview/"
                     ),
 
-                    "data": (
-                        live_data
-                        if live_data is not None
-                        else (
-                            version.normalized_json
-                            if version
-                            else None
-                        ),
-                    ),
+                    "data": result_data,
 
                     "error": (
                         upload.failure_reason
@@ -1935,6 +1973,78 @@ class OCRBatchStatusView(APIView):
                 "completed_at": batch.completed_at,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class OCRUploadRetryView(APIView):
+    """Retry only failed OCR parts for an existing upload."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, upload_id):
+        queryset = _visible_upload_queryset(request.user).select_related("batch")
+        with transaction.atomic():
+            try:
+                # ``batch`` is nullable and ``select_related("batch")``
+                # creates a LEFT OUTER JOIN. PostgreSQL rejects a plain
+                # FOR UPDATE over the nullable side of that join, so lock
+                # only the OCRUpload row that is being transitioned.
+                upload = queryset.select_for_update(of=("self",)).get(pk=upload_id)
+            except OCRUpload.DoesNotExist as exc:
+                raise NotFound("OCR upload not found.") from exc
+
+            if upload.status in {OCRUpload.Status.PROCESSING, OCRUpload.Status.UPLOADED}:
+                return Response(
+                    {"detail": "This extraction is already running or queued."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if upload.status != OCRUpload.Status.FAILED:
+                return Response(
+                    {"detail": "Retry is available only for a failed extraction."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            retry_limit = int(getattr(settings, "OCR_MANUAL_RETRY_LIMIT", 4))
+            if upload.retry_count >= retry_limit:
+                return Response(
+                    {
+                        "detail": (
+                            f"Retry limit reached ({retry_limit}). "
+                            "Please start a new extraction or contact an administrator."
+                        ),
+                        "retry_count": upload.retry_count,
+                        "retry_limit": retry_limit,
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            parts = OCRExtractionPart.objects.filter(upload=upload)
+            parts.filter(status=OCRExtractionPart.Status.FAILED).update(
+                status=OCRExtractionPart.Status.PENDING,
+                error="",
+                started_at=None,
+                completed_at=None,
+                updated_at=timezone.now(),
+            )
+            upload.status = OCRUpload.Status.UPLOADED
+            upload.failure_reason = None
+            upload.failure_code = ""
+            upload.next_attempt_at = None
+            upload.queued_at = None
+            upload.queued_via = ""
+            upload.retry_count += 1
+            upload.save(update_fields=[
+                "status", "failure_reason", "failure_code", "next_attempt_at",
+                "queued_at", "queued_via", "retry_count", "updated_at",
+            ])
+            if upload.batch_id:
+                upload.batch.status = OCRBatch.Status.PROCESSING
+                upload.batch.completed_at = None
+                upload.batch.save(update_fields=["status", "completed_at"])
+
+        executor = dispatch_upload(str(upload.id), str(upload.user_id))
+        return Response(
+            {"upload_id": str(upload.id), "status": upload.status, "execution_mode": executor},
+            status=status.HTTP_202_ACCEPTED,
         )
 
 

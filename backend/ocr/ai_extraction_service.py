@@ -886,9 +886,14 @@ def build_file_prompt(
     document_context: dict[str, Any] | None = None,
 ) -> str:
     """Build the new upload-file prompt; the legacy prompt remains above."""
+    continuation_part = bool(
+        document_context
+        and int(document_context.get("current_part", 1) or 1) > 1
+    )
+    prompt_header_fields = {} if continuation_part else header_fields
     field_lines = "\n".join(
         f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
-        for key, description in header_fields.items()
+        for key, description in prompt_header_fields.items()
     )
 
     if include_line_items:
@@ -904,12 +909,12 @@ def build_file_prompt(
         line_rules = "- Do not return line_items because no line-item fields were requested."
 
     date_rule = ""
-    if "invoice_date" in header_fields:
+    if "invoice_date" in prompt_header_fields:
         if source == "email":
             date_rule = "- If invoice_date is not explicitly present, return null. The backend assigns the email received date after extraction."
         else:
             date_rule = "- If invoice_date is not explicitly present, return null. The backend assigns today's date after extraction."
-    if "due_date" in header_fields:
+    if "due_date" in prompt_header_fields:
         date_rule += "\n- If due_date is not explicitly present, return null."
 
     if source == "email":
@@ -942,12 +947,17 @@ For continuation parts:
 - Do not repeat line items from earlier parts.
 """
 
+    header_section = (
+        f"Requested header fields:\n{field_lines}"
+        if prompt_header_fields
+        else "Continuation part: header fields are intentionally omitted; return only line_items."
+    )
+
     return f"""Extract business document data into the exact requested JSON schema.
 {source_instruction}
 {context_section}
 
-Requested header fields:
-{field_lines}
+{header_section}
 {line_section}
 Rules:
 - Respond with only one valid JSON object.
@@ -971,17 +981,24 @@ def build_email_prompt(
     *,
     email_body: str,
 ) -> str:
-    """Build the email prompt with vendor classification plus file rules."""
-    extraction_prompt = build_file_prompt(
-        header_fields,
-        line_fields,
-        include_line_items,
-        header_types,
-        line_types,
-        source="email",
+    """Build an email-only vendor-bill classification/extraction prompt."""
+    header_lines = "\n".join(
+        f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
+        for key, description in header_fields.items()
+    )
+    line_lines = "\n".join(
+        f'  - "{key}": {description}{_type_format_hint(line_types.get(key, "text"))}'
+        for key, description in line_fields.items()
+    )
+    line_section = (
+        f"Line-item fields:\n{line_lines}"
+        if include_line_items
+        else "No line-item fields were requested; return line_items as an empty array."
     )
 
     return f"""You are an email vendor-bill extraction assistant.
+Classify the message before extracting it; this email prompt is independent
+from the PDF/file-upload prompt.
 
 First classify the email:
 - Set "is_vendor_bill" to true only when the email contains clear billing, purchase, supply, charge, or payment intent and at least one specific product or service line.
@@ -991,8 +1008,22 @@ For a vendor bill, return one JSON object with "is_vendor_bill": true and place
 the extracted fields inside "data". The matched NetSuite vendor supplies vendor
 identity; do not replace it from email text.
 
-Apply this extraction contract to the email body:
-{extraction_prompt}
+For a vendor bill, extract the following fields from the email body.
+
+Requested header fields:
+{header_lines}
+
+{line_section}
+
+Rules:
+- Return exactly one JSON object with is_vendor_bill and data.
+- Set data to null when is_vendor_bill is false.
+- Use null for missing, ambiguous, or unsupported values.
+- Never invent, infer, calculate, or guess values.
+- Numeric fields must contain numbers only.
+- Dates must use YYYY-MM-DD format.
+- Extract every visible row in source order; do not merge, skip, duplicate, or summarize rows.
+- Do not treat ordinary conversation, follow-ups, enquiries, or delivery updates as bills.
 
 EMAIL BODY START
 {email_body}
@@ -1052,11 +1083,20 @@ class AIExtractor:
 
         header_keys = tuple(header_fields.keys())
         line_keys = tuple(line_fields.keys())
+        continuation_part = bool(
+            document_context
+            and int(document_context.get("current_part", 1) or 1) > 1
+        )
+        prompt_header_fields = {} if continuation_part else header_fields
+        prompt_header_types = {
+            key: value for key, value in header_types.items()
+            if key in prompt_header_fields
+        }
         schema = _build_schema(
-            header_fields,
+            prompt_header_fields,
             line_fields,
             include_line_items,
-            header_types,
+            prompt_header_types,
             line_types,
         )
         prompt = build_file_prompt(
@@ -1141,12 +1181,13 @@ class AIExtractor:
                     line_keys,
                 )
                 result = apply_calculated_values(result)
-                result = _apply_template_default_values(result, requested_fields)
-                result = apply_invoice_date_fallback(
-                    result,
-                    header_keys,
-                    source="file",
-                )
+                if not continuation_part:
+                    result = _apply_template_default_values(result, requested_fields)
+                    result = apply_invoice_date_fallback(
+                        result,
+                        header_keys,
+                        source="file",
+                    )
                 logger.info(
                     "AI EXTRACTION DEBUG | source=file | request_id=%s | "
                     "TEMPLATE-MAPPED RESULT:\n%s",

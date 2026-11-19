@@ -164,7 +164,7 @@ class CompanyDepartment(BaseModel):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        db_table = 'company_department'
+        db_table = 'department'
         constraints = [
             models.UniqueConstraint(
                 Lower('name'),

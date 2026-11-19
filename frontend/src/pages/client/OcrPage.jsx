@@ -1,6 +1,4 @@
 import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../../contexts/AuthContext.jsx'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
@@ -12,7 +10,7 @@ import { aiIntegrationApi } from '../../services/aiIntegration.js'
 import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandle.jsx'
 import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
-import { isCompanyAdminUser, isNetSuiteReauthJob } from '../../utils/netsuiteErrors.js'
+import { isNetSuiteReauthJob } from '../../utils/netsuiteErrors.js'
 import { getPreviewErrorMessage } from '../../utils/ocrPreviewError.js'
 import { preventOcrNumberStep, blurOcrNumberOnWheel } from '../../utils/ocrNumericInput.js'
 
@@ -881,10 +879,6 @@ function getFileCategory(file) {
 }
 
 export default function OcrPage() {
-  const navigate = useNavigate()
-  const { user } = useAuth()
-  const canManageEmailIntegration = isCompanyAdminUser(user)
-
   const clearSelectedFilesAfterExtraction = useCallback(() => {
     setSelectedFiles((current) => {
       current.forEach(({ previewUrl }) => {
@@ -906,6 +900,8 @@ export default function OcrPage() {
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
   const [results, setResults] = useState([])
+  const [currentBatchId, setCurrentBatchId] = useState(null)
+  const [retryingUploadId, setRetryingUploadId] = useState(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
   const [remotePreviewUrl, setRemotePreviewUrl] = useState(null)
@@ -2590,6 +2586,8 @@ useEffect(() => {
         throw new Error('OCR batch was created without a batch ID.')
       }
 
+      setCurrentBatchId(batchId)
+
       const usedTemplateConfig = payload?.requested_fields || selectedTemplate?.fields_config || null
       const initialFiles = Array.isArray(payload.files)
         ? payload.files.map((item) => ({
@@ -2701,6 +2699,69 @@ useEffect(() => {
       setError(detail)
     } finally {
       setProcessing(false)
+    }
+  }
+
+  const retryExistingExtraction = async () => {
+    const uploadId = activeResult?.upload_id
+    if (!uploadId || !currentBatchId || retryingUploadId || processing) return
+
+    setRetryingUploadId(uploadId)
+    setError('')
+    setData({})
+    setResults((current) => current.map((item) => (
+      item.upload_id === uploadId
+        ? { ...item, status: 'UPLOADED', data: null, error: null }
+        : item
+    )))
+
+    try {
+      await apiClient.post(`/ocr/extract/uploads/${uploadId}/retry/`)
+
+      const startedAt = Date.now()
+      const maxPollingMs = 30 * 60 * 1000
+      while (Date.now() - startedAt < maxPollingMs) {
+        const response = await apiClient.get(`/ocr/extract/batches/${currentBatchId}/`)
+        const batch = response?.data ?? {}
+        const files = Array.isArray(batch.files) ? batch.files : []
+        setResults(files)
+        setActiveIndex((current) => Math.min(current, Math.max(files.length - 1, 0)))
+
+        const allTerminal = files.length > 0 && files.every((item) =>
+          ['COMPLETED', 'FAILED'].includes(String(item.status || '').toUpperCase()),
+        )
+        if (allTerminal) {
+          const retriedFile = files.find((item) => item.upload_id === uploadId)
+          const retryLimitReached = retriedFile?.status === 'FAILED' &&
+            Number(retriedFile?.retry_count || 0) >= Number(retriedFile?.retry_limit)
+          if (retryLimitReached) {
+            window.alert(
+              'Internal issue ki wajah se extraction complete nahi ho saki. ' +
+              'Kripya thodi der baad dobara try karein.',
+            )
+            window.location.reload()
+            return
+          }
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+      }
+    } catch (err) {
+      if (err?.response?.status === 429) {
+        window.alert(
+          'Internal issue ki wajah se extraction complete nahi saki. ' +
+          'Kripya thodi der baad dobara try karein.',
+        )
+        window.location.reload()
+        return
+      }
+      setError(
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Could not retry this document.',
+      )
+    } finally {
+      setRetryingUploadId(null)
     }
   }
   const activeSelectedItem = selectedFiles.find(({ file }) => {
@@ -2920,12 +2981,6 @@ const goNext = () => {
                   Choose Files
                 </Button>
 
-                {canManageEmailIntegration && (
-                  <Button type="button" onClick={() => navigate('/app/integrations/email')}>
-                    Email
-                  </Button>
-                )}
-
                 {!!selectedFiles.length && (
                   <>
                     <Button
@@ -3141,17 +3196,43 @@ const goNext = () => {
                     {activeResult?.filename || activeFile?.name || 'Waiting for extraction'}
                   </p>
                 </div>
-                {activeResult?.status && (
-                  <span className={`shrink-0 text-xs font-semibold uppercase tracking-wide ${statusClass(activeResult.status)}`}>
-                    {statusLabel(activeResult.status)}
-                  </span>
-                )}
+                <div className="flex shrink-0 items-center gap-2">
+                  {activeResult?.status === 'FAILED' && (
+                    <button
+                      type="button"
+                      onClick={retryExistingExtraction}
+                      disabled={Boolean(retryingUploadId) || processing || (
+                        Number.isFinite(Number(activeResult?.retry_limit)) &&
+                        Number(activeResult?.retry_count || 0) >= Number(activeResult.retry_limit)
+                      )}
+                      title={Number(activeResult?.retry_count || 0) >= Number(activeResult?.retry_limit)
+                        ? 'Retry limit reached for this upload'
+                        : undefined}
+                      className="rounded-lg border border-[var(--color-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {retryingUploadId === activeResult?.upload_id
+                        ? 'Retrying…'
+                        : Number(activeResult?.retry_count || 0) >= Number(activeResult?.retry_limit)
+                          ? 'Retry limit reached'
+                          : 'Retry extraction'}
+                    </button>
+                  )}
+                  {activeResult?.status && (
+                    <span className={`text-xs font-semibold uppercase tracking-wide ${statusClass(activeResult.status)}`}>
+                      {statusLabel(activeResult.status)}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="min-h-0 flex-1 overflow-auto bg-[var(--color-surface)] p-4">
                 {activeResult ? (
                   activeResult.status === 'FAILED' ? (
                     <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                       {activeResult.error || 'OCR extraction failed for this file.'}
+                    </div>
+                  ) : activeResult.batch_status && activeResult.batch_status !== 'COMPLETED' ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                      Extraction is still in progress. The result will appear only after the complete document/batch finishes.
                     </div>
                   ) : (
                     <>

@@ -24,6 +24,15 @@ const FILTERS = [
 
 const PAGE_SIZE_OPTIONS = [10, 50, 100]
 const HISTORY_PAGE_SIZE_STORAGE_KEY = 'data_extraction_history_page_size'
+const DATE_RANGE_OPTIONS = [
+  { value: 'custom', label: 'Custom' },
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'last-7-days', label: 'Last 7 days' },
+  { value: 'last-30-days', label: 'Last 30 days' },
+  { value: 'last-week', label: 'Last week' },
+  { value: 'last-month', label: 'Last month' },
+]
 
 function getSavedPageSize() {
   const savedValue = Number(sessionStorage.getItem(HISTORY_PAGE_SIZE_STORAGE_KEY))
@@ -61,6 +70,61 @@ function formatDate(value) {
   if (!value) return '--'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '--' : formatDateTime(date)
+}
+
+function toIsoDate(value) {
+  const date = new Date(value)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatDateRangeValue(value) {
+  if (!value) return ''
+  const [year, month, day] = value.split('-')
+  return year && month && day ? `${day}/${month}/${year}` : value
+}
+
+function getDateRangePreset(value) {
+  const today = new Date()
+  const end = toIsoDate(today)
+  const startDate = new Date(today)
+
+  switch (value) {
+    case 'yesterday':
+      startDate.setDate(today.getDate() - 1)
+      return { from: toIsoDate(startDate), to: toIsoDate(startDate) }
+    case 'last-7-days':
+      startDate.setDate(today.getDate() - 6)
+      return { from: toIsoDate(startDate), to: end }
+    case 'last-30-days':
+      startDate.setDate(today.getDate() - 29)
+      return { from: toIsoDate(startDate), to: end }
+    case 'last-week': {
+      const day = today.getDay()
+      const monday = new Date(today)
+      monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1))
+      const previousMonday = new Date(monday)
+      previousMonday.setDate(monday.getDate() - 7)
+      const previousSunday = new Date(monday)
+      previousSunday.setDate(monday.getDate() - 1)
+      return { from: toIsoDate(previousMonday), to: toIsoDate(previousSunday) }
+    }
+    case 'last-month': {
+      const firstOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+      const lastOfPreviousMonth = new Date(firstOfThisMonth)
+      lastOfPreviousMonth.setDate(0)
+      return {
+        from: toIsoDate(new Date(lastOfPreviousMonth.getFullYear(), lastOfPreviousMonth.getMonth(), 1)),
+        to: toIsoDate(lastOfPreviousMonth),
+      }
+    }
+    case 'today':
+      return { from: end, to: end }
+    default:
+      return { from: '', to: '' }
+  }
 }
 
 function historyRecordLabel(record) {
@@ -106,6 +170,15 @@ export default function DataExtractionHistoryPage() {
   const { user } = useAuth()
   const canDeleteHistory = isCompanyAdminUser(user)
   const [filter, setFilter] = useState('ALL')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [dateRangeOpen, setDateRangeOpen] = useState(false)
+  const [dateRangePreset, setDateRangePreset] = useState('custom')
+  const [draftDateFrom, setDraftDateFrom] = useState('')
+  const [draftDateTo, setDraftDateTo] = useState('')
+  const [dateRangeError, setDateRangeError] = useState('')
+  const [templateId, setTemplateId] = useState('')
+  const [templates, setTemplates] = useState([])
   const [records, setRecords] = useState([])
   const [pagination, setPagination] = useState({ count: 0, offset: 0, limit: 10, nextOffset: null, previousOffset: null })
   const [pageSize, setPageSize] = useState(getSavedPageSize)
@@ -135,6 +208,9 @@ export default function DataExtractionHistoryPage() {
       if (filter !== 'ALL') {
         params.set('status', filter)
       }
+      if (dateFrom) params.set('date_from', dateFrom)
+      if (dateTo) params.set('date_to', dateTo)
+      if (templateId) params.set('template_id', templateId)
 
       const response = await apiClient.get(
         `/ocr/history/?${params.toString()}`,
@@ -155,11 +231,56 @@ export default function DataExtractionHistoryPage() {
     } finally {
       setLoading(false)
     }
-  }, [filter, pageSize])
+  }, [dateFrom, dateTo, filter, pageSize, templateId])
 
   useEffect(() => {
     loadHistory()
   }, [loadHistory])
+
+  useEffect(() => {
+    let cancelled = false
+    apiClient.get('/ocr/extraction-templates/')
+      .then((response) => {
+        const payload = response?.data?.data ?? response?.data ?? []
+        if (!cancelled) setTemplates(Array.isArray(payload) ? payload : [])
+      })
+      .catch((err) => {
+        console.warn('Could not load OCR extraction templates for history filters:', err)
+        if (!cancelled) setTemplates([])
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  const clearFilters = () => {
+    setFilter('ALL')
+    setDateFrom('')
+    setDateTo('')
+    setDraftDateFrom('')
+    setDraftDateTo('')
+    setDateRangePreset('custom')
+    setDateRangeOpen(false)
+    setDateRangeError('')
+    setTemplateId('')
+  }
+
+  const openDateRange = () => {
+    setDraftDateFrom(dateFrom)
+    setDraftDateTo(dateTo)
+    setDateRangePreset('custom')
+    setDateRangeError('')
+    setDateRangeOpen(true)
+  }
+
+  const applyDateRange = () => {
+    if (draftDateFrom && draftDateTo && draftDateFrom > draftDateTo) {
+      setDateRangeError('From date cannot be later than To date.')
+      return
+    }
+    setDateFrom(draftDateFrom)
+    setDateTo(draftDateTo)
+    setDateRangeOpen(false)
+    setDateRangeError('')
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -590,6 +711,76 @@ export default function DataExtractionHistoryPage() {
                 ))}
               </select>
 
+               <div className="relative">
+                 <button
+                   type="button"
+                   onClick={openDateRange}
+                   disabled={working}
+                   aria-label="Choose history date range"
+                   aria-expanded={dateRangeOpen}
+                   className="min-w-56 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-left text-sm text-[var(--color-ink)] outline-none transition-colors hover:bg-[var(--color-canvas)] disabled:cursor-not-allowed disabled:opacity-50"
+                 >
+                   {dateFrom || dateTo
+                     ? `${formatDateRangeValue(dateFrom) || '—'} - ${formatDateRangeValue(dateTo) || '—'}`
+                     : 'Select date range'}
+                 </button>
+                 {dateRangeOpen && (
+                   <div className="absolute right-0 z-30 mt-2 w-80 rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-xl">
+                     <div className="grid grid-cols-2 gap-3">
+                       <div className="col-span-2">
+                         <label className="text-xs font-medium text-[var(--color-muted)]" htmlFor="history-date-range-preset">Date range</label>
+                         <select
+                           id="history-date-range-preset"
+                           value={dateRangePreset}
+                           onChange={(event) => {
+                             const value = event.target.value
+                             setDateRangePreset(value)
+                             if (value !== 'custom') {
+                               const range = getDateRangePreset(value)
+                               setDraftDateFrom(range.from)
+                               setDraftDateTo(range.to)
+                             }
+                           }}
+                           className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]"
+                         >
+                           {DATE_RANGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                         </select>
+                       </div>
+                       <label className="text-xs font-medium text-[var(--color-muted)]" htmlFor="history-date-from">
+                         Start
+                         <input id="history-date-from" type="date" value={draftDateFrom} onChange={(event) => { setDateRangePreset('custom'); setDraftDateFrom(event.target.value) }} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-sm font-normal text-[var(--color-ink)]" />
+                       </label>
+                       <label className="text-xs font-medium text-[var(--color-muted)]" htmlFor="history-date-to">
+                         End
+                         <input id="history-date-to" type="date" value={draftDateTo} onChange={(event) => { setDateRangePreset('custom'); setDraftDateTo(event.target.value) }} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-sm font-normal text-[var(--color-ink)]" />
+                       </label>
+                     </div>
+                     {dateRangeError && <p className="mt-3 text-xs text-red-600">{dateRangeError}</p>}
+                     <div className="mt-4 flex justify-end gap-2">
+                       <Button type="button" intent="secondary" onClick={() => setDateRangeOpen(false)}>Cancel</Button>
+                       <Button type="button" onClick={applyDateRange}>Apply</Button>
+                     </div>
+                   </div>
+                 )}
+               </div>
+               <select
+                 value={templateId}
+                 onChange={(event) => setTemplateId(event.target.value)}
+                 disabled={working}
+                 aria-label="Filter by extraction template"
+                 className="max-w-56 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]"
+               >
+                 <option value="">All Templates</option>
+                 {templates.map((template) => (
+                   <option key={template.id} value={template.id}>{template.name}</option>
+                 ))}
+               </select>
+               {(dateFrom || dateTo || templateId || filter !== 'ALL') && (
+                 <Button type="button" intent="secondary" onClick={clearFilters} disabled={working}>
+                   Clear Filters
+                 </Button>
+               )}
+
               <div className="relative">
                 <button
                   type="button"
@@ -727,11 +918,12 @@ export default function DataExtractionHistoryPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1900px]">
-                <div className="grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_180px_150px_150px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+               <div className="min-w-[2100px]">
+                 <div className="grid grid-cols-[44px_100px_minmax(220px,1fr)_180px_100px_90px_200px_70px_120px_170px_180px_150px_150px_56px] border-b border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                   <div />
                   <div>S.No.</div>
                   <div>File / Batch</div>
+                  <div>Template</div>
                   <div>Type</div>
                   <div>Mode</div>
                   {/* <div>Vendor Email</div> */}
@@ -756,7 +948,7 @@ export default function DataExtractionHistoryPage() {
                     return (
                       <div
                         key={item.batch_id}
-                        className={`grid grid-cols-[44px_100px_minmax(220px,1fr)_100px_90px_200px_70px_120px_170px_180px_150px_150px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
+                         className={`grid grid-cols-[44px_100px_minmax(220px,1fr)_180px_100px_90px_200px_70px_120px_170px_180px_150px_150px_56px] items-center px-4 py-4 ${selected ? 'bg-[var(--color-primary-soft)]' : ''}`}
                       >
                         <div>
                           <input
@@ -783,6 +975,13 @@ export default function DataExtractionHistoryPage() {
                                 ? `${item.validated_count || 0}/${item.file_count} validated`
                                 : 'Single file'}
                           </p>
+                        </div>
+
+                        <div
+                          className="truncate pr-2 text-sm text-[var(--color-muted)]"
+                          title={item.template_name || ''}
+                        >
+                          {item.template_name || '--'}
                         </div>
 
                         <div className="text-sm text-[var(--color-muted)]">

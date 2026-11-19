@@ -6,7 +6,7 @@ from django.conf import settings
 from mail_integration.exceptions import EmailIntegrationStateError
 
 HEARTBEAT_KEY = "agsuite:mail-integration:beat-worker-heartbeat"
-HEARTBEAT_TTL_SECONDS = 90
+HEARTBEAT_TTL_SECONDS = 1800
 
 
 def _broker_redis():

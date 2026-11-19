@@ -30,8 +30,22 @@ def purge_expired_operational_audit_logs():
 
 @shared_task
 def purge_expired_notifications():
+    """Fallback cleanup for delayed tasks missed during worker downtime."""
     deleted, _ = Notification.objects.filter(
         delete_after__isnull=False,
         delete_after__lte=timezone.now(),
     ).delete()
     return {"deleted": deleted}
+
+
+@shared_task
+def purge_notification_after_undo(notification_id):
+    """Permanently delete one notification after its undo window."""
+    now = timezone.now()
+    deleted, _ = Notification.objects.filter(
+        pk=notification_id,
+        deleted_at__isnull=False,
+        delete_after__isnull=False,
+        delete_after__lte=now,
+    ).delete()
+    return {"deleted": deleted, "notification_id": str(notification_id)}

@@ -42,18 +42,15 @@ OCR_PDF_WHOLE_DOCUMENT: bool = config(
 
 #: Max pages per chunk PDF sent to the AI provider in one request.
 OCR_PDF_CHUNK_PAGES: int = config(
-    'OCR_PDF_CHUNK_PAGES', default=10, cast=int
+    'OCR_PDF_CHUNK_PAGES', default=5, cast=int
 )
 
 # ------------------------------------------------------------------
-# Gemini API
+# AI provider API
 # ------------------------------------------------------------------
 
-#: Gemini model name for OCR extraction.
-# OCR_GEMINI_MODEL: str = config('OCR_GEMINI_MODEL', default='gemini-2.5-flash')
-
-#: Request timeout in seconds for Gemini API calls.
-OCR_TIMEOUT: int = config('OCR_TIMEOUT', default=180, cast=int)
+#: Request timeout in seconds for AI provider calls.
+OCR_TIMEOUT: int = config('OCR_TIMEOUT', default=300, cast=int)
 
 #: Maximum number of retry attempts on failure.
 OCR_MAX_RETRIES: int = config('OCR_MAX_RETRIES', default=3, cast=int)
@@ -61,14 +58,11 @@ OCR_MAX_RETRIES: int = config('OCR_MAX_RETRIES', default=3, cast=int)
 #: Base delay in seconds for exponential backoff.
 OCR_RETRY_DELAY: float = config('OCR_RETRY_DELAY', default=1.0, cast=float)
 
-#: Maximum image size in MB allowed for Gemini processing.
+#: Maximum image size in MB allowed for AI processing.
 # OCR_MAX_IMAGE_SIZE_MB: int = config('OCR_MAX_IMAGE_SIZE_MB', default=20, cast=int)
 
 # #: Confidence threshold below which extraction is considered unreliable.
 # OCR_CONFIDENCE_THRESHOLD: float = config('OCR_CONFIDENCE_THRESHOLD', default=0.5, cast=float)
-
-# #: Master switch to enable/disable Gemini extraction.
-# OCR_ENABLE_GEMINI: bool = config('OCR_ENABLE_GEMINI', default=False, cast=bool)
 
 OCR_MAX_UPLOAD_SIZE_MB: int = config('OCR_MAX_UPLOAD_SIZE_MB',default=10,cast=int)
 
@@ -78,31 +72,31 @@ OCR_MAX_ZIP_SIZE_MB: int = config('OCR_MAX_ZIP_SIZE_MB',default=50,cast=int)
 
 OCR_MAX_ZIP_UNCOMPRESSED_MB: int = config('OCR_MAX_ZIP_UNCOMPRESSED_MB',default=100,cast=int)
 
-# Maximum number of Gemini calls that may be active across all workers.
-OCR_GEMINI_MAX_CONCURRENCY: int = config('OCR_GEMINI_MAX_CONCURRENCY',default=2,cast=int)
+# Maximum number of AI calls active for one company/provider/model scope.
+OCR_AI_MAX_CONCURRENCY: int = config('OCR_AI_MAX_CONCURRENCY', default=5, cast=int)
 
 # Application-side rolling requests-per-minute ceiling.
-# Keep this BELOW your actual Gemini project quota.
-OCR_GEMINI_TARGET_RPM: int = config(
-    'OCR_GEMINI_TARGET_RPM',
-    default=8,
+# Keep this BELOW the configured provider account quota for one scope.
+OCR_AI_TARGET_RPM: int = config(
+    'OCR_AI_TARGET_RPM',
+    default=20,
     cast=int,
 )
 
 # Lease for the distributed concurrency slot.
-OCR_GEMINI_CONCURRENCY_LEASE_SECONDS: int = config(
-    'OCR_GEMINI_CONCURRENCY_LEASE_SECONDS',
-    default=180,
+OCR_AI_CONCURRENCY_LEASE_SECONDS: int = config(
+    'OCR_AI_CONCURRENCY_LEASE_SECONDS',
+    default=600,
     cast=int,
 )
-OCR_SINGLE_MAX_PAGES: int = config('OCR_SINGLE_MAX_PAGES', default=3, cast=int)
+OCR_SINGLE_MAX_PAGES: int = config('OCR_SINGLE_MAX_PAGES', default=5, cast=int)
 # Catalyst AppSail ends every request after 30s, so on that platform the inline
 # attempt must hand over to background processing well before that.
 ON_CATALYST: bool = bool(os.environ.get("X_ZOHO_CATALYST_LISTEN_PORT"))
 
 OCR_SINGLE_TIME_BUDGET_SECONDS: int = config(
     'OCR_SINGLE_TIME_BUDGET_SECONDS',
-    default=20 if ON_CATALYST else 180,
+    default=20 if ON_CATALYST else 300,
     cast=int,
 )
 # true = never process inline: accept the file and let the client poll.
@@ -127,8 +121,12 @@ OCR_BACKGROUND_WORKERS: int = config('OCR_BACKGROUND_WORKERS', default=2, cast=i
 # Threads for in-process NetSuite batch jobs (kept separate from OCR so a long
 # posting batch never starves OCR).
 NETSUITE_BACKGROUND_WORKERS: int = config('NETSUITE_BACKGROUND_WORKERS', default=1, cast=int)
-OCR_JOB_LEASE_SECONDS: int = config('OCR_JOB_LEASE_SECONDS', default=300, cast=int)
+OCR_JOB_LEASE_SECONDS: int = config('OCR_JOB_LEASE_SECONDS', default=600, cast=int)
 OCR_JOB_MAX_RETRIES: int = config('OCR_JOB_MAX_RETRIES', default=5, cast=int)
+
+# Limits for explicit actions initiated from the OCR review screen. These are
+# separate from automatic Celery/provider retries and are cumulative per upload.
+OCR_MANUAL_RETRY_LIMIT: int = config('OCR_MANUAL_RETRY_LIMIT', default=4, cast=int)
 # Retry back-off: base * 2**attempt seconds (+ jitter), capped at 15 minutes.
 OCR_JOB_RETRY_BASE_SECONDS: float = config('OCR_JOB_RETRY_BASE_SECONDS', default=15, cast=float)
 # How long a queued job may sit unclaimed before recovery re-dispatches it.

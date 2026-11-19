@@ -305,6 +305,10 @@ class OCRUpload(models.Model):
     lease_expires_at = models.DateTimeField(null=True, blank=True)
     attempt_count = models.PositiveSmallIntegerField(default=0)
 
+    # User-triggered extraction controls. These are intentionally separate
+    # from attempt_count, which also includes automatic worker recovery/retries.
+    retry_count = models.PositiveSmallIntegerField(default=0)
+
     # Earliest time a retry may start (None = immediately).
     next_attempt_at = models.DateTimeField(null=True, blank=True)
     
@@ -350,6 +354,54 @@ class OCRUpload(models.Model):
 
     def __str__(self) -> str:
         return f'OCRUpload {self.id} ({self.original_filename})'
+
+
+class OCRExtractionPart(models.Model):
+    """Durable state for one PDF chunk within an OCR upload."""
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        PROCESSING = "PROCESSING", "Processing"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    upload = models.ForeignKey(
+        OCRUpload,
+        on_delete=models.CASCADE,
+        related_name="extraction_parts",
+    )
+    part_number = models.PositiveIntegerField()
+    page_start = models.PositiveIntegerField()
+    page_end = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    result_json = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "ocr_extraction_part"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["upload", "part_number"],
+                name="ocr_part_upload_number_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["upload", "status"], name="ocr_part_upload_status_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"OCR part {self.part_number} for {self.upload_id}"
 
 
 class DocumentType(models.TextChoices):
@@ -506,7 +558,7 @@ class OCRDocumentVersion(models.Model):
             ),
         ]
 
-    # Structured extraction fields returned by the approved Gemini notebook schema.
+    # Structured extraction fields returned by the configured AI schema.
     # Nullable because a document may legitimately omit any of these values.
     invoice_number = models.CharField(max_length=255, null=True, blank=True)
     invoice_date = models.DateField(null=True, blank=True)
@@ -689,9 +741,9 @@ class AIProviderModel(models.Model):
     def __str__(self) -> str:
         return f"{self.provider_name} → {self.model_name}"
 
-class OCRGeminiLease(models.Model):
+class OCRAILimitLease(models.Model):
     """
-    PostgreSQL-backed fallback for the Gemini concurrency / RPM limiter.
+    PostgreSQL-backed fallback for the AI concurrency / RPM limiter.
 
     Used only when Redis is not configured or unreachable. One row is one
     "request start": ``created_at`` drives the rolling 60-second RPM window and
@@ -700,12 +752,23 @@ class OCRGeminiLease(models.Model):
     """
 
     token = models.CharField(max_length=128, primary_key=True)
+    scope_key = models.CharField(max_length=64, db_index=True)
     created_at = models.DateTimeField(db_index=True)
     lease_expires_at = models.DateTimeField(db_index=True)
     released_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        db_table = "ocr_gemini_lease"
+        db_table = "ocr_ai_limit_lease"
+        indexes = [
+            models.Index(
+                fields=["scope_key", "lease_expires_at"],
+                name="ocr_ai_lease_scope_active_idx",
+            ),
+            models.Index(
+                fields=["scope_key", "created_at"],
+                name="ocr_ai_lease_scope_recent_idx",
+            ),
+        ]
 
 class OCRStoredFile(models.Model):
     """File contents when ``OCR_STORAGE_BACKEND`` is ``db`` (see ocr.storage)."""

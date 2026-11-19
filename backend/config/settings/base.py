@@ -190,24 +190,11 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-AI_PROVIDER = config("AI_PROVIDER", default="gemini")
-
-GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
-
-GEMINI_MODEL = config(
-    "GEMINI_MODEL",
-    default="gemini-2.5-flash",
-)
-
-OPENAI_API_KEY = config(
-    "OPENAI_API_KEY",
-    default="",
-)
-
-OPENAI_MODEL = config(
-    "OPENAI_MODEL",
-    default="gpt-4o-mini",
-)
+# AI selection is company-scoped in ``ocr.AIConfiguration``. These optional
+# generic defaults are retained only for non-OCR integrations; OCR never
+# assumes a specific provider or model.
+AI_PROVIDER = config("AI_PROVIDER", default="")
+AI_MODEL = config("AI_MODEL", default="")
 
 # External verification is server-only; never pass either key to the frontend.
 ABSTRACT_EMAIL_VALIDATION_API_KEY = config(
@@ -272,7 +259,7 @@ CELERY_TASK_PUBLISH_RETRY_POLICY = {
 # ------------------------------------------------------------------
 # Redis (OPTIONAL)
 # ------------------------------------------------------------------
-# Redis is only an accelerator (OCR result cache, extraction lock, Gemini rate
+# Redis is only an accelerator (OCR result cache, extraction lock, AI quota
 # limiter). The app must run without it. Set REDIS_URL to enable it; if unset,
 # it falls back to CELERY_BROKER_URL when that is a redis:// URL (backward
 # compatible). Set REDIS_ENABLED=false to switch Redis usage off completely.

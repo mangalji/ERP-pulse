@@ -13,7 +13,7 @@ from common.crypto import EncryptedTextField
 class EmailIntegration(models.Model):
     """One OAuth-connected mailbox belonging to a company."""
 
-    DEFAULT_SYNC_INTERVAL_MINUTES = 1
+    DEFAULT_SYNC_INTERVAL_MINUTES = 60
 
     class Provider(models.TextChoices):
         GOOGLE = "GOOGLE", "Google Gmail"

@@ -1,4 +1,4 @@
-"""Persistence helpers for the approved Gemini OCR extraction schema."""
+"""Persistence helpers for the configured AI OCR extraction schema."""
 
 from __future__ import annotations
 
@@ -76,11 +76,11 @@ def _remove_customer_name_key(value):
 def normalize_extraction_payload(result: dict) -> dict:
     """Build the stable DB payload without dropping the complete JSON response."""
     if not isinstance(result, dict):
-        raise ValueError('Gemini extraction result must be a JSON object.')
+        raise ValueError('AI extraction result must be a JSON object.')
 
     data = result.get('data', result)
     if not isinstance(data, dict):
-        raise ValueError('Gemini extraction data must be a JSON object.')
+        raise ValueError('AI extraction data must be a JSON object.')
 
     return {
         'invoice_number': _nullable_string(data.get('invoice_number')),

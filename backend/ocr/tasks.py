@@ -2,8 +2,8 @@
 OCR processing tasks.
 
 Existing IDP pipeline tasks are preserved.
-The OCR batch processor uses the approved notebook Gemini extractor,
-Redis quota limiting, and per-file persistence.
+The OCR batch processor uses the configured AI provider, scoped quota
+limiting, and per-file persistence.
 """
 from __future__ import annotations
 import sys
@@ -13,6 +13,7 @@ from common.timing import timed_stage
 import time
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
 import logging
@@ -37,15 +38,35 @@ from ocr.exceptions import (
     InvalidExtractionResultException,
     OCRTimeBudgetExceeded,
 )
-from ocr.models import OCRBatch, OCRDocument, OCRUpload
+from ocr.models import OCRBatch, OCRDocument, OCRExtractionPart, OCRUpload
 from ocr.ai_extraction_service import ai_extractor, get_standard_field_catalog
 from ocr.adapters import get_adapter, PDFAdapter
 from common.infra import get_redis_client, report_redis_failure, warn_throttled
 from ocr.storage import local_file_path
 from ocr.leases import LeaseHeartbeat, claim_upload, lease_seconds, new_owner
-from ocr.services.gemini_quota_limiter import GeminiQuotaLimiter
+from ocr.services.ai_quota_limiter import AIQuotaLimiter
 
 logger = logging.getLogger(__name__)
+
+
+def _ai_scope_for_upload(upload) -> tuple[str, str, str] | None:
+    """Return the active company/provider/model scope for one upload."""
+    company_id = getattr(getattr(upload, "batch", None), "company_id", None)
+    if not company_id:
+        return None
+
+    from ocr.models import AIConfiguration
+
+    configuration = (
+        AIConfiguration.objects
+        .filter(company_id=company_id, is_active=True)
+        .values("provider", "model")
+        .first()
+    )
+    if not configuration or not configuration.get("provider") or not configuration.get("model"):
+        return None
+
+    return str(company_id), str(configuration["provider"]), str(configuration["model"])
 
 OCR_EXTRACTION_LOCK_TTL_SECONDS = getattr(
     settings,
@@ -108,7 +129,47 @@ def _mark_upload_failed(upload, reason: str, code: str = "") -> None:
         update_fields.append("processing_duration_ms")
 
     upload.save(update_fields=update_fields)
+
+    # Keep the source PDF available while the user still has a permitted
+    # manual retry. Once the final retry has failed, there is no future OCR
+    # operation that can use the source, so remove the PDF bytes and chunk
+    # rows while retaining the lightweight FAILED upload metadata for the UI.
+    manual_retry_limit = int(getattr(settings, "OCR_MANUAL_RETRY_LIMIT", 4))
+    if getattr(upload, "retry_count", 0) >= manual_retry_limit:
+        _discard_failed_upload_source(upload)
+
     _refresh_batch_status(upload.batch_id)
+
+
+def _discard_failed_upload_source(upload) -> None:
+    """Remove temporary source/chunk data after a final failed retry."""
+
+    try:
+        OCRExtractionPart.objects.filter(upload_id=upload.id).delete()
+
+        file_name = getattr(upload.file, "name", "")
+        if file_name:
+            try:
+                upload.file.storage.delete(file_name)
+            except Exception:  # noqa: BLE001 - cleanup must not hide failure state
+                logger.exception(
+                    "Could not delete failed OCR source file — upload=%s",
+                    upload.id,
+                )
+
+        # Keep the OCRUpload row and failure metadata so the batch/UI can
+        # display the final failure, but detach the source file from it.
+        upload.file = ""
+        upload.save(update_fields=["file", "updated_at"])
+        logger.info(
+            "Discarded failed OCR source and extraction parts — upload=%s",
+            upload.id,
+        )
+    except Exception:  # noqa: BLE001 - cleanup must not mask OCR failure
+        logger.exception(
+            "Failed to discard temporary OCR source data — upload=%s",
+            getattr(upload, "id", None),
+        )
 
 
 def _merge_page_extraction_results(page_results: list[dict]) -> dict:
@@ -208,7 +269,7 @@ def _split_pdf_into_chunks(upload, original_path) -> tuple[list[str], int] | Non
     from ocr.pdf_processor import pdf_processor
     from ocr.exceptions import PDFTooLargeException
 
-    chunk_size = max(1, getattr(settings, "OCR_PDF_CHUNK_PAGES", 10))
+    chunk_size = max(1, getattr(settings, "OCR_PDF_CHUNK_PAGES", 5))
 
     try:
         total_pages = pdf_processor.get_page_count(original_path)
@@ -234,6 +295,25 @@ def _split_pdf_into_chunks(upload, original_path) -> tuple[list[str], int] | Non
         original_path,
     )
     return [str(p) for p in chunks], total_pages
+
+
+def _ensure_extraction_parts(upload, *, total_parts: int, chunk_size: int, total_pages: int):
+    """Create stable part rows so retries can target only failed chunks."""
+    parts = []
+    for part_number in range(1, total_parts + 1):
+        page_start = ((part_number - 1) * chunk_size) + 1
+        page_end = min(page_start + chunk_size - 1, total_pages)
+        part, _ = OCRExtractionPart.objects.get_or_create(
+            upload=upload,
+            part_number=part_number,
+            defaults={"page_start": page_start, "page_end": page_end},
+        )
+        if part.page_start != page_start or part.page_end != page_end:
+            part.page_start = page_start
+            part.page_end = page_end
+            part.save(update_fields=["page_start", "page_end", "updated_at"])
+        parts.append(part)
+    return parts
 
 
 @timed_stage("ocr.prepare_pages")
@@ -358,7 +438,7 @@ def _extract_single_page(
             retry_delay = min(3.0, remaining_after_failure - 2.0)
 
             logger.warning(
-                "Retrying Single OCR Gemini request — "
+                "Retrying Single OCR AI request — "
                 "upload=%s page=%s attempt=%d/%d delay=%.1fs reason=%s",
                 upload.id,
                 page_index,
@@ -370,7 +450,7 @@ def _extract_single_page(
             time.sleep(retry_delay)
 
     if result is None:
-        raise GeminiConnectionException("Gemini OCR did not return a result.")
+        raise GeminiConnectionException("AI OCR did not return a result.")
 
     return result
 
@@ -403,50 +483,155 @@ def _perform_ocr_extraction(
             )
             page_results = []
             ai_duration_ms = 0.0
-            chunk_size = max(1, int(getattr(settings, "OCR_PDF_CHUNK_PAGES", 10)))
+            chunk_size = max(1, int(getattr(settings, "OCR_PDF_CHUNK_PAGES", 5)))
             total_parts = len(page_paths) if is_chunked_pdf else 1
-            previous_header_context: dict[str, Any] = {}
-            previous_line_item_count = 0
+            if is_chunked_pdf and deadline_monotonic is None and total_parts > 1:
+                # Chunk PDFs are independent requests. Run them concurrently,
+                # while keeping the result list in source-page order for the
+                # deterministic merge below. The scoped AI limiter remains the
+                # final guard on company/provider/model concurrency.
+                parts = _ensure_extraction_parts(
+                    upload,
+                    total_parts=total_parts,
+                    chunk_size=chunk_size,
+                    total_pages=total_pages,
+                )
+                completed_results = {
+                    part.part_number: part.result_json
+                    for part in parts
+                    if part.status == OCRExtractionPart.Status.COMPLETED
+                    and isinstance(part.result_json, dict)
+                }
+                max_workers = min(
+                    total_parts,
+                    max(1, int(getattr(settings, "OCR_AI_MAX_CONCURRENCY", 1))),
+                )
 
-            for page_index, page_path in enumerate(page_paths, start=1):
-                document_context = None
-                if is_chunked_pdf:
-                    page_start = ((page_index - 1) * chunk_size) + 1
+                def extract_chunk(item):
+                    part_index, part_path = item
+                    part = parts[part_index - 1]
+                    page_start = ((part_index - 1) * chunk_size) + 1
                     page_end = min(page_start + chunk_size - 1, total_pages)
+                    if part_index in completed_results:
+                        return part_index, completed_results[part_index], 0.0
+                    part.status = OCRExtractionPart.Status.PROCESSING
+                    part.started_at = timezone.now()
+                    part.attempt_count = (part.attempt_count or 0) + 1
+                    part.error = ""
+                    part.save(update_fields=[
+                        "status", "started_at", "attempt_count", "error", "updated_at",
+                    ])
                     document_context = {
                         "document_id": str(upload.id),
                         "total_pages": total_pages,
                         "total_parts": total_parts,
-                        "current_part": page_index,
+                        "current_part": part_index,
                         "current_page_range": {
                             "start": page_start,
                             "end": page_end,
                         },
-                        "previously_extracted_line_item_count": previous_line_item_count,
-                        "previous_header_context": previous_header_context,
+                        "previously_extracted_line_item_count": 0,
+                        "previous_header_context": {},
                     }
-                ai_started = time.perf_counter()
-                result = _extract_single_page(
-                    upload,
-                    page_path,
-                    requested_fields,
-                    page_index,
-                    deadline_monotonic,
-                    document_context=document_context,
-                )
-                ai_duration_ms += (time.perf_counter() - ai_started) * 1000
-                _validate_extraction_result(result, page_index=page_index)
-                page_results.append(result)
+                    started = time.perf_counter()
+                    try:
+                        result = _extract_single_page(
+                            upload,
+                            part_path,
+                            requested_fields,
+                            part_index,
+                            None,
+                            document_context=document_context,
+                        )
+                    except Exception as exc:
+                        part.status = OCRExtractionPart.Status.FAILED
+                        part.error = str(exc)[:5000]
+                        part.save(update_fields=["status", "error", "updated_at"])
+                        raise
+                    duration_ms = (time.perf_counter() - started) * 1000
+                    try:
+                        _validate_extraction_result(result, page_index=part_index)
+                    except Exception as exc:
+                        part.status = OCRExtractionPart.Status.FAILED
+                        part.error = str(exc)[:5000]
+                        part.save(update_fields=["status", "error", "updated_at"])
+                        raise
+                    part.status = OCRExtractionPart.Status.COMPLETED
+                    part.result_json = result
+                    part.completed_at = timezone.now()
+                    part.error = ""
+                    part.save(update_fields=[
+                        "status", "result_json", "completed_at", "error", "updated_at",
+                    ])
+                    logger.info(
+                        "OCR PDF chunk completed — upload=%s part=%d/%d pages=%d-%d duration_ms=%.2f",
+                        upload.id,
+                        part_index,
+                        total_parts,
+                        page_start,
+                        page_end,
+                        duration_ms,
+                    )
+                    return part_index, result, duration_ms
 
-                if is_chunked_pdf:
-                    for key, value in result.items():
-                        if key in {"line_items", "raw_text"}:
-                            continue
-                        if value not in (None, "") and previous_header_context.get(key) in (None, ""):
-                            previous_header_context[key] = value
-                    line_items = result.get("line_items")
-                    if isinstance(line_items, list):
-                        previous_line_item_count += len(line_items)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(extract_chunk, item)
+                        for item in enumerate(page_paths, start=1)
+                        if item[0] not in completed_results
+                    ]
+                    chunk_results = [future.result() for future in futures]
+
+                chunk_results.sort(key=lambda item: item[0])
+                result_by_part = {
+                    part_number: result
+                    for part_number, result, _duration in chunk_results
+                }
+                result_by_part.update(completed_results)
+                page_results = [result_by_part[index] for index in range(1, total_parts + 1)]
+                ai_duration_ms = sum(item[2] for item in chunk_results)
+            else:
+                previous_header_context: dict[str, Any] = {}
+                previous_line_item_count = 0
+                for page_index, page_path in enumerate(page_paths, start=1):
+                    document_context = None
+                    if is_chunked_pdf:
+                        page_start = ((page_index - 1) * chunk_size) + 1
+                        page_end = min(page_start + chunk_size - 1, total_pages)
+                        document_context = {
+                            "document_id": str(upload.id),
+                            "total_pages": total_pages,
+                            "total_parts": total_parts,
+                            "current_part": page_index,
+                            "current_page_range": {
+                                "start": page_start,
+                                "end": page_end,
+                            },
+                            "previously_extracted_line_item_count": previous_line_item_count,
+                            "previous_header_context": previous_header_context,
+                        }
+                    ai_started = time.perf_counter()
+                    result = _extract_single_page(
+                        upload,
+                        page_path,
+                        requested_fields,
+                        page_index,
+                        deadline_monotonic,
+                        document_context=document_context,
+                    )
+                    ai_duration_ms += (time.perf_counter() - ai_started) * 1000
+                    _validate_extraction_result(result, page_index=page_index)
+                    page_results.append(result)
+
+                    if is_chunked_pdf:
+                        for key, value in result.items():
+                            if key in {"line_items", "raw_text"}:
+                                continue
+                            if value not in (None, "") and previous_header_context.get(key) in (None, ""):
+                                previous_header_context[key] = value
+                        line_items = result.get("line_items")
+                        if isinstance(line_items, list):
+                            previous_line_item_count += len(line_items)
 
             upload._ai_extraction_duration_ms = int(round(ai_duration_ms))
             return _merge_page_extraction_results(page_results)
@@ -1446,6 +1631,11 @@ def _persist_success(
         ]
     )
 
+    # Chunk rows are only needed while assembling the result. The durable
+    # result is now on OCRUpload (and can later be copied to document history),
+    # so remove the temporary per-part state after a complete success.
+    OCRExtractionPart.objects.filter(upload_id=upload.id).delete()
+
     if upload.batch_id:
         _refresh_batch_status(upload.batch_id)
 
@@ -1707,7 +1897,7 @@ def execute_upload_job(
     claim: bool = False,
 ) -> JobOutcome:
     """
-    Run one background OCR job: cache -> extraction lock -> global Gemini
+    Run one background OCR job: cache -> extraction lock -> scoped AI
     limiter -> extraction -> persistence.
 
             # if upload.status == OCRUpload.Status.COMPLETED:
@@ -1724,7 +1914,7 @@ def execute_upload_job(
     """
 
     upload = None
-    limiter = GeminiQuotaLimiter()
+    limiter = None
     token = None
     heartbeat = None
     outcome = JobOutcome("done")
@@ -1759,22 +1949,29 @@ def execute_upload_job(
         heartbeat = LeaseHeartbeat(upload.id, owner)
         heartbeat.start()
 
-        # Optional distributed gate. The Gemini call normally starts only
-        # after both concurrency and rolling-RPM checks pass; if the
-        # limiter backend (Redis) is unavailable we continue without the
-        # global limiter instead of failing the document.
-        try:
-            token = limiter.acquire(
-                request_id=f"{upload.id}:{request_id}"
+        # Resolve the active company/provider/model before acquiring a slot.
+        # Each scope gets an independent concurrency and rolling-RPM budget.
+        ai_scope = _ai_scope_for_upload(upload)
+        if ai_scope:
+            company_id, provider, model = ai_scope
+            limiter = AIQuotaLimiter(
+                company_id=company_id,
+                provider=provider,
+                model=model,
             )
-        except Exception as limiter_exc:  # noqa: BLE001
-            token = None
-            logger.warning(
-                "Gemini rate limiter unavailable; continuing without the "
-                "global limiter — upload=%s reason=%s",
-                upload.id,
-                limiter_exc,
-            )
+            try:
+                token = limiter.acquire(request_id=f"{upload.id}:{request_id}")
+            except Exception as limiter_exc:  # noqa: BLE001
+                token = None
+                logger.warning(
+                    "AI quota limiter unavailable; continuing without the "
+                    "scoped limiter — upload=%s company=%s provider=%s model=%s reason=%s",
+                    upload.id,
+                    company_id,
+                    provider,
+                    model,
+                    limiter_exc,
+                )
 
         requested_fields = upload.batch.requested_fields_json if upload.batch else None
         scope = _extraction_scope(upload)
@@ -2044,7 +2241,7 @@ def execute_upload_job(
         if heartbeat is not None:
             heartbeat.stop()
         
-        if token is not None:
+        if token is not None and limiter is not None:
             limiter.release(token)
 
     return outcome

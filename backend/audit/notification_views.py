@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from audit.models import Notification
+from audit.tasks import purge_notification_after_undo
 
 
 def visible(request):
@@ -95,6 +96,7 @@ class NotificationDelete(APIView):
         )
         if not updated:
             return Response({'detail': 'Notification not found.'}, status=404)
+        purge_notification_after_undo.apply_async(args=[pk], countdown=10)
         return Response({'deleted': True, 'undo_seconds': 10})
 
 
