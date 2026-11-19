@@ -3424,10 +3424,8 @@ const goNext = () => {
           type="button"
           intent="secondary"
           onClick={() => {
-            // Editing changes the data that was previously validated.
-            setValidationResult(null)
-            setAiDiagnostics([])
-            setDiagnosticError('')
+            // Keep the last failed validation and its AI diagnosis visible
+            // while the user edits. A new validation attempt replaces it.
             setViewMode('fields')
             setEditing(true)
           }}

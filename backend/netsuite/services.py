@@ -1575,6 +1575,23 @@ class NetSuiteVendorBillPostingService:
         if value in (None, ""):
             return None
 
+        # OCR commonly persists an unavailable/blank tax code as numeric 0.
+        # NetSuite treats 0 as an invalid tax-code internal ID, so never send
+        # that sentinel. Required mappings fail before the API call with a
+        # useful line-level message; optional mappings are omitted so the
+        # account's/default tax behavior can apply.
+        if str(mapping.get("target_field_id") or "").strip().lower() in {"taxcode", "taxcode1"} and str(value).strip() == "0":
+            if mapping.get("is_required", False):
+                raise ValueError(
+                    f"{prefix}NetSuite {field_label} has an invalid value 0. "
+                    "Enter a valid tax code or remove the tax-code mapping."
+                )
+            logger.warning(
+                "Omitting invalid OCR tax-code sentinel — field=%s line=%s value=%r",
+                mapping.get("target_field_id"), line_number, value,
+            )
+            return None
+
         datatype = str(
             mapping.get("target_datatype")
             or mapping.get("source_datatype")
@@ -1820,7 +1837,8 @@ class NetSuiteVendorBillPostingService:
             line_index = validated_item.get("line_index")
             if line_index is None:
                 continue
-            validated_items_by_line[str(line_index)] = validated_item
+            sublist = str(validated_item.get("sublist") or "item").lower()
+            validated_items_by_line[f"{sublist}:{line_index}"] = validated_item
 
         # Build mappings from the exact template snapshot used for this OCR upload.
         # Do not read a legacy mapping table here: separate rows may contain stale
@@ -1857,16 +1875,22 @@ class NetSuiteVendorBillPostingService:
             ),
             None,
         )
-        if item_mapping is None:
-            raise ValueError(
-                "The selected template must map one line field to NetSuite Item."
-            )
-
+        expense_line_mappings = [
+            mapping for mapping in template_mappings
+            if mapping.get("source_scope") == "line"
+            and mapping.get("target_scope") == "column"
+            and mapping.get("target_sublist_id") in {"expense", "expenses"}
+        ]
+        expense_account_mapping = next(
+            (mapping for mapping in expense_line_mappings
+             if str(mapping.get("target_field_id") or "").strip().lower() == "account"),
+            None,
+        )
         unsupported_line_mappings = [
             mapping for mapping in template_mappings
             if mapping.get("source_scope") == "line"
             and mapping.get("target_scope") == "column"
-            and mapping.get("target_sublist_id") not in {"", "item", "items"}
+            and mapping.get("target_sublist_id") not in {"", "item", "items", "expense", "expenses"}
         ]
         if unsupported_line_mappings:
             labels = ", ".join(
@@ -1874,70 +1898,65 @@ class NetSuiteVendorBillPostingService:
                 for mapping in unsupported_line_mappings
             )
             raise ValueError(
-                "The selected template contains line mappings outside the Vendor "
-                f"Bill Item sublist: {labels}."
+                "The selected template contains unsupported Vendor Bill line "
+                f"mappings: {labels}."
             )
 
         payload_items = []
-        item_source_key = item_mapping["source_field_key"]
+        payload_expenses = []
+        item_source_key = item_mapping["source_field_key"] if item_mapping else None
+        expense_source_key = expense_account_mapping["source_field_key"] if expense_account_mapping else None
         for index, line in enumerate(line_items, start=1):
             if not isinstance(line, dict):
                 raise ValueError(f"Line {index}: OCR line item is invalid.")
 
-            item_name = line.get(item_source_key)
-            if isinstance(item_name, str):
-                item_name = item_name.strip()
-            if item_name in (None, ""):
-                continue
-
-            validated_item = validated_items_by_line.get(str(index))
-            if not isinstance(validated_item, dict):
-                raise ValueError(
-                    f"Line {index}: no persisted NetSuite item validation exists "
-                    "for this OCR line. Validate the document again before posting."
-                )
-            if validated_item.get("ambiguous"):
-                raise ValueError(
-                    f'Line {index}: multiple NetSuite items were matched for '
-                    f'"{item_name}" during validation. Please correct the item '
-                    "mapping and validate again."
-                )
-            if not validated_item.get("matched"):
-                raise ValueError(
-                    f'Line {index}: NetSuite item "{item_name}" was not '
-                    "successfully validated. Validate the document again before posting."
-                )
-
-            item_id = validated_item.get("netsuite_id")
-            if not item_id:
-                raise ValueError(f"Line {index}: validated NetSuite item ID is missing.")
-
-            item_payload = {}
-            for mapping in item_line_mappings:
-                target_field_id = str(mapping.get("target_field_id") or "").strip()
-                target_key = target_field_id.lower()
-                if target_key in {"item", "items"}:
-                    # ``item`` is the Vendor Bill REST column name. The source
-                    # field remains fully template-driven; the value is the ID
-                    # selected during validation, never a second text lookup.
-                    item_payload["item"] = {"id": str(item_id)}
-                    continue
-
-                mapped_value = self._normalise_mapped_value(
-                    line.get(mapping["source_field_key"]),
-                    mapping,
-                    line_number=index,
-                )
-                if mapped_value is not None:
-                    item_payload[target_field_id] = mapped_value
-                elif mapping.get("is_required", False):
-                    raise ValueError(
-                        f'Line {index}: NetSuite field '
-                        f'{mapping.get("target_field_label") or target_field_id} '
-                        "is required before posting. Add the value and validate again."
+            item_name = str(line.get(item_source_key) or "").strip() if item_source_key else ""
+            if item_name:
+                validated_item = validated_items_by_line.get(f"item:{index}")
+                if not isinstance(validated_item, dict) or not validated_item.get("matched"):
+                    raise ValueError(f'Line {index}: NetSuite item "{item_name}" was not successfully validated. Validate again before posting.')
+                item_id = validated_item.get("netsuite_id")
+                if not item_id:
+                    raise ValueError(f"Line {index}: validated NetSuite item ID is missing.")
+                item_payload = {}
+                for mapping in item_line_mappings:
+                    target_field_id = str(mapping.get("target_field_id") or "").strip()
+                    target_key = target_field_id.lower()
+                    if target_key in {"item", "items"}:
+                        item_payload["item"] = {"id": str(item_id)}
+                        continue
+                    mapped_value = self._normalise_mapped_value(
+                        line.get(mapping["source_field_key"]), mapping, line_number=index,
                     )
+                    if mapped_value is not None:
+                        item_payload[target_field_id] = mapped_value
+                    elif mapping.get("is_required", False):
+                        raise ValueError(
+                            f'Line {index}: NetSuite field '
+                            f'{mapping.get("target_field_label") or target_field_id} '
+                            "is required before posting. Add the value and validate again."
+                        )
 
-            payload_items.append(item_payload)
+                payload_items.append(item_payload)
+
+            account_name = str(line.get(expense_source_key) or "").strip() if expense_source_key else ""
+            if account_name:
+                validated_expense = validated_items_by_line.get(f"expense:{index}")
+                if not isinstance(validated_expense, dict) or not validated_expense.get("matched"):
+                    raise ValueError(f'Line {index}: expense account "{account_name}" was not successfully validated. Validate again before posting.')
+                account_id = validated_expense.get("netsuite_id")
+                expense_payload = {}
+                for mapping in expense_line_mappings:
+                    target_field_id = str(mapping.get("target_field_id") or "").strip()
+                    if target_field_id.lower() == "account":
+                        expense_payload["account"] = {"id": str(account_id)}
+                        continue
+                    mapped_value = self._normalise_mapped_value(line.get(mapping["source_field_key"]), mapping, line_number=index)
+                    if mapped_value is not None:
+                        expense_payload[target_field_id] = mapped_value
+                    elif mapping.get("is_required", False):
+                        raise ValueError(f'Line {index}: NetSuite expense field {mapping.get("target_field_label") or target_field_id} is required.')
+                payload_expenses.append(expense_payload)
 
         payload = {}
 
@@ -2127,6 +2146,8 @@ class NetSuiteVendorBillPostingService:
                     }
         if payload_items:
             payload["item"] = {"items":payload_items}
+        if payload_expenses:
+            payload["expense"] = {"items": payload_expenses}
 
         # Stable reconciliation identity across versions and interrupted attempts.
         if use_subsidiary_currency:
@@ -2142,7 +2163,8 @@ class NetSuiteVendorBillPostingService:
         logger.warning(
             "Vendor Bill payload summary before NetSuite POST — "
             "vendor_id=%s location_id=%s subsidiary=%s currency=%s "
-            "item_count=%s item_lines=%s body_keys=%s custom_fields=%s "
+            "item_count=%s item_lines=%s expense_count=%s expense_lines=%s "
+            "body_keys=%s custom_fields=%s "
             "connection=%s",
             str(validated_vendor_id),
             (payload.get("location") or {}).get("id"),
@@ -2157,6 +2179,17 @@ class NetSuiteVendorBillPostingService:
                     "location_id": line.get("location", {}).get("id"),
                 }
                 for line in payload_items
+            ],
+            len(payload_expenses),
+            [
+                {
+                    "account_id": (line.get("account") or {}).get("id"),
+                    "amount": line.get("amount"),
+                    "tax_code": line.get("taxcode"),
+                    "tax_amount": line.get("taxamount"),
+                    "memo": line.get("memo"),
+                }
+                for line in payload_expenses
             ],
             sorted(payload.keys()),
             len(
@@ -4069,6 +4102,14 @@ class NetSuiteValidationService:
         "class": ("classification", ("name",)),
         "terms": ("term", ("name",)),
         "term": ("term", ("name",)),
+        # Vendor Bill Expense sublist reference. NetSuite accounts can be
+        # identified by either account number or display name.
+        # NetSuite's REST/SuiteQL account schema exposes the UI account name
+        # through accountsearchdisplayname in this account, not acctname.
+        "account": (
+            "account",
+            ("acctnumber", "accountsearchdisplayname", "displaynamewithhierarchy"),
+        ),
     }
 
     @timed_stage("netsuite.reference_lookup")
@@ -4108,10 +4149,22 @@ class NetSuiteValidationService:
         if literal is None:
             return None
 
-        where_clause = " OR ".join(
-            f"LOWER({column}) = LOWER({literal})"
-            for column in match_columns
-        )
+        if table == "account":
+            # NetSuite may return an account as "1090 Employee Advances" or
+            # "Other Current Asset : Employee Advances" while OCR contains
+            # only the visible account name. Match the account number exactly
+            # and display names conservatively by containing the full input.
+            contains_literal = self._suiteql_literal(f"%{raw_value}%")
+            where_clause = (
+                f"LOWER(acctnumber) = LOWER({literal}) OR "
+                f"LOWER(accountsearchdisplayname) LIKE LOWER({contains_literal}) OR "
+                f"LOWER(displaynamewithhierarchy) LIKE LOWER({contains_literal})"
+            )
+        else:
+            where_clause = " OR ".join(
+                f"LOWER({column}) = LOWER({literal})"
+                for column in match_columns
+            )
 
         query = f"""
             SELECT id, {", ".join(match_columns)}, isinactive
@@ -4506,6 +4559,17 @@ class NetSuiteValidationService:
             ),
             None,
         )
+        expense_line_mappings = [
+            mapping for mapping in template_mappings
+            if mapping.get("source_scope") == "line"
+            and mapping.get("target_scope") == "column"
+            and mapping.get("target_sublist_id") in {"expense", "expenses"}
+        ]
+        expense_account_mapping = next(
+            (mapping for mapping in expense_line_mappings
+             if str(mapping.get("target_field_id") or "").strip().lower() == "account"),
+            None,
+        )
 
         if vendor_mapping is None:
             raise ValueError(
@@ -4698,31 +4762,29 @@ class NetSuiteValidationService:
             vendor_name=vendor_name,
         )
 
-        # Validate only real Vendor Bill item rows. OCR can also return
-        # account/tax/TDS/GST rows inside line_items; those rows do not have
-        # quantity or unit price and must not become NetSuite item lines.
-        if item_mapping is None:
-            raise ValueError(
-                "Item field mapping is required before NetSuite reference validation."
-            )
-        item_source_key = item_mapping["source_field_key"]
+        # A template may provide Item lines, Expense lines, or both. A missing
+        # mapping is only an error when the corresponding OCR line contains a
+        # value for that sublist.
+        item_source_key = item_mapping["source_field_key"] if item_mapping else None
+        expense_source_key = expense_account_mapping["source_field_key"] if expense_account_mapping else None
         real_item_lines = []
         real_item_line_indexes = []
+        real_expense_lines = []
+        real_expense_line_indexes = []
         for line_index, line in enumerate(line_items, start=1):
             if not isinstance(line, dict):
                 continue
-            item_name = line.get(item_source_key)
+            if item_source_key and line.get(item_source_key) not in (None, "") and str(line.get(item_source_key)).strip():
+                real_item_lines.append(line)
+                real_item_line_indexes.append(line_index)
+            if expense_source_key and line.get(expense_source_key) not in (None, "") and str(line.get(expense_source_key)).strip():
+                real_expense_lines.append(line)
+                real_expense_line_indexes.append(line_index)
 
-            if item_name is None or not str(item_name).strip():
-                continue
-
-            real_item_lines.append(line)
-            real_item_line_indexes.append(line_index)
-
-        if item_mapping is None and real_item_lines:
-            raise ValueError(
-                "Item field mapping is required before NetSuite reference validation."
-            )
+        if real_item_lines and item_mapping is None:
+            raise ValueError("Item line data was found, but the template has no Item sublist mapping.")
+        if real_expense_lines and expense_account_mapping is None:
+            raise ValueError("Expense line data was found, but the template has no Expense Account mapping.")
 
         item_results = []
         if real_item_lines:
@@ -4739,6 +4801,37 @@ class NetSuiteValidationService:
             ):
                 result["line_index"] = original_line_index
                 item_results.append(result)
+
+        # Expense accounts are select references, not inventory items. Resolve
+        # them independently and turn provider/ambiguity failures into a
+        # per-line validation result instead of an unhandled exception.
+        for line, original_line_index in zip(real_expense_lines, real_expense_line_indexes):
+            raw_account = line.get(expense_source_key)
+            account_name = str(raw_account).strip() if raw_account is not None else ""
+            result = {
+                "sublist": "expense",
+                "line_index": original_line_index,
+                "extracted_name": account_name or None,
+                "matched": False,
+                "ambiguous": False,
+                "netsuite_id": None,
+            }
+            try:
+                account_id = self._resolve_select_field_live(
+                    connection=connection,
+                    target_field_id="account",
+                    value=account_name,
+                    require_unique=True,
+                )
+                result["netsuite_id"] = str(account_id) if account_id else None
+                result["matched"] = bool(account_id)
+            except ValueError as exc:
+                result["error"] = str(exc)
+                result["ambiguous"] = "multiple" in str(exc).lower() or "ambiguous" in str(exc).lower()
+            except Exception as exc:
+                logger.exception("Expense account validation failed: line=%s account=%s", original_line_index, account_name)
+                result["error"] = "NetSuite account lookup could not be completed."
+            item_results.append(result)
 
         errors = []
 
@@ -4773,6 +4866,16 @@ class NetSuiteValidationService:
         mismatch_errors_by_key = {}
 
         for item in item_results:
+            if item.get("sublist") == "expense":
+                if item.get("matched"):
+                    continue
+                errors.append({
+                    "type": "EXPENSE_ACCOUNT_AMBIGUOUS" if item.get("ambiguous") else "EXPENSE_ACCOUNT_NOT_FOUND",
+                    "message": item.get("error") or "Expense account does not exist in the selected NetSuite account.",
+                    "extracted_name": item.get("extracted_name"),
+                    "line_index": item.get("line_index"),
+                })
+                continue
             if item.get("item_subsidiary_mismatch"):
                 item_id = item.get("netsuite_id")
                 candidate_details = item.get("candidates") or []
@@ -4859,7 +4962,7 @@ class NetSuiteValidationService:
         matched_items = [
             item
             for item in item_results
-            if item.get("matched")
+            if item.get("matched") and item.get("sublist") != "expense"
         ]
         unique_netsuite_items = {
             str(item.get("netsuite_id"))

@@ -98,6 +98,15 @@ LOGGING = {
 
         },
 
+        # Stage timings are useful during focused profiling but are too noisy
+        # for normal terminal/application logs. Keep errors from other
+        # loggers visible while suppressing routine INFO timing events.
+        "performance": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+
     },
 
 }
