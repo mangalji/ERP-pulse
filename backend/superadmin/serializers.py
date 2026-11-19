@@ -2,6 +2,9 @@ import re
 from common.contact_validation import normalize_phone
 from common.email_verification import ensure_email_deliverable
 from rest_framework import serializers
+from ocr.models import BillProcessingCount
+from ocr.usage import allocation_period_state
+from django.db import transaction
 from .models import (
     Plan, 
     Transaction,
@@ -25,6 +28,20 @@ class CompanySerializer(serializers.ModelSerializer):
     user_count = serializers.IntegerField(
         read_only=True,
     )
+    pdf_page_limit = serializers.IntegerField(
+        write_only=True,
+        required=True,
+        min_value=0,
+    )
+    email_bill_limit = serializers.IntegerField(
+        write_only=True,
+        required=True,
+        min_value=0,
+    )
+    pdf_allocation_start_date = serializers.DateField(write_only=True, required=True)
+    pdf_allocation_end_date = serializers.DateField(write_only=True, required=True)
+    email_allocation_start_date = serializers.DateField(write_only=True, required=True)
+    email_allocation_end_date = serializers.DateField(write_only=True, required=True)
 
     class Meta:
         model = Company
@@ -51,6 +68,13 @@ class CompanySerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         is_create = self.instance is None
+
+        if is_create:
+            for prefix in ('pdf', 'email'):
+                if attrs[f'{prefix}_allocation_end_date'] < attrs[f'{prefix}_allocation_start_date']:
+                    raise serializers.ValidationError({
+                        f'{prefix}_allocation_end_date': 'End date must be on or after the start date.'
+                    })
 
         name = (attrs.get("name") or "").strip()
         code = (attrs.get("code") or "").strip()
@@ -210,6 +234,26 @@ class CompanySerializer(serializers.ModelSerializer):
                 attrs["contact_phone_country_code"] = custom_code
 
         return attrs
+
+    def create(self, validated_data):
+        pdf_page_limit = validated_data.pop('pdf_page_limit')
+        email_bill_limit = validated_data.pop('email_bill_limit')
+        pdf_start = validated_data.pop('pdf_allocation_start_date')
+        pdf_end = validated_data.pop('pdf_allocation_end_date')
+        email_start = validated_data.pop('email_allocation_start_date')
+        email_end = validated_data.pop('email_allocation_end_date')
+        with transaction.atomic():
+            company = super().create(validated_data)
+            BillProcessingCount.objects.create(
+                company=company,
+                pdf_page_limit=pdf_page_limit,
+                email_bill_limit=email_bill_limit,
+                pdf_allocation_start_date=pdf_start,
+                pdf_allocation_end_date=pdf_end,
+                email_allocation_start_date=email_start,
+                email_allocation_end_date=email_end,
+            )
+        return company
 
     # Legacy onboarding note: company creation previously accepted admin
     # fields and sent an invitation here. User onboarding now belongs solely
@@ -383,6 +427,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
     netsuite_connections = serializers.SerializerMethodField()
     netsuite_connection_count = serializers.SerializerMethodField()
     transactions = serializers.SerializerMethodField()
+    bill_processing_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Company
@@ -394,6 +439,7 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'netsuite_connected', 'netsuite_account_id', 'netsuite_last_sync',
             'netsuite_connections', 'netsuite_connection_count',
             'transactions', 'suspension_reason', 'suspension_description',
+            'bill_processing_count',
         ]
         read_only_fields = fields
 
@@ -402,6 +448,25 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
 
     def get_active_user_count(self, obj):
         return obj.users.filter(is_active=True).count()
+
+    def get_bill_processing_count(self, obj):
+        usage, _ = BillProcessingCount.objects.get_or_create(company=obj)
+        return {
+            'id': str(usage.id),
+            'pdf_page_limit': usage.pdf_page_limit,
+            'email_bill_limit': usage.email_bill_limit,
+            'pdf_pages_consumed': usage.pdf_pages_consumed,
+            'email_bills_consumed': usage.email_bills_consumed,
+            'pdf_pages_remaining': max(0, usage.pdf_page_limit - usage.pdf_pages_consumed),
+            'email_bills_remaining': max(0, usage.email_bill_limit - usage.email_bills_consumed),
+            'pdf_allocation_start_date': usage.pdf_allocation_start_date,
+            'pdf_allocation_end_date': usage.pdf_allocation_end_date,
+            'email_allocation_start_date': usage.email_allocation_start_date,
+            'email_allocation_end_date': usage.email_allocation_end_date,
+            'pdf_allocation_status': allocation_period_state(usage, 'pdf'),
+            'email_allocation_status': allocation_period_state(usage, 'email'),
+            'updated_at': usage.updated_at,
+        }
     
     def get_admin_email(self, obj):
         admin = obj.users.filter(role__name='Company Admin').first()

@@ -45,6 +45,7 @@ from common.infra import get_redis_client, report_redis_failure, warn_throttled
 from ocr.storage import local_file_path
 from ocr.leases import LeaseHeartbeat, claim_upload, lease_seconds, new_owner
 from ocr.services.ai_quota_limiter import AIQuotaLimiter
+from ocr.usage import reserve_upload_pages, ProcessingLimitExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,17 @@ def _should_chunk_pdf(adapter) -> bool:
     if not getattr(settings, "OCR_PDF_WHOLE_DOCUMENT", False):
         return False
     return isinstance(adapter, PDFAdapter)
+
+
+def _source_page_count(upload) -> int:
+    """Get the bill-processing unit count before a cache/AI fast path."""
+    extension = str(getattr(upload, "extension", "") or "").lower().lstrip(".")
+    mime_type = str(getattr(upload, "mime_type", "") or "").lower()
+    if extension != "pdf" and mime_type != "application/pdf":
+        return 1
+    from ocr.pdf_processor import pdf_processor
+    with local_file_path(upload.file) as original_path:
+        return max(1, int(pdf_processor.get_page_count(original_path)))
 
 
 def _split_pdf_into_chunks(upload, original_path) -> tuple[list[str], int] | None:
@@ -481,6 +493,27 @@ def _perform_ocr_extraction(
             page_paths, is_chunked_pdf, total_pages = _normalize_to_page_paths(
                 adapter, upload, original_path
             )
+            # Account once when the file has been accepted and its real page
+            # count is known. The usage helper locks the upload, so retries do
+            # not increment the company's counter again.
+            try:
+                reserve_upload_pages(upload, total_pages)
+            except ProcessingLimitExceeded:
+                logger.warning(
+                    "OCR file processing blocked by company allocation — upload=%s pages=%s",
+                    upload.id,
+                    total_pages,
+                )
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "OCR processing usage accounting failed — upload=%s pages=%s",
+                    upload.id,
+                    total_pages,
+                )
+                raise RuntimeError(
+                    "Processing usage could not be checked safely. Please try again later."
+                ) from exc
             page_results = []
             ai_duration_ms = 0.0
             chunk_size = max(1, int(getattr(settings, "OCR_PDF_CHUNK_PAGES", 5)))
@@ -1807,6 +1840,10 @@ def process_single_ocr_upload(
 
         started_at = _begin_processing(upload)
 
+        # Reserve before checking the extraction cache too. A cache hit still
+        # represents one company's file-processing usage and must obey limits.
+        reserve_upload_pages(upload, _source_page_count(upload))
+
         deadline_monotonic = time.monotonic() + float(time_budget_seconds)
 
         # Reuse a valid extraction cache when available.
@@ -1948,6 +1985,10 @@ def execute_upload_job(
         started_at = _begin_processing(upload, owner)
         heartbeat = LeaseHeartbeat(upload.id, owner)
         heartbeat.start()
+
+        # Keep the cache-hit path subject to the same allocation guard as the
+        # normal AI path; reserve is idempotent for the later page normalizer.
+        reserve_upload_pages(upload, _source_page_count(upload))
 
         # Resolve the active company/provider/model before acquiring a slot.
         # Each scope gets an independent concurrency and rolling-RPM budget.

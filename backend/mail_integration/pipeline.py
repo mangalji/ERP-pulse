@@ -26,6 +26,7 @@ from netsuite.services import NetSuiteValidationService, NetSuiteVendorBillPosti
 from ocr.models import DocumentType, OCRBatch, OCRDocument, OCRDocumentStatus
 from ocr.ai_extraction_service import ai_extractor
 from ocr.services.extraction_persistence import persist_extraction
+from ocr.usage import email_capacity_available, record_email_bill, ProcessingLimitExceeded
 from audit.notifications import automated_activity, notify
 from tenancy.services import company_lifecycle_service
 
@@ -61,6 +62,18 @@ class EmailBillPipeline:
             "by_integration": {},
         }
         for candidate in candidates:
+            if not email_capacity_available(candidate.integration.company_id):
+                logger.warning(
+                    "Email AI processing skipped because company allocation is exhausted — company=%s",
+                    candidate.integration.company_id,
+                )
+                outcome["deferred"] += 1
+                per_integration = outcome["by_integration"].setdefault(
+                    str(candidate.integration_id),
+                    {"processed": 0, "promoted": 0, "discarded": 0, "deferred": 0},
+                )
+                per_integration["deferred"] += 1
+                continue
             result = self.process_message(message_id=candidate.id)
             outcome["processed"] += 1
             per_integration = outcome["by_integration"].setdefault(
@@ -164,6 +177,15 @@ class EmailBillPipeline:
         template = integration.ocr_template
         if user is None or template is None:
             self._defer(message.id, ValueError("Mailbox requires an owner and OCR template before processing."))
+            return "deferred"
+        if not email_capacity_available(integration.company_id):
+            self._defer(
+                message.id,
+                ProcessingLimitExceeded(
+                    "Email bill processing is unavailable because this company "
+                    "has no remaining email-bill allocation. Please contact your SuperAdmin."
+                ),
+            )
             return "deferred"
         try:
             ai_extraction_duration_ms = 0
@@ -414,6 +436,11 @@ class EmailBillPipeline:
                     extraction_template=template,
                     status=OCRBatch.Status.PROCESSING,
                 )
+                # Reserve the one email-bill unit while holding the promotion
+                # transaction. If the limit is exhausted, no OCR document is
+                # created and the message remains eligible after allocation is
+                # increased.
+                record_email_bill(batch)
                 document = OCRDocument.objects.create(
                     batch=batch,
                     user=user,

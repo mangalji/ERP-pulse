@@ -26,7 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from common.common_utils import success_response
 from rest_framework.response import Response
-from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionPart, OCRExtractionTemplate, OCRValidationResult
+from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionPart, OCRExtractionTemplate, OCRValidationResult, BillProcessingCount
 from netsuite.models import NetSuiteOCRPosting
 from netsuite.oauth import netsuite_vendor_bill_url
 from ocr.serializers import (
@@ -47,6 +47,7 @@ from ocr.ai_extraction_service import get_standard_field_catalog, resolve_field_
 from ocr.exceptions import OCRTimeBudgetExceeded
 from ocr.execution import dispatch_upload, recover_batch
 from ocr.tasks import process_single_ocr_upload
+from ocr.usage import pdf_capacity_available, allocation_period_state
 from ocr.utils import logger
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
@@ -1489,6 +1490,17 @@ class OCRExtractView(APIView):
 
         try:
             company = getattr(request.user, "company", None)
+            if company is None or not pdf_capacity_available(company.id):
+                return Response(
+                    {
+                        "detail": (
+                            "PDF/file processing is unavailable because this "
+                            "company has no remaining page allocation. Please "
+                            "contact your SuperAdmin."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             contains_zip = any(
                 self._is_zip(uploaded_file)
                 for uploaded_file in uploaded_files
@@ -2045,6 +2057,35 @@ class OCRUploadRetryView(APIView):
         return Response(
             {"upload_id": str(upload.id), "status": upload.status, "execution_mode": executor},
             status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class BillProcessingCountView(APIView):
+    """Read-only company usage status for admins and employees."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        company = getattr(request.user, 'company', None)
+        if company is None:
+            return Response({'detail': 'Company context is required.'}, status=status.HTTP_403_FORBIDDEN)
+        usage, _ = BillProcessingCount.objects.get_or_create(company=company)
+        return success_response(
+            message='Bill processing usage fetched successfully.',
+            data={
+                'pdf_page_limit': usage.pdf_page_limit,
+                'email_bill_limit': usage.email_bill_limit,
+                'pdf_pages_consumed': usage.pdf_pages_consumed,
+                'email_bills_consumed': usage.email_bills_consumed,
+                'pdf_pages_remaining': max(0, usage.pdf_page_limit - usage.pdf_pages_consumed),
+                'email_bills_remaining': max(0, usage.email_bill_limit - usage.email_bills_consumed),
+                'pdf_allocation_start_date': usage.pdf_allocation_start_date,
+                'pdf_allocation_end_date': usage.pdf_allocation_end_date,
+                'email_allocation_start_date': usage.email_allocation_start_date,
+                'email_allocation_end_date': usage.email_allocation_end_date,
+                'pdf_allocation_status': allocation_period_state(usage, 'pdf'),
+                'email_allocation_status': allocation_period_state(usage, 'email'),
+                'updated_at': usage.updated_at,
+            },
         )
 
 

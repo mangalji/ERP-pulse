@@ -64,6 +64,7 @@ export const clientApi = {
   getCompanySettings: () => apiClient.get(CLIENT_ENDPOINTS.settings).then(unwrap),
   updateCompanySettings: (payload) =>
     apiClient.patch(CLIENT_ENDPOINTS.settings, payload).then(unwrap),
+  getProcessingUsage: () => apiClient.get(CLIENT_ENDPOINTS.processingUsage).then(unwrap),
 
   getNavigationMenu: (cacheKey = null) => {
     const now = Date.now()

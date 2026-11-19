@@ -52,6 +52,7 @@ export const CLIENT_ENDPOINTS = {
   employeeResendInvitation: (id) => `/client/employees/${id}/resend_invitation/`,
   roles: '/client/roles/',
   settings: '/client/settings/',
+  processingUsage: '/ocr/processing-usage/',
 }
 
 export const SUPERADMIN_ENDPOINTS = {
@@ -74,6 +75,7 @@ export const SUPERADMIN_ENDPOINTS = {
   companyAssignPlanPending: (id) => `/superadmin/companies/${id}/assign-plan-pending/`,
   companyCompleteTransaction: (id) => `/superadmin/companies/${id}/complete-transaction/`,
   companySendTransactionEmail: (id) => `/superadmin/companies/${id}/send-transaction-email/`,
+  companyBillProcessingCount: (id) => `/superadmin/companies/${id}/bill-processing-count/`,
 }
 
 export const INVITATION_ENDPOINTS = {

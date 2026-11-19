@@ -197,6 +197,13 @@ export default function AdminLayout({ title, breadcrumb, children }) {
                   >
                     Profile
                   </NavLink>
+                  <NavLink
+                    to="/admin/company-logs"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="block w-full px-4 py-2 text-left text-sm text-[var(--color-ink)] hover:bg-[var(--color-canvas)]"
+                  >
+                    Companies Logs
+                  </NavLink>
                   <button
                     onClick={handleLogout}
                     className="block w-full px-4 py-2 text-left text-sm text-[var(--color-negative)] hover:bg-[var(--color-canvas)]"

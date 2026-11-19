@@ -19,6 +19,7 @@ const SuperAdminEmployeesPage = lazy(() => import('../pages/superadmin/Employees
 const SuperAdminSettingsPage = lazy(() => import('../pages/superadmin/SettingsPage.jsx'))
 const SuperAdminCompanyDetailPage = lazy(() => import('../pages/superadmin/CompanyDetailPage.jsx'))
 const SuperAdminCompanySubscriptionPage = lazy(() => import('../pages/superadmin/CompanySubscriptionPage.jsx'))
+const SuperAdminActivityLogsPage = lazy(() => import('../pages/superadmin/ActivityLogsPage.jsx'))
 const InvitationAcceptPage = lazy(() => import('../pages/invitations/InvitationAcceptPage.jsx'))
 const AIIntegrationPage = lazy(() => import('../pages/client/AIIntegrationPage.jsx'))
 
@@ -43,7 +44,7 @@ const OcrBatchHistoryPage = lazy(() => import('../pages/client/OcrBatchHistoryPa
 const DataExtractionHistoryPage = lazy(() => import('../pages/client/DataExtractionHistoryPage.jsx'))
 const FileTemplatePage = lazy(() => import('../pages/client/FileTemplatePage.jsx'))
 const EmailIntegrationsPage = lazy(() => import('../pages/client/EmailIntegrationsPage.jsx'))
-const CompanyActivityLogPage = lazy(() => import('../pages/client/CompanyActivityLogPage.jsx'))
+const ProcessingStatusPage = lazy(() => import('../pages/client/ProcessingStatusPage.jsx'))
 
 function PublicRoute({ children }) {
   return <PublicLayout>{children}</PublicLayout>
@@ -201,6 +202,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/admin/company-logs" element={<ProtectedRoute requiredRole="admin"><SuperAdminActivityLogsPage /></ProtectedRoute>} />
 
       {/* Invitation */}
       <Route path="/invitation/:token" element={<InvitationAcceptPage />} />
@@ -223,6 +225,7 @@ export default function AppRoutes() {
         }
       />
       <Route path="/app/notifications" element={<ProtectedRoute requiredRole="client"><NotificationsPage /></ProtectedRoute>} />
+      <Route path="/app/processing-status" element={<ProtectedRoute requiredRole="client"><ProcessingStatusPage /></ProtectedRoute>} />
       <Route path="/app/integrations/email" element={
         <ProtectedRoute requiredRole="companyAdmin"><EmailIntegrationsPage /></ProtectedRoute>
       } />
@@ -295,14 +298,6 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute requiredRole="client">
             <AIIntegrationPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/app/company-activity-log"
-        element={
-          <ProtectedRoute requiredRole="client">
-            <CompanyActivityLogPage />
           </ProtectedRoute>
         }
       />

@@ -11,6 +11,7 @@ import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
 import { formatDate, formatDateTime } from '../../utils/formatDate.js'
+import AllocationDateRangeField from '../../components/superadmin/AllocationDateRangeField.jsx'
 
 const COUNTRY_OPTIONS = [
   { value: 'IN', label: 'India', dialCode: '+91' },
@@ -37,6 +38,9 @@ export default function CompanyDetailPage() {
   const [suspensionDescription, setSuspensionDescription] = useState('')
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
+  const [usageForm, setUsageForm] = useState({ pdf_page_limit: '', email_bill_limit: '', pdf_allocation_start_date: '', pdf_allocation_end_date: '', email_allocation_start_date: '', email_allocation_end_date: '' })
+  const [usageSaving, setUsageSaving] = useState(false)
+  const [usageEditing, setUsageEditing] = useState(false)
 
   const [editOpen, setEditOpen] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -72,6 +76,51 @@ export default function CompanyDetailPage() {
   useEffect(() => {
     void loadCompany()
   }, [loadCompany])
+
+  useEffect(() => {
+    if (company?.bill_processing_count) {
+      setUsageForm({
+        pdf_page_limit: company.bill_processing_count.pdf_page_limit ?? 0,
+        email_bill_limit: company.bill_processing_count.email_bill_limit ?? 0,
+        pdf_allocation_start_date: company.bill_processing_count.pdf_allocation_start_date || '',
+        pdf_allocation_end_date: company.bill_processing_count.pdf_allocation_end_date || '',
+        email_allocation_start_date: company.bill_processing_count.email_allocation_start_date || '',
+        email_allocation_end_date: company.bill_processing_count.email_allocation_end_date || '',
+      })
+    }
+  }, [company])
+
+  const saveUsageLimits = async (event) => {
+    event.preventDefault()
+    const pdf_page_limit = Number(usageForm.pdf_page_limit)
+    const email_bill_limit = Number(usageForm.email_bill_limit)
+    if (!Number.isInteger(pdf_page_limit) || pdf_page_limit < 0 || !Number.isInteger(email_bill_limit) || email_bill_limit < 0) {
+      addToast('Limits must be non-negative whole numbers.', 'error')
+      return
+    }
+    if (!usageForm.pdf_allocation_start_date || !usageForm.pdf_allocation_end_date || usageForm.pdf_allocation_end_date < usageForm.pdf_allocation_start_date || !usageForm.email_allocation_start_date || !usageForm.email_allocation_end_date || usageForm.email_allocation_end_date < usageForm.email_allocation_start_date) {
+      addToast('Enter valid PDF and email allocation date ranges.', 'error')
+      return
+    }
+    setUsageSaving(true)
+    try {
+      await superadminApi.updateCompanyBillProcessingCount(company.id, {
+        pdf_page_limit,
+        email_bill_limit,
+        pdf_allocation_start_date: usageForm.pdf_allocation_start_date,
+        pdf_allocation_end_date: usageForm.pdf_allocation_end_date,
+        email_allocation_start_date: usageForm.email_allocation_start_date,
+        email_allocation_end_date: usageForm.email_allocation_end_date,
+      })
+      await loadCompany()
+      setUsageEditing(false)
+      addToast('Processing limits updated successfully')
+    } catch (err) {
+      addToast(err.payload?.detail || err.payload?.message || err.message || 'Failed to update processing limits.', 'error')
+    } finally {
+      setUsageSaving(false)
+    }
+  }
 
   const runAction = async (action, reason = '', notify = null) => {
     setConfirm(null)
@@ -481,6 +530,79 @@ export default function CompanyDetailPage() {
             </div>
           </SectionCard>
         </div>
+
+        <SectionCard
+          title="Bill Processing Usage & Limits"
+          actions={!usageEditing && <Button size="sm" intent="secondary" onClick={() => setUsageEditing(true)}>Modify</Button>}
+        >
+          <form onSubmit={saveUsageLimits} className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              {[
+                ['pdf_page_limit', 'PDF/file page limit'],
+                ['email_bill_limit', 'Email bill limit'],
+              ].map(([key, label]) => (
+                <div key={key}>
+                  <p className="text-xs text-[var(--color-muted)]">{label}</p>
+                  {usageEditing ? (
+                    <input
+                      type={key.includes('_date') ? 'date' : 'number'}
+                      min={key.includes('_date') ? undefined : '0'}
+                      value={usageForm[key]}
+                      onChange={(event) => setUsageForm((current) => ({ ...current, [key]: event.target.value }))}
+                      className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                    />
+                  ) : (
+                    <p className="mt-2 text-lg font-semibold text-[var(--color-ink)]">{company.bill_processing_count?.[key] || '—'}</p>
+                  )}
+                </div>
+              ))}
+              <AllocationDateRangeField
+                label="PDF/file allocation period"
+                start={usageForm.pdf_allocation_start_date}
+                end={usageForm.pdf_allocation_end_date}
+                disabled={!usageEditing}
+                onChange={({ start, end }) => setUsageForm((current) => ({ ...current, pdf_allocation_start_date: start, pdf_allocation_end_date: end }))}
+              />
+              <AllocationDateRangeField
+                label="Email allocation period"
+                start={usageForm.email_allocation_start_date}
+                end={usageForm.email_allocation_end_date}
+                disabled={!usageEditing}
+                onChange={({ start, end }) => setUsageForm((current) => ({ ...current, email_allocation_start_date: start, email_allocation_end_date: end }))}
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-[var(--color-border)] p-4">
+                <p className="text-xs text-[var(--color-muted)]">PDF/file pages consumed</p>
+                <p className="mt-1 text-xl font-semibold text-[var(--color-ink)]">{company.bill_processing_count?.pdf_pages_consumed ?? 0}</p>
+              </div>
+              <div className="rounded-lg border border-[var(--color-border)] p-4">
+                <p className="text-xs text-[var(--color-muted)]">Email bills consumed</p>
+                <p className="mt-1 text-xl font-semibold text-[var(--color-ink)]">{company.bill_processing_count?.email_bills_consumed ?? 0}</p>
+              </div>
+            </div>
+            {usageEditing && (
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" disabled={usageSaving}>
+                  {usageSaving ? 'Saving...' : 'Save Limits'}
+                </Button>
+                <Button type="button" size="sm" intent="secondary" disabled={usageSaving} onClick={() => {
+                  setUsageEditing(false)
+                  setUsageForm({
+                    pdf_page_limit: company.bill_processing_count?.pdf_page_limit ?? 0,
+                    email_bill_limit: company.bill_processing_count?.email_bill_limit ?? 0,
+                    pdf_allocation_start_date: company.bill_processing_count?.pdf_allocation_start_date || '',
+                    pdf_allocation_end_date: company.bill_processing_count?.pdf_allocation_end_date || '',
+                    email_allocation_start_date: company.bill_processing_count?.email_allocation_start_date || '',
+                    email_allocation_end_date: company.bill_processing_count?.email_allocation_end_date || '',
+                  })
+                }}>
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </form>
+        </SectionCard>
 
         {/* Subscription */}
         <SectionCard

@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework.exceptions import MethodNotAllowed, ValidationError
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
@@ -31,6 +32,7 @@ from superadmin.notifications import (
     send_transaction_completed_email,
 )
 from tenancy.models import Company, CompanyDeletionHistory, CompanyDepartment, CompanySuspensionReason
+from ocr.models import BillProcessingCount
 from tenancy.services import company_lifecycle_service
 from subscriptions.services import subscription_service
 from invitations.models import Invitation
@@ -120,6 +122,47 @@ class CompanyViewSet(viewsets.ModelViewSet):
         return success_response(
             message='Company fetched successfully.',
             data=serializer.data,
+        )
+
+    @action(detail=True, methods=['patch'], url_path='bill-processing-count')
+    def bill_processing_count(self, request, pk=None):
+        """SuperAdmin-only allocation update; consumed values are immutable."""
+        company = self.get_object()
+        usage, _ = BillProcessingCount.objects.get_or_create(company=company)
+        values = {}
+        for field in ('pdf_page_limit', 'email_bill_limit'):
+            if field not in request.data:
+                continue
+            try:
+                value = int(request.data[field])
+            except (TypeError, ValueError):
+                return Response({'detail': f'{field} must be a non-negative integer.'}, status=status.HTTP_400_BAD_REQUEST)
+            if value < 0:
+                return Response({'detail': f'{field} must be a non-negative integer.'}, status=status.HTTP_400_BAD_REQUEST)
+            values[field] = value
+        for field in (
+            'pdf_allocation_start_date', 'pdf_allocation_end_date',
+            'email_allocation_start_date', 'email_allocation_end_date',
+        ):
+            if field not in request.data:
+                continue
+            parsed = parse_date(str(request.data[field]))
+            if parsed is None:
+                return Response({'detail': f'{field} must be a valid date in YYYY-MM-DD format.'}, status=status.HTTP_400_BAD_REQUEST)
+            values[field] = parsed
+        for prefix in ('pdf', 'email'):
+            start_date = values.get(f'{prefix}_allocation_start_date', getattr(usage, f'{prefix}_allocation_start_date'))
+            end_date = values.get(f'{prefix}_allocation_end_date', getattr(usage, f'{prefix}_allocation_end_date'))
+            if start_date and end_date and end_date < start_date:
+                return Response({'detail': f'{prefix.title()} allocation end date must be on or after the start date.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not values:
+            return Response({'detail': 'Provide at least one processing limit.'}, status=status.HTTP_400_BAD_REQUEST)
+        for field, value in values.items():
+            setattr(usage, field, value)
+        usage.save(update_fields=[*values.keys(), 'updated_at'])
+        return success_response(
+            message='Bill processing limits updated successfully.',
+            data=CompanyDetailSerializer(company).data.get('bill_processing_count'),
         )
 
     @staticmethod

@@ -23,6 +23,7 @@ from ocr.views import (
     OCRUploadModesView,   
     OCRHistoryUploadDeleteView,
     OCRHistoryBulkDeleteView,
+    BillProcessingCountView,
 )
 
 urlpatterns = [
@@ -41,5 +42,6 @@ urlpatterns = [
     path("extraction-fields/",OCRStandardFieldsView.as_view(),name="ocr-extraction-fields"),
     path("review/save/",OCRReviewSaveView.as_view(),name="ocr-review-save"),
     path("extract/upload-modes/",OCRUploadModesView.as_view(),name="ocr-upload-modes"),
+    path("processing-usage/", BillProcessingCountView.as_view(), name="ocr-processing-usage"),
     path("ai/", include("ocr.ai.urls")),
 ]

@@ -40,6 +40,7 @@ export const superadminApi = {
   completeTransaction: (companyId, transactionId) => apiClient.post(SUPERADMIN_ENDPOINTS.companyCompleteTransaction(companyId),{ transaction_id: transactionId }).then(unwrap),
   sendTransactionEmail: (companyId, transactionId) => apiClient.post(SUPERADMIN_ENDPOINTS.companySendTransactionEmail(companyId), { transaction_id: transactionId }).then(unwrap),
   fetchCompanyTransactions: (companyId) => apiClient.get(`/superadmin/companies/${companyId}/transactions/`).then(unwrap),
+  updateCompanyBillProcessingCount: (companyId, payload) => apiClient.patch(SUPERADMIN_ENDPOINTS.companyBillProcessingCount(companyId), payload).then(unwrap),
 
   // ── Employees ────────────────────────────────────────────────
   listEmployees: (params) => apiClient.get(SUPERADMIN_ENDPOINTS.employees, { params }).then(unwrap),

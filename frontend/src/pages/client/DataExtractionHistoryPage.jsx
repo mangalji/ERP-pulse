@@ -15,6 +15,7 @@ import {
 } from '../../utils/netsuiteErrors.js'
 import { formatDateTime } from '../../utils/formatDate.js'
 import useClickOutside from '../../hooks/useClickOutside.js'
+import DateInput from '../../components/ui/DateInput.jsx'
 
 const FILTERS = [
   { value: 'ALL', label: 'All Data' },
@@ -754,11 +755,11 @@ export default function DataExtractionHistoryPage() {
                        </div>
                        <label className="text-xs font-medium text-[var(--color-muted)]" htmlFor="history-date-from">
                          Start
-                         <input id="history-date-from" type="date" value={draftDateFrom} onChange={(event) => { setDateRangePreset('custom'); setDraftDateFrom(event.target.value) }} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-sm font-normal text-[var(--color-ink)]" />
+                         <DateInput id="history-date-from" value={draftDateFrom} onChange={(event) => { setDateRangePreset('custom'); setDraftDateFrom(event.target.value) }} className="mt-1 rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 pr-8 text-sm font-normal text-[var(--color-ink)]" />
                        </label>
                        <label className="text-xs font-medium text-[var(--color-muted)]" htmlFor="history-date-to">
                          End
-                         <input id="history-date-to" type="date" value={draftDateTo} onChange={(event) => { setDateRangePreset('custom'); setDraftDateTo(event.target.value) }} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-sm font-normal text-[var(--color-ink)]" />
+                         <DateInput id="history-date-to" value={draftDateTo} onChange={(event) => { setDateRangePreset('custom'); setDraftDateTo(event.target.value) }} className="mt-1 rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 pr-8 text-sm font-normal text-[var(--color-ink)]" />
                        </label>
                      </div>
                      {dateRangeError && <p className="mt-3 text-xs text-red-600">{dateRangeError}</p>}

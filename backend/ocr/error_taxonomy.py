@@ -30,6 +30,7 @@ from ocr.exceptions import (
     PDFTooLargeException,
     UnsupportedFormatException,
 )
+from ocr.usage import ProcessingLimitExceeded
 
 
 class FailureCode:
@@ -92,6 +93,12 @@ def _is_infra_error(exc: BaseException) -> bool:
 
 def classify_failure(exc: BaseException) -> FailureInfo:
     """Map any exception to a ``FailureInfo``."""
+    if isinstance(exc, ProcessingLimitExceeded):
+        return FailureInfo(
+            FailureCode.QUOTA_EXHAUSTED,
+            False,
+            str(exc) or "The company's processing allocation has been exhausted.",
+        )
     if isinstance(exc, GeminiRateLimitException):
         if is_daily_quota_error(exc):
             return FailureInfo(FailureCode.QUOTA_EXHAUSTED, False, QUOTA_MESSAGE)

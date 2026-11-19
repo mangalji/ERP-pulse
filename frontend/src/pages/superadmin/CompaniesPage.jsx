@@ -22,6 +22,7 @@ import {
   PHONE_MAX_DIGITS,
 } from '../../utils/formValidation.js'
 import { formatDate } from '../../utils/formatDate.js'
+import AllocationDateRangeField from '../../components/superadmin/AllocationDateRangeField.jsx'
 
 const PAGE_SIZE = 10
 const COMPANY_NAME_MAX_LENGTH = 100
@@ -34,6 +35,12 @@ const EMPTY_FORM = {
   other_country_name: '',
   other_country_code: '',
   city: '',
+  pdf_page_limit: '',
+  email_bill_limit: '',
+  pdf_allocation_start_date: '',
+  pdf_allocation_end_date: '',
+  email_allocation_start_date: '',
+  email_allocation_end_date: '',
 }
 
 export default function CompaniesPage() {
@@ -322,6 +329,20 @@ export default function CompaniesPage() {
               ? 'Enter a valid country calling code, e.g. +91.'
               : '',
       contact_phone: validatePhone(form.contact_phone, form.country),
+      pdf_page_limit:
+        form.pdf_page_limit === '' || !Number.isInteger(Number(form.pdf_page_limit)) || Number(form.pdf_page_limit) < 0
+          ? 'Enter a non-negative whole-number PDF/file page limit.'
+          : '',
+      email_bill_limit:
+        form.email_bill_limit === '' || !Number.isInteger(Number(form.email_bill_limit)) || Number(form.email_bill_limit) < 0
+          ? 'Enter a non-negative whole-number email bill limit.'
+          : '',
+      pdf_allocation_start_date: !form.pdf_allocation_start_date ? 'Select a PDF start date.' : '',
+      pdf_allocation_end_date:
+        !form.pdf_allocation_end_date ? 'Select a PDF end date.' : form.pdf_allocation_end_date < form.pdf_allocation_start_date ? 'End date must be on or after the start date.' : '',
+      email_allocation_start_date: !form.email_allocation_start_date ? 'Select an email start date.' : '',
+      email_allocation_end_date:
+        !form.email_allocation_end_date ? 'Select an email end date.' : form.email_allocation_end_date < form.email_allocation_start_date ? 'End date must be on or after the start date.' : '',
     }
 
     setTouched({
@@ -329,6 +350,12 @@ export default function CompaniesPage() {
       contact_email: true,
       country: true,
       contact_phone: true,
+      pdf_page_limit: true,
+      email_bill_limit: true,
+      pdf_allocation_start_date: true,
+      pdf_allocation_end_date: true,
+      email_allocation_start_date: true,
+      email_allocation_end_date: true,
     })
 
     setFieldErrors(errors)
@@ -389,6 +416,12 @@ export default function CompaniesPage() {
       'contact_email',
       'country',
       'contact_phone',
+      'pdf_page_limit',
+      'email_bill_limit',
+      'pdf_allocation_start_date',
+      'pdf_allocation_end_date',
+      'email_allocation_start_date',
+      'email_allocation_end_date',
     ]
 
     const mapped = {}
@@ -450,6 +483,12 @@ export default function CompaniesPage() {
           form.country === 'OTHER'
             ? other_country_code.trim()
             : form.contact_phone_country_code,
+        pdf_page_limit: Number(form.pdf_page_limit),
+        email_bill_limit: Number(form.email_bill_limit),
+        pdf_allocation_start_date: form.pdf_allocation_start_date,
+        pdf_allocation_end_date: form.pdf_allocation_end_date,
+        email_allocation_start_date: form.email_allocation_start_date,
+        email_allocation_end_date: form.email_allocation_end_date,
       })
 
       addToast('Company created successfully')
@@ -1278,6 +1317,49 @@ export default function CompaniesPage() {
                     }
                   />
                 </div>
+
+                <div>
+                  <Input
+                    label="PDF/file page limit"
+                    type="number"
+                    min="0"
+                    value={form.pdf_page_limit}
+                    onChange={(e) => updateField('pdf_page_limit', e.target.value)}
+                    placeholder="enter page processing limits"
+                  />
+                  {touched.pdf_page_limit && fieldErrors.pdf_page_limit && (
+                    <p className="mt-1 text-xs text-red-600">{fieldErrors.pdf_page_limit}</p>
+                  )}
+                </div>
+
+                <div>
+                  <Input
+                    label="Email bill limit"
+                    type="number"
+                    min="0"
+                    value={form.email_bill_limit}
+                    onChange={(e) => updateField('email_bill_limit', e.target.value)}
+                    placeholder="enter email attachment limits"
+                  />
+                  {touched.email_bill_limit && fieldErrors.email_bill_limit && (
+                    <p className="mt-1 text-xs text-red-600">{fieldErrors.email_bill_limit}</p>
+                  )}
+                </div>
+
+                <AllocationDateRangeField
+                  label="PDF/file allocation period"
+                  start={form.pdf_allocation_start_date}
+                  end={form.pdf_allocation_end_date}
+                  onChange={({ start, end }) => setForm((current) => ({ ...current, pdf_allocation_start_date: start, pdf_allocation_end_date: end }))}
+                  error={fieldErrors.pdf_allocation_start_date || fieldErrors.pdf_allocation_end_date}
+                />
+                <AllocationDateRangeField
+                  label="Email allocation period"
+                  start={form.email_allocation_start_date}
+                  end={form.email_allocation_end_date}
+                  onChange={({ start, end }) => setForm((current) => ({ ...current, email_allocation_start_date: start, email_allocation_end_date: end }))}
+                  error={fieldErrors.email_allocation_start_date || fieldErrors.email_allocation_end_date}
+                />
               </div>
             </div>
 

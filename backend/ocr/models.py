@@ -139,6 +139,9 @@ class OCRBatch(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # Usage accounting is idempotent so email retries/provider overlap cannot
+    # charge the same bill more than once.
+    processing_usage_counted = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'ocr_batch'
@@ -327,6 +330,10 @@ class OCRUpload(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Set once after the file has been admitted to OCR and its page count is
+    # known. This prevents worker retries from double-counting usage.
+    processing_usage_counted = models.BooleanField(default=False)
+    processing_usage_pages = models.PositiveIntegerField(default=0)
 
     class Meta:
         db_table = 'ocr_upload'
@@ -354,6 +361,30 @@ class OCRUpload(models.Model):
 
     def __str__(self) -> str:
         return f'OCRUpload {self.id} ({self.original_filename})'
+
+
+class BillProcessingCount(models.Model):
+    """Per-company PDF-page and email-bill allocation/usage ledger."""
+
+    company = models.OneToOneField(
+        'tenancy.Company',
+        on_delete=models.CASCADE,
+        related_name='bill_processing_count',
+    )
+    pdf_page_limit = models.PositiveBigIntegerField(default=0)
+    email_bill_limit = models.PositiveBigIntegerField(default=0)
+    pdf_allocation_start_date = models.DateField(null=True, blank=True)
+    pdf_allocation_end_date = models.DateField(null=True, blank=True)
+    email_allocation_start_date = models.DateField(null=True, blank=True)
+    email_allocation_end_date = models.DateField(null=True, blank=True)
+    pdf_pages_consumed = models.PositiveBigIntegerField(default=0)
+    email_bills_consumed = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'bill_processing_count'
+
 
 
 class OCRExtractionPart(models.Model):
