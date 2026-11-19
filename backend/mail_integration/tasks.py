@@ -9,6 +9,31 @@ from mail_integration.health import record_scheduler_heartbeat
 from mail_integration.models import EmailIntegration
 
 
+def enqueue_next_mailbox_run(integration_id):
+    """Queue the next user-configured run instead of polling at a fixed interval."""
+    integration = EmailIntegration.objects.filter(pk=integration_id).only("next_sync_at", "is_active", "is_paused").first()
+    if not integration or not integration.is_active or integration.is_paused or not integration.next_sync_at:
+        return False
+    run_scheduled_mailbox.apply_async(args=[str(integration_id)], eta=integration.next_sync_at)
+    return True
+
+
+@shared_task
+def run_scheduled_mailbox(integration_id):
+    """Run one mailbox at its configured next-run time."""
+    integration = EmailIntegration.objects.filter(pk=integration_id).first()
+    if not integration or not integration.is_active or integration.is_paused:
+        return {"skipped": True}
+    if integration.next_sync_at and integration.next_sync_at > timezone.now():
+        return {"skipped": True, "next_sync_at": integration.next_sync_at.isoformat()}
+    try:
+        staged = EmailSyncService().sync_integration(integration_id=integration_id)
+        pipeline = EmailBillPipeline().process_due_messages()
+        return {"integration_id": str(integration_id), "emails_fetched": staged, "pipeline": pipeline}
+    finally:
+        enqueue_next_mailbox_run(integration_id)
+
+
 @shared_task
 def email_scheduler_heartbeat():
     """Beat dispatches this task; a worker records proof of execution."""

@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button.jsx'
 import apiClient from '../../services/apiClient.js'
 import { formatDateTime } from '../../utils/formatDate.js'
 import { netsuiteApi } from '../../services/netsuite.js'
+import useClickOutside from '../../hooks/useClickOutside.js'
 
 const DATA_TYPE_OPTIONS = [
   { value: 'text', label: 'Text' },
@@ -448,6 +449,8 @@ function NetSuiteFieldCombobox({
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const dropdownRef = useRef(null)
+  useClickOutside(dropdownRef, () => setOpen(false), open)
   const selectedOption = options.find(
   (option) => {
     const [
@@ -514,7 +517,7 @@ function NetSuiteFieldCombobox({
   }, [options, search])
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" ref={dropdownRef}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}

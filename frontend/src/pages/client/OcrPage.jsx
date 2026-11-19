@@ -980,12 +980,6 @@ export default function OcrPage() {
   const batchValidatedCount = batchEligibleResults.filter(isBatchFileValidated).length
   const batchPostedCount = batchEligibleResults.filter(isBatchFilePosted).length
   const batchExcludedCount = results.length - batchEligibleResults.length
-  const allBatchValidated =
-    batchEligibleResults.length > 0 &&
-    batchValidatedCount === batchEligibleResults.length
-  const allBatchPosted =
-    batchEligibleResults.length > 0 &&
-    batchPostedCount === batchEligibleResults.length
   const batchHasActivity = results.some(
     (item) => item?.batch_validation || item?.batch_posting,
   )
@@ -1597,8 +1591,13 @@ useEffect(() => {
   let saveCompleted = false
 
   try {
-    const savedResult = await handleSave()
-    saveCompleted = true
+    const alreadySaved = Boolean(
+      activeResult?.document_id &&
+      !activeResult?.draft_data &&
+      !editing,
+    )
+    const savedResult = alreadySaved ? activeResult : await handleSave()
+    saveCompleted = !alreadySaved
 
     if (controller.signal.aborted) {
       return
@@ -1917,6 +1916,50 @@ useEffect(() => {
     [connectionId],
   )
 
+  const handleBatchSaveOnly = async () => {
+    if (saving || validating || posting) return
+    const targets = results.map((item, index) => ({ item, index })).filter(({ item }) => isBatchFileEligible(item))
+    if (!targets.length) {
+      addToast('There are no extracted files to save.', 'error')
+      return
+    }
+    setSaving(true)
+    setEditing(false)
+    let savedCount = 0
+    try {
+      for (let position = 0; position < targets.length; position += 1) {
+        const { item, index } = targets[position]
+        setBatchProgress(`Saving ${position + 1}/${targets.length}: ${item.filename || 'file'}`)
+        const sourceData = index === activeIndex ? data : (item.draft_data ?? item.data)
+        const fields = resolveConfiguredFields(item.requested_fields || item.fields_config || selectedTemplate?.fields_config || null, sourceData)
+        const payload = { data: normalizeEditedData(sourceData, fields) }
+        if (item.document_id) payload.document_id = item.document_id
+        else payload.upload_id = item.upload_id
+        try {
+          const response = await apiClient.post('/ocr/review/save/', payload)
+          const responseData = response?.data?.data ?? response?.data ?? {}
+          patchResultByIndex(index, {
+            document_id: responseData?.document_id || item.document_id || null,
+            upload_id: responseData?.upload_id || item.upload_id || null,
+            version_id: responseData?.version_id || item.version_id || null,
+            version_number: responseData?.version_number || item.version_number || null,
+            status: responseData?.status || 'APPROVED',
+            data: responseData?.data || payload.data,
+            draft_data: undefined,
+          })
+          savedCount += 1
+        } catch (err) {
+          patchResultByIndex(index, { draft_data: sourceData })
+          console.error('Failed to save OCR result:', err)
+        }
+      }
+      addToast(`${savedCount} of ${targets.length} OCR result(s) saved.`, savedCount === targets.length ? 'success' : 'error')
+    } finally {
+      setSaving(false)
+      setBatchProgress('')
+    }
+  }
+
   const handleBatchSaveAndValidate = async () => {
     if (validationInFlightRef.current || postingInFlightRef.current) return
 
@@ -1937,7 +1980,7 @@ useEffect(() => {
     // Files already validated (and not edited since) are not re-run.
     const pending = targets.filter(({ item }) => !isBatchFileValidated(item))
     if (!pending.length) {
-      addToast('All files are already validated. You can post the batch to NetSuite.', 'success')
+      await handleBatchPost()
       return
     }
 
@@ -1955,7 +1998,7 @@ useEffect(() => {
       // 1) Save every file that is new or edited.
       for (let position = 0; position < pending.length; position += 1) {
         const { item, index } = pending[position]
-        const needsSave = !item.batch_validation || Boolean(item.draft_data)
+        const needsSave = !item.document_id || Boolean(item.draft_data)
 
         if (!needsSave) {
           documentIds.push(String(item.document_id))
@@ -3401,30 +3444,10 @@ const goNext = () => {
             onChange={async (event) => {
               const action = event.target.value
             
-              if (action === 'save_validate') {
+              if (action === 'save') {
+                await (isBatchMode ? handleBatchSaveOnly() : handleSave())
+              } else if (action === 'post') {
                 await (isBatchMode ? handleBatchSaveAndValidate() : handleSaveAndValidate())
-              
-              // if (action === 'post' && isBatchMode) {
-              //   await handleBatchPost()
-              //   event.target.value = ''
-              //   return
-              // }
-            } else if (action === 'post') {
-                if (isBatchMode) {
-                  await handleBatchPost()
-                } else{
-                if (
-                  String(validationResult?.status || '').toUpperCase() !== 'VALIDATED'
-                ){
-                  addToast(
-                    'Please validate the OCR data successfully before posting to NetSuite.',
-                    'error',
-                  )
-                  event.target.value = ''
-                  return
-                  }
-                await handlePost()
-              }
             }
             
               event.target.value = ''
@@ -3440,26 +3463,18 @@ const goNext = () => {
                     : 'Actions'}
             </option>
             <option
-              value="save_validate"
+              value="save"
               disabled={
                 !activeResult?.upload_id &&
                 !activeResult?.document_id
               }
             >
-              {isBatchMode ? 'Save & Validate All' : 'Save & Validate'}
+              {isBatchMode ? 'Save All' : 'Save'}
             </option>
 
             <option
               value="post"
-              disabled={
-                editing ||
-                saving ||
-                validating ||
-                posting ||
-                (isBatchMode
-                  ? !allBatchValidated || allBatchPosted
-                  : String(validationResult?.status || '').toUpperCase() !== 'VALIDATED')
-                }
+              disabled={saving || validating || posting}
             >
               {isBatchMode ? 'Post Batch to NetSuite' : 'Post to NetSuite'}
             </option>
@@ -3505,17 +3520,15 @@ const goNext = () => {
                     <Button
                       type="button"
                       intent="secondary"
-                      onClick={handleBatchSaveAndValidate}
+                      onClick={handleBatchSaveOnly}
                       disabled={saving || validating || posting || diagnosing}
                     >
-                      Save &amp; Validate All
+                      Save All
                     </Button>
                     <Button
                       type="button"
-                      onClick={handleBatchPost}
+                      onClick={handleBatchSaveAndValidate}
                       disabled={
-                        !allBatchValidated ||
-                        allBatchPosted ||
                         saving ||
                         validating ||
                         posting ||

@@ -1538,18 +1538,18 @@ function getFileCategory(file) {
                         onChange={async (event) => {
                           const action = event.target.value
 
-                          if (action === 'save_validate') {
-                            await handleSaveAndValidate()
+                          if (action === 'save') {
+                            await handleSave()
                           }
 
                           if (action === 'post') {
-                            await handlePost()
+                            await handleSaveAndValidate()
                           }
 
                           event.target.value = ''
                         }}
                       >
-                        <option value="">
+                        <option value="" disabled hidden>
                           {posting
                             ? 'Posting...'
                             : validating
@@ -1560,18 +1560,11 @@ function getFileCategory(file) {
                         </option>
 
 
-                        <option value="save_validate">
-                          Save &amp; Validate
+                        <option value="save">
+                          Save
                         </option>
 
-                        <option
-                          value="post"
-                          disabled={
-                            String(
-                              validationResult?.status || '',
-                            ).toUpperCase() !== 'VALIDATED'
-                          }
-                        >
+                        <option value="post">
                           Post to NetSuite
                         </option>
                       </select>

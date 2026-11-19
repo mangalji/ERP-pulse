@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -12,6 +13,10 @@ import { useAuth } from '../../contexts/AuthContext.jsx'
 import { isCompanyAdminUser } from '../../utils/netsuiteErrors.js'
 
 export default function NetSuiteIntegrationsPage() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { connectionId } = useParams()
+  const isNewPage = location.pathname.endsWith('/new')
   const { toasts, addToast, removeToast } = useToast()
   const { user } = useAuth()
   const canReconnect = isCompanyAdminUser(user)
@@ -19,7 +24,6 @@ export default function NetSuiteIntegrationsPage() {
   const [currentConnectionId, setCurrentConnectionId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [showForm, setShowForm] = useState(false)
   const [assigningId, setAssigningId] = useState(null)
   const [companyEmployees, setCompanyEmployees] = useState([])
   const loadData = useCallback(async () => {
@@ -52,6 +56,10 @@ export default function NetSuiteIntegrationsPage() {
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  const visibleConnections = connectionId
+    ? connections.filter((connection) => String(connection.id) === String(connectionId))
+    : connections
 
   const handleCreate = async (formData) => {
     setSaving(true)
@@ -180,7 +188,7 @@ export default function NetSuiteIntegrationsPage() {
             <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">NetSuite Integration</h1>
             <p className="mt-1 text-sm text-[var(--color-muted)]">Manage your company's NetSuite connections.</p>
           </div>
-          <Button onClick={() => setShowForm(true)}>New Connection</Button>
+          {isNewPage || connectionId ? <Button intent="secondary" onClick={() => navigate('/app/integrations/netsuite')}>Back to Connections</Button> : <Button onClick={() => navigate('/app/integrations/netsuite/new')}>New Connection</Button>}
         </div>
 
         {/* <Card className="p-4">
@@ -203,23 +211,23 @@ export default function NetSuiteIntegrationsPage() {
           </p>
         </Card> */}
 
-        {showForm && (
+        {isNewPage && (
           <Card className="p-6">
             <h3 className="mb-4 font-[var(--font-display)] text-base font-semibold text-[var(--color-ink)]">
               Create Connection
             </h3>
             <ConnectionForm onSubmit={handleCreate} isLoading={saving} />
-            <Button intent="secondary" onClick={() => setShowForm(false)} className="mt-4">Cancel</Button>
+            <Button intent="secondary" onClick={() => navigate('/app/integrations/netsuite')} className="mt-4">Cancel</Button>
           </Card>
         )}
 
-        {connections.length === 0 ? (
+        {!isNewPage && (visibleConnections.length === 0 ? (
           <Card className="p-6">
             <p className="text-sm text-[var(--color-muted)]">No NetSuite connections yet. Create one to get started.</p>
           </Card>
         ) : (
           <div className="flex flex-col gap-4">
-            {connections.map((conn) => (
+            {visibleConnections.map((conn) => (
               <ConnectionCard
                 key={conn.id}
                 connection={conn}
@@ -235,7 +243,7 @@ export default function NetSuiteIntegrationsPage() {
               />
             ))}
           </div>
-        )}
+        ))}
 
         {assigningId && (
           <AssignEmployeesDialog

@@ -173,13 +173,19 @@ class CompanyViewSet(viewsets.ModelViewSet):
         item = CompanyDepartment.objects.filter(
             pk=department_id,
             company=company,
-            is_active=True,
-            is_deleted=False,
         ).first()
         if item is None:
             return Response({'detail': 'Department not found.'}, status=status.HTTP_404_NOT_FOUND)
-        item.is_active = False
-        item.save(update_fields=['is_active', 'updated_at'])
+        assigned_count = get_user_model().objects.filter(
+            company=company,
+            department__iexact=item.name,
+        ).count()
+        if assigned_count:
+            return Response(
+                {'detail': f'Cannot delete {item.name}. It is assigned to {assigned_count} employee(s). Reassign them first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        item.delete()
         return success_response(message='Department removed successfully.')
 
     @action(detail=True, methods=['post'])

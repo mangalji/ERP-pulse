@@ -2,6 +2,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from mail_integration.models import EmailIntegration
+from mail_integration.scheduling import validate_schedule
 
 
 class EmailIntegrationCreateSerializer(serializers.Serializer):
@@ -44,7 +45,13 @@ class EmailIntegrationCreateSerializer(serializers.Serializer):
 
 
 class EmailIntegrationConfigureSerializer(serializers.Serializer):
-    initial_sync_from_at = serializers.DateTimeField()
+    schedule = serializers.JSONField()
+
+    def validate_schedule(self, value):
+        try:
+            return validate_schedule(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
     def validate_initial_sync_from_at(self, value):
         if value > timezone.now():
@@ -75,6 +82,7 @@ class EmailIntegrationSerializer(serializers.ModelSerializer):
             "is_active",
             "is_paused",
             "sync_interval_minutes",
+            "schedule_config",
             "initial_sync_from_at",
             "initial_sync_configured",
             "last_successful_sync_at",

@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useRef } from 'react'
 import { getCachedData, setCachedData } from '../../utils/pageCache.js'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import DataTable from '../../components/superadmin/DataTable.jsx'
@@ -42,6 +42,8 @@ export default function PlansPage() {
   const [saving, setSaving] = useState(false)
   const [confirm, setConfirm] = useState(null)
   const navigate = useNavigate()
+  const location = useLocation()
+  const isCreatePage = location.pathname.endsWith('/new')
 
   const handlePlanAction = async () => {
     if (!confirm) return
@@ -84,19 +86,21 @@ export default function PlansPage() {
     load()
   }, [load])
 
+  useEffect(() => {
+    if (isCreatePage) {
+      setForm(EMPTY_PLAN)
+      setModal({ mode: 'create' })
+    } else {
+      setModal(null)
+    }
+  }, [isCreatePage])
+
   const openCreate = () => {
-    setForm(EMPTY_PLAN)
-    setModal({ mode: 'create' })
+    navigate('/admin/plans/new')
   }
 
   const openEdit = (plan) => {
-    setForm({
-      name: plan.name || '',
-      description: plan.description || '',
-      price: plan.price ?? '',
-      validity_days: plan.validity_days ?? 30,
-    })
-    setModal({ mode: 'edit', plan })
+    navigate(`/admin/plans/${plan.id}/edit`)
   }
 
   const handleSave = async () => {
@@ -109,7 +113,7 @@ export default function PlansPage() {
         await superadminApi.updatePlan(modal.plan.id, form)
         addToast('Plan updated successfully')
       }
-      setModal(null)
+      navigate('/admin/plans')
       load()
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to save plan', 'error')
@@ -194,12 +198,12 @@ export default function PlansPage() {
           <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
         </div>
         <PageHeader
-          title="Plans"
-          subtitle="Manage subscription plans and their validity."
-          actions={<Button onClick={openCreate}>Create Plan</Button>}
+          title={isCreatePage ? 'Create Plan' : 'Plans'}
+          subtitle={isCreatePage ? 'Configure pricing and validity for a subscription plan.' : 'Manage subscription plans and their validity.'}
+          actions={isCreatePage ? <Button intent="secondary" onClick={() => navigate('/admin/plans')}>Back to Plans</Button> : <Button onClick={openCreate}>Create Plan</Button>}
         />
 
-        <Card className="p-5">
+        {!isCreatePage && <Card className="p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <SearchBox value={search} onChange={(v) => { setSearch(v); setOffset(0) }} placeholder="Search plans..." />
             <span className="text-xs text-[var(--color-muted)]">{count} result{count !== 1 ? 's' : ''}</span>
@@ -226,14 +230,14 @@ export default function PlansPage() {
               </Button>
             </div>
           )}
-        </Card>
+        </Card>}
       </div>
 
       {/* Create/Edit Plan Modal */}
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setModal(null)} />
-          <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+        <div className={isCreatePage ? 'w-full' : 'fixed inset-0 z-50 flex items-center justify-center p-4'}>
+          <div className={isCreatePage ? 'hidden' : 'absolute inset-0 bg-black/40'} onClick={() => navigate('/admin/plans')} />
+          <div className={isCreatePage ? 'relative w-full max-w-2xl rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-sm' : 'relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl'}>
             <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
               {modal.mode === 'create' ? 'Create Plan' : 'Edit Plan'}
             </h3>
@@ -244,7 +248,7 @@ export default function PlansPage() {
               <Input label="Validity (days)" type="number" value={form.validity_days} onChange={(e) => setForm({ ...form, validity_days: e.target.value })} />
             </div>
             <div className="mt-6 flex justify-end gap-2">
-              <Button intent="secondary" onClick={() => setModal(null)}>Cancel</Button>
+              <Button intent="secondary" onClick={() => navigate('/admin/plans')}>Cancel</Button>
               <Button onClick={handleSave} isLoading={saving}>{modal.mode === 'create' ? 'Create' : 'Save'}</Button>
             </div>
           </div>

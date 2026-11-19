@@ -59,6 +59,8 @@ class EmailIntegration(models.Model):
     is_active = models.BooleanField(default=False)
     is_paused = models.BooleanField(default=False)
     sync_interval_minutes = models.PositiveSmallIntegerField(default=DEFAULT_SYNC_INTERVAL_MINUTES)
+    # NetSuite-style recurrence settings used to calculate each mailbox run.
+    schedule_config = models.JSONField(default=dict, blank=True)
     initial_sync_from_at = models.DateTimeField(null=True, blank=True)
     last_successful_sync_at = models.DateTimeField(null=True, blank=True)
     provider_cursor = models.TextField(blank=True, default="")

@@ -11,12 +11,12 @@ import { superadminApi } from '../../services/superadmin.js'
 import { formatDate } from '../../utils/formatDate.js'
 
 export default function PlanDetailPage() {
-  const { id } = useParams()
+  const { id, editMode } = useParams()
   const navigate = useNavigate()
+  const isEditPage = editMode === 'edit'
   const [plan, setPlan] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [editOpen, setEditOpen] = useState(false)
   const [editForm, setEditForm] = useState({})
   const [saving, setSaving] = useState(false)
 
@@ -48,7 +48,7 @@ export default function PlanDetailPage() {
     try {
       const updated = await superadminApi.updatePlan(id, editForm)
       setPlan(updated)
-      setEditOpen(false)
+      navigate(`/admin/plans/${id}`)
     } catch (err) {
       alert(err.payload?.message || err.message || 'Failed to update plan')
     } finally {
@@ -77,7 +77,7 @@ export default function PlanDetailPage() {
   if (!plan) return null
 
   return (
-    <AdminLayout title={plan.name} breadcrumb="Plan Detail">
+    <AdminLayout title={isEditPage ? `Edit ${plan.name}` : plan.name} breadcrumb={isEditPage ? 'Edit Plan' : 'Plan Detail'}>
       <div className="flex flex-col gap-6">
         <div className="flex items-center gap-2">
           <button
@@ -92,21 +92,16 @@ export default function PlanDetailPage() {
         </div>
 
         <PageHeader
-          title={plan.name}
-          subtitle={plan.description}
+          title={isEditPage ? `Edit ${plan.name}` : plan.name}
+          subtitle={isEditPage ? 'Update plan details and save your changes.' : plan.description}
           actions={
-            <div className="flex gap-2">
-              <Button size="sm" intent="secondary" onClick={() => navigate(`/admin/plans`)}>
-                Back to Plans
-              </Button>
-              <Button size="sm" onClick={() => setEditOpen(true)}>
-                Edit Plan
-              </Button>
-            </div>
+            isEditPage
+              ? <Button size="sm" intent="secondary" onClick={() => navigate(`/admin/plans/${id}`)}>Back to Plan</Button>
+              : <div className="flex gap-2"><Button size="sm" intent="secondary" onClick={() => navigate('/admin/plans')}>Back to Plans</Button><Button size="sm" onClick={() => navigate(`/admin/plans/${id}/edit`)}>Edit Plan</Button></div>
           }
         />
 
-        <InfoCard
+        {!isEditPage && <InfoCard
           title="Basic Information"
           items={[
             { label: 'Plan Name', value: plan.name },
@@ -115,20 +110,18 @@ export default function PlanDetailPage() {
             { label: 'Created Date', value: plan.created_at ? formatDate(plan.created_at) : '—'},
             { label: 'Updated Date', value: plan.updated_at ? formatDate(plan.updated_at) : '—'},
           ]}
-        />
+        />}
 
-        <InfoCard
+        {!isEditPage && <InfoCard
           title="Pricing"
           items={[
             { label: 'Price', value: `₹${Number(plan.price || 0).toFixed(2)}` },
             { label: 'Validity', value: `${plan.validity_days ?? 30} days` },
           ]}
-        />
+        />}
 
-        {editOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/40" onClick={() => setEditOpen(false)} />
-            <div className="relative w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+        {isEditPage && (
+            <Card className="w-full max-w-2xl p-6">
               <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">
                 Edit Plan
               </h3>
@@ -139,11 +132,10 @@ export default function PlanDetailPage() {
                 <Input label="Validity (days)" type="number" value={editForm.validity_days || ''} onChange={(e) => setEditForm({ ...editForm, validity_days: e.target.value })} />
               </div>
               <div className="mt-6 flex justify-end gap-2">
-                <Button intent="secondary" size="sm" onClick={() => setEditOpen(false)}>Cancel</Button>
+                <Button intent="secondary" size="sm" onClick={() => navigate(`/admin/plans/${id}`)}>Cancel</Button>
                 <Button size="sm" onClick={handleSave} isLoading={saving}>Save Changes</Button>
               </div>
-            </div>
-          </div>
+            </Card>
         )}
       </div>
     </AdminLayout>

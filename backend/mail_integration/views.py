@@ -151,7 +151,7 @@ class EmailIntegrationInitialSyncView(APIView):
         integration = EmailIntegrationService().configure_initial_sync(
             user=request.user,
             integration_id=integration_id,
-            **serializer.validated_data,
+            schedule=serializer.validated_data["schedule"],
         )
         return success_response(
             message="Initial email sync is configured.",

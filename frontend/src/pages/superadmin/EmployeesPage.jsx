@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getCachedData, setCachedData } from '../../utils/pageCache.js'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import AdminLayout from '../../components/layout/AdminLayout.jsx'
 import PageHeader from '../../components/superadmin/PageHeader.jsx'
 import DataTable from '../../components/superadmin/DataTable.jsx'
@@ -55,6 +55,8 @@ export default function EmployeesPage() {
   const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
   const navigate = useNavigate()
+  const location = useLocation()
+  const isCreatePage = location.pathname.endsWith('/new')
   const [searchParams] = useSearchParams()
   const companyId = searchParams.get('company_id')
 
@@ -177,9 +179,20 @@ export default function EmployeesPage() {
   const openCreate = () => {
     setForm(EMPTY_EMPLOYEE)
     setFormError('')
-    setCreateOpen(true)
+    navigate('/admin/employees/new')
     loadCompanies()
   }
+
+  useEffect(() => {
+    if (isCreatePage) {
+      setCreateOpen(true)
+      setForm(EMPTY_EMPLOYEE)
+      setFormError('')
+      loadCompanies()
+    } else {
+      setCreateOpen(false)
+    }
+  }, [isCreatePage])
 
   const updateField = (field, value) => {
   setForm((prev) => ({
@@ -283,6 +296,7 @@ const isFormValid = () => {
         role: form.role,
       })
       alert('Invitation sent successfully')
+      navigate('/admin/employees')
       setCreateOpen(false)
       setForm(EMPTY_EMPLOYEE)
       setFormError('')
@@ -479,12 +493,12 @@ if (isCompanySuspended) {
           <span className="text-sm text-[var(--color-muted)]">Dashboard</span>
         </div>
         <PageHeader
-          title="Users"
-          subtitle="Manage AGSuite and client users."
-          actions={<Button onClick={openCreate}>Create User</Button>}
+           title={isCreatePage ? 'Create User' : 'Users'}
+           subtitle={isCreatePage ? 'Create a user and send an invitation.' : 'Manage AGSuite and client users.'}
+           actions={isCreatePage ? <Button intent="secondary" onClick={() => navigate('/admin/employees')}>Back to Users</Button> : <Button onClick={openCreate}>Create User</Button>}
         />
 
-        <Card className="p-5">
+         {!isCreatePage && <Card className="p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <SearchBox value={search} onChange={(v) => { setSearch(v); setOffset(0) }} placeholder="Search users..." />
             <span className="text-xs text-[var(--color-muted)]">{count} user{count !== 1 ? 's' : ''}</span>
@@ -511,14 +525,14 @@ if (isCompanySuspended) {
               </Button>
             </div>
           )}
-        </Card>
+         </Card>}
       </div>
 
       {/* Create Employee Modal */}
       {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setCreateOpen(false)} />
-            <div className="relative w-full max-w-3xl max-h-[calc(100vh-80px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
+        <div className={isCreatePage ? 'w-full' : 'fixed inset-0 z-50 flex items-center justify-center p-4'}>
+          <div className={isCreatePage ? 'hidden' : 'absolute inset-0 bg-black/40'} onClick={() => navigate('/admin/employees')} />
+            <div className={isCreatePage ? 'relative w-full max-w-3xl rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-sm' : 'relative w-full max-w-3xl max-h-[calc(100vh-80px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl'}>
             <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">Create User</h3>
             <div className="mt-4 flex flex-col gap-4">
               <Input label={<><span className="text-red-600">*</span> Email</>} type="email" required maxLength={EMAIL_MAX_LENGTH} value={form.email} onChange={(e) => updateField('email', e.target.value)} onBlur={verifyEmailOnBlur} />
@@ -654,7 +668,7 @@ if (isCompanySuspended) {
                 </div>
                 )}
               <div className="mt-6 flex justify-end gap-2">
-                <Button intent="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                <Button intent="secondary" onClick={() => navigate('/admin/employees')}>Cancel</Button>
                 <Button onClick={handleCreate} isLoading={saving}>Send Invitation</Button>
               </div>
             </div>

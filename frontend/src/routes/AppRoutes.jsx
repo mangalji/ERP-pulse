@@ -157,6 +157,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/admin/plans/new" element={<ProtectedRoute requiredRole="admin"><SuperAdminPlansPage /></ProtectedRoute>} />
       <Route
         path="/admin/plans/:id"
         element={
@@ -165,6 +166,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/admin/plans/:id/edit" element={<ProtectedRoute requiredRole="admin"><SuperAdminPlanDetailPage /></ProtectedRoute>} />
       <Route
         path="/admin/employees"
         element={
@@ -173,6 +175,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/admin/employees/new" element={<ProtectedRoute requiredRole="admin"><SuperAdminEmployeesPage /></ProtectedRoute>} />
       <Route
         path="/admin/profile"
         element={
@@ -189,6 +192,7 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/admin/companies/new" element={<ProtectedRoute requiredRole="admin"><SuperAdminCompaniesPage /></ProtectedRoute>} />
       <Route
         path="/admin/companies/:id/subscription"
         element={
@@ -222,6 +226,8 @@ export default function AppRoutes() {
       <Route path="/app/integrations/email" element={
         <ProtectedRoute requiredRole="companyAdmin"><EmailIntegrationsPage /></ProtectedRoute>
       } />
+      <Route path="/app/integrations/email/new" element={<ProtectedRoute requiredRole="companyAdmin"><EmailIntegrationsPage /></ProtectedRoute>} />
+      <Route path="/app/integrations/email/:integrationId" element={<ProtectedRoute requiredRole="companyAdmin"><EmailIntegrationsPage /></ProtectedRoute>} />
       <Route
         path="/app/ocr"
         element={
@@ -273,6 +279,9 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/app/employees/new" element={<ProtectedRoute requiredRole="client"><ClientEmployeesPage /></ProtectedRoute>} />
+      <Route path="/app/employees/:employeeId/edit" element={<ProtectedRoute requiredRole="client"><ClientEmployeesPage /></ProtectedRoute>} />
+      <Route path="/app/employees/:employeeId" element={<ProtectedRoute requiredRole="client"><ClientEmployeesPage /></ProtectedRoute>} />
       <Route
         path="/app/settings"
         element={
@@ -353,6 +362,8 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/app/integrations/netsuite/new" element={<ProtectedRoute requiredRole="client"><NetSuiteIntegrationsPage /></ProtectedRoute>} />
+      <Route path="/app/integrations/netsuite/:connectionId" element={<ProtectedRoute requiredRole="client"><NetSuiteIntegrationsPage /></ProtectedRoute>} />
       <Route
         path="/app/netsuite"
         element={

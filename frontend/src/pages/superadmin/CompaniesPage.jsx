@@ -84,6 +84,7 @@ export default function CompaniesPage() {
   const [saving, setSaving] = useState(false)
   const [touched, setTouched] = useState({})
   const [fieldErrors, setFieldErrors] = useState({})
+  const isCreatePage = location.pathname.endsWith('/new')
 
   // ─────────────────────────────────────────────────────────────
   // Confirmation dialog
@@ -342,15 +343,26 @@ export default function CompaniesPage() {
     setForm(EMPTY_FORM)
     setTouched({})
     setFieldErrors({})
-    setCreateOpen(true)
+    navigate('/admin/companies/new')
   }
 
   const closeCreate = () => {
-    setCreateOpen(false)
+    navigate('/admin/companies')
     setForm(EMPTY_FORM)
     setTouched({})
     setFieldErrors({})
   }
+
+  useEffect(() => {
+    if (isCreatePage) {
+      setCreateOpen(true)
+      setForm(EMPTY_FORM)
+      setTouched({})
+      setFieldErrors({})
+    } else {
+      setCreateOpen(false)
+    }
+  }, [isCreatePage])
 
   // ─────────────────────────────────────────────────────────────
   // Map backend validation errors to individual fields
@@ -821,15 +833,16 @@ export default function CompaniesPage() {
 
         {/* Header */}
         <PageHeader
-          title="Companies"
-          subtitle="Manage all client companies across the platform."
+          title={isCreatePage ? 'Create Company' : 'Companies'}
+          subtitle={isCreatePage ? 'Add a new client company to the platform.' : 'Manage all client companies across the platform.'}
           actions={
-            <Button onClick={openCreate}>
-              Create Company
-            </Button>
+            isCreatePage
+              ? <Button intent="secondary" onClick={closeCreate}>Back to Companies</Button>
+              : <Button onClick={openCreate}>Create Company</Button>
           }
         />
 
+        {!isCreatePage && <>
         {/* ─────────────────────────────────────────────────────── */}
         {/* Active / Suspended Companies */}
         {/* ─────────────────────────────────────────────────────── */}
@@ -1059,6 +1072,7 @@ export default function CompaniesPage() {
             </div>
           )}
         </Card>
+        </>}
 
       </div>
 
@@ -1066,13 +1080,13 @@ export default function CompaniesPage() {
       {/* Create Company Modal */}
       {/* ───────────────────────────────────────────────────────── */}
       {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className={isCreatePage ? 'w-full' : 'fixed inset-0 z-50 flex items-center justify-center p-4'}>
           <div
-            className="absolute inset-0 bg-black/40"
+            className={isCreatePage ? 'hidden' : 'absolute inset-0 bg-black/40'}
             onClick={closeCreate}
           />
 
-          <div className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl">
+          <div className={isCreatePage ? 'relative w-full max-w-3xl rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm' : 'relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl'}>
             {/* Header */}
             <div className="flex-shrink-0 px-6 py-5">
               <h3 className="font-[var(--font-display)] text-lg font-semibold text-[var(--color-ink)]">

@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import useClickOutside from '../../hooks/useClickOutside.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Badge from '../../components/ui/Badge.jsx'
@@ -24,6 +25,11 @@ import {
 
 export default function EmployeesPage() {
   const { user } = useAuth()
+  const { employeeId } = useParams()
+  const location = useLocation()
+  const isCreatePage = location.pathname.endsWith('/new')
+  const isEditPage = location.pathname.endsWith('/edit')
+  const isFormPage = isCreatePage || Boolean(employeeId)
   const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -41,6 +47,8 @@ export default function EmployeesPage() {
   const [editing, setEditing] = useState(false)
   const [viewEmployee, setViewEmployee] = useState(null)
   const navigate = useNavigate()
+  const departmentEditorRef = useRef(null)
+  useClickOutside(departmentEditorRef, () => setEditingDepartments(false), editingDepartments)
 
   const updateField = (field, value) => {
   setForm((prev) => ({
@@ -281,7 +289,7 @@ function hasEmployeePassword(employee) {
       alert('Employee invitation sent successfully')
       setShowCreate(false)
       setForm({email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', role_id: '', designation: '', department: '', })
-      loadEmployees()
+      navigate('/app/employees')
     } catch (err) {
       alert(
         err.payload?.detail ||
@@ -324,23 +332,7 @@ function hasEmployeePassword(employee) {
   }
 
   const handleEdit = async (employee) => {
-    const full = await clientApi.getEmployee(employee.id)
-    const emp = full?.employee || full
-    setEditingEmployee(emp)
-    setForm({
-      email: emp.email || '',
-      first_name: emp.first_name || '',
-      last_name: emp.last_name || '',
-      mobile_number: emp.mobile_number || '',
-      country: emp.country || 'IN',
-      phone_country_code: emp.phone_country_code || '+91',
-      role_id: emp.roles?.[0]?.role_id ? String(emp.roles[0].role_id) : '',
-      designation: emp.designation || '',
-      department: emp.department || '',
-    })
-    setShowCreate(false)
-    setTouched({})
-    setFieldErrors({})
+    navigate(`/app/employees/${employee.id}/edit`)
   }
 
   const handleUpdate = async (event) => {
@@ -361,7 +353,7 @@ function hasEmployeePassword(employee) {
       })
       alert('Employee updated successfully')
       setEditingEmployee(null)
-      loadEmployees()
+      navigate('/app/employees')
     } catch (err) {
       alert(err.payload?.message || err.message || 'Failed to update employee')
     } finally {
@@ -370,15 +362,55 @@ function hasEmployeePassword(employee) {
   }
 
   const handleView = async (employee) => {
-    const full = await clientApi.getEmployee(employee.id)
-    const emp = full?.employee || full
-    setViewEmployee(emp)
+    navigate(`/app/employees/${employee.id}`)
   }
 
-  const closeView = () => setViewEmployee(null)
+  const closeView = () => navigate('/app/employees')
+
+  useEffect(() => {
+    let cancelled = false
+    if (isCreatePage) {
+      setShowCreate(true)
+      setEditingEmployee(null)
+      setViewEmployee(null)
+      setForm({ email: '', first_name: '', last_name: '', mobile_number: '', country: 'IN', phone_country_code: '+91', role_id: '', designation: '', department: '' })
+      setTouched({})
+      setFieldErrors({})
+      return undefined
+    }
+    if (!employeeId) {
+      setShowCreate(false)
+      setEditingEmployee(null)
+      setViewEmployee(null)
+      return undefined
+    }
+    const employee = employees.find((item) => String(item.id) === String(employeeId))
+    if (!employee) return undefined
+    clientApi.getEmployee(employee.id).then((full) => {
+      if (cancelled) return
+      const emp = full?.employee || full
+      if (isEditPage) {
+        setEditingEmployee(emp)
+        setViewEmployee(null)
+        setForm({
+          email: emp.email || '', first_name: emp.first_name || '', last_name: emp.last_name || '',
+          mobile_number: emp.mobile_number || '', country: emp.country || 'IN',
+          phone_country_code: emp.phone_country_code || '+91', role_id: emp.roles?.[0]?.role_id ? String(emp.roles[0].role_id) : '',
+          designation: emp.designation || '', department: emp.department || '',
+        })
+        setTouched({})
+        setFieldErrors({})
+      } else {
+        setViewEmployee(emp)
+        setEditingEmployee(null)
+      }
+      setShowCreate(false)
+    })
+    return () => { cancelled = true }
+  }, [employeeId, employees, isCreatePage, isEditPage])
 
   return (
-    <ClientLayout title="Employees" breadcrumb="Employees">
+    <ClientLayout title={isCreatePage ? 'Add Employee' : employeeId ? (isEditPage ? 'Edit Employee' : 'Employee Details') : 'Employees'} breadcrumb={isCreatePage ? 'Employees / Add' : employeeId ? (isEditPage ? 'Employees / Edit' : 'Employees / Details') : 'Employees'}>
       <div className="flex flex-col gap-6">
         <div className="flex items-center gap-2">
           <button
@@ -394,15 +426,14 @@ function hasEmployeePassword(employee) {
          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex flex-col gap-1">
             <h1 className="font-[var(--font-display)] text-2xl font-semibold text-[var(--color-ink)]">
-              Company Employees
+               {isCreatePage ? 'Add Employee' : employeeId ? (isEditPage ? 'Edit Employee' : 'Employee Details') : 'Company Employees'}
             </h1>
             <p className="text-sm text-[var(--color-muted)]">
-              Manage the people in your company and their access to the portal.
+               {isCreatePage ? 'Invite a new employee to your company.' : employeeId ? 'Review or update this employee record.' : 'Manage the people in your company and their access to the portal.'}
             </p>
           </div>
-           <Button intent="primary" onClick={() => setShowCreate((prev) => !prev)}>
-             + Add Employee
-           </Button>
+           {!isFormPage && <Button intent="primary" onClick={() => navigate('/app/employees/new')}>+ Add Employee</Button>}
+           {isFormPage && <Button intent="secondary" onClick={() => navigate('/app/employees')}>Back to Employees</Button>}
         </div>
 
         {showCreate && (
@@ -520,7 +551,7 @@ function hasEmployeePassword(employee) {
                 value={form.designation}
                 onChange={(e) => setForm({ ...form, designation: e.target.value })}
               />
-              <label className="relative flex flex-col gap-1.5">
+              <label ref={departmentEditorRef} className="relative flex flex-col gap-1.5">
                 <span className="flex items-center justify-between text-sm font-medium text-[var(--color-ink-soft)]"><span><span className="text-red-600">*</span> Department</span><button type="button" onClick={() => setEditingDepartments((value) => !value)} className="text-[var(--color-primary)] underline">Edit</button></span>
                 <select value={form.department} onChange={(e) => updateField('department', e.target.value)} required className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]">
                   <option value="">Select department</option>
@@ -538,7 +569,7 @@ function hasEmployeePassword(employee) {
                 <Button type="submit" isLoading={creating}>
                   Send Invitation
                 </Button>
-                <Button type="button" intent="ghost" onClick={() => setShowCreate(false)}>
+                 <Button type="button" intent="ghost" onClick={() => navigate('/app/employees')}>
                   Cancel
                 </Button>
               </div>
@@ -640,14 +671,14 @@ function hasEmployeePassword(employee) {
                 value={form.designation}
                 onChange={(e) => setForm({ ...form, designation: e.target.value })}
               />
-              <label className="relative flex flex-col gap-1.5">
+              <label ref={departmentEditorRef} className="relative flex flex-col gap-1.5">
                 <span className="flex items-center justify-between text-sm font-medium text-[var(--color-ink-soft)]"><span><span className="text-red-600">*</span> Department</span><button type="button" onClick={() => setEditingDepartments((value) => !value)} className="text-[var(--color-primary)] underline">Edit</button></span>
                 <select value={form.department} onChange={(e) => updateField('department', e.target.value)} required className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]">
                   <option value="">Select department</option>
                   {departments.map((department) => <option key={department.id} value={department.name}>{department.name}</option>)}
                 </select>
                 {editingDepartments && (
-                  <div className="absolute left-full top-0 z-20 ml-3 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl">
+                    <div className="absolute left-full top-0 z-20 ml-3 w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl">
                     <div className="mb-3 flex items-center justify-between"><strong>Edit departments</strong><button type="button" onClick={() => setEditingDepartments(false)} aria-label="Close department editor">×</button></div>
                     <div className="mb-3 flex gap-2"><input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} placeholder="New department" maxLength={150} className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm" /><Button type="button" size="sm" onClick={addDepartment}>Add</Button></div>
                     <div className="max-h-44 space-y-1 overflow-y-auto">{departments.map((department) => <div key={department.id} className="flex items-center justify-between rounded bg-[var(--color-canvas)] px-2 py-1 text-sm"><span>{department.name}</span><button type="button" onClick={() => removeDepartment(department)} className="text-red-600">Remove</button></div>)}</div>
@@ -658,7 +689,7 @@ function hasEmployeePassword(employee) {
                 <Button type="submit" isLoading={editing}>
                   Save Changes
                 </Button>
-                <Button type="button" intent="ghost" onClick={() => setEditingEmployee(null)}>
+                 <Button type="button" intent="ghost" onClick={() => navigate('/app/employees')}>
                   Cancel
                 </Button>
               </div>
@@ -667,7 +698,7 @@ function hasEmployeePassword(employee) {
         )}
 
         {viewEmployee && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className={isFormPage ? 'w-full' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/40'}>
             <div className="w-full max-w-2xl rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="font-[var(--font-display)] text-xl font-semibold text-[var(--color-ink)]">
@@ -722,13 +753,13 @@ function hasEmployeePassword(employee) {
               </div>
               <div className="mt-6 flex justify-end gap-2">
                 <Button intent="ghost" onClick={closeView}>Close</Button>
-                <Button size="sm" intent="secondary" onClick={() => { closeView(); handleEdit(viewEmployee) }}>Edit</Button>
+                  <Button size="sm" intent="secondary" onClick={() => handleEdit(viewEmployee)}>Edit</Button>
               </div>
             </div>
           </div>
         )}
 
-        <Card className="p-6">
+         {!isFormPage && <Card className="p-6">
           <div className="mb-4">
             <input
               type="text"
@@ -892,7 +923,7 @@ function hasEmployeePassword(employee) {
               </table>
             </div>
           )}
-        </Card>
+         </Card>}
       </div>
 
     </ClientLayout>

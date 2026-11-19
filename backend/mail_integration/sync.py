@@ -20,6 +20,7 @@ from mail_integration.client import EmailOAuthClient
 from mail_integration.exceptions import EmailIntegrationOAuthError, EmailIntegrationStateError, EmailMailboxFetchError
 from mail_integration.mailbox import IncomingMailboxMessage, mailbox_client_for
 from mail_integration.models import EmailIntegration, EmailMessage
+from mail_integration.scheduling import next_run_at
 from tenancy.services import company_lifecycle_service
 
 
@@ -254,7 +255,7 @@ class EmailSyncService:
         # long history backfill cannot skip mail delivered while it ran.
         completed_at = timezone.now()
         integration.last_successful_sync_at = sync_until
-        integration.next_sync_at = completed_at + timedelta(minutes=integration.sync_interval_minutes)
+        integration.next_sync_at = next_run_at(integration.schedule_config, now=completed_at) if integration.schedule_config else completed_at + timedelta(minutes=integration.sync_interval_minutes)
         integration.last_error = ""
         integration.consecutive_failures = 0
         # All pages of this frozen time window were staged. Clear any resume

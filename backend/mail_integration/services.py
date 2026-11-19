@@ -14,6 +14,7 @@ from mail_integration.exceptions import (
     EmailIntegrationStateError,
 )
 from mail_integration.models import EmailIntegration
+from mail_integration.scheduling import next_run_at
 from mail_integration.oauth import (
     build_authorization_url,
     resolve_state,
@@ -290,6 +291,9 @@ class EmailIntegrationService:
                 integration.next_sync_at = timezone.now()
                 update_fields.append("next_sync_at")
             integration.save(update_fields=update_fields)
+        if integration.next_sync_at:
+            from mail_integration.tasks import enqueue_next_mailbox_run
+            enqueue_next_mailbox_run(integration.id)
         return integration
 
     def check_initial_sync_ready(self, *, user: User, integration_id):
@@ -325,6 +329,9 @@ class EmailIntegrationService:
             integration.next_sync_at = timezone.now()
         integration.is_paused = paused
         integration.save(update_fields=["is_paused", "next_sync_at", "updated_at"])
+        if not paused:
+            from mail_integration.tasks import enqueue_next_mailbox_run
+            enqueue_next_mailbox_run(integration.id)
         return integration
 
     def disconnect(self, *, user: User, integration_id):
@@ -378,21 +385,30 @@ class EmailIntegrationService:
             )
             integration.delete()
 
-    def configure_initial_sync(self, *, user: User, integration_id, initial_sync_from_at):
+    def configure_initial_sync(self, *, user: User, integration_id, schedule):
         integration = self.check_initial_sync_ready(user=user, integration_id=integration_id)
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        initial_sync_from_at = datetime.fromisoformat(
+            f"{schedule['start_date']}T{schedule['start_time']}"
+        ).replace(tzinfo=ZoneInfo(schedule["timezone"]))
         integration.initial_sync_from_at = initial_sync_from_at
+        integration.schedule_config = schedule
         integration.is_paused = False
-        integration.sync_interval_minutes = EmailIntegration.DEFAULT_SYNC_INTERVAL_MINUTES
-        integration.next_sync_at = timezone.now()
+        integration.sync_interval_minutes = schedule.get("repeat_minutes") or EmailIntegration.DEFAULT_SYNC_INTERVAL_MINUTES
+        integration.next_sync_at = next_run_at(schedule) or timezone.now()
         integration.save(
             update_fields=[
                 "initial_sync_from_at",
+                "schedule_config",
                 "is_paused",
                 "sync_interval_minutes",
                 "next_sync_at",
                 "updated_at",
             ]
         )
+        from mail_integration.tasks import enqueue_next_mailbox_run
+        enqueue_next_mailbox_run(integration.id)
         from audit.integration_alerts import mark_integration_healthy
         from audit.models import IntegrationFailureAlert
         mark_integration_healthy(

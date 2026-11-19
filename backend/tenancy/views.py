@@ -12,6 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.contrib.auth import get_user_model
 
 from accounts.serializers import UserSerializer
 from common.pagination import paginated_response
@@ -303,11 +304,19 @@ class CompanyDepartmentView(APIView):
 
     def delete(self, request, pk):
         client_portal_service._ensure_company_operational(company=request.user.company)
-        item = CompanyDepartment.objects.filter(pk=pk, company=request.user.company, is_active=True).first()
+        item = CompanyDepartment.objects.filter(pk=pk, company=request.user.company).first()
         if not item:
             return Response({'detail': 'Department not found.'}, status=status.HTTP_404_NOT_FOUND)
-        item.is_active = False
-        item.save(update_fields=['is_active', 'updated_at'])
+        assigned_count = get_user_model().objects.filter(
+            company=request.user.company,
+            department__iexact=item.name,
+        ).count()
+        if assigned_count:
+            return Response(
+                {'detail': f'Cannot delete {item.name}. It is assigned to {assigned_count} employee(s). Reassign them first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        item.delete()
         return success_response(message='Department removed successfully.')
 
 

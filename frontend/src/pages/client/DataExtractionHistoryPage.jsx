@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import apiClient from '../../services/apiClient.js'
@@ -14,6 +14,7 @@ import {
   isNetSuiteReauthJob,
 } from '../../utils/netsuiteErrors.js'
 import { formatDateTime } from '../../utils/formatDate.js'
+import useClickOutside from '../../hooks/useClickOutside.js'
 
 const FILTERS = [
   { value: 'ALL', label: 'All Data' },
@@ -194,6 +195,11 @@ export default function DataExtractionHistoryPage() {
   const [actionMessages, setActionMessages] = useState([])
   const [reauthRequired, setReauthRequired] = useState(false)
   const [connection, setConnection] = useState(null)
+  const dateRangeRef = useRef(null)
+  const pageSizeMenuRef = useRef(null)
+
+  useClickOutside(dateRangeRef, () => setDateRangeOpen(false), dateRangeOpen)
+  useClickOutside(pageSizeMenuRef, () => setShowPageSizeMenu(false), showPageSizeMenu)
 
   const loadHistory = useCallback(async (requestedOffset = 0) => {
     try {
@@ -711,7 +717,7 @@ export default function DataExtractionHistoryPage() {
                 ))}
               </select>
 
-               <div className="relative">
+               <div className="relative" ref={dateRangeRef}>
                  <button
                    type="button"
                    onClick={openDateRange}
@@ -781,7 +787,7 @@ export default function DataExtractionHistoryPage() {
                  </Button>
                )}
 
-              <div className="relative">
+               <div className="relative" ref={pageSizeMenuRef}>
                 <button
                   type="button"
                   onClick={() => setShowPageSizeMenu((visible) => !visible)}
