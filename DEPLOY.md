@@ -84,6 +84,17 @@ catalyst deploy appsail
 ```
 The CLI will build the Python container, run `collectstatic`, start Gunicorn, and output your live AppSail URL.
 
+Apply the Django schema in the deployed environment:
+
+```bash
+python manage.py migrate
+```
+
+Keep all tracked migrations, including `ocr/migrations/0033_bill_processing_prompts.py`.
+PDF/file and email prompts are company-level database settings. Super Admins
+must configure the prompt, quota, and active date range for each processing
+type; the application has no hardcoded prompt fallback.
+
 ---
 
 ### STEP 7: Retrieve Deployed AppSail Backend Endpoint
@@ -130,3 +141,8 @@ Return to **Zoho Catalyst Console** -> **AppSail** -> **agsuite-backend** -> **E
 1. Open your deployed Catalyst frontend URL in the browser.
 2. Verify API authentication (`/api/v1/auth/me/`).
 3. Verify static files and assets load correctly.
+4. Verify that missing any one of a prompt, quota, or active date range blocks
+   the matching flow and shows the Super Admin contact message.
+5. Verify aggregate page-limit rejection before AI for Multiple uploads,
+   non-vendor file rejection, and usage retention only for successful vendor
+   bills.

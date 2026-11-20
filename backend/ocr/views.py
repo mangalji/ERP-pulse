@@ -47,7 +47,7 @@ from ocr.ai_extraction_service import get_standard_field_catalog, resolve_field_
 from ocr.exceptions import OCRTimeBudgetExceeded
 from ocr.execution import dispatch_upload, recover_batch
 from ocr.tasks import process_single_ocr_upload
-from ocr.usage import pdf_capacity_available, allocation_period_state
+from ocr.usage import pdf_remaining_pages, allocation_period_state
 from ocr.utils import logger
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
@@ -1536,13 +1536,11 @@ class OCRExtractView(APIView):
 
         try:
             company = getattr(request.user, "company", None)
-            if company is None or not pdf_capacity_available(company.id):
+            if company is None:
                 return Response(
                     {
                         "detail": (
-                            "PDF/file processing is unavailable because this "
-                            "company has no remaining page allocation. Please "
-                            "contact your SuperAdmin."
+                            "Company context is required for PDF/file processing."
                         )
                     },
                     status=status.HTTP_403_FORBIDDEN,
@@ -1557,6 +1555,35 @@ class OCRExtractView(APIView):
             page_limit_error = self._validate_pdf_page_limits(actual_files)
             if page_limit_error:
                 return Response(page_limit_error, status=status.HTTP_400_BAD_REQUEST)
+
+            uploaded_page_count = 0
+            for actual_file in actual_files:
+                filename = (getattr(actual_file, "name", "") or "").lower()
+                content_type = (getattr(actual_file, "content_type", "") or "").lower()
+                is_pdf = filename.endswith(".pdf") or content_type == "application/pdf"
+                if not is_pdf:
+                    uploaded_page_count += 1
+                    continue
+                actual_file.seek(0)
+                pdf_doc = get_fitz().open(stream=actual_file.read(), filetype="pdf")
+                uploaded_page_count += max(1, int(pdf_doc.page_count))
+                pdf_doc.close()
+                actual_file.seek(0)
+
+            remaining_pages = pdf_remaining_pages(company.id)
+            if uploaded_page_count > remaining_pages:
+                return Response(
+                    {
+                        "detail": (
+                            f"Your remaining PDF/file page limit is {remaining_pages}, "
+                            f"but you uploaded {uploaded_page_count} pages. "
+                            "Please upload files within your remaining limit."
+                        ),
+                        "remaining_pages": remaining_pages,
+                        "uploaded_pages": uploaded_page_count,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             if mode == "single":
                 single_file = actual_files[0]

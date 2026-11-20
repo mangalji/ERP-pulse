@@ -42,6 +42,8 @@ class CompanySerializer(serializers.ModelSerializer):
     pdf_allocation_end_date = serializers.DateField(write_only=True, required=True)
     email_allocation_start_date = serializers.DateField(write_only=True, required=True)
     email_allocation_end_date = serializers.DateField(write_only=True, required=True)
+    pdf_extraction_prompt = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    email_extraction_prompt = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Company
@@ -242,6 +244,8 @@ class CompanySerializer(serializers.ModelSerializer):
         pdf_end = validated_data.pop('pdf_allocation_end_date')
         email_start = validated_data.pop('email_allocation_start_date')
         email_end = validated_data.pop('email_allocation_end_date')
+        pdf_prompt = validated_data.pop('pdf_extraction_prompt', '')
+        email_prompt = validated_data.pop('email_extraction_prompt', '')
         with transaction.atomic():
             company = super().create(validated_data)
             BillProcessingCount.objects.create(
@@ -252,6 +256,8 @@ class CompanySerializer(serializers.ModelSerializer):
                 pdf_allocation_end_date=pdf_end,
                 email_allocation_start_date=email_start,
                 email_allocation_end_date=email_end,
+                pdf_extraction_prompt=pdf_prompt.strip(),
+                email_extraction_prompt=email_prompt.strip(),
             )
         return company
 
@@ -463,6 +469,8 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'pdf_allocation_end_date': usage.pdf_allocation_end_date,
             'email_allocation_start_date': usage.email_allocation_start_date,
             'email_allocation_end_date': usage.email_allocation_end_date,
+            'pdf_extraction_prompt': usage.pdf_extraction_prompt,
+            'email_extraction_prompt': usage.email_extraction_prompt,
             'pdf_allocation_status': allocation_period_state(usage, 'pdf'),
             'email_allocation_status': allocation_period_state(usage, 'email'),
             'updated_at': usage.updated_at,

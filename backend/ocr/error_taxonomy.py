@@ -24,6 +24,7 @@ from ocr.exceptions import (
     GeminiRateLimitException,
     GeminiTimeoutException,
     GeminiValidationException,
+    NonVendorBillException,
     InvalidExtractionResultException,
     InvalidFileException,
     PDFProcessingException,
@@ -127,6 +128,13 @@ def classify_failure(exc: BaseException) -> FailureInfo:
             FailureCode.INVALID_RESPONSE,
             False,
             "The AI response could not be understood. Please try again.",
+        )
+
+    if isinstance(exc, NonVendorBillException):
+        return FailureInfo(
+            FailureCode.INVALID_RESPONSE,
+            False,
+            str(exc) or "This file does not appear to be a vendor bill.",
         )
 
     if isinstance(exc, _FILE_ERRORS):

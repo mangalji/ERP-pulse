@@ -28,6 +28,7 @@ from django.conf import settings
 from django.utils import timezone
 from ocr.ai.providers import AIProviderError
 from ocr.ai.service import ai_configuration_service
+from ocr.models import BillProcessingCount
 from ocr.services.calculated_values import apply_calculated_values
 
 from ocr.exceptions import (
@@ -35,6 +36,7 @@ from ocr.exceptions import (
     GeminiRateLimitException,
     GeminiTimeoutException,
     GeminiValidationException,
+    NonVendorBillException,
 )
 from ocr.utils import logger
 
@@ -767,6 +769,28 @@ def _configured_field_defaults(
     return header_defaults, line_defaults
 
 
+def _fields_for_ai_extraction(
+    header_fields: dict[str, str],
+    line_fields: dict[str, str],
+    requested_fields: dict[str, Any] | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Exclude fields whose template value is already fully configured."""
+    header_defaults, line_defaults = _configured_field_defaults(requested_fields)
+    # Keep the original resolved field maps intact. They are still used later
+    # to build the complete final result and apply template defaults.
+    ai_header_fields = {
+        key: description
+        for key, description in header_fields.items()
+        if key not in header_defaults
+    }
+    ai_line_fields = {
+        key: description
+        for key, description in line_fields.items()
+        if key not in line_defaults
+    }
+    return ai_header_fields, ai_line_fields
+
+
 def _apply_template_default_values(
     data: dict[str, Any],
     requested_fields: dict[str, Any] | None,
@@ -840,6 +864,37 @@ def apply_invoice_date_fallback(
     return result
 
 
+def _dynamic_field_sections(
+    header_fields: dict[str, str],
+    line_fields: dict[str, str],
+    include_line_items: bool,
+    header_types: dict[str, str],
+    line_types: dict[str, str],
+    *,
+    continuation_part: bool = False,
+) -> str:
+    """Render only the selected template fields into the saved prompt."""
+    selected_headers = {} if continuation_part else header_fields
+    header_lines = "\n".join(
+        f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
+        for key, description in selected_headers.items()
+    )
+    header_section = (
+        f"Requested header fields:\n{header_lines}"
+        if selected_headers
+        else "Continuation part: header fields are intentionally omitted; return only line_items."
+    )
+    if include_line_items:
+        line_lines = "\n".join(
+            f'  - "{key}": {description}{_type_format_hint(line_types.get(key, "text"))}'
+            for key, description in line_fields.items()
+        )
+        line_section = f"Line-item fields:\n{line_lines}"
+    else:
+        line_section = "No line-item fields were requested; return line_items as an empty array."
+    return f"{header_section}\n\n{line_section}"
+
+
 def build_file_prompt(
     header_fields: dict[str, str],
     line_fields: dict[str, str],
@@ -849,92 +904,28 @@ def build_file_prompt(
     *,
     source: str = "file",
     document_context: dict[str, Any] | None = None,
+    company_prompt: str = "",
 ) -> str:
-    """Build the new upload-file prompt; the legacy prompt remains above."""
+    """Combine the saved company prompt with dynamic template data."""
     continuation_part = bool(
-        document_context
-        and int(document_context.get("current_part", 1) or 1) > 1
+        document_context and int(document_context.get("current_part", 1) or 1) > 1
     )
-    prompt_header_fields = {} if continuation_part else header_fields
-    field_lines = "\n".join(
-        f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
-        for key, description in prompt_header_fields.items()
-    )
-
-    if include_line_items:
-        item_lines = "\n".join(
-            f'  - "{key}": {description}{_type_format_hint(line_types.get(key, "text"))}'
-            for key, description in line_fields.items()
-        )
-        line_section = f"\nLine-item fields:\n{item_lines}\n"
-        line_rules = """- Extract every visible row in source order; do not merge, skip, duplicate, or summarize rows.
-- Extract only explicitly stated values; return null if a value is missing or unclear."""
-    else:
-        line_section = ""
-        line_rules = "- Do not return line_items because no line-item fields were requested."
-
-    date_rule = ""
-    if "invoice_date" in prompt_header_fields:
-        if source == "email":
-            date_rule = "- If invoice_date is not explicitly present, return null. The backend assigns the email received date after extraction."
-        else:
-            date_rule = "- If invoice_date is not explicitly present, return null. The backend assigns today's date after extraction."
-    if "due_date" in prompt_header_fields:
-        date_rule += "\n- If due_date is not explicitly present, return null."
-
-    if source == "email":
-        source_instruction = "Read the entire email body before responding."
-    elif document_context:
-        source_instruction = (
-            "Read every page of the supplied PDF part before responding. "
-            "The part metadata identifies its position in the original document."
-        )
-    else:
-        source_instruction = "Read the entire uploaded document before responding."
-
-    context_section = ""
+    source_data = "Read the entire uploaded document before responding."
     if document_context:
-        context_section = f"""
-DOCUMENT PART CONTEXT
-{json.dumps(document_context, ensure_ascii=False, indent=2, default=str)}
-
-This file is one part of a multi-part document. The Document ID identifies
-the same original PDF across requests; it does not contain the previous
-document content. Use the part number and page range to understand where
-this file belongs in the original document.
-
-For continuation parts:
-- Preserve valid values from the previous header context.
-- Never replace a previous valid value with null merely because it is not
-  visible in this part.
-- Extract only line items visible in the current part. Previous line-item
-  data is intentionally not included and must not be reconstructed.
-- Do not repeat line items from earlier parts.
-"""
-
-    header_section = (
-        f"Requested header fields:\n{field_lines}"
-        if prompt_header_fields
-        else "Continuation part: header fields are intentionally omitted; return only line_items."
-    )
-
-    return f"""Extract business document data into the exact requested JSON schema.
-{source_instruction}
-{context_section}
-
-{header_section}
-{line_section}
-Rules:
-- Respond with only one valid JSON object.
-- Use exactly the requested field names and structure; do not add extra keys.
-- Extract only values explicitly supported by the document.
-- Use null for missing, unreadable, ambiguous, or unsupported values.
-- Never invent, assume, infer, calculate, or guess values.
-- Numeric fields must contain numbers only, without currency symbols or separators.
-- Dates must use YYYY-MM-DD format.
-{date_rule}
-{line_rules}
-"""
+        source_data = "Read every page of the supplied PDF part before responding."
+    if source == "email":
+        source_data = "Read the entire email body before responding."
+    sections = [company_prompt.strip(), source_data]
+    if document_context:
+        sections.append(
+            "DOCUMENT PART CONTEXT\n"
+            + json.dumps(document_context, ensure_ascii=False, indent=2, default=str)
+        )
+    sections.append(_dynamic_field_sections(
+        header_fields, line_fields, include_line_items, header_types, line_types,
+        continuation_part=continuation_part,
+    ))
+    return "\n\n".join(section for section in sections if section)
 
 
 def build_email_prompt(
@@ -945,55 +936,17 @@ def build_email_prompt(
     line_types: dict[str, str],
     *,
     email_body: str,
+    company_prompt: str = "",
 ) -> str:
-    """Build an email-only vendor-bill classification/extraction prompt."""
-    header_lines = "\n".join(
-        f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
-        for key, description in header_fields.items()
-    )
-    line_lines = "\n".join(
-        f'  - "{key}": {description}{_type_format_hint(line_types.get(key, "text"))}'
-        for key, description in line_fields.items()
-    )
-    line_section = (
-        f"Line-item fields:\n{line_lines}"
-        if include_line_items
-        else "No line-item fields were requested; return line_items as an empty array."
-    )
-
-    return f"""You are an email vendor-bill extraction assistant.
-Classify the message before extracting it; this email prompt is independent
-from the PDF/file-upload prompt.
-
-First classify the email:
-- Set "is_vendor_bill" to true only when the email contains clear billing, purchase, supply, charge, or payment intent and at least one specific product or service line.
-- For ordinary conversations, follow-ups, delivery updates, enquiries, or vague references, set "is_vendor_bill" to false and "data" to null.
-
-For a vendor bill, return one JSON object with "is_vendor_bill": true and place
-the extracted fields inside "data". The matched NetSuite vendor supplies vendor
-identity; do not replace it from email text.
-
-For a vendor bill, extract the following fields from the email body.
-
-Requested header fields:
-{header_lines}
-
-{line_section}
-
-Rules:
-- Return exactly one JSON object with is_vendor_bill and data.
-- Set data to null when is_vendor_bill is false.
-- Use null for missing, ambiguous, or unsupported values.
-- Never invent, infer, calculate, or guess values.
-- Numeric fields must contain numbers only.
-- Dates must use YYYY-MM-DD format.
-- Extract every visible row in source order; do not merge, skip, duplicate, or summarize rows.
-- Do not treat ordinary conversation, follow-ups, enquiries, or delivery updates as bills.
-
-EMAIL BODY START
-{email_body}
-EMAIL BODY END
-"""
+    """Combine the saved email prompt with dynamic template data and body."""
+    sections = [
+        company_prompt.strip(),
+        _dynamic_field_sections(
+            header_fields, line_fields, include_line_items, header_types, line_types,
+        ),
+        f"EMAIL BODY START\n{email_body}\nEMAIL BODY END",
+    ]
+    return "\n\n".join(section for section in sections if section)
 
 class AIExtractor:
     """Company-scoped OCR extractor with a provider-neutral AI backend.
@@ -1007,6 +960,19 @@ class AIExtractor:
         self.timeout = getattr(settings, "OCR_TIMEOUT", 180)
         self.max_retries = getattr(settings, "OCR_MAX_RETRIES", 2)
         self.retry_delay = getattr(settings, "OCR_RETRY_DELAY", 1.0)
+
+    @staticmethod
+    def _company_prompt(company, source: str) -> str:
+        company_id = getattr(company, "pk", None)
+        if not isinstance(company_id, (str, int, uuid.UUID)):
+            return ""
+        field = "pdf_extraction_prompt" if source == "pdf" else "email_extraction_prompt"
+        return (
+            BillProcessingCount.objects.filter(company_id=company_id)
+            .values_list(field, flat=True)
+            .first()
+            or ""
+        )
 
     @timed_stage("ai.document_extraction")
     def extract(
@@ -1048,29 +1014,50 @@ class AIExtractor:
 
         header_keys = tuple(header_fields.keys())
         line_keys = tuple(line_fields.keys())
+        ai_header_fields, ai_line_fields = _fields_for_ai_extraction(
+            header_fields, line_fields, requested_fields
+        )
+        ai_header_types = {
+            key: value for key, value in header_types.items()
+            if key in ai_header_fields
+        }
+        ai_line_types = {
+            key: value for key, value in line_types.items()
+            if key in ai_line_fields
+        }
+        ai_include_line_items = include_line_items and bool(ai_line_fields)
         continuation_part = bool(
             document_context
             and int(document_context.get("current_part", 1) or 1) > 1
         )
-        prompt_header_fields = {} if continuation_part else header_fields
+        prompt_header_fields = {} if continuation_part else ai_header_fields
         prompt_header_types = {
             key: value for key, value in header_types.items()
             if key in prompt_header_fields
         }
-        schema = _build_schema(
+        extraction_schema = _build_schema(
             prompt_header_fields,
-            line_fields,
-            include_line_items,
+            ai_line_fields,
+            ai_include_line_items,
             prompt_header_types,
-            line_types,
+            ai_line_types,
         )
+        schema = {
+            "type": "object",
+            "properties": {
+                "is_vendor_bill": {"type": "boolean"},
+                "data": {**extraction_schema, "nullable": True},
+            },
+            "required": ["is_vendor_bill", "data"],
+        }
         prompt = build_file_prompt(
-            header_fields,
-            line_fields,
-            include_line_items,
-            header_types,
-            line_types,
+            ai_header_fields,
+            ai_line_fields,
+            ai_include_line_items,
+            ai_header_types,
+            ai_line_types,
             document_context=document_context,
+            company_prompt=self._company_prompt(company, "pdf"),
         )
 
         path = Path(file_path)
@@ -1132,8 +1119,22 @@ class AIExtractor:
                     getattr(provider, "last_raw_response", ""),
                     json.dumps(provider_result, ensure_ascii=False, indent=2, default=str),
                 )
+                if not isinstance(provider_result, dict):
+                    raise GeminiValidationException(
+                        "AI file extraction did not return a JSON object."
+                    )
+                if provider_result.get("is_vendor_bill") is not True:
+                    raise NonVendorBillException(
+                        "This file does not appear to be a vendor bill. "
+                        "Please upload a valid vendor bill."
+                    )
+                extracted_data = provider_result.get("data")
+                if not isinstance(extracted_data, dict):
+                    raise GeminiValidationException(
+                        "AI classified the file as a vendor bill but did not return extraction data."
+                    )
                 result = _normalize_result(
-                    provider_result,
+                    extracted_data,
                     header_keys,
                     line_keys,
                     include_line_items,
@@ -1290,8 +1291,24 @@ class AIExtractor:
 
         header_keys = tuple(header_fields.keys())
         line_keys = tuple(line_fields.keys())
+        ai_header_fields, ai_line_fields = _fields_for_ai_extraction(
+            header_fields, line_fields, requested_fields
+        )
+        ai_header_types = {
+            key: value for key, value in header_types.items()
+            if key in ai_header_fields
+        }
+        ai_line_types = {
+            key: value for key, value in line_types.items()
+            if key in ai_line_fields
+        }
+        ai_include_line_items = include_line_items and bool(ai_line_fields)
         extraction_schema = _build_schema(
-            header_fields, line_fields, include_line_items, header_types, line_types
+            ai_header_fields,
+            ai_line_fields,
+            ai_include_line_items,
+            ai_header_types,
+            ai_line_types,
         )
         schema = {
             "type": "object",
@@ -1305,12 +1322,13 @@ class AIExtractor:
             "required": ["is_vendor_bill", "data"],
         }
         prompt = build_email_prompt(
-            header_fields,
-            line_fields,
-            include_line_items,
-            header_types,
-            line_types,
+            ai_header_fields,
+            ai_line_fields,
+            ai_include_line_items,
+            ai_header_types,
+            ai_line_types,
             email_body=email_body,
+            company_prompt=self._company_prompt(company, "email"),
         )
         provider = ai_configuration_service.resolve_provider(company=company)
         request_id = uuid.uuid4().hex[:8]

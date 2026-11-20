@@ -150,13 +150,16 @@ class CompanyViewSet(viewsets.ModelViewSet):
             if parsed is None:
                 return Response({'detail': f'{field} must be a valid date in YYYY-MM-DD format.'}, status=status.HTTP_400_BAD_REQUEST)
             values[field] = parsed
+        for field in ('pdf_extraction_prompt', 'email_extraction_prompt'):
+            if field in request.data:
+                values[field] = str(request.data[field] or '').strip()
         for prefix in ('pdf', 'email'):
             start_date = values.get(f'{prefix}_allocation_start_date', getattr(usage, f'{prefix}_allocation_start_date'))
             end_date = values.get(f'{prefix}_allocation_end_date', getattr(usage, f'{prefix}_allocation_end_date'))
             if start_date and end_date and end_date < start_date:
                 return Response({'detail': f'{prefix.title()} allocation end date must be on or after the start date.'}, status=status.HTTP_400_BAD_REQUEST)
         if not values:
-            return Response({'detail': 'Provide at least one processing limit.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Provide at least one processing limit, date range, or extraction prompt.'}, status=status.HTTP_400_BAD_REQUEST)
         for field, value in values.items():
             setattr(usage, field, value)
         usage.save(update_fields=[*values.keys(), 'updated_at'])

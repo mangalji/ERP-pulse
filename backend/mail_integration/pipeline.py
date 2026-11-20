@@ -26,7 +26,12 @@ from netsuite.services import NetSuiteValidationService, NetSuiteVendorBillPosti
 from ocr.models import DocumentType, OCRBatch, OCRDocument, OCRDocumentStatus
 from ocr.ai_extraction_service import ai_extractor
 from ocr.services.extraction_persistence import persist_extraction
-from ocr.usage import email_capacity_available, record_email_bill, ProcessingLimitExceeded
+from ocr.usage import (
+    email_capacity_available,
+    record_email_bill,
+    validate_processing_configuration,
+    ProcessingLimitExceeded,
+)
 from audit.notifications import automated_activity, notify
 from tenancy.services import company_lifecycle_service
 
@@ -177,6 +182,11 @@ class EmailBillPipeline:
         template = integration.ocr_template
         if user is None or template is None:
             self._defer(message.id, ValueError("Mailbox requires an owner and OCR template before processing."))
+            return "deferred"
+        try:
+            validate_processing_configuration(integration.company, "email")
+        except ProcessingLimitExceeded as exc:
+            self._defer(message.id, exc)
             return "deferred"
         if not email_capacity_available(integration.company_id):
             self._defer(

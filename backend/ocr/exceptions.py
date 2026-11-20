@@ -80,6 +80,12 @@ class GeminiValidationException(OCRException):
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
+class NonVendorBillException(OCRException):
+    """Raised when an uploaded file is not a vendor bill."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 class GeminiRateLimitException(OCRException):
     """
     Raised when Gemini returns HTTP 429 (Too Many Requests).

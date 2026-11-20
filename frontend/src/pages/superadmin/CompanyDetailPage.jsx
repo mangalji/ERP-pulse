@@ -38,7 +38,7 @@ export default function CompanyDetailPage() {
   const [suspensionDescription, setSuspensionDescription] = useState('')
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
-  const [usageForm, setUsageForm] = useState({ pdf_page_limit: '', email_bill_limit: '', pdf_allocation_start_date: '', pdf_allocation_end_date: '', email_allocation_start_date: '', email_allocation_end_date: '' })
+  const [usageForm, setUsageForm] = useState({ pdf_page_limit: '', email_bill_limit: '', pdf_allocation_start_date: '', pdf_allocation_end_date: '', email_allocation_start_date: '', email_allocation_end_date: '', pdf_extraction_prompt: '', email_extraction_prompt: '' })
   const [usageSaving, setUsageSaving] = useState(false)
   const [usageEditing, setUsageEditing] = useState(false)
 
@@ -86,6 +86,8 @@ export default function CompanyDetailPage() {
         pdf_allocation_end_date: company.bill_processing_count.pdf_allocation_end_date || '',
         email_allocation_start_date: company.bill_processing_count.email_allocation_start_date || '',
         email_allocation_end_date: company.bill_processing_count.email_allocation_end_date || '',
+        pdf_extraction_prompt: company.bill_processing_count.pdf_extraction_prompt || '',
+        email_extraction_prompt: company.bill_processing_count.email_extraction_prompt || '',
       })
     }
   }, [company])
@@ -111,6 +113,8 @@ export default function CompanyDetailPage() {
         pdf_allocation_end_date: usageForm.pdf_allocation_end_date,
         email_allocation_start_date: usageForm.email_allocation_start_date,
         email_allocation_end_date: usageForm.email_allocation_end_date,
+        pdf_extraction_prompt: usageForm.pdf_extraction_prompt,
+        email_extraction_prompt: usageForm.email_extraction_prompt,
       })
       await loadCompany()
       setUsageEditing(false)
@@ -563,6 +567,22 @@ export default function CompanyDetailPage() {
                 disabled={!usageEditing}
                 onChange={({ start, end }) => setUsageForm((current) => ({ ...current, pdf_allocation_start_date: start, pdf_allocation_end_date: end }))}
               />
+              <div className="md:col-span-2">
+                <label className="text-xs text-[var(--color-muted)]">PDF/file AI extraction prompt</label>
+                {usageEditing ? (
+                  <textarea
+                    rows={6}
+                    value={usageForm.pdf_extraction_prompt}
+                    onChange={(event) => setUsageForm((current) => ({ ...current, pdf_extraction_prompt: event.target.value }))}
+                    placeholder="Enter the company-specific instructions for PDF/file extraction"
+                    className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                  />
+                ) : (
+                  <p className="mt-2 whitespace-pre-wrap rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-ink)]">
+                    {company.bill_processing_count?.pdf_extraction_prompt || 'Not configured'}
+                  </p>
+                )}
+              </div>
               <AllocationDateRangeField
                 label="Email allocation period"
                 start={usageForm.email_allocation_start_date}
@@ -570,6 +590,22 @@ export default function CompanyDetailPage() {
                 disabled={!usageEditing}
                 onChange={({ start, end }) => setUsageForm((current) => ({ ...current, email_allocation_start_date: start, email_allocation_end_date: end }))}
               />
+              <div className="md:col-span-2">
+                <label className="text-xs text-[var(--color-muted)]">Email AI extraction prompt</label>
+                {usageEditing ? (
+                  <textarea
+                    rows={6}
+                    value={usageForm.email_extraction_prompt}
+                    onChange={(event) => setUsageForm((current) => ({ ...current, email_extraction_prompt: event.target.value }))}
+                    placeholder="Enter the company-specific instructions for email extraction"
+                    className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                  />
+                ) : (
+                  <p className="mt-2 whitespace-pre-wrap rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-ink)]">
+                    {company.bill_processing_count?.email_extraction_prompt || 'Not configured'}
+                  </p>
+                )}
+              </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-lg border border-[var(--color-border)] p-4">
@@ -595,6 +631,8 @@ export default function CompanyDetailPage() {
                     pdf_allocation_end_date: company.bill_processing_count?.pdf_allocation_end_date || '',
                     email_allocation_start_date: company.bill_processing_count?.email_allocation_start_date || '',
                     email_allocation_end_date: company.bill_processing_count?.email_allocation_end_date || '',
+                    pdf_extraction_prompt: company.bill_processing_count?.pdf_extraction_prompt || '',
+                    email_extraction_prompt: company.bill_processing_count?.email_extraction_prompt || '',
                   })
                 }}>
                   Cancel

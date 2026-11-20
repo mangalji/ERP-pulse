@@ -364,7 +364,7 @@ class OCRUpload(models.Model):
 
 
 class BillProcessingCount(models.Model):
-    """Per-company PDF-page and email-bill allocation/usage ledger."""
+    """Per-company processing allocation, usage, and AI prompt configuration."""
 
     company = models.OneToOneField(
         'tenancy.Company',
@@ -377,6 +377,8 @@ class BillProcessingCount(models.Model):
     pdf_allocation_end_date = models.DateField(null=True, blank=True)
     email_allocation_start_date = models.DateField(null=True, blank=True)
     email_allocation_end_date = models.DateField(null=True, blank=True)
+    pdf_extraction_prompt = models.TextField(blank=True, default="")
+    email_extraction_prompt = models.TextField(blank=True, default="")
     pdf_pages_consumed = models.PositiveBigIntegerField(default=0)
     email_bills_consumed = models.PositiveBigIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

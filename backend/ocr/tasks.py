@@ -45,7 +45,11 @@ from common.infra import get_redis_client, report_redis_failure, warn_throttled
 from ocr.storage import local_file_path
 from ocr.leases import LeaseHeartbeat, claim_upload, lease_seconds, new_owner
 from ocr.services.ai_quota_limiter import AIQuotaLimiter
-from ocr.usage import reserve_upload_pages, ProcessingLimitExceeded
+from ocr.usage import (
+    reserve_upload_pages,
+    release_upload_pages,
+    ProcessingLimitExceeded,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +96,7 @@ OCR_EXTRACTION_LOCK_POLL_INTERVAL_SECONDS = getattr(
     1,
 )
 
-OCR_EXTRACTION_CACHE_VERSION = "v4"
+OCR_EXTRACTION_CACHE_VERSION = "v5"
 OCR_EXTRACTION_CONTRACT_VERSION = "v4"  
 
 
@@ -289,6 +293,36 @@ def _normalize_to_page_paths(adapter, upload, original_path) -> tuple[list[str],
         )
 
     return page_paths, False, len(page_paths)
+
+
+def _ensure_extraction_parts(
+    upload,
+    *,
+    total_parts: int,
+    chunk_size: int,
+    total_pages: int,
+) -> list[OCRExtractionPart]:
+    """Return durable chunk rows for the legacy chunk-processing branch.
+
+    Current upload validation keeps every PDF within the five-page limit and
+    sends it as one complete file, so this compatibility path is not used by
+    normal Single or Multiple mode processing. Keeping the helper prevents an
+    unresolved reference if an older adapter re-enters the branch.
+    """
+    parts = []
+    for part_number in range(1, total_parts + 1):
+        page_start = ((part_number - 1) * chunk_size) + 1
+        page_end = min(page_start + chunk_size - 1, total_pages)
+        part, _ = OCRExtractionPart.objects.get_or_create(
+            upload=upload,
+            part_number=part_number,
+            defaults={
+                "page_start": page_start,
+                "page_end": page_end,
+            },
+        )
+        parts.append(part)
+    return parts
 
 
 def _extract_single_page(
@@ -1505,6 +1539,7 @@ def _persist_success(
     """
     _validate_extraction_result(result)
 
+
     # Apply live vendor defaults before the result becomes the user's review
     # payload. This is best-effort: an unavailable/ambiguous NetSuite vendor
     # must never turn a successful AI extraction into a failed OCR job.
@@ -1622,6 +1657,7 @@ def _persist_failure(upload, exc: BaseException) -> FailureInfo:
 
     if upload is not None:
         try:
+            release_upload_pages(upload)
             _mark_upload_failed(upload, info.message, info.code)
         except Exception as save_exc:  # noqa: BLE001
             logger.warning(
@@ -1790,7 +1826,6 @@ def process_single_ocr_upload(
             )
 
         _validate_extraction_result(result)
-
         _persist_success(
             upload,
             result,
@@ -2069,7 +2104,6 @@ def execute_upload_job(
                     )
 
                     _validate_extraction_result(result)
-
                     _write_cached_result(
                          upload.file_hash,
                         result,

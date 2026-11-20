@@ -24,7 +24,7 @@ The platform includes a company workspace for administrators and employees, plus
 | Area | Capabilities |
 | --- | --- |
 | Document processing | PDF and image extraction, multiple-file and ZIP uploads, configurable templates, header and line-item fields, document review and version history; each PDF is limited to five pages and is sent to the AI as one complete document |
-| AI configuration | Company-level provider and model configuration for Google Gemini, OpenAI, and Anthropic |
+| AI configuration | Company-level provider/model configuration plus separate database-backed PDF/file and email extraction prompts |
 | NetSuite | OAuth connections, employee connection assignments, field mapping, live reference validation, Vendor Bill posting, background batch jobs, and existing-connection reauthorization |
 | Email automation | Zoho Mail and Gmail connections, scheduled fetching, message staging and deduplication, vendor-bill processing, and validation/posting results |
 | Access management | Company-scoped access, Company Admin promotion/demotion, invitations with mobile confirmation, JWT authentication, password recovery, email OTP, password visibility controls, and company lifecycle controls |
@@ -35,15 +35,17 @@ The platform includes a company workspace for administrators and employees, plus
 ### Document uploads
 
 1. Select an extraction template and upload documents. Single and Multiple modes accept PDF/image files; each individual PDF may contain no more than five pages. ZIP archives are checked file-by-file.
-2. Extract structured header and line-item data using the company's AI configuration. Each accepted PDF is submitted as one complete document request.
-3. Apply template defaults and enrich missing mapped references from NetSuite.
-4. Review and save the extracted data; calculate applicable line totals and taxes.
-5. Validate vendor, item, and other mapped references against the connected NetSuite account.
-6. Post a validated Vendor Bill and retain its internal ID and NetSuite record link in history.
+2. Validate the company's file quota, active allocation period, and configured file prompt. In Multiple mode, the total page count of all selected files is checked before any file is processed.
+3. Extract structured header and line-item data using the stored company prompt. Template fields with default values are omitted from the AI request and restored from the template afterward; each accepted PDF is submitted as one complete document request.
+4. Classify each file as a vendor bill. A file returned with `is_vendor_bill: false` fails with a user-facing message and does not continue as a successful extraction.
+5. Apply template defaults and enrich missing mapped references from NetSuite.
+6. Review and save the extracted data; calculate applicable line totals and taxes.
+7. Validate vendor, item, and other mapped references against the connected NetSuite account.
+8. Post a validated Vendor Bill and retain its internal ID and NetSuite record link in history.
 
 ### Automated email processing
 
-Connect a mailbox, select its extraction template, and configure the fetching schedule. The schedule is stored per mailbox and is user-configurable: single event, daily, weekly, monthly, or yearly execution; start date/time; repeat interval where applicable; selected weekdays or calendar pattern; and an optional end date. Background workers fetch and stage messages, identify vendor bills, and create document history records. Valid bills proceed through validation and posting; failures remain available for review.
+Connect a mailbox, select its extraction template, and configure the fetching schedule. The schedule is stored per mailbox and is user-configurable: single event, daily, weekly, monthly, or yearly execution; start date/time; repeat interval where applicable; selected weekdays or calendar pattern; and an optional end date. Before AI extraction, the email quota, active allocation period, and company-specific email prompt must all be configured. Background workers fetch and stage messages, classify them as vendor bills, and create processing records only for valid bills; non-vendor messages do not consume email usage.
 
 There is no hardcoded five-minute mailbox processing interval. Celery Beat dispatches each mailbox according to its saved schedule. A separate scheduler-health heartbeat runs every 10 minutes and does not decide when a mailbox should fetch.
 
@@ -62,6 +64,8 @@ Super Admins allocate two independent, company-level processing quotas during co
 
 Each quota has its own start and end date. Processing is allowed only while the relevant allocation period is active and unused capacity remains. A zero limit, exhausted limit, or expired period blocks the corresponding file or email processing. Current limits, consumed units, remaining units, and period status are visible to Company Admins and employees on the Processing Status page; only Super Admins can change allocations.
 
+The prompt, limit, and start/end dates are linked configuration for each processing type. If any one is missing, that flow is blocked before AI work begins and the user sees the missing setting plus the Super Admin contact email; there is no hardcoded prompt fallback. Multiple file uploads are rejected before AI when their aggregate page count exceeds the remaining file quota. File usage is released for extraction failures and non-vendor files; only successfully processed vendor-bill files retain the page usage.
+
 ### Activity logs
 
 The existing audit endpoint is shared by both scopes:
@@ -74,7 +78,7 @@ Activity logs are available only in the Super Admin UI at `/admin/company-logs`.
 
 ### Field precedence and NetSuite references
 
-- Configured template defaults replace AI-extracted values for ordinary fields. **Location is a source-first exception:** an AI-extracted Location from a PDF, image, or vendor email is retained; the template Location is used only when no Location was extracted.
+- Configured template defaults replace AI-extracted values for ordinary fields. Default-valued fields are omitted from the AI prompt/schema to reduce context and token usage, then restored from the template. **Location is a source-first exception:** an AI-extracted Location from a PDF, image, or vendor email is retained; the template Location is used only when no Location was extracted.
 - Missing mapped subsidiary and location values can be filled from an unambiguously matched vendor's NetSuite record. Existing values are preserved by this vendor fallback.
 - When subsidiary and currency are mapped, the subsidiary's base currency replaces the extracted or template currency. Posting fetches currency again using the final resolved subsidiary and sends the NetSuite currency internal ID.
 - A failed subsidiary-currency lookup during enrichment clears the old currency value. A failed lookup during posting prevents the bill from being submitted.
@@ -225,7 +229,6 @@ Replace the example SMTP/Brevo credentials with working development credentials.
 
 ```powershell
 cd backend
-python manage.py makemigrations
 python manage.py migrate
 python manage.py seed_rbac
 python manage.py createsuperuser
@@ -233,6 +236,8 @@ python manage.py runserver
 ```
 
 The API is available at `http://localhost:8000`, with application routes under `/api/v1/`.
+
+Run `makemigrations` only when intentionally creating a model migration. The company prompt fields are persisted by the tracked migration `ocr/migrations/0033_bill_processing_prompts.py`; apply it with `migrate` in every environment and keep it in the release.
 
 ### 2. Start background services
 
@@ -363,6 +368,8 @@ npm run build
 ```
 
 Integration acceptance checks should cover login, invitation acceptance with the saved mobile number, password recovery for an active account and rejection for a pending account, a document upload, mapped-field validation, and a Vendor Bill posted to a NetSuite sandbox. For email changes, also check scheduled fetching, duplicate handling, disconnect/reconnect behavior, and failure visibility in history. Mocked unit tests do not verify account-specific NetSuite permissions or provider behavior.
+
+OCR acceptance checks should also cover missing prompt/limit/date configuration, aggregate page-limit rejection before AI, `is_vendor_bill: false` rejection for files and emails, default-valued template fields being excluded from the AI request, and usage being retained only for successfully processed vendor bills. Backend tests require a reachable PostgreSQL test database.
 
 ## Deployment and operations
 

@@ -1,7 +1,10 @@
 """Idempotent company processing usage accounting."""
 
 from django.db import transaction
+from django.db.models import Q
+from django.conf import settings
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 
 from ocr.models import BillProcessingCount, OCRBatch, OCRUpload
 
@@ -10,12 +13,61 @@ class ProcessingLimitExceeded(Exception):
     """A company has no remaining allocation for this processing source."""
 
 
+class ProcessingConfigurationIncomplete(ProcessingLimitExceeded):
+    """The company has not been fully configured for a processing source."""
+
+
 class ProcessingUsageUnavailable(Exception):
     """Usage accounting could not be checked safely."""
 
 
 def get_or_create_usage(company):
     usage, _ = BillProcessingCount.objects.get_or_create(company=company)
+    return usage
+
+
+def get_superadmin_contact_email() -> str:
+    """Return the first active platform SuperAdmin contact address."""
+    user_model = get_user_model()
+    return (
+        user_model.objects.filter(is_active=True, email__isnull=False)
+        .exclude(email="")
+        .filter(Q(is_superuser=True) | Q(is_staff=True))
+        .order_by("created_at", "email")
+        .values_list("email", flat=True)
+        .first()
+        or getattr(settings, "DEFAULT_FROM_EMAIL", "")
+        or "your Super Administrator"
+    )
+
+
+def validate_processing_configuration(company, source: str):
+    """Validate prompt, limit, and date range as one source configuration."""
+    prefix = "pdf" if source == "pdf" else "email"
+    usage = BillProcessingCount.objects.filter(company=company).first()
+    missing = []
+    if not usage:
+        missing = [
+            f"{prefix.upper()} extraction prompt",
+            f"{prefix.upper()}/file page limit" if prefix == "pdf" else "email bill limit",
+            f"{prefix.upper()}/file allocation date range" if prefix == "pdf" else "email allocation date range",
+        ]
+    else:
+        if not getattr(usage, f"{prefix}_extraction_prompt", "").strip():
+            missing.append(f"{prefix.upper()} extraction prompt")
+        limit_field = "pdf_page_limit" if prefix == "pdf" else "email_bill_limit"
+        if int(getattr(usage, limit_field, 0) or 0) <= 0:
+            missing.append("PDF/file page limit" if prefix == "pdf" else "email bill limit")
+        if not getattr(usage, f"{prefix}_allocation_start_date", None) or not getattr(usage, f"{prefix}_allocation_end_date", None):
+            missing.append("PDF/file allocation date range" if prefix == "pdf" else "email allocation date range")
+
+    if missing:
+        contact = get_superadmin_contact_email()
+        reason = ", ".join(missing)
+        raise ProcessingConfigurationIncomplete(
+            f"AI extraction is not configured for this company. Missing configuration: {reason}. "
+            f"Please contact your Super Administrator: {contact}."
+        )
     return usage
 
 
@@ -41,6 +93,13 @@ def pdf_capacity_available(company_id) -> bool:
     return bool(usage and allocation_period_state(usage, 'pdf') == 'active' and usage.pdf_page_limit > usage.pdf_pages_consumed)
 
 
+def pdf_remaining_pages(company_id) -> int:
+    usage = BillProcessingCount.objects.filter(company_id=company_id).first()
+    if not usage or allocation_period_state(usage, 'pdf') != 'active':
+        return 0
+    return max(0, int(usage.pdf_page_limit) - int(usage.pdf_pages_consumed))
+
+
 def email_capacity_available(company_id) -> bool:
     usage = BillProcessingCount.objects.filter(company_id=company_id).first()
     return bool(usage and allocation_period_state(usage, 'email') == 'active' and usage.email_bill_limit > usage.email_bills_consumed)
@@ -52,7 +111,15 @@ def reserve_upload_pages(upload: OCRUpload, page_count: int) -> None:
     if not upload.batch_id:
         return
     with transaction.atomic():
-        locked = OCRUpload.objects.select_for_update().select_related('batch').get(pk=upload.pk)
+        # ``batch`` is nullable. Without ``of=("self",)`` PostgreSQL tries
+        # to lock the nullable side of the LEFT OUTER JOIN created by
+        # ``select_related('batch')`` and raises NotSupportedError.
+        locked = (
+            OCRUpload.objects
+            .select_for_update(of=("self",))
+            .select_related('batch')
+            .get(pk=upload.pk)
+        )
         if locked.processing_usage_counted:
             return
         company_id = locked.batch.company_id if locked.batch_id else None
@@ -61,6 +128,7 @@ def reserve_upload_pages(upload: OCRUpload, page_count: int) -> None:
         usage, _ = BillProcessingCount.objects.select_for_update().get_or_create(
             company_id=company_id
         )
+        validate_processing_configuration(locked.batch.company, "pdf")
         period_state = allocation_period_state(usage, 'pdf')
         if period_state != 'active':
             raise ProcessingLimitExceeded(
@@ -81,6 +149,29 @@ def reserve_upload_pages(upload: OCRUpload, page_count: int) -> None:
         locked.save(update_fields=['processing_usage_counted', 'processing_usage_pages', 'updated_at'])
 
 
+def release_upload_pages(upload: OCRUpload) -> None:
+    """Release a file-page reservation when extraction does not succeed."""
+    if not upload.batch_id:
+        return
+    with transaction.atomic():
+        locked = OCRUpload.objects.select_for_update(of=("self",)).get(pk=upload.pk)
+        if not locked.processing_usage_counted or not locked.processing_usage_pages:
+            return
+        batch_id = locked.batch_id
+        company_id = OCRBatch.objects.filter(pk=batch_id).values_list("company_id", flat=True).first()
+        if not company_id:
+            return
+        usage = BillProcessingCount.objects.select_for_update().filter(company_id=company_id).first()
+        if usage:
+            usage.pdf_pages_consumed = max(
+                0, usage.pdf_pages_consumed - locked.processing_usage_pages
+            )
+            usage.save(update_fields=["pdf_pages_consumed", "updated_at"])
+        locked.processing_usage_pages = 0
+        locked.processing_usage_counted = False
+        locked.save(update_fields=["processing_usage_counted", "processing_usage_pages", "updated_at"])
+
+
 def record_email_bill(batch: OCRBatch) -> None:
     """Count one promoted vendor-bill email exactly once."""
     if not batch.company_id:
@@ -92,6 +183,7 @@ def record_email_bill(batch: OCRBatch) -> None:
         usage, _ = BillProcessingCount.objects.select_for_update().get_or_create(
             company_id=locked.company_id
         )
+        validate_processing_configuration(locked.company, "email")
         period_state = allocation_period_state(usage, 'email')
         if period_state != 'active':
             raise ProcessingLimitExceeded(

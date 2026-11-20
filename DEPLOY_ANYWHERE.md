@@ -21,6 +21,26 @@
 +automatically (the frontend's status polling triggers recovery), and
 +documents already posted to NetSuite are not repeated.
 +
++## OCR configuration and usage behavior
++
++Each company must have a complete configuration for each processing type:
++quota, active start/end dates, and a non-empty AI extraction prompt. PDF/file
++and email prompts are separate database fields and are sent to AI from the
++company configuration; there is no hardcoded prompt fallback. Missing
++configuration stops that processing type and shows the missing setting plus
++the Super Admin contact email.
++
++Single and Multiple uploads use the same file rules. The total page count of a
++Multiple selection is checked before extraction, and an upload over the
++remaining quota is rejected before any AI call. Each file is independently
++classified as a vendor bill; non-vendor files do not continue as successful
++extractions. File usage is released on extraction failure or non-vendor
++rejection. Email usage is consumed only when a vendor-bill email is promoted
++into processing.
++
++Template fields with configured default values are omitted from the AI request
++and restored from the template afterward, reducing AI context and token usage.
++
 +## Processes
 +
 +| Process | Command | When |
