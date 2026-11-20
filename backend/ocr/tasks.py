@@ -13,7 +13,6 @@ from common.timing import timed_stage
 import time
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
 import logging
@@ -38,7 +37,7 @@ from ocr.exceptions import (
     InvalidExtractionResultException,
     OCRTimeBudgetExceeded,
 )
-from ocr.models import OCRBatch, OCRDocument, OCRExtractionPart, OCRUpload
+from ocr.models import OCRBatch, OCRDocument, OCRUpload
 from ocr.ai_extraction_service import ai_extractor, get_standard_field_catalog
 from ocr.adapters import get_adapter, PDFAdapter
 from common.infra import get_redis_client, report_redis_failure, warn_throttled
@@ -137,8 +136,8 @@ def _mark_upload_failed(upload, reason: str, code: str = "") -> None:
 
     # Keep the source PDF available while the user still has a permitted
     # manual retry. Once the final retry has failed, there is no future OCR
-    # operation that can use the source, so remove the PDF bytes and chunk
-    # rows while retaining the lightweight FAILED upload metadata for the UI.
+    # operation that can use the source, so remove the PDF bytes while
+    # retaining the lightweight FAILED upload metadata for the UI.
     manual_retry_limit = int(getattr(settings, "OCR_MANUAL_RETRY_LIMIT", 4))
     if getattr(upload, "retry_count", 0) >= manual_retry_limit:
         _discard_failed_upload_source(upload)
@@ -147,11 +146,9 @@ def _mark_upload_failed(upload, reason: str, code: str = "") -> None:
 
 
 def _discard_failed_upload_source(upload) -> None:
-    """Remove temporary source/chunk data after a final failed retry."""
+    """Remove temporary source data after a final failed retry."""
 
     try:
-        OCRExtractionPart.objects.filter(upload_id=upload.id).delete()
-
         file_name = getattr(upload.file, "name", "")
         if file_name:
             try:
@@ -167,7 +164,7 @@ def _discard_failed_upload_source(upload) -> None:
         upload.file = ""
         upload.save(update_fields=["file", "updated_at"])
         logger.info(
-            "Discarded failed OCR source and extraction parts — upload=%s",
+            "Discarded failed OCR source — upload=%s",
             upload.id,
         )
     except Exception:  # noqa: BLE001 - cleanup must not mask OCR failure
@@ -257,7 +254,7 @@ def _source_page_count(upload) -> int:
 
 
 @timed_stage("ocr.prepare_pages")
-def _normalize_to_page_paths(adapter, upload, original_path) -> tuple[list[str], bool, int]:
+def _normalize_to_page_paths(adapter, upload, original_path) -> tuple[list[str], int]:
     """Return one complete PDF path or normalized page paths for other files."""
 
     if isinstance(adapter, PDFAdapter):
@@ -268,7 +265,7 @@ def _normalize_to_page_paths(adapter, upload, original_path) -> tuple[list[str],
         from ocr.pdf_processor import pdf_processor
 
         total_pages = pdf_processor.get_page_count(original_path)
-        return [str(original_path)], False, total_pages
+        return [str(original_path)], total_pages
 
     normalized = adapter.normalize()
 
@@ -292,37 +289,7 @@ def _normalize_to_page_paths(adapter, upload, original_path) -> tuple[list[str],
             f"'{upload.original_filename}'."
         )
 
-    return page_paths, False, len(page_paths)
-
-
-def _ensure_extraction_parts(
-    upload,
-    *,
-    total_parts: int,
-    chunk_size: int,
-    total_pages: int,
-) -> list[OCRExtractionPart]:
-    """Return durable chunk rows for the legacy chunk-processing branch.
-
-    Current upload validation keeps every PDF within the five-page limit and
-    sends it as one complete file, so this compatibility path is not used by
-    normal Single or Multiple mode processing. Keeping the helper prevents an
-    unresolved reference if an older adapter re-enters the branch.
-    """
-    parts = []
-    for part_number in range(1, total_parts + 1):
-        page_start = ((part_number - 1) * chunk_size) + 1
-        page_end = min(page_start + chunk_size - 1, total_pages)
-        part, _ = OCRExtractionPart.objects.get_or_create(
-            upload=upload,
-            part_number=part_number,
-            defaults={
-                "page_start": page_start,
-                "page_end": page_end,
-            },
-        )
-        parts.append(part)
-    return parts
+    return page_paths, len(page_paths)
 
 
 def _extract_single_page(
@@ -331,7 +298,6 @@ def _extract_single_page(
     requested_fields,
     page_index: int,
     deadline_monotonic: float | None,
-    document_context: dict[str, Any] | None = None,
 ) -> dict:
     """
     Send one page to the AI extractor.
@@ -354,7 +320,6 @@ def _extract_single_page(
             mime_type=mime_type,
             requested_fields=requested_fields,
             company=upload.batch.company,
-            document_context=document_context,
         )
 
     max_single_ai_retries = 1
@@ -380,7 +345,6 @@ def _extract_single_page(
                 company=upload.batch.company,
                 timeout=request_timeout,
                 max_retries=0,
-                document_context=document_context,
             )
             break
         except (
@@ -444,7 +408,7 @@ def _perform_ocr_extraction(
 
         try:
 
-            page_paths, is_chunked_pdf, total_pages = _normalize_to_page_paths(
+            page_paths, total_pages = _normalize_to_page_paths(
                 adapter, upload, original_path
             )
             # Account once when the file has been accepted and its real page
@@ -470,155 +434,18 @@ def _perform_ocr_extraction(
                 ) from exc
             page_results = []
             ai_duration_ms = 0.0
-            chunk_size = max(1, int(getattr(settings, "OCR_PDF_CHUNK_PAGES", 5)))
-            total_parts = len(page_paths) if is_chunked_pdf else 1
-            if is_chunked_pdf and deadline_monotonic is None and total_parts > 1:
-                # Chunk PDFs are independent requests. Run them concurrently,
-                # while keeping the result list in source-page order for the
-                # deterministic merge below. The scoped AI limiter remains the
-                # final guard on company/provider/model concurrency.
-                parts = _ensure_extraction_parts(
+            for page_index, page_path in enumerate(page_paths, start=1):
+                ai_started = time.perf_counter()
+                result = _extract_single_page(
                     upload,
-                    total_parts=total_parts,
-                    chunk_size=chunk_size,
-                    total_pages=total_pages,
+                    page_path,
+                    requested_fields,
+                    page_index,
+                    deadline_monotonic,
                 )
-                completed_results = {
-                    part.part_number: part.result_json
-                    for part in parts
-                    if part.status == OCRExtractionPart.Status.COMPLETED
-                    and isinstance(part.result_json, dict)
-                }
-                max_workers = min(
-                    total_parts,
-                    max(1, int(getattr(settings, "OCR_AI_MAX_CONCURRENCY", 1))),
-                )
-
-                def extract_chunk(item):
-                    part_index, part_path = item
-                    part = parts[part_index - 1]
-                    page_start = ((part_index - 1) * chunk_size) + 1
-                    page_end = min(page_start + chunk_size - 1, total_pages)
-                    if part_index in completed_results:
-                        return part_index, completed_results[part_index], 0.0
-                    part.status = OCRExtractionPart.Status.PROCESSING
-                    part.started_at = timezone.now()
-                    part.attempt_count = (part.attempt_count or 0) + 1
-                    part.error = ""
-                    part.save(update_fields=[
-                        "status", "started_at", "attempt_count", "error", "updated_at",
-                    ])
-                    document_context = {
-                        "document_id": str(upload.id),
-                        "total_pages": total_pages,
-                        "total_parts": total_parts,
-                        "current_part": part_index,
-                        "current_page_range": {
-                            "start": page_start,
-                            "end": page_end,
-                        },
-                        "previously_extracted_line_item_count": 0,
-                        "previous_header_context": {},
-                    }
-                    started = time.perf_counter()
-                    try:
-                        result = _extract_single_page(
-                            upload,
-                            part_path,
-                            requested_fields,
-                            part_index,
-                            None,
-                            document_context=document_context,
-                        )
-                    except Exception as exc:
-                        part.status = OCRExtractionPart.Status.FAILED
-                        part.error = str(exc)[:5000]
-                        part.save(update_fields=["status", "error", "updated_at"])
-                        raise
-                    duration_ms = (time.perf_counter() - started) * 1000
-                    try:
-                        _validate_extraction_result(result, page_index=part_index)
-                    except Exception as exc:
-                        part.status = OCRExtractionPart.Status.FAILED
-                        part.error = str(exc)[:5000]
-                        part.save(update_fields=["status", "error", "updated_at"])
-                        raise
-                    part.status = OCRExtractionPart.Status.COMPLETED
-                    part.result_json = result
-                    part.completed_at = timezone.now()
-                    part.error = ""
-                    part.save(update_fields=[
-                        "status", "result_json", "completed_at", "error", "updated_at",
-                    ])
-                    logger.info(
-                        "OCR PDF chunk completed — upload=%s part=%d/%d pages=%d-%d duration_ms=%.2f",
-                        upload.id,
-                        part_index,
-                        total_parts,
-                        page_start,
-                        page_end,
-                        duration_ms,
-                    )
-                    return part_index, result, duration_ms
-
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = [
-                        executor.submit(extract_chunk, item)
-                        for item in enumerate(page_paths, start=1)
-                        if item[0] not in completed_results
-                    ]
-                    chunk_results = [future.result() for future in futures]
-
-                chunk_results.sort(key=lambda item: item[0])
-                result_by_part = {
-                    part_number: result
-                    for part_number, result, _duration in chunk_results
-                }
-                result_by_part.update(completed_results)
-                page_results = [result_by_part[index] for index in range(1, total_parts + 1)]
-                ai_duration_ms = sum(item[2] for item in chunk_results)
-            else:
-                previous_header_context: dict[str, Any] = {}
-                previous_line_item_count = 0
-                for page_index, page_path in enumerate(page_paths, start=1):
-                    document_context = None
-                    if is_chunked_pdf:
-                        page_start = ((page_index - 1) * chunk_size) + 1
-                        page_end = min(page_start + chunk_size - 1, total_pages)
-                        document_context = {
-                            "document_id": str(upload.id),
-                            "total_pages": total_pages,
-                            "total_parts": total_parts,
-                            "current_part": page_index,
-                            "current_page_range": {
-                                "start": page_start,
-                                "end": page_end,
-                            },
-                            "previously_extracted_line_item_count": previous_line_item_count,
-                            "previous_header_context": previous_header_context,
-                        }
-                    ai_started = time.perf_counter()
-                    result = _extract_single_page(
-                        upload,
-                        page_path,
-                        requested_fields,
-                        page_index,
-                        deadline_monotonic,
-                        document_context=document_context,
-                    )
-                    ai_duration_ms += (time.perf_counter() - ai_started) * 1000
-                    _validate_extraction_result(result, page_index=page_index)
-                    page_results.append(result)
-
-                    if is_chunked_pdf:
-                        for key, value in result.items():
-                            if key in {"line_items", "raw_text"}:
-                                continue
-                            if value not in (None, "") and previous_header_context.get(key) in (None, ""):
-                                previous_header_context[key] = value
-                        line_items = result.get("line_items")
-                        if isinstance(line_items, list):
-                            previous_line_item_count += len(line_items)
+                ai_duration_ms += (time.perf_counter() - ai_started) * 1000
+                _validate_extraction_result(result, page_index=page_index)
+                page_results.append(result)
 
             upload._ai_extraction_duration_ms = int(round(ai_duration_ms))
             return _merge_page_extraction_results(page_results)
@@ -634,10 +461,8 @@ def _perform_ocr_extraction(
                     getattr(upload, "id", None),
                 )
 
-            # Covers both the old per-page PNG temp dir and the chunk-PDF
-            # temp dir (_split_pdf_into_chunks) — both live under the same
-            # pdf_processor scratch path and this is a no-op if neither
-            # was ever created.
+            # Clean any temporary PDF-processing data; this is a no-op for
+            # the whole-document path when no scratch data was created.
             try:
                 from ocr.pdf_processor import pdf_processor
 
@@ -1622,7 +1447,6 @@ def _persist_success(
     # Chunk rows are only needed while assembling the result. The durable
     # result is now on OCRUpload (and can later be copied to document history),
     # so remove the temporary per-part state after a complete success.
-    OCRExtractionPart.objects.filter(upload_id=upload.id).delete()
 
     if upload.batch_id:
         _refresh_batch_status(upload.batch_id)
@@ -2191,10 +2015,12 @@ def execute_upload_job(
             900,
         )         
 
-        # Hand the upload back to the queue: no lease, retry not before
+        # Hand the upload back to the queue in an explicit RETRYING state.
+        # This keeps retry-waiting jobs distinct from newly uploaded jobs and
+        # makes recovery and monitoring unambiguous.
         # ``next_attempt_at`` (also lets recovery find it if the retry
         # message/timer is lost).
-        upload.status = OCRUpload.Status.UPLOADED
+        upload.status = OCRUpload.Status.RETRYING
         upload.failure_reason = info.message
         upload.failure_code = info.code
         upload.lease_owner = ""

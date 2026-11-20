@@ -5,7 +5,6 @@ All OCR-related configurable values live here so no magic numbers
 appear inside the OCR codebase. Values can be overridden via
 environment variables for environment-specific tuning.
 """
-import os
 from decouple import config
 
 # ------------------------------------------------------------------
@@ -22,8 +21,7 @@ OCR_PDF_DPI: int = config('OCR_PDF_DPI', default=300, cast=int)
 # ------------------------------------------------------------------
 # PDF extraction mode
 # ------------------------------------------------------------------
-# PDFs are limited to five pages per file. Chunked extraction is no longer
-# used for new uploads; the standard page pipeline handles the accepted file.
+# PDFs are limited to five pages per file and are sent as whole documents.
 # ------------------------------------------------------------------
 # AI provider API
 # ------------------------------------------------------------------
@@ -69,13 +67,10 @@ OCR_AI_CONCURRENCY_LEASE_SECONDS: int = config(
     cast=int,
 )
 OCR_SINGLE_MAX_PAGES: int = OCR_MAX_PAGES
-# Catalyst AppSail ends every request after 30s, so on that platform the inline
-# attempt must hand over to background processing well before that.
-ON_CATALYST: bool = bool(os.environ.get("X_ZOHO_CATALYST_LISTEN_PORT"))
 
 OCR_SINGLE_TIME_BUDGET_SECONDS: int = config(
     'OCR_SINGLE_TIME_BUDGET_SECONDS',
-    default=20 if ON_CATALYST else 300,
+    default=300,
     cast=int,
 )
 # true = never process inline: accept the file and let the client poll.
@@ -131,13 +126,3 @@ OCR_S3_ENDPOINT_URL: str = config('OCR_S3_ENDPOINT_URL', default='')
 OCR_S3_ACCESS_KEY_ID: str = config('OCR_S3_ACCESS_KEY_ID', default='')
 OCR_S3_SECRET_ACCESS_KEY: str = config('OCR_S3_SECRET_ACCESS_KEY', default='')
 
-# Zoho Catalyst Cloud Scale Stratus
-# OCR_STRATUS_BUCKET: str = config(
-#     'OCR_STRATUS_BUCKET',
-#     default='',
-# )
-
-# OCR_STRATUS_PREFIX: str = config(
-#     'OCR_STRATUS_PREFIX',
-#     default='ocr',
-# )

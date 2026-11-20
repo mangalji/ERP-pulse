@@ -119,7 +119,10 @@ class OCRTemplateDefaultValueTests(SimpleTestCase):
             resolve_field_config({
                 "standard_fields": ["invoice_date"],
                 "standard_field_overrides": {
-                    "invoice_date": {"default_value": "not-a-date"},
+                    "invoice_date": {
+                        "questionaire": "Read the invoice date.",
+                        "default_value": "not-a-date",
+                    },
                 },
                 "custom_fields": [],
             })
@@ -251,7 +254,7 @@ class OCRDateFallbackPromptTests(SimpleTestCase):
             {},
         )
 
-        self.assertIn("If invoice_date is not explicitly present, return null", prompt)
+        self.assertIn('"invoice_date": Invoice date', prompt)
         self.assertNotIn("Single-date fallback", prompt)
 
     def test_single_date_fallback_is_omitted_without_both_date_fields(self):
@@ -293,12 +296,10 @@ class OCREmailVendorBillPromptTests(SimpleTestCase):
             email_body="Please arrange two consulting sessions at 5000 each.",
         )
 
-        self.assertIn("email vendor-bill extraction assistant", prompt)
         self.assertIn("Line-item fields", prompt)
         self.assertIn("Please arrange two consulting sessions", prompt)
-        self.assertIn('"is_vendor_bill"', prompt)
-        self.assertIn("follow-ups", prompt)
-        self.assertIn("Extract every visible row in source order", prompt)
+        self.assertIn('"invoice_date": Invoice issue date', prompt)
+        self.assertNotIn("email vendor-bill extraction assistant", prompt)
 
     @patch("ocr.ai_extraction_service.ai_configuration_service.resolve_provider")
     def test_email_extractor_returns_terminal_non_bill_classification(self, resolve_provider):
@@ -312,7 +313,13 @@ class OCREmailVendorBillPromptTests(SimpleTestCase):
 
         result = AIExtractor().extract_email_text(
             "Can you confirm the delivery status for last week's order?",
-            requested_fields={"standard_fields": ["invoice_date"], "custom_fields": []},
+            requested_fields={
+                "standard_fields": ["invoice_date"],
+                "standard_field_overrides": {
+                    "invoice_date": {"questionaire": "Read the invoice date."},
+                },
+                "custom_fields": [],
+            },
             company=Mock(),
             email_received_at=datetime(2026, 10, 28, 10, 0),
             timeout=1,
@@ -321,7 +328,8 @@ class OCREmailVendorBillPromptTests(SimpleTestCase):
 
         self.assertEqual(result, {"is_vendor_bill": False, "data": None})
         request = provider.generate_structured_json.call_args.kwargs
-        self.assertIn('"is_vendor_bill"', request["prompt"])
+        self.assertNotIn('"is_vendor_bill"', request["prompt"])
+        self.assertIn('"invoice_date":', request["prompt"])
         self.assertIn("data", request["schema"]["properties"])
         self.assertTrue(request["schema"]["properties"]["data"]["nullable"])
 

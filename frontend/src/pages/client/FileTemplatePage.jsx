@@ -165,12 +165,8 @@ function normalizeCatalogField(field) {
     key: field?.key || '',
     original_key: field?.key || '',
     label: field?.label || field?.key || '',
-    description:
-    normalizeDescriptionText(
-      field?.questionaire ||
-      field?.description ||
-      field?.label ||
-      '',
+    description: normalizeDescriptionText(
+      field?.questionaire || field?.description || '',
     ),
     data_type: field?.data_type || 'text',
     scope: field?.scope === 'line' ? 'line' : 'header',
@@ -1301,11 +1297,10 @@ const handleRefreshNetSuiteFields = async () => {
         return 'Every field must have a Field Name.'
       }
 
-      
       if (!normalizeDescriptionText(field.description)) {
         return `Questionaire is required for "${label}".`
       }
-      
+
       if (!field.netsuite_field_id?.trim()) {
         return `NetSuite Field ID is required for "${label}".`
       }

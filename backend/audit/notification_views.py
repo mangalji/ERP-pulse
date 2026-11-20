@@ -1,11 +1,7 @@
-from datetime import timedelta
-
-from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from audit.models import Notification
-from audit.tasks import purge_notification_after_undo
 
 
 def visible(request):
@@ -49,7 +45,21 @@ class NotificationList(APIView):
             return Response({'detail': 'Invalid pagination.'}, status=400)
         all_items = visible(request)
         unread_count = all_items.filter(is_read=False).count()
-        items = all_items.filter(is_read=False) if request.query_params.get('unread') == 'true' else all_items
+        read_filter = request.query_params.get('read', 'all')
+        if read_filter not in {'all', 'unread', 'read'}:
+            return Response({'detail': 'Invalid read filter.'}, status=400)
+        if read_filter == 'unread':
+            all_items = all_items.filter(is_read=False)
+        elif read_filter == 'read':
+            all_items = all_items.filter(is_read=True)
+
+        type_filter = request.query_params.get('type', 'all')
+        if type_filter not in {'all', 'manual', 'automated'}:
+            return Response({'detail': 'Invalid notification type filter.'}, status=400)
+        if type_filter != 'all':
+            all_items = all_items.filter(activity_type=type_filter)
+
+        items = all_items
         rows = items.select_related('actor')[offset:offset + limit]
         results = [{
             'id': item.id, 'message': item.message, 'link': item.link,
@@ -80,38 +90,68 @@ class NotificationsReadAll(APIView):
         return Response({'updated': count})
 
 
+class NotificationBulkRead(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        notification_ids = request.data.get('ids')
+        is_read = request.data.get('is_read')
+        if not isinstance(notification_ids, list) or not notification_ids:
+            return Response({'detail': 'ids must be a non-empty list.'}, status=400)
+        if not isinstance(is_read, bool):
+            return Response({'detail': 'is_read must be a boolean.'}, status=400)
+
+        normalized_ids = []
+        for value in notification_ids:
+            try:
+                normalized_ids.append(int(value))
+            except (TypeError, ValueError):
+                return Response({'detail': 'Notification ids must be integers.'}, status=400)
+
+        if len(normalized_ids) > 100:
+            return Response({'detail': 'You can update at most 100 notifications at once.'}, status=400)
+
+        updated = Notification.objects.filter(
+            recipient=request.user,
+            company_id=request.user.company_id,
+            pk__in=set(normalized_ids),
+        ).update(is_read=is_read)
+        return Response({'updated': updated, 'is_read': is_read})
+
+
+class NotificationBulkDelete(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        notification_ids = request.data.get('ids')
+        if not isinstance(notification_ids, list) or not notification_ids:
+            return Response({'detail': 'ids must be a non-empty list.'}, status=400)
+
+        normalized_ids = []
+        for value in notification_ids:
+            try:
+                normalized_ids.append(int(value))
+            except (TypeError, ValueError):
+                return Response({'detail': 'Notification ids must be integers.'}, status=400)
+
+        if len(normalized_ids) > 100:
+            return Response({'detail': 'You can delete at most 100 notifications at once.'}, status=400)
+
+        owned = Notification.objects.filter(
+            recipient=request.user,
+            company_id=request.user.company_id,
+            pk__in=set(normalized_ids),
+        )
+        deleted, _ = owned.delete()
+        return Response({'deleted': True, 'deleted_count': deleted})
+
+
 class NotificationDelete(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, pk):
         owned = Notification.objects.filter(recipient=request.user, company_id=request.user.company_id)
-        if request.query_params.get('permanent') == 'true':
-            deleted, _ = owned.filter(pk=pk).delete()
-            if not deleted:
-                return Response({'detail': 'Notification not found.'}, status=404)
-            return Response({'deleted': True})
-        updated = owned.filter(deleted_at__isnull=True, pk=pk).update(
-            deleted_at=timezone.now(),
-            delete_after=timezone.now() + timedelta(seconds=10),
-        )
-        if not updated:
+        deleted, _ = owned.filter(pk=pk).delete()
+        if not deleted:
             return Response({'detail': 'Notification not found.'}, status=404)
-        purge_notification_after_undo.apply_async(args=[pk], countdown=10)
-        return Response({'deleted': True, 'undo_seconds': 10})
-
-
-class NotificationRestore(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, pk):
-        now = timezone.now()
-        updated = Notification.objects.filter(
-            pk=pk,
-            recipient=request.user,
-            company_id=request.user.company_id,
-            deleted_at__isnull=False,
-            delete_after__gt=now,
-        ).update(deleted_at=None, delete_after=None)
-        if not updated:
-            return Response({'detail': 'Undo window has expired.'}, status=410)
-        return Response({'restored': True})
+        return Response({'deleted': True})

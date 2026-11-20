@@ -59,7 +59,7 @@ def claim_upload(upload_id, owner: str) -> bool:
     """
     Atomically take an upload for execution.
 
-    Succeeds only if the upload is waiting (UPLOADED / interrupted PROCESSING),
+    Succeeds only if the upload is waiting (UPLOADED / RETRYING / interrupted PROCESSING),
     nobody holds a live lease on it and any retry delay has elapsed. Exactly
     one of several concurrent callers wins.
     """
@@ -71,6 +71,7 @@ def claim_upload(upload_id, owner: str) -> bool:
         OCRUpload.objects.filter(pk=upload_id)
         .filter(
             Q(status=OCRUpload.Status.UPLOADED)
+            | Q(status=OCRUpload.Status.RETRYING)
             | Q(status=OCRUpload.Status.PROCESSING)
         )
         .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lt=now))

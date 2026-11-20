@@ -440,6 +440,9 @@ def get_standard_field_catalog() -> dict[str, Any]:
             {
                 "key": key,
                 "label": FIELD_LABELS.get(key, key),
+                # This is the default questionnaire shown when creating a
+                # standard template. The saved template value remains the
+                # source of truth during extraction.
                 "questionaire": FIELD_DESCRIPTIONS.get(key, ""),
                 "data_type": FIELD_DATA_TYPES.get(key, "text"),
                 "scope": "header",
@@ -451,6 +454,9 @@ def get_standard_field_catalog() -> dict[str, Any]:
             {
                 "key": key,
                 "label": LINE_ITEM_LABELS.get(key, key),
+                # This is the default questionnaire shown when creating a
+                # standard template. The saved template value remains the
+                # source of truth during extraction.
                 "questionaire": LINE_ITEM_FIELDS.get(key, ""),
                 "data_type": LINE_ITEM_DATA_TYPES.get(key, "text"),
                 "scope": "line",
@@ -503,11 +509,11 @@ def resolve_field_config(
         if not key or key == "line_items":
             continue
         if key in header_catalog:
-            description = header_catalog[key]
+            description = ""
             data_type = FIELD_DATA_TYPES.get(key, "text")
             default_scope = "header"
         elif key in line_catalog:
-            description = line_catalog[key]
+            description = ""
             data_type = LINE_ITEM_DATA_TYPES.get(key, "text")
             default_scope = "line"
         else:
@@ -515,9 +521,19 @@ def resolve_field_config(
         override = overrides.get(key) or {}
         if not isinstance(override, dict):
             raise ValueError(f"standard_field_overrides['{key}'] must be an object.")
-        description = str(override.get("questionaire") or override.get("description") or description).strip()
+        description = str(
+            override.get("questionaire")
+            or override.get("description")
+            or ""
+        ).strip()
         if not description:
-            raise ValueError(f"Questionaire is required for field '{key}'.")
+            field_label = str(
+                override.get("label")
+                or FIELD_LABELS.get(key)
+                or LINE_ITEM_LABELS.get(key)
+                or key
+            ).strip()
+            raise ValueError(f'Questionaire is required for "{field_label}".')
         data_type = _coerce_data_type(override.get("data_type") or data_type)
         scope = override.get("scope") or default_scope
         if scope not in {"header", "line"}:
@@ -561,9 +577,8 @@ def resolve_field_config(
             raise ValueError(f"Duplicate custom field '{label}' (resolved key '{key}').")
         
         description = str(custom.get("questionaire") or custom.get("description") or "").strip()
-        
         if not description:
-            raise ValueError(f"Questionaire is required for custom field '{label}'.")
+            raise ValueError(f'Questionaire is required for "{label}".')
         
         data_type = _coerce_data_type(custom.get("data_type"))
         
@@ -870,11 +885,9 @@ def _dynamic_field_sections(
     include_line_items: bool,
     header_types: dict[str, str],
     line_types: dict[str, str],
-    *,
-    continuation_part: bool = False,
 ) -> str:
     """Render only the selected template fields into the saved prompt."""
-    selected_headers = {} if continuation_part else header_fields
+    selected_headers = header_fields
     header_lines = "\n".join(
         f'- "{key}": {description}{_type_format_hint(header_types.get(key, "text"))}'
         for key, description in selected_headers.items()
@@ -882,7 +895,7 @@ def _dynamic_field_sections(
     header_section = (
         f"Requested header fields:\n{header_lines}"
         if selected_headers
-        else "Continuation part: header fields are intentionally omitted; return only line_items."
+        else "No header fields were requested."
     )
     if include_line_items:
         line_lines = "\n".join(
@@ -902,28 +915,13 @@ def build_file_prompt(
     header_types: dict[str, str],
     line_types: dict[str, str],
     *,
-    source: str = "file",
-    document_context: dict[str, Any] | None = None,
     company_prompt: str = "",
 ) -> str:
     """Combine the saved company prompt with dynamic template data."""
-    continuation_part = bool(
-        document_context and int(document_context.get("current_part", 1) or 1) > 1
-    )
     source_data = "Read the entire uploaded document before responding."
-    if document_context:
-        source_data = "Read every page of the supplied PDF part before responding."
-    if source == "email":
-        source_data = "Read the entire email body before responding."
     sections = [company_prompt.strip(), source_data]
-    if document_context:
-        sections.append(
-            "DOCUMENT PART CONTEXT\n"
-            + json.dumps(document_context, ensure_ascii=False, indent=2, default=str)
-        )
     sections.append(_dynamic_field_sections(
         header_fields, line_fields, include_line_items, header_types, line_types,
-        continuation_part=continuation_part,
     ))
     return "\n\n".join(section for section in sections if section)
 
@@ -984,7 +982,6 @@ class AIExtractor:
         company=None,
         timeout: float | None = None,
         max_retries: int | None = None,
-        document_context: dict[str, Any] | None = None,
     ) -> dict:
         (
             header_fields,
@@ -1026,20 +1023,11 @@ class AIExtractor:
             if key in ai_line_fields
         }
         ai_include_line_items = include_line_items and bool(ai_line_fields)
-        continuation_part = bool(
-            document_context
-            and int(document_context.get("current_part", 1) or 1) > 1
-        )
-        prompt_header_fields = {} if continuation_part else ai_header_fields
-        prompt_header_types = {
-            key: value for key, value in header_types.items()
-            if key in prompt_header_fields
-        }
         extraction_schema = _build_schema(
-            prompt_header_fields,
+            ai_header_fields,
             ai_line_fields,
             ai_include_line_items,
-            prompt_header_types,
+            ai_header_types,
             ai_line_types,
         )
         schema = {
@@ -1056,7 +1044,6 @@ class AIExtractor:
             ai_include_line_items,
             ai_header_types,
             ai_line_types,
-            document_context=document_context,
             company_prompt=self._company_prompt(company, "pdf"),
         )
 
@@ -1147,13 +1134,12 @@ class AIExtractor:
                     line_keys,
                 )
                 result = apply_calculated_values(result)
-                if not continuation_part:
-                    result = _apply_template_default_values(result, requested_fields)
-                    result = apply_invoice_date_fallback(
-                        result,
-                        header_keys,
-                        source="file",
-                    )
+                result = _apply_template_default_values(result, requested_fields)
+                result = apply_invoice_date_fallback(
+                    result,
+                    header_keys,
+                    source="file",
+                )
                 logger.info(
                     "AI EXTRACTION DEBUG | source=file | request_id=%s | "
                     "TEMPLATE-MAPPED RESULT:\n%s",

@@ -11,9 +11,8 @@ Environment variables (all optional):
     GUNICORN_THREADS      threads per worker; >1 switches to the gthread class
     GUNICORN_TIMEOUT      seconds before a silent worker is killed (default 300)
 
-NOTE: this only controls gunicorn. Hosting platforms have their own request
-limits (e.g. Catalyst AppSail ends requests after 30s) that no gunicorn setting
-can raise; long OCR jobs must therefore run in the background there.
+NOTE: this only controls gunicorn. Hosting platforms may impose their own
+request limits; long OCR jobs can run in the background when needed.
 """
 
 import os
@@ -26,11 +25,7 @@ def _int_env(name, default):
         return int(default)
 
 
-_port = (
-    os.environ.get("X_ZOHO_CATALYST_LISTEN_PORT")
-    or os.environ.get("PORT")
-    or "8000"
-)
+_port = os.environ.get("PORT") or "8000"
 
 bind = os.environ.get("GUNICORN_BIND", f"0.0.0.0:{_port}")
 workers = _int_env("GUNICORN_WORKERS", _int_env("WEB_CONCURRENCY", 2))

@@ -4,7 +4,7 @@ import AppRoutes from './routes/AppRoutes.jsx'
 
 /**
  * Root application component.
- * HashRouter is used for Zoho Catalyst Web Client compatibility so direct links and page refreshes work smoothly.
+ * HashRouter keeps direct links and page refreshes working across static hosts.
  */
 function App() {
   return (

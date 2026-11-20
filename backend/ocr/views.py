@@ -26,7 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from common.common_utils import success_response
 from rest_framework.response import Response
-from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionPart, OCRExtractionTemplate, OCRValidationResult, BillProcessingCount
+from ocr.models import OCRDocument, OCRDocumentVersion, OCRUpload, OCRBatch, OCRExtractionTemplate, OCRValidationResult, BillProcessingCount
 from netsuite.models import NetSuiteOCRPosting
 from netsuite.oauth import netsuite_vendor_bill_url
 from ocr.serializers import (
@@ -520,7 +520,10 @@ class OCRBatchHistoryView(APIView):
         queued = sum(
             1
             for upload in uploads
-            if upload.status == OCRUpload.Status.UPLOADED
+            if upload.status in {
+                OCRUpload.Status.UPLOADED,
+                OCRUpload.Status.RETRYING,
+            }
         )
 
         serializer = OCRBatchHistorySerializer(
@@ -1968,7 +1971,10 @@ class OCRBatchStatusView(APIView):
         )
         queued = sum(
             1 for upload in uploads
-            if upload.status == OCRUpload.Status.UPLOADED
+            if upload.status in {
+                OCRUpload.Status.UPLOADED,
+                OCRUpload.Status.RETRYING,
+            }
         )
 
         # The task updates the batch status, but this defensive reconciliation
@@ -2082,7 +2088,11 @@ class OCRUploadRetryView(APIView):
             except OCRUpload.DoesNotExist as exc:
                 raise NotFound("OCR upload not found.") from exc
 
-            if upload.status in {OCRUpload.Status.PROCESSING, OCRUpload.Status.UPLOADED}:
+            if upload.status in {
+                OCRUpload.Status.PROCESSING,
+                OCRUpload.Status.UPLOADED,
+                OCRUpload.Status.RETRYING,
+            }:
                 return Response(
                     {"detail": "This extraction is already running or queued."},
                     status=status.HTTP_409_CONFLICT,

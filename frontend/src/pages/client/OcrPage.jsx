@@ -2931,6 +2931,8 @@ const goNext = () => {
         return 'text-red-600'
       case 'PROCESSING':
         return 'text-amber-600'
+      case 'RETRYING':
+        return 'text-amber-600'
       default:
         return 'text-[var(--color-muted)]'
     }

@@ -413,7 +413,9 @@ def _waiting_uploads(batch_id=None):
 
     now = timezone.now()
 
-    qs = OCRUpload.objects.filter(status=OCRUpload.Status.UPLOADED)
+    qs = OCRUpload.objects.filter(
+        status__in=[OCRUpload.Status.UPLOADED, OCRUpload.Status.RETRYING]
+    )
     if batch_id is not None:
         qs = qs.filter(batch_id=batch_id)
 
@@ -454,7 +456,7 @@ def recover_batch(batch_id=None, *, limit: int = 200) -> int:
         # Reserve the re-dispatch so concurrent pollers do not all do it.
         reserved = OCRUpload.objects.filter(
             pk=upload.pk,
-            status=OCRUpload.Status.UPLOADED,
+            status__in=[OCRUpload.Status.UPLOADED, OCRUpload.Status.RETRYING],
             queued_at=upload.queued_at,
         ).update(queued_at=now)
 

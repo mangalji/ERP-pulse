@@ -31,7 +31,7 @@ X_FRAME_OPTIONS = config(
 )
 
 # ------------------------------------------------------------------
-# Reverse Proxy (Zoho Catalyst / Render / Nginx)
+# Reverse proxy (Render / Nginx / other hosts)
 # ------------------------------------------------------------------
 
 SECURE_PROXY_SSL_HEADER = (

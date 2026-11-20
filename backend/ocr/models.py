@@ -1,8 +1,8 @@
 """
 Database models for the OCR application.
 
-It tracks the file through its lifecycle (UPLOADED → PROCESSING →
-COMPLETED/FAILED) and stores the IDP engine entities (document, page,
+    It tracks the file through its lifecycle (UPLOADED → PROCESSING →
+    RETRYING/COMPLETED/FAILED) and stores the IDP engine entities (document, page,
 version, quality metric) for the Enterprise IDP pipeline.
 """
 
@@ -253,6 +253,7 @@ class OCRUpload(models.Model):
     class Status(models.TextChoices):
         UPLOADED = 'UPLOADED', 'Uploaded'
         PROCESSING = 'PROCESSING', 'Processing'
+        RETRYING = 'RETRYING', 'Retrying'
         COMPLETED = 'COMPLETED', 'Completed'
         FAILED = 'FAILED', 'Failed'
 
