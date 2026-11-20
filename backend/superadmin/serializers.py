@@ -3,7 +3,7 @@ from common.contact_validation import normalize_phone
 from common.email_verification import ensure_email_deliverable
 from rest_framework import serializers
 from ocr.models import BillProcessingCount
-from ocr.usage import allocation_period_state
+from ocr.usage import allocation_period_state, validate_allocation_dates
 from django.db import transaction
 from .models import (
     Plan, 
@@ -73,9 +73,11 @@ class CompanySerializer(serializers.ModelSerializer):
 
         if is_create:
             for prefix in ('pdf', 'email'):
-                if attrs[f'{prefix}_allocation_end_date'] < attrs[f'{prefix}_allocation_start_date']:
+                try:
+                    validate_allocation_dates(attrs, prefix)
+                except ValueError as exc:
                     raise serializers.ValidationError({
-                        f'{prefix}_allocation_end_date': 'End date must be on or after the start date.'
+                        f'{prefix}_allocation_end_date': str(exc)
                     })
 
         name = (attrs.get("name") or "").strip()

@@ -47,7 +47,7 @@ from ocr.ai_extraction_service import get_standard_field_catalog, resolve_field_
 from ocr.exceptions import OCRTimeBudgetExceeded
 from ocr.execution import dispatch_upload, recover_batch
 from ocr.tasks import process_single_ocr_upload
-from ocr.usage import pdf_remaining_pages, allocation_period_state
+from ocr.usage import remaining_units, allocation_period_state
 from ocr.utils import logger
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
@@ -1573,7 +1573,7 @@ class OCRExtractView(APIView):
                 pdf_doc.close()
                 actual_file.seek(0)
 
-            remaining_pages = pdf_remaining_pages(company.id)
+            remaining_pages = remaining_units(company.id, "pdf")
             if uploaded_page_count > remaining_pages:
                 return Response(
                     {

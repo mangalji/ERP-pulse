@@ -31,6 +31,7 @@ from superadmin.notifications import (
     send_company_suspended_email,
     send_transaction_completed_email,
 )
+from ocr.usage import validate_allocation_dates
 from tenancy.models import Company, CompanyDeletionHistory, CompanyDepartment, CompanySuspensionReason
 from ocr.models import BillProcessingCount
 from tenancy.services import company_lifecycle_service
@@ -154,10 +155,20 @@ class CompanyViewSet(viewsets.ModelViewSet):
             if field in request.data:
                 values[field] = str(request.data[field] or '').strip()
         for prefix in ('pdf', 'email'):
-            start_date = values.get(f'{prefix}_allocation_start_date', getattr(usage, f'{prefix}_allocation_start_date'))
-            end_date = values.get(f'{prefix}_allocation_end_date', getattr(usage, f'{prefix}_allocation_end_date'))
-            if start_date and end_date and end_date < start_date:
-                return Response({'detail': f'{prefix.title()} allocation end date must be on or after the start date.'}, status=status.HTTP_400_BAD_REQUEST)
+            allocation_dates = {
+                f'{prefix}_allocation_start_date': values.get(
+                    f'{prefix}_allocation_start_date',
+                    getattr(usage, f'{prefix}_allocation_start_date'),
+                ),
+                f'{prefix}_allocation_end_date': values.get(
+                    f'{prefix}_allocation_end_date',
+                    getattr(usage, f'{prefix}_allocation_end_date'),
+                ),
+            }
+            try:
+                validate_allocation_dates(allocation_dates, prefix)
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if not values:
             return Response({'detail': 'Provide at least one processing limit, date range, or extraction prompt.'}, status=status.HTTP_400_BAD_REQUEST)
         for field, value in values.items():

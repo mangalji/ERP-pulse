@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
+import { useCrudResource } from '../../hooks/useCrudResource.js'
 
 const EMPTY_CATEGORY_FORM = {
   name: '',
@@ -33,23 +34,22 @@ export default function CenterCategoriesPage() {
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState(EMPTY_PAGINATION)
 
-  const [loading, setLoading] = useState(true)
-  const [savingCategory, setSavingCategory] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const {
+    loading, saving: savingCategory, deleting, error, message,
+    setError, setMessage, loadResource, saveResource, deleteResource,
+  } = useCrudResource()
   const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [editingCategoryId, setEditingCategoryId] = useState(null)
   const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM)
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
   const editingCategory = categories.find((category) => String(category.id) === String(editingCategoryId))
 
-  const loadCategories = async (nextPage = page) => {
-    setLoading(true)
-    setError('')
-
-    try {
-      const result = await clientApi.getCenterCategories(nextPage)
+  const loadCategories = useCallback(async (nextPage = page) => {
+    const result = await loadResource(
+      () => clientApi.getCenterCategories(nextPage),
+      'Unable to load Center Categories.',
+    )
+    if (result) {
 
       const nextCategories = result?.results || []
       setCategories(nextCategories)
@@ -60,21 +60,14 @@ export default function CenterCategoriesPage() {
         page: nextPage,
       })
 
-    } catch (err) {
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to load Center Categories.',
-      )
+    } else {
       setCategories([])
-    } finally {
-      setLoading(false)
     }
-  }
+  }, [loadResource, page])
 
   useEffect(() => {
-    loadCategories(page)
-  }, [page])
+    void loadCategories(page)
+  }, [loadCategories, page])
 
   const startCreateCategory = () => {
     setEditingCategoryId(null)
@@ -140,11 +133,7 @@ export default function CenterCategoriesPage() {
       return
     }
 
-    setSavingCategory(true)
-    setError('')
-    setMessage('')
-
-    try {
+    const saved = await saveResource(async () => {
       if (editingCategoryId) {
         const payload = {
           name,
@@ -180,21 +169,12 @@ export default function CenterCategoriesPage() {
         setMessage('Center Category created successfully.')
       }
 
+    }, `Unable to ${editingCategoryId ? 'update' : 'create'} Center Category.`)
+    if (saved) {
       setCategoryForm(EMPTY_CATEGORY_FORM)
       setEditingCategoryId(null)
       setShowCategoryForm(false)
-
       await loadCategories(page)
-    } catch (err) {
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          `Unable to ${
-            editingCategoryId ? 'update' : 'create'
-          } Center Category.`,
-      )
-    } finally {
-      setSavingCategory(false)
     }
   }
 
@@ -219,18 +199,14 @@ export default function CenterCategoriesPage() {
     if (!selectedIds.length) return
     if (!window.confirm(`Delete ${selectedIds.length} selected Center Categor${selectedIds.length === 1 ? 'y' : 'ies'} and their subtabs?`)) return
 
-    setDeleting(true)
-    setError('')
-    setMessage('')
-    try {
-      await clientApi.deleteCenterCategories(selectedIds)
+    const deleted = await deleteResource(
+      () => clientApi.deleteCenterCategories(selectedIds),
+      'Unable to delete selected Center Categories.',
+    )
+    if (deleted) {
       setSelectedIds([])
       setMessage('Selected Center Categories deleted successfully.')
       await loadCategories(page)
-    } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to delete selected Center Categories.')
-    } finally {
-      setDeleting(false)
     }
   }
 

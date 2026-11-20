@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
+import { useCrudResource } from '../../hooks/useCrudResource.js'
+import { getApiErrorMessage } from '../../utils/apiError.js'
 
 const EMPTY_FORM = { name: '', route: '', query_param: '', sort_order: '' }
 
@@ -10,30 +12,28 @@ export default function CenterTabsPage() {
   const [tabs, setTabs] = useState([])
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ page: 1, page_size: 10, total: 0, total_pages: 1, has_next: false, has_previous: false })
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const {
+    loading, saving, deleting, error, message,
+    setError, setMessage,
+    loadResource, saveResource, deleteResource,
+  } = useCrudResource()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
   const [selectedIds, setSelectedIds] = useState([])
 
   const loadTabs = useCallback(async (nextPage = page) => {
-    setLoading(true)
-    setError('')
-    try {
-      const result = await clientApi.getCenterTabs(nextPage)
+    const result = await loadResource(
+      () => clientApi.getCenterTabs(nextPage),
+      'Unable to load Center Tabs.',
+    )
+    if (result) {
       setTabs(result?.results || [])
       setPagination((current) => result?.pagination || current)
-    } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to load Center Tabs.')
+    } else {
       setTabs([])
-    } finally {
-      setLoading(false)
     }
-  }, [page])
+  }, [loadResource, page])
 
   useEffect(() => { void loadTabs(page) }, [page, loadTabs])
 
@@ -59,12 +59,9 @@ export default function CenterTabsPage() {
   if (!isSystemTab && (route.includes('?') || route.includes('#'))) {
     return setError('Do not enter query parameters in Path.')
   }
+  if (isSystemTab && form.sort_order === '') return setError('Sort Order is required.')
 
-  setSaving(true)
-  setError('')
-  setMessage('')
-
-  try {
+  const saved = await saveResource(async () => {
     const payload = isSystemTab ? {} : { name, query_param: queryParam }
 
     // Pre-created/system tab ka Path update nahi hoga.
@@ -75,8 +72,6 @@ export default function CenterTabsPage() {
     if (form.sort_order !== '') {
       payload.sort_order = Number(form.sort_order)
     }
-    if (isSystemTab && form.sort_order === '') return setError('Sort Order is required.')
-
     if (editingId) {
       await clientApi.updateNavigationTab('top', editingId, payload)
       setMessage('Center Tab updated successfully.')
@@ -88,22 +83,10 @@ export default function CenterTabsPage() {
       setMessage('Center Tab created successfully.')
     }
 
+  }, 'Unable to save Center Tab.')
+  if (saved) {
     resetForm()
     await loadTabs(page)
-  } catch (err) {
-    const backendMessage =
-      err?.payload?.detail ||
-      err?.payload?.message ||
-      err?.response?.data?.detail ||
-      err?.response?.data?.message
-
-    setError(
-      backendMessage ||
-      err?.message ||
-      'Unable to save Center Tab.'
-    )
-  } finally {
-    setSaving(false)
   }
 }
 
@@ -117,7 +100,7 @@ export default function CenterTabsPage() {
       }
       navigate(`/app/settings/customize/center-tabs/${tab.id}`)
     } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to open Center Tab.')
+      setError(getApiErrorMessage(err, 'Unable to open Center Tab.'))
     }
   }
 
@@ -156,15 +139,15 @@ export default function CenterTabsPage() {
   const deleteSelected = async () => {
     if (!selectedIds.length) return
     if (!window.confirm(`Delete ${selectedIds.length} selected Center Tab(s) and all of their categories/subtabs?`)) return
-    setDeleting(true); setError(''); setMessage('')
-    try {
-      await clientApi.deleteCenterTabs(selectedIds)
+    const deleted = await deleteResource(
+      () => clientApi.deleteCenterTabs(selectedIds),
+      'Unable to delete selected Center Tabs.',
+    )
+    if (deleted) {
       setSelectedIds([])
       setMessage('Selected Center Tabs deleted successfully.')
       await loadTabs(page)
-    } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to delete selected Center Tabs.')
-    } finally { setDeleting(false) }
+    }
   }
 
   return (

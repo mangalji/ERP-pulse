@@ -139,9 +139,11 @@ def apply_calculated_values(
         calculated_items.append(item)
 
     result["line_items"] = calculated_items
-    if "total_tax_amount" in result:
-        total_tax = sum(line_taxes, Decimal("0")) if line_taxes else None
-        _set_calculated(result, "total_tax_amount", _money(total_tax) if total_tax is not None else None, overwrite=overwrite)
+    # Temporarily disabled: the header-level total tax field is not part of
+    # the active OCR template contract. Line-level tax values remain intact.
+    # if "total_tax_amount" in result:
+    #     total_tax = sum(line_taxes, Decimal("0")) if line_taxes else None
+    #     _set_calculated(result, "total_tax_amount", _money(total_tax) if total_tax is not None else None, overwrite=overwrite)
     if "amount" in result:
         invoice_total = sum(line_totals, Decimal("0")) if has_line and all_line_totals_known else None
         _set_calculated(result, "amount", _money(invoice_total) if invoice_total is not None else None, overwrite=overwrite)

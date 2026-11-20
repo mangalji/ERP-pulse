@@ -141,7 +141,8 @@ FIELD_DESCRIPTIONS = {
     "subsidiary": "Explicitly identified company subsidiary or business unit only.",
     "location": "Explicitly stated NetSuite Location, branch, site, or warehouse. Do not infer from address.",
     "currency": "Three-letter currency code, such as USD, EUR, or INR.",
-    "total_tax_amount": "Total tax amount for the entire invoice.",
+    # Temporarily disabled: header-level total tax is NetSuite-computed.
+    # "total_tax_amount": "Total tax amount for the entire invoice.",
     "amount": "Grand total including taxes and charges.",
 }
 
@@ -163,7 +164,8 @@ FIELD_LABELS = {
     "subsidiary": "Subsidiary",
     "currency": "Currency",
     "location":'Location',
-    "total_tax_amount":"Total Tax",
+    # Temporarily disabled with the header-level total tax field.
+    # "total_tax_amount":"Total Tax",
     "amount": "Amount",
 }
 
@@ -331,7 +333,8 @@ FIELD_DATA_TYPES = {
     "subsidiary": "text",
     "currency": "text",
     "location":"text",
-    "total_tax_amount":"currency",
+    # Temporarily disabled with the header-level total tax field.
+    # "total_tax_amount":"currency",
     "amount": "currency",
 }
 

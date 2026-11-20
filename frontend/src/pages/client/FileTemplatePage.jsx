@@ -71,10 +71,11 @@ const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
     id: 'amount',
     scope: 'line',
   },
-  total_tax_amount: {
-    id: 'taxtotal',
-    scope: 'body',
-  },
+  // Temporarily disabled: NetSuite computes the header-level tax total.
+  // total_tax_amount: {
+  //   id: 'taxtotal',
+  //   scope: 'body',
+  // },
   tax_amount:{
     id:'tax1Amt',
     scope:'line'
@@ -194,6 +195,32 @@ function normalizeCatalogField(field) {
     enabled: field?.enabled !== false,
   }
 }
+
+function normalizeSavedStandardField(key, override = {}, disabled = false) {
+  return {
+    id: `standard-legacy-header-${key}`,
+    key,
+    original_key: key,
+    label: override?.label || key,
+    description:
+      normalizeDescriptionText(
+        override?.description || override?.questionaire || '',
+      ),
+    data_type: override?.data_type || 'text',
+    scope: override?.scope === 'line' ? 'line' : 'header',
+    netsuite_field_id:
+      override?.netsuite_field_id || '',
+    netsuite_field_scope:
+      override?.netsuite_field_scope || '',
+    netsuite_field_sublist_id: override?.netsuite_field_sublist_id || '',
+    default_value: override?.default_value ?? '',
+    standard: true,
+    // Preserve the saved template's enabled/disabled state. A legacy field
+    // must not be greyed out merely because it is absent from the catalogue.
+    enabled: !disabled && override?.enabled !== false,
+  }
+}
+
 function normalizeDescriptionText(value) {
   if (Array.isArray(value)) {
     return value
@@ -1073,44 +1100,16 @@ const handleRefreshNetSuiteFields = async () => {
     ])
     const disabledStandardKeys = new Set(config.disabled_standard_fields)
 
-    const standardFields = catalogFields
-      .filter((field) => selectedStandardKeys.has(field?.key))
-      .map((field) => {
-        const normalized = normalizeCatalogField(field)
-        const override = config.standard_field_overrides?.[normalized.original_key]
-
-        return {
-          ...normalized,
-          label: override?.label || normalized.label,
-          description:
-            override?.description ||
-            override?.questionaire ||
-            normalized.description,
-          data_type: override?.data_type || normalized.data_type,
-          scope:
-            override?.scope === 'line'
-              ? 'line'
-              : override?.scope === 'header'
-                ? 'header'
-                : normalized.scope,
-          netsuite_field_id:
-            override?.netsuite_field_id ||
-            normalized.netsuite_field_id ||
-            '',
-
-          netsuite_field_scope:
-            override?.netsuite_field_scope ||
-            normalized.netsuite_field_scope ||
-            '',
-
-          netsuite_field_sublist_id:
-            override?.netsuite_field_sublist_id ||
-            normalized.netsuite_field_sublist_id ||
-            '',
-          default_value: override?.default_value ?? normalized.default_value ?? '',
-          enabled: !disabledStandardKeys.has(normalized.original_key) &&
-            override?.enabled !== false,
-        }
+    // Saved templates are reconstructed exclusively from the persisted DB
+    // configuration. The current catalogue and new-template defaults must not
+    // add metadata, mappings, or fields to a saved template.
+    const standardFields = [...selectedStandardKeys].map((key) => {
+        const override = config.standard_field_overrides?.[key]
+        return normalizeSavedStandardField(
+          key,
+          override,
+          disabledStandardKeys.has(key),
+        )
       })
 
     const customFields = [

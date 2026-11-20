@@ -21,6 +21,26 @@ class ProcessingUsageUnavailable(Exception):
     """Usage accounting could not be checked safely."""
 
 
+def _source_fields(source: str) -> tuple[str, str, str]:
+    """Return the usage fields for a supported processing source."""
+    if source == "pdf":
+        return "pdf", "pdf_page_limit", "pdf_pages_consumed"
+    if source == "email":
+        return "email", "email_bill_limit", "email_bills_consumed"
+    raise ValueError(f"Unsupported processing source: {source}")
+
+
+def validate_allocation_dates(data, source: str) -> None:
+    """Validate one source's allocation date range when both dates are present."""
+    prefix, _, _ = _source_fields(source)
+    start_date = data.get(f"{prefix}_allocation_start_date")
+    end_date = data.get(f"{prefix}_allocation_end_date")
+    if start_date and end_date and end_date < start_date:
+        raise ValueError(
+            f"{prefix.title()} allocation end date must be on or after the start date."
+        )
+
+
 def get_or_create_usage(company):
     usage, _ = BillProcessingCount.objects.get_or_create(company=company)
     return usage
@@ -88,21 +108,29 @@ def _is_active(usage):
     return allocation_period_state(usage) == 'active'
 
 
-def pdf_capacity_available(company_id) -> bool:
+def capacity_available(company_id, source: str) -> bool:
+    """Return whether a company has active, unused capacity for ``source``."""
+    prefix, limit_field, consumed_field = _source_fields(source)
     usage = BillProcessingCount.objects.filter(company_id=company_id).first()
-    return bool(usage and allocation_period_state(usage, 'pdf') == 'active' and usage.pdf_page_limit > usage.pdf_pages_consumed)
+    return bool(
+        usage
+        and allocation_period_state(usage, prefix) == "active"
+        and int(getattr(usage, limit_field, 0) or 0)
+        > int(getattr(usage, consumed_field, 0) or 0)
+    )
 
 
-def pdf_remaining_pages(company_id) -> int:
+def remaining_units(company_id, source: str) -> int:
+    """Return active remaining allocation units for ``source``."""
+    prefix, limit_field, consumed_field = _source_fields(source)
     usage = BillProcessingCount.objects.filter(company_id=company_id).first()
-    if not usage or allocation_period_state(usage, 'pdf') != 'active':
+    if not usage or allocation_period_state(usage, prefix) != "active":
         return 0
-    return max(0, int(usage.pdf_page_limit) - int(usage.pdf_pages_consumed))
-
-
-def email_capacity_available(company_id) -> bool:
-    usage = BillProcessingCount.objects.filter(company_id=company_id).first()
-    return bool(usage and allocation_period_state(usage, 'email') == 'active' and usage.email_bill_limit > usage.email_bills_consumed)
+    return max(
+        0,
+        int(getattr(usage, limit_field, 0) or 0)
+        - int(getattr(usage, consumed_field, 0) or 0),
+    )
 
 
 def reserve_upload_pages(upload: OCRUpload, page_count: int) -> None:

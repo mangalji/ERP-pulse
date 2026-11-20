@@ -1256,36 +1256,6 @@ def _is_valid_cached_result(result) -> bool:
     return True
 
 
-def _read_cached_result(file_hash: str, requested_fields: Any, scope: str = ""):
-    """
-    Backward-compatible wrapper around ``read_valid_cached_result``.
-
-    Accepts the legacy ``config_hash`` signature via ``_config_hash``
-    for existing callers, but validates cache metadata before
-    returning any result.
-    Preserve the internal call interface while validating cache metadata
-    before returning any result.
-    """
-    return read_valid_cached_result(file_hash, requested_fields, scope)
-
-
-def _write_cached_result(
-    file_hash: str,
-    result: dict,
-    requested_fields: Any,
-    ttl: int | None = None,
-    scope: str = "",
-) -> None:
-    """
-    Backward-compatible wrapper around ``write_completed_cached_result``.
-
-    Accepts the legacy ``config_hash`` signature via ``_config_hash``
-    for existing callers.
-    Preserve the internal call interface for completed-result cache writes.
-    """
-    write_completed_cached_result(file_hash, requested_fields, result, ttl=ttl, scope=scope)
-
-
 def _write_live_result(upload_id: str, result: dict) -> None:
     try:
         _redis_client().setex(
@@ -1399,10 +1369,10 @@ def _persist_success(
         )
 
     if write_cache:
-        _write_cached_result(
+        write_completed_cached_result(
             upload.file_hash,
-            result,
             requested_fields,
+            result,
             scope=scope,
         )
 
@@ -1627,7 +1597,7 @@ def process_single_ocr_upload(
         deadline_monotonic = time.monotonic() + float(time_budget_seconds)
 
         # Reuse a valid extraction cache when available.
-        result = _read_cached_result(
+        result = read_valid_cached_result(
             upload.file_hash,
             requested_fields,
             scope=scope,
@@ -1795,7 +1765,7 @@ def execute_upload_job(
 
         requested_fields = upload.batch.requested_fields_json if upload.batch else None
         scope = _extraction_scope(upload)
-        result = _read_cached_result(
+        result = read_valid_cached_result(
             upload.file_hash,
             requested_fields,
             scope=scope,
@@ -1864,7 +1834,7 @@ def execute_upload_job(
                     # A slow concurrent extraction must not turn into a
                     # false OCR failure. Re-check cache, then make one
                     # bounded attempt to take over if the lock is free.
-                    result = _read_cached_result(
+                    result = read_valid_cached_result(
                          upload.file_hash,
                          requested_fields,
                          scope=scope,
@@ -1928,10 +1898,10 @@ def execute_upload_job(
                     )
 
                     _validate_extraction_result(result)
-                    _write_cached_result(
+                    write_completed_cached_result(
                          upload.file_hash,
-                        result,
                         requested_fields,
+                         result,
                         scope=scope,
                     )
                 finally:

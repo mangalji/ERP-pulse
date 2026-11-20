@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
+import { useCrudResource } from '../../hooks/useCrudResource.js'
+import { getApiErrorMessage } from '../../utils/apiError.js'
 
 const EMPTY = { name: '', route: '', query_param: '', sort_order: '' }
 
@@ -10,30 +12,23 @@ export default function CenterTabDetailPage() {
   const navigate = useNavigate()
   const [tab, setTab] = useState(null)
   const [categories, setCategories] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const { loading, saving, deleting, error, message, setError, setMessage, loadResource, saveResource, deleteResource } = useCrudResource()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [selectedIds, setSelectedIds] = useState([])
   const [form, setForm] = useState(EMPTY)
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
 
   const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const result = await clientApi.getCenterTabChildren(tabId)
+    const result = await loadResource(
+      () => clientApi.getCenterTabChildren(tabId),
+      'Unable to load Center Tab.',
+    )
+    if (result) {
       setTab(result?.center_tab || null)
       setCategories(result?.results || [])
       setSelectedIds([])
-    } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to load Center Tab.')
-    } finally {
-      setLoading(false)
     }
-  }, [tabId])
+  }, [loadResource, tabId])
 
   useEffect(() => { void load() }, [load])
 
@@ -46,10 +41,7 @@ export default function CenterTabDetailPage() {
   const save = async () => {
     if (!form.name.trim()) return setError('Center Category name is required.')
 
-    setSaving(true)
-    setError('')
-    setMessage('')
-    try {
+    const saved = await saveResource(async () => {
 
       const editingCategory = editingId
         ? categories.find(
@@ -82,11 +74,8 @@ export default function CenterTabDetailPage() {
 
       reset()
       await load()
-    } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to save Center Category.')
-    } finally {
-      setSaving(false)
-    }
+    }, 'Unable to save Center Category.')
+    if (!saved) return
   }
 
   const startEdit = (category) => {
@@ -114,7 +103,7 @@ export default function CenterTabDetailPage() {
       }
       navigate(`/app/settings/customize/center-categories/${category.id}`)
     } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to open Center Category.')
+      setError(getApiErrorMessage(err, 'Unable to open Center Category.'))
     }
   }
 
@@ -134,18 +123,14 @@ export default function CenterTabDetailPage() {
     if (!selectedIds.length) return
     if (!window.confirm(`Delete ${selectedIds.length} selected Center Category(s) and their subtabs?`)) return
 
-    setDeleting(true)
-    setError('')
-    setMessage('')
-    try {
-      await clientApi.deleteCenterCategories(selectedIds)
+    const deleted = await deleteResource(
+      () => clientApi.deleteCenterCategories(selectedIds),
+      'Unable to delete selected Center Categories.',
+    )
+    if (deleted) {
       setSelectedIds([])
       setMessage('Selected Center Categories deleted successfully.')
       await load()
-    } catch (err) {
-      setError(err?.payload?.message || err?.message || 'Unable to delete selected Center Categories.')
-    } finally {
-      setDeleting(false)
     }
   }
 

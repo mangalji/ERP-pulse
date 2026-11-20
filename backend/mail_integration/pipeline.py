@@ -27,7 +27,7 @@ from ocr.models import DocumentType, OCRBatch, OCRDocument, OCRDocumentStatus
 from ocr.ai_extraction_service import ai_extractor
 from ocr.services.extraction_persistence import persist_extraction
 from ocr.usage import (
-    email_capacity_available,
+    capacity_available,
     record_email_bill,
     validate_processing_configuration,
     ProcessingLimitExceeded,
@@ -67,7 +67,7 @@ class EmailBillPipeline:
             "by_integration": {},
         }
         for candidate in candidates:
-            if not email_capacity_available(candidate.integration.company_id):
+            if not capacity_available(candidate.integration.company_id, "email"):
                 logger.warning(
                     "Email AI processing skipped because company allocation is exhausted — company=%s",
                     candidate.integration.company_id,
@@ -188,7 +188,7 @@ class EmailBillPipeline:
         except ProcessingLimitExceeded as exc:
             self._defer(message.id, exc)
             return "deferred"
-        if not email_capacity_available(integration.company_id):
+        if not capacity_available(integration.company_id, "email"):
             self._defer(
                 message.id,
                 ProcessingLimitExceeded(

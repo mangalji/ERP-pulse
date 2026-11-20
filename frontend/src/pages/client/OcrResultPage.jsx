@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import apiClient from '../../services/apiClient.js'
 import { useToast, default as Toast } from '../../components/ui/Toast.jsx'
@@ -7,114 +7,24 @@ import { netsuiteApi } from '../../services/netsuite.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
-import Input from '../../components/ui/Input.jsx'
 import { WorkspaceResizeHandle } from '../../components/ocr/WorkspaceResizeHandle.jsx'
 import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
 import { getPreviewErrorMessage } from '../../utils/ocrPreviewError.js'
 import { preventOcrNumberStep, blurOcrNumberOnWheel } from '../../utils/ocrNumericInput.js'
+import OcrFieldInput from '../../components/ocr/OcrFieldInput.jsx'
+import {
+  DEFAULT_FIELD_DEFINITIONS,
+  slugifyFieldKey,
+  toInputType,
+  recalculateInvoiceTotals,
+  cloneData,
+  toInputValue,
+  isImage,
+  isPdf,
+  getFileCategory,
+} from '../../utils/ocrShared.js'
 
-const TOP_LEVEL_FIELDS = [
-  { key: 'invoice_number', label: 'Invoice Number', type: 'text' },
-  { key: 'invoice_date', label: 'Invoice Date', type: 'date' },
-  { key: 'due_date', label: 'Due Date', type: 'date' },
-  { key: 'vendor_name', label: 'Vendor Name', type: 'text' },
-  { key: 'subsidiary', label: 'Subsidiary', type: 'text' },
-  { key: 'location', label: 'Location', type: 'text' },
-  { key: 'currency', label: 'Currency', type: 'text' },
-  { key: 'total_tax_amount', label: 'Total Tax', type: 'currency' },
-  { key: 'amount', label: 'Amount', type: 'currency' },
-]
-
-const LINE_ITEM_FIELDS = [
-  { key: 'item', label: 'Item / account/ description', type: 'text' },
-  { key: 'quantity', label: 'Qty', type: 'number' },
-  { key: 'unit_price', label: 'Unit Price', type: 'currency' },
-  { key: 'subtotal', label: 'Subtotal', type: 'currency' },
-  { key: 'tax_amount', label: 'Tax Amount', type: 'currency' },
-  { key: 'tax_rate', label: 'Tax Rate (%)', type: 'number' },
-  { key: 'total_amount', label: 'Total Amount', type: 'currency' },
-]
-
-const DEFAULT_FIELD_DEFINITIONS = [
-  ...TOP_LEVEL_FIELDS.map((field) => ({ ...field, scope: 'header', dataType: field.type })),
-  ...LINE_ITEM_FIELDS.map((field) => ({ ...field, scope: 'line', dataType: field.type })),
-]
-
-function slugifyFieldKey(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'custom_field'
-}
-
-function toInputType(dataType) {
-  if (dataType === 'number' || dataType === 'currency') return 'number'
-  if (dataType === 'date') return 'date'
-  return 'text'
-}
-
-function numericValue(value) {
-  if (value === null || value === undefined || value === '') return null
-
-  const parsed = Number(String(value).replace(/,/g, ''))
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function money(value) {
-  return Math.round((value + Number.EPSILON) * 100) / 100
-}
-
-function recalculateInvoiceTotals(current, fields = null) {
-  const items = Array.isArray(current?.line_items) ? current.line_items : []
-  const headerDefaults = new Map((fields?.headerFields || [])
-    .filter((field) => field.defaultValue !== null && field.defaultValue !== undefined && field.defaultValue !== '')
-    .map((field) => [field.key, field.defaultValue]))
-  const lineDefaults = new Map((fields?.lineFields || [])
-    .filter((field) => field.defaultValue !== null && field.defaultValue !== undefined && field.defaultValue !== '')
-    .map((field) => [field.key, field.defaultValue]))
-
-  let totalTax = 0
-  let invoiceTotal = 0
-
-  const lineItems = items.map((item) => {
-    const quantity = numericValue(item?.quantity)
-    const unitPrice = numericValue(item?.unit_price)
-
-    const subtotal = quantity !== null && unitPrice !== null
-      ? money(quantity * unitPrice)
-      : numericValue(item?.subtotal)
-
-    const taxRate = numericValue(item?.tax_rate)
-    const taxAmount = taxRate !== null && subtotal !== null
-      ? money(subtotal * taxRate / 100)
-      : numericValue(item?.tax_amount)
-
-    const effectiveSubtotal = numericValue(lineDefaults.get('subtotal')) ?? subtotal
-    const effectiveTaxAmount = numericValue(lineDefaults.get('tax_amount')) ?? taxAmount
-    const totalAmount = effectiveSubtotal !== null
-      ? money(effectiveSubtotal + (effectiveTaxAmount ?? 0))
-      : numericValue(item?.total_amount)
-
-    totalTax += effectiveTaxAmount ?? 0
-    invoiceTotal += numericValue(lineDefaults.get('total_amount')) ?? totalAmount ?? 0
-
-    return {
-      ...item,
-      subtotal: lineDefaults.get('subtotal') ?? subtotal,
-      tax_amount: lineDefaults.get('tax_amount') ?? taxAmount,
-      total_amount: lineDefaults.get('total_amount') ?? totalAmount,
-    }
-  })
-
-  return {
-    ...current,
-    line_items: lineItems,
-    total_tax_amount: headerDefaults.get('total_tax_amount') ?? money(totalTax),
-    amount: headerDefaults.get('amount') ?? money(invoiceTotal),
-  }
-}
 
 function resolveConfiguredFields(config, fallbackData = {}) {
   const hasTemplateConfig =
@@ -278,35 +188,6 @@ function emptyLineItem(lineFields = []) {
  }
 
 
-function cloneData(data) {
-  if (!data || typeof data !== 'object') return {}
-
-  let source = data
-
-  if (Array.isArray(source)) {
-    source = source[0] || {}
-  }
-
-  if (
-    source &&
-    typeof source === 'object' &&
-    !Array.isArray(source.data) &&
-    source.data &&
-    typeof source.data === 'object'
-  ) {
-    source = source.data
-  }
-
-  const cloned = JSON.parse(JSON.stringify(source))
-  if (cloned && typeof cloned === 'object' && !Array.isArray(cloned)) {
-    delete cloned.customer_name
-  }
-  return cloned
-}
-
-function toInputValue(value) {
-  return value === null || value === undefined ? '' : String(value)
-}
 
 function normalizeEditedData(data, configuredFields) {
   const source = cloneData(data)
@@ -331,42 +212,6 @@ function normalizeEditedData(data, configuredFields) {
 
   return next
 }
-
-const FieldInput = memo(function FieldInput({
-  field,
-  value,
-  editable,
-  onChange,
-}) {
-  const displayValue = toInputValue(value)
-
-  if (!editable) {
-    return (
-      <div className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium text-[var(--color-ink-soft)]">
-          {field.label}
-        </span>
-        <div className="min-h-[46px] rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3.5 py-2.5 text-sm text-[var(--color-ink)]">
-          {displayValue || '--'}
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <Input
-      id={`ocr-history-${field.key}`}
-      label={field.label}
-      type={field.type}
-      value={displayValue}
-      step={field.type === 'number' ? 'any' : undefined}
-      className={field.type === 'number' ? 'ocr-number-input' : ''}
-      onKeyDown={field.type === 'number' ? preventOcrNumberStep : undefined}
-      onWheel={field.type === 'number' ? blurOcrNumberOnWheel : undefined}
-      onChange={(event) => onChange(field.key, event.target.value)}
-    />
-  )
-})
 
 function AIDiagnosticGuidance({ diagnostic, diagnosing }) {
   return (
@@ -1161,63 +1006,6 @@ const setField = useCallback((key, value) => {
     }
   }
 }
-function getFileName(file) {
-  return file?.name || file?.filename || ''
-}
-
-function isImage(file) {
-  return (
-    String(file?.type || '').startsWith('image/') ||
-    /\.(png|jpe?g|webp|gif|bmp|tif|tiff)$/i.test(
-      getFileName(file),
-    )
-  )
-}
-
-function isPdf(file) {
-  return (
-    file?.type === 'application/pdf' ||
-    /\.pdf$/i.test(getFileName(file))
-  )
-}
-function isDocx(file) {
-  return (
-    file?.type ===
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    /\.docx$/i.test(getFileName(file))
-  )
-}
-
-function isSpreadsheet(file) {
-  return (
-    file?.type ===
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    /\.xlsx$/i.test(getFileName(file))
-  )
-}
-
-function isCsv(file) {
-  return (
-    ['text/csv', 'application/csv', 'application/vnd.ms-excel'].includes(
-      file?.type,
-    ) || /\.csv$/i.test(getFileName(file))
-  )
-}
-
-function isText(file) {
-  return file?.type === 'text/plain' || /\.txt$/i.test(getFileName(file))
-}
-
-function getFileCategory(file) {
-  if (isPdf(file)) return 'PDF'
-  if (isDocx(file)) return 'DOCX'
-  if (isImage(file)) return 'Image'
-  if (isSpreadsheet(file)) return 'Spreadsheet'
-  if (isCsv(file)) return 'CSV'
-  if (isText(file)) return 'Text'
-  return 'Document'
-}
-
   const previewIsPdf = isPdf(result)
   const previewIsImage = isImage(result)
 
@@ -1428,7 +1216,7 @@ function getFileCategory(file) {
                       <div className="mt-4 grid gap-4 sm:grid-cols-2">
                         {/* {TOP_LEVEL_FIELDS.map((field) => ( */}
                         {headerFieldDefinitions.map((field) => (
-                          <FieldInput
+                          <OcrFieldInput
                             key={field.key}
                             field={field}
                             value={data[field.key]}

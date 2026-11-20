@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import { clientApi } from '../../services/client.js'
+import { useCrudResource } from '../../hooks/useCrudResource.js'
 
 const EMPTY_FORM = {
   name: '',
@@ -19,37 +20,26 @@ export default function CenterCategoryDetailPage() {
   const { categoryId } = useParams()
   const [category, setCategory] = useState(null)
   const [children, setChildren] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const { loading, saving, deleting, error, message, setError, setMessage, loadResource, saveResource, deleteResource } = useCrudResource()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [selectedIds, setSelectedIds] = useState([])
   const [form, setForm] = useState(EMPTY_FORM)
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
 
   const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
-
-    try {
-      const result = await clientApi.getCenterCategoryChildren(categoryId)
+    const result = await loadResource(
+      () => clientApi.getCenterCategoryChildren(categoryId),
+      'Unable to load Center Category.',
+    )
+    if (result) {
       setCategory(result?.category || null)
       setChildren(result?.results || [])
       setSelectedIds([])
-    } catch (err) {
+    } else {
       setCategory(null)
       setChildren([])
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to load Center Category.',
-      )
-    } finally {
-      setLoading(false)
     }
-  }, [categoryId])
+  }, [categoryId, loadResource])
 
   useEffect(() => {
     void load()
@@ -102,11 +92,7 @@ export default function CenterCategoryDetailPage() {
       }
     }
 
-    setSaving(true)
-    setError('')
-    setMessage('')
-
-    try {
+    const saved = await saveResource(async () => {
       const editingChild = editingId
         ? children.find((child) => String(child.id) === String(editingId))
         : null
@@ -143,15 +129,8 @@ export default function CenterCategoryDetailPage() {
 
       resetForm()
       await load()
-    } catch (err) {
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          `Unable to ${editingId ? 'update' : 'create'} Level-3 subtab.`,
-      )
-    } finally {
-      setSaving(false)
-    }
+    }, `Unable to ${editingId ? 'update' : 'create'} Level-3 subtab.`)
+    if (!saved) return
   }
 
   const toggleSelected = (id) => {
@@ -182,27 +161,18 @@ export default function CenterCategoryDetailPage() {
       return
     }
 
-    setDeleting(true)
-    setError('')
-    setMessage('')
-
-    try {
-      await Promise.all(
+    const deleted = await deleteResource(
+      () => Promise.all(
         selectedIds.map((id) =>
           clientApi.deleteNavigationTab('level3', id),
         ),
-      )
+      ),
+      'Unable to delete selected Level-3 subtabs.',
+    )
+    if (deleted) {
       setSelectedIds([])
       setMessage('Selected Level-3 subtabs deleted successfully.')
       await load()
-    } catch (err) {
-      setError(
-        err?.payload?.message ||
-          err?.message ||
-          'Unable to delete selected Level-3 subtabs.',
-      )
-    } finally {
-      setDeleting(false)
     }
   }
 
