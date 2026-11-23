@@ -12,6 +12,7 @@ import { useWorkspaceHeight } from '../../hooks/useWorkspaceHeight.js'
 import { formatAffectedLines, groupValidationErrors } from '../../utils/validationErrorGroups.js'
 import { getPreviewErrorMessage } from '../../utils/ocrPreviewError.js'
 import { preventOcrNumberStep, blurOcrNumberOnWheel } from '../../utils/ocrNumericInput.js'
+import { persistNotificationToast } from '../../utils/notificationToast.js'
 import OcrFieldInput from '../../components/ocr/OcrFieldInput.jsx'
 import {
   DEFAULT_FIELD_DEFINITIONS,
@@ -213,6 +214,10 @@ function normalizeEditedData(data, configuredFields) {
   return next
 }
 
+function dataSignature(data, configuredFields) {
+  return JSON.stringify(normalizeEditedData(data, configuredFields))
+}
+
 function AIDiagnosticGuidance({ diagnostic, diagnosing }) {
   return (
     <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -336,15 +341,16 @@ export default function OcrResultPage() {
   const postingAbortControllerRef = useRef(null)
   const [viewMode, setViewMode] = useState('fields')
   const [data, setData] = useState({})
+  const [savedDataSignature, setSavedDataSignature] = useState(null)
+  const [postReady, setPostReady] = useState(false)
   const [aiDiagnostics, setAiDiagnostics] = useState([])
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagnosticError, setDiagnosticError] = useState('')
 
-  const persistToast = useCallback((message) => apiClient.post('/notifications/', {
-    message,
-    link: documentId ? `/app/ocr/history/${documentId}` : '/app/ocr/history',
-    activity_type: 'manual',
-  }).then(() => window.dispatchEvent(new Event('notifications-changed'))), [documentId])
+  const persistToast = useCallback(
+    (message) => persistNotificationToast(message, documentId ? `/app/ocr/history/${documentId}` : '/app/ocr/history'),
+    [documentId],
+  )
   const { toasts, addToast, removeToast } = useToast({ autoDismiss: false, latestOnly: true, persist: persistToast })
   const connectionId = connection?.id || null
   const aiDiagnosticsByReference = useMemo(
@@ -518,11 +524,20 @@ export default function OcrResultPage() {
           data: reviewedData,
         }
 
-        setResult(loadedResult)
-        setData(recalculateInvoiceTotals(
+        const loadedData = recalculateInvoiceTotals(
           cloneData(reviewedData),
           resolveConfiguredFields(requestedFields, reviewedData),
-        ))
+        )
+
+        setResult(loadedResult)
+        setData(loadedData)
+        setSavedDataSignature(
+          dataSignature(
+            loadedData,
+            resolveConfiguredFields(requestedFields, reviewedData),
+          ),
+        )
+        setPostReady(false)
 
         const savedValidation = payload?.validation || null
         setValidationResult(savedValidation)
@@ -671,9 +686,21 @@ const setField = useCallback((key, value) => {
     try {
       setSaving(true)
 
+      const editedData = normalizeEditedData(data, configuredFields)
+      const isAlreadyPosted = Boolean(postedRecord?.internalId)
+
+      if (isAlreadyPosted && JSON.stringify(editedData) === savedDataSignature) {
+        setEditing(false)
+        addToast(
+          'No changes detected. Edit the OCR data before posting it again.',
+          'info',
+        )
+        return { ...result, created_copy: false, unchanged: true }
+      }
+
       const payload = {
         document_id: result.document_id,
-        data: normalizeEditedData(data, configuredFields),
+        data: editedData,
       }
 
       const response = await apiClient.post(
@@ -713,9 +740,11 @@ const setField = useCallback((key, value) => {
 
       setResult(savedResult)
       setData(cloneData(savedResult.data))
+      setSavedDataSignature(dataSignature(savedResult.data, configuredFields))
       setEditing(false)
       if (responseData?.created_copy) {
         setPostedRecord(null)
+        setPostReady(true)
         setValidationResult(null)
         setAiDiagnostics([])
       }
@@ -778,7 +807,20 @@ const setField = useCallback((key, value) => {
       return
     }
 
-    const savedResult = await handleSave()
+    if (
+      postedRecord?.internalId &&
+      dataSignature(data, configuredFields) === savedDataSignature
+    ) {
+      setEditing(false)
+      addToast(
+        'No changes detected. Edit and save the OCR data before posting it again.',
+        'info',
+      )
+      return
+    }
+
+    const savedResult = postReady ? result : await handleSave()
+    setPostReady(false)
     if (savedResult?.created_copy) copiedDocumentId = savedResult.document_id
 
     if (controller.signal.aborted) {
@@ -1352,7 +1394,10 @@ const setField = useCallback((key, value) => {
                           Save
                         </option>
 
-                        <option value="post">
+                        <option
+                          value="post"
+                          disabled={Boolean(postedRecord?.internalId)}
+                        >
                           Post to NetSuite
                         </option>
                       </select>
@@ -1564,7 +1609,13 @@ const setField = useCallback((key, value) => {
                       type="button"
                       intent="secondary"
                       onClick={handleValidateAgain}
-                      disabled={saving || validating || posting || diagnosing}
+                      disabled={
+                        saving ||
+                        validating ||
+                        posting ||
+                        diagnosing ||
+                        Boolean(postedRecord?.internalId)
+                      }
                     >
                       {validating ? 'Validating...' : 'Validate Again'}
                     </Button>

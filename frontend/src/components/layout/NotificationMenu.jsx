@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../../services/apiClient.js'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 export default function NotificationMenu({ userId }) {
   const [open, setOpen] = useState(false)
@@ -59,7 +60,7 @@ export default function NotificationMenu({ userId }) {
         {!items.length && <p className="p-4 text-sm text-[var(--color-muted)]">No notifications.</p>}
         {items.map(item => <div key={item.id} className={`border-b border-[var(--color-border)] p-3 text-sm ${item.is_read ? '' : 'bg-[var(--color-primary-soft)]'}`}>
           <button type="button" className="block w-full text-left text-[var(--color-ink)]" onClick={async () => { if (!item.is_read) await setRead(item, true); if (item.link) { setOpen(false); navigate(item.link) } }}>{item.message}</button>
-          <div className="mt-1 flex items-center justify-between gap-2 text-xs text-[var(--color-muted)]"><time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time><button type="button" className="text-[var(--color-primary)]" onClick={() => setRead(item, !item.is_read)}>{item.is_read ? 'Mark unread' : 'Mark read'}</button></div>
+          <div className="mt-1 flex items-center justify-between gap-2 text-xs text-[var(--color-muted)]"><time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time><button type="button" className="text-[var(--color-primary)]" onClick={() => setRead(item, !item.is_read)}>{item.is_read ? 'Mark unread' : 'Mark read'}</button></div>
         </div>)}
       </div>
     </section>}

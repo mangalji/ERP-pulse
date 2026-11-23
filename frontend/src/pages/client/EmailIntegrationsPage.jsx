@@ -4,10 +4,11 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Input from '../../components/ui/Input.jsx'
-import apiClient, { unwrap } from '../../services/apiClient.js'
 import { emailIntegrationApi } from '../../services/emailIntegration.js'
+import { ocrApi } from '../../services/ocr.js'
 import EmailReconnectBanner from '../../components/EmailReconnectBanner.jsx'
 import DateInput from '../../components/ui/DateInput.jsx'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 export default function EmailIntegrationsPage() {
   const navigate = useNavigate()
@@ -28,11 +29,11 @@ export default function EmailIntegrationsPage() {
   const load = async () => {
     setLoading(true); setError('')
     try {
-      const [mailboxes, templateData] = await Promise.all([
-        emailIntegrationApi.list(), apiClient.get('/ocr/extraction-templates/').then(unwrap),
+      const [mailboxes, templates] = await Promise.all([
+        emailIntegrationApi.list(), ocrApi.listExtractionTemplates(),
       ])
       setIntegrations(mailboxes || [])
-      setTemplates(templateData?.results || templateData || [])
+      setTemplates(templates)
     } catch (e) { setError(e?.payload?.message || e?.message || 'Could not load email integrations.') }
     finally { setLoading(false) }
   }
@@ -113,7 +114,7 @@ export default function EmailIntegrationsPage() {
 
 function SyncDetails({ item, health, loading }) {
   const summary = item.last_sync_summary || {}
-  const dateTime = (value) => value ? new Date(value).toLocaleString() : 'Not available yet'
+  const dateTime = (value) => formatDateTime(value, 'Not available yet')
   const status = (isRunning) => isRunning ? 'Running' : 'Unavailable'
   return <div className="mt-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-4 text-sm md:grid-cols-2">
     <Detail label="Last successful mailbox check" value={dateTime(item.last_successful_sync_at)} />

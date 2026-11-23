@@ -588,15 +588,10 @@ class OCRHistoryListView(APIView):
                 Q(extraction_template_id=template_id)
                 | Q(email_integration__ocr_template_id=template_id)
             )
-        validated_documents = OCRValidationResult.objects.filter(
-            Q(document__batch_id=OuterRef("pk"))
-            | Q(document__upload__batch_id=OuterRef("pk"))
-        )
-        # History begins after a validation attempt. A raw AI extraction or an
-        # unvalidated upload remains in the review workspace, not in history.
-        batch_queryset = batch_queryset.annotate(
-            history_has_validation=Exists(validated_documents),
-        ).filter(history_has_validation=True)
+        # Any persisted OCR document belongs in history, even when NetSuite
+        # validation has not happened or failed. The status calculation below
+        # will expose those records as NOT_VALIDATED so the saved extraction
+        # remains recoverable and can be retried after a connection issue.
         if status_filter in {"NOT_VALIDATED", "VALIDATED", "POSTED"}:
             documents = OCRDocument.objects.filter(Q(batch_id=OuterRef("pk")) | Q(upload__batch_id=OuterRef("pk")))
             latest_validation = OCRValidationResult.objects.filter(

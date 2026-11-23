@@ -10,6 +10,7 @@ import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Input from '../../components/ui/Input.jsx'
+import PaginationControls from '../../components/ui/PaginationControls.jsx'
 import { superadminApi } from '../../services/superadmin.js'
 import { invitationApi } from '../../services/invitations.js'
 import {COUNTRY_OPTIONS, NAME_MAX_LENGTH, EMAIL_MAX_LENGTH, getCountryRule, validateEmail, validateName, validatePhone} from '../../utils/formValidation.js'
@@ -514,17 +515,12 @@ if (isCompanySuspended) {
             emptyDescription="Try adjusting your search or create a new user."
           />
 
-          {totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between">
-              <Button intent="secondary" size="sm" disabled={offset === 0} onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}>
-                Previous
-              </Button>
-              <span className="text-sm text-[var(--color-muted)]">Page {currentPage} of {totalPages}</span>
-              <Button intent="secondary" size="sm" disabled={offset + PAGE_SIZE >= count} onClick={() => setOffset((o) => o + PAGE_SIZE)}>
-                Next
-              </Button>
-            </div>
-          )}
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPrevious={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+            onNext={() => setOffset((o) => o + PAGE_SIZE)}
+          />
          </Card>}
       </div>
 

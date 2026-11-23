@@ -53,9 +53,9 @@ export function money(value) {
 export function recalculateInvoiceTotals(current, fields = null) {
   const items = Array.isArray(current?.line_items) ? current.line_items : []
   // Temporarily disabled with the header-level total tax field.
-  // const headerDefaults = new Map((fields?.headerFields || [])
-  //   .filter((field) => field.defaultValue !== null && field.defaultValue !== undefined && field.defaultValue !== '')
-  //   .map((field) => [field.key, field.defaultValue]))
+  const headerDefaults = new Map((fields?.headerFields || [])
+    .filter((field) => field.defaultValue !== null && field.defaultValue !== undefined && field.defaultValue !== '')
+    .map((field) => [field.key, field.defaultValue]))
   const lineDefaults = new Map((fields?.lineFields || [])
     .filter((field) => field.defaultValue !== null && field.defaultValue !== undefined && field.defaultValue !== '')
     .map((field) => [field.key, field.defaultValue]))

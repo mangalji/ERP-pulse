@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
+import { ocrApi } from '../../services/ocr.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -246,10 +247,9 @@ export default function DataExtractionHistoryPage() {
 
   useEffect(() => {
     let cancelled = false
-    apiClient.get('/ocr/extraction-templates/')
-      .then((response) => {
-        const payload = response?.data?.data ?? response?.data ?? []
-        if (!cancelled) setTemplates(Array.isArray(payload) ? payload : [])
+    ocrApi.listExtractionTemplates()
+      .then((templates) => {
+        if (!cancelled) setTemplates(templates)
       })
       .catch((err) => {
         console.warn('Could not load OCR extraction templates for history filters:', err)

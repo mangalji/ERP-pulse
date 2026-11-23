@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import apiClient from '../../services/apiClient.js'
+import { formatDateTime } from '../../utils/formatDate.js'
 
 const LIMIT = 15
 
@@ -136,7 +137,7 @@ export default function NotificationsPage() {
           <input type="checkbox" aria-label={`Select notification ${item.id}`} checked={selectedIds.has(item.id)} onChange={() => toggleSelected(item.id)} />
           <div className="min-w-0 flex-1"><div className="block whitespace-pre-wrap break-words text-[var(--color-ink)] select-text cursor-text">{item.message}</div>
         <div className="mt-2 text-sm text-[var(--color-muted)]">Type: {item.activity_type === 'manual' ? 'Manual' : item.activity_type === 'automated' ? 'Automated' : '—'}{item.activity_type === 'manual' && item.actor_name ? ` · User: ${item.actor_name}` : ''}</div>
-        <div className="mt-2 flex items-center justify-between gap-2 text-sm text-[var(--color-muted)]"><time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time><div className="flex items-center gap-4">{item.link && <button type="button" className="text-[var(--color-primary)]" onClick={() => openNotification(item)}>Open</button>}<button className="text-[var(--color-primary)]" onClick={() => updateRead(item, !item.is_read)}>{item.is_read ? 'Mark unread' : 'Mark read'}</button><button type="button" aria-label="Delete notification" title="Delete notification" className="text-[var(--color-negative)]" onClick={() => deleteNotification(item)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg></button></div></div></div></div>
+        <div className="mt-2 flex items-center justify-between gap-2 text-sm text-[var(--color-muted)]"><time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time><div className="flex items-center gap-4">{item.link && <button type="button" className="text-[var(--color-primary)]" onClick={() => openNotification(item)}>Open</button>}<button className="text-[var(--color-primary)]" onClick={() => updateRead(item, !item.is_read)}>{item.is_read ? 'Mark unread' : 'Mark read'}</button><button type="button" aria-label="Delete notification" title="Delete notification" className="text-[var(--color-negative)]" onClick={() => deleteNotification(item)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg></button></div></div></div></div>
       </article>)}
       <div className="flex items-center justify-between p-4 text-sm text-[var(--color-muted)]"><button disabled={offset === 0} className="disabled:opacity-40" onClick={() => setOffset(Math.max(0, offset - LIMIT))}>Previous</button><span>{count ? `${offset + 1}–${Math.min(offset + LIMIT, count)} of ${count}` : '0'}</span><button disabled={offset + LIMIT >= count} className="disabled:opacity-40" onClick={() => setOffset(offset + LIMIT)}>Next</button></div>
     </section>

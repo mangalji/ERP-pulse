@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import apiClient from '../../services/apiClient.js'
 import { netsuiteApi } from '../../services/netsuite.js'
+import { ocrApi } from '../../services/ocr.js'
 import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
@@ -12,6 +13,7 @@ import { formatAffectedLines, groupValidationErrors } from '../../utils/validati
 import { isNetSuiteReauthJob } from '../../utils/netsuiteErrors.js'
 import { getPreviewErrorMessage } from '../../utils/ocrPreviewError.js'
 import { preventOcrNumberStep, blurOcrNumberOnWheel } from '../../utils/ocrNumericInput.js'
+import { persistNotificationToast } from '../../utils/notificationToast.js'
 import OcrFieldInput from '../../components/ocr/OcrFieldInput.jsx'
 import {
   DEFAULT_FIELD_DEFINITIONS,
@@ -726,11 +728,7 @@ export default function OcrPage() {
     multiple: false,
   })
 
-  const persistToast = useCallback((message) => apiClient.post('/notifications/', {
-    message,
-    link: '/app/ocr',
-    activity_type: 'manual',
-  }).then(() => window.dispatchEvent(new Event('notifications-changed'))), [])
+  const persistToast = useCallback((message) => persistNotificationToast(message, '/app/ocr'), [])
   const { toasts, addToast, removeToast } = useToast({ autoDismiss: false, latestOnly: true, persist: persistToast })
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -2119,9 +2117,7 @@ useEffect(() => {
 
     const loadExtractionTemplates = async () => {
       try {
-        const response = await apiClient.get('/ocr/extraction-templates/')
-        const payload = response?.data?.data ?? response?.data ?? {}
-        const templates = Array.isArray(payload) ? payload : []
+        const templates = await ocrApi.listExtractionTemplates()
 
         if (!cancelled) {
           setExtractionTemplates(templates)

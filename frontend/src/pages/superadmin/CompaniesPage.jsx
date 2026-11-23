@@ -10,6 +10,7 @@ import ConfirmDialog from '../../components/superadmin/ConfirmDialog.jsx'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
+import PaginationControls from '../../components/ui/PaginationControls.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import { superadminApi } from '../../services/superadmin.js'
 import {
@@ -927,41 +928,12 @@ export default function CompaniesPage() {
             emptyDescription="Try adjusting your search or create a new company."
           />
 
-          {totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between">
-              <Button
-                intent="secondary"
-                size="sm"
-                disabled={offset === 0}
-                onClick={() =>
-                  setOffset((value) =>
-                    Math.max(0, value - PAGE_SIZE)
-                  )
-                }
-              >
-                Previous
-              </Button>
-
-              <span className="text-sm text-[var(--color-muted)]">
-                Page {currentPage} of {totalPages}
-              </span>
-
-              <Button
-                intent="secondary"
-                size="sm"
-                disabled={
-                  offset + PAGE_SIZE >= count
-                }
-                onClick={() =>
-                  setOffset(
-                    (value) => value + PAGE_SIZE
-                  )
-                }
-              >
-                Next
-              </Button>
-            </div>
-          )}
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPrevious={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
+            onNext={() => setOffset((value) => value + PAGE_SIZE)}
+          />
         </Card>
 
         {/* ─────────────────────────────────────────────────────── */}
@@ -997,43 +969,12 @@ export default function CompaniesPage() {
             emptyDescription="Companies deleted within the recovery period will appear here."
           />
 
-          {softDeletedTotalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between">
-              <Button
-                intent="secondary"
-                size="sm"
-                disabled={softDeletedOffset === 0}
-                onClick={() =>
-                  setSoftDeletedOffset((value) =>
-                    Math.max(0, value - PAGE_SIZE)
-                  )
-                }
-              >
-                Previous
-              </Button>
-
-              <span className="text-sm text-[var(--color-muted)]">
-                Page {softDeletedCurrentPage} of{' '}
-                {softDeletedTotalPages}
-              </span>
-
-              <Button
-                intent="secondary"
-                size="sm"
-                disabled={
-                  softDeletedOffset + PAGE_SIZE >=
-                  softDeletedCount
-                }
-                onClick={() =>
-                  setSoftDeletedOffset(
-                    (value) => value + PAGE_SIZE
-                  )
-                }
-              >
-                Next
-              </Button>
-            </div>
-          )}
+          <PaginationControls
+            currentPage={softDeletedCurrentPage}
+            totalPages={softDeletedTotalPages}
+            onPrevious={() => setSoftDeletedOffset((value) => Math.max(0, value - PAGE_SIZE))}
+            onNext={() => setSoftDeletedOffset((value) => value + PAGE_SIZE)}
+          />
         </Card>
 
         {/* ─────────────────────────────────────────────────────── */}
@@ -1069,47 +1010,12 @@ export default function CompaniesPage() {
             emptyDescription="Permanent deletion history will appear here."
           />
 
-          {permanentlyDeletedTotalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between">
-              <Button
-                intent="secondary"
-                size="sm"
-                disabled={
-                  permanentlyDeletedOffset === 0
-                }
-                onClick={() =>
-                  setPermanentlyDeletedOffset(
-                    (value) =>
-                      Math.max(0, value - PAGE_SIZE)
-                  )
-                }
-              >
-                Previous
-              </Button>
-
-              <span className="text-sm text-[var(--color-muted)]">
-                Page {permanentlyDeletedCurrentPage} of{' '}
-                {permanentlyDeletedTotalPages}
-              </span>
-
-              <Button
-                intent="secondary"
-                size="sm"
-                disabled={
-                  permanentlyDeletedOffset +
-                    PAGE_SIZE >=
-                  permanentlyDeletedCount
-                }
-                onClick={() =>
-                  setPermanentlyDeletedOffset(
-                    (value) => value + PAGE_SIZE
-                  )
-                }
-              >
-                Next
-              </Button>
-            </div>
-          )}
+          <PaginationControls
+            currentPage={permanentlyDeletedCurrentPage}
+            totalPages={permanentlyDeletedTotalPages}
+            onPrevious={() => setPermanentlyDeletedOffset((value) => Math.max(0, value - PAGE_SIZE))}
+            onNext={() => setPermanentlyDeletedOffset((value) => value + PAGE_SIZE)}
+          />
         </Card>
         </>}
 

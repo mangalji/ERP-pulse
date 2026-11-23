@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button.jsx'
 import apiClient from '../../services/apiClient.js'
 import { formatDateTime } from '../../utils/formatDate.js'
 import { netsuiteApi } from '../../services/netsuite.js'
+import { ocrApi } from '../../services/ocr.js'
 import useClickOutside from '../../hooks/useClickOutside.js'
 
 const DATA_TYPE_OPTIONS = [
@@ -928,9 +929,7 @@ const handleRefreshNetSuiteFields = async () => {
   }
 
   const loadTemplates = async () => {
-    const response = await apiClient.get('/ocr/extraction-templates/')
-    const data = response?.data?.data ?? response?.data ?? []
-    const items = Array.isArray(data) ? data : []
+    const items = await ocrApi.listExtractionTemplates()
 
     setTemplates(items)
 
