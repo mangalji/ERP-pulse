@@ -122,7 +122,7 @@ function SyncDetails({ item, health, loading }) {
     <Detail label="Email fetching schedule" value={scheduleSummary(item.schedule_config, item.sync_interval_minutes)} />
     <Detail label="Worker status" value={loading ? 'Checking…' : status(health?.worker_running)} tone={loading ? undefined : health?.worker_running ? 'success' : 'error'} />
     <Detail label="Scheduler status" value={loading ? 'Checking…' : status(health?.scheduler_running)} tone={loading ? undefined : health?.scheduler_running ? 'success' : 'error'} />
-    <Detail label="Latest processing result" value={summary.completed_at ? `${summary.emails_fetched || 0} email(s) fetched, ${summary.vendor_bill_records_created || 0} vendor-bill record(s) created, ${summary.emails_ignored || 0} ignored` : 'No completed sync yet'} />
+    <Detail label="Latest processing result" value={summary.completed_at ? `${summary.emails_fetched || 0} email(s) fetched, ${summary.vendor_bill_records_created || 0} vendor-bill record(s) created, ${summary.emails_ignored || 0} ignored, ${summary.emails_deferred || 0} deferred` : 'No completed sync yet'} />
     {health?.message && <p className="md:col-span-2 text-xs text-[var(--color-text-muted)]">{health.message}</p>}
   </div>
 }

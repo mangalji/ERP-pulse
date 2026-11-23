@@ -611,10 +611,12 @@ export default function CompanyDetailPage() {
               <div className="rounded-lg border border-[var(--color-border)] p-4">
                 <p className="text-xs text-[var(--color-muted)]">PDF/file pages consumed</p>
                 <p className="mt-1 text-xl font-semibold text-[var(--color-ink)]">{company.bill_processing_count?.pdf_pages_consumed ?? 0}</p>
+                <p className="mt-1 text-xs text-[var(--color-muted)]">Posted records: {company.bill_processing_count?.pdf_posted_count ?? 0}</p>
               </div>
               <div className="rounded-lg border border-[var(--color-border)] p-4">
                 <p className="text-xs text-[var(--color-muted)]">Email bills consumed</p>
                 <p className="mt-1 text-xl font-semibold text-[var(--color-ink)]">{company.bill_processing_count?.email_bills_consumed ?? 0}</p>
+                <p className="mt-1 text-xs text-[var(--color-muted)]">Posted records: {company.bill_processing_count?.email_posted_count ?? 0}</p>
               </div>
             </div>
             {usageEditing && (

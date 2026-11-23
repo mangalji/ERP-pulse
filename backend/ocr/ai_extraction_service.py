@@ -482,7 +482,7 @@ def resolve_field_config(
     field_descriptions: dict[str, str] | None = None,
     line_item_fields: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str], bool, dict[str, str], dict[str, str]]:
-    """Resolve the mandatory template into the exact AI field contract."""
+    """Build the AI field contract from the saved template configuration."""
     if not isinstance(requested_fields, dict) or not requested_fields:
         raise ValueError("An extraction template is required for OCR processing.")
 
@@ -490,13 +490,11 @@ def resolve_field_config(
     custom_fields = requested_fields.get("custom_fields") or []
     overrides = requested_fields.get("standard_field_overrides") or {}
     if not isinstance(selected_standard, list):
-        raise ValueError("standard_fields must be a list.")
+        selected_standard = []
     if not isinstance(custom_fields, list):
-        raise ValueError("custom_fields must be a list.")
+        custom_fields = []
     if not isinstance(overrides, dict):
-        raise ValueError("standard_field_overrides must be a JSON object.")
-    if not selected_standard and not custom_fields:
-        raise ValueError("Extraction template must contain at least one field.")
+        overrides = {}
 
     header_catalog = field_descriptions or FIELD_DESCRIPTIONS
     line_catalog = line_item_fields or LINE_ITEM_FIELDS
@@ -511,41 +509,39 @@ def resolve_field_config(
         key = str(raw_key).strip()
         if not key or key == "line_items":
             continue
+        default_scope = "header"
+        data_type = "text"
+        catalog_description = ""
         if key in header_catalog:
-            description = ""
             data_type = FIELD_DATA_TYPES.get(key, "text")
-            default_scope = "header"
+            catalog_description = header_catalog.get(key, "")
         elif key in line_catalog:
-            description = ""
             data_type = LINE_ITEM_DATA_TYPES.get(key, "text")
             default_scope = "line"
-        else:
-            raise ValueError(f"Unknown standard field '{key}'.")
+            catalog_description = line_catalog.get(key, "")
         override = overrides.get(key) or {}
         if not isinstance(override, dict):
-            raise ValueError(f"standard_field_overrides['{key}'] must be an object.")
+            override = {}
+        # The saved template is authoritative. A key that is no longer in the
+        # standard catalogue (for example, a field retained by an older
+        # template) still has the metadata needed to form an AI field. Treat
+        # it as a template-defined field instead of rejecting the extraction.
         description = str(
             override.get("questionaire")
             or override.get("description")
+            or catalog_description
+            or override.get("label")
+            or key.replace("_", " ")
             or ""
         ).strip()
-        if not description:
-            field_label = str(
-                override.get("label")
-                or FIELD_LABELS.get(key)
-                or LINE_ITEM_LABELS.get(key)
-                or key
-            ).strip()
-            raise ValueError(f'Questionaire is required for "{field_label}".')
-        data_type = _coerce_data_type(override.get("data_type") or data_type)
+        data_type = override.get("data_type") or data_type or "text"
+        try:
+            data_type = _coerce_data_type(data_type)
+        except ValueError:
+            data_type = "text"
         scope = override.get("scope") or default_scope
         if scope not in {"header", "line"}:
-            raise ValueError(f"Invalid scope for field '{key}'.")
-        _normalise_configured_default_value(
-            override.get("default_value"),
-            data_type,
-            label=str(override.get("label") or key),
-        )
+            scope = default_scope
         if scope == "line":
             line_fields[key] = description
             line_types[key] = data_type
@@ -555,46 +551,34 @@ def resolve_field_config(
 
     seen_keys = set(header_fields) | set(line_fields)
     for idx, custom in enumerate(custom_fields):
-        
         if not isinstance(custom, dict):
-            raise ValueError(f"custom_fields[{idx}] must be a dict, got {type(custom).__name__}")
+            continue
 
         if custom.get("enabled") is False:
             continue
 
-        label = str(custom.get("label") or custom.get("key") or "").strip()
-        
-        if not label:
-            raise ValueError(f"custom_fields[{idx}] must have a non-empty label or key")
-        
+        label = str(
+            custom.get("label") or custom.get("key") or f"Custom Field {idx + 1}"
+        ).strip()
         # The user-facing label is the source of truth for custom JSON keys.
         # Older UI versions could persist only the first typed character in
         # ``key`` (for example key="m", label="memo").  Do not let that
         # stale hidden value change the AI contract.
         key = _slugify_field_key(label)
-        
-        if key in reserved_keys:
-            raise ValueError(f"Custom field '{label}' conflicts with a standard field name ('{key}').")
-        
-        if key in seen_keys:
-            raise ValueError(f"Duplicate custom field '{label}' (resolved key '{key}').")
-        
-        description = str(custom.get("questionaire") or custom.get("description") or "").strip()
-        if not description:
-            raise ValueError(f'Questionaire is required for "{label}".')
-        
-        data_type = _coerce_data_type(custom.get("data_type"))
-        
+        if key in reserved_keys or key in seen_keys:
+            continue
+
+        description = str(
+            custom.get("questionaire") or custom.get("description") or label
+        ).strip()
+        try:
+            data_type = _coerce_data_type(custom.get("data_type") or "text")
+        except ValueError:
+            data_type = "text"
+
         scope = custom.get("scope") or "header"
-        
         if scope not in {"header", "line"}:
-            raise ValueError(f"Invalid scope for custom field '{label}'.")
-        _normalise_configured_default_value(
-            custom.get("default_value"),
-            data_type,
-            label=label,
-        )
-        
+            scope = "header"
         if scope == "line":
             line_fields[key] = description
             line_types[key] = data_type
@@ -747,21 +731,26 @@ def _configured_field_defaults(
     if isinstance(selected_standard, list) and isinstance(overrides, dict):
         for raw_key in selected_standard:
             key = str(raw_key or "").strip()
+            override = overrides.get(key) or {}
+            if not isinstance(override, dict):
+                continue
             if key in FIELD_DESCRIPTIONS:
                 fallback_type, fallback_scope = FIELD_DATA_TYPES.get(key, "text"), "header"
             elif key in LINE_ITEM_FIELDS:
                 fallback_type, fallback_scope = LINE_ITEM_DATA_TYPES.get(key, "text"), "line"
             else:
-                continue
-
-            override = overrides.get(key) or {}
-            if not isinstance(override, dict):
-                continue
-            value = _normalise_configured_default_value(
-                override.get("default_value"),
-                _coerce_data_type(override.get("data_type") or fallback_type),
-                label=str(override.get("label") or key),
-            )
+                fallback_type, fallback_scope = "text", "header"
+            configured_type = override.get("data_type") or fallback_type
+            try:
+                configured_type = _coerce_data_type(configured_type)
+                value = _normalise_configured_default_value(
+                    override.get("default_value"),
+                    configured_type,
+                    label=str(override.get("label") or key),
+                )
+            except ValueError:
+                # A stale/invalid fallback must not block a fresh AI run.
+                value = None
             if value is not None:
                 scope = override.get("scope") or fallback_scope
                 target = line_defaults if scope == "line" else header_defaults
@@ -774,11 +763,16 @@ def _configured_field_defaults(
             label = str(custom.get("label") or custom.get("key") or "").strip()
             if not label:
                 continue
-            value = _normalise_configured_default_value(
-                custom.get("default_value"),
-                _coerce_data_type(custom.get("data_type")),
-                label=label,
-            )
+            try:
+                custom_type = _coerce_data_type(custom.get("data_type"))
+                value = _normalise_configured_default_value(
+                    custom.get("default_value"),
+                    custom_type,
+                    label=label,
+                )
+            except ValueError:
+                # Ignore an unusable template fallback; let AI extract it.
+                value = None
             if value is not None:
                 key = _slugify_field_key(label)
                 target = line_defaults if custom.get("scope") == "line" else header_defaults

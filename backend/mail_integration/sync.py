@@ -20,6 +20,7 @@ from mail_integration.client import EmailOAuthClient
 from mail_integration.exceptions import EmailIntegrationOAuthError, EmailIntegrationStateError, EmailMailboxFetchError
 from mail_integration.mailbox import IncomingMailboxMessage, mailbox_client_for
 from mail_integration.models import EmailIntegration, EmailMessage
+from ocr.usage import capacity_available, pause_email_integrations_for_limit
 from mail_integration.scheduling import next_run_at
 from tenancy.services import company_lifecycle_service
 
@@ -99,6 +100,9 @@ class EmailSyncService:
         if integration.status != EmailIntegration.Status.CONNECTED or not integration.is_active or integration.is_paused:
             return 0
         if not company_lifecycle_service.is_operational(company=integration.company):
+            return 0
+        if not capacity_available(integration.company_id, "email"):
+            pause_email_integrations_for_limit(integration.company)
             return 0
         if integration.initial_sync_from_at is None:
             raise EmailIntegrationStateError("Initial email sync is not configured.")

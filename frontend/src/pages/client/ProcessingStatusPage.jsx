@@ -3,12 +3,13 @@ import ClientLayout from '../../components/layout/ClientLayout.jsx'
 import Card from '../../components/ui/Card.jsx'
 import { clientApi } from '../../services/client.js'
 
-function Metric({ label, used, limit, remaining }) {
+function Metric({ label, used, limit, remaining, postedCount }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] p-5">
       <p className="text-sm text-[var(--color-muted)]">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-[var(--color-ink)]">{used}</p>
       <p className="mt-1 text-xs text-[var(--color-muted)]">of {limit} allocated · {remaining} remaining</p>
+      <p className="mt-2 text-xs text-[var(--color-muted)]">Posted records: {postedCount ?? 0}</p>
     </div>
   )
 }
@@ -40,8 +41,8 @@ export default function ProcessingStatusPage() {
                 <span>Email period: {usage.email_allocation_start_date || '—'} to {usage.email_allocation_end_date || '—'} · {usage.email_allocation_status?.replace('_', ' ') || 'active'}</span>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-                <Metric label="PDF/file pages processed" used={usage.pdf_pages_consumed} limit={usage.pdf_page_limit} remaining={usage.pdf_pages_remaining} />
-                <Metric label="Email bills processed" used={usage.email_bills_consumed} limit={usage.email_bill_limit} remaining={usage.email_bills_remaining} />
+                <Metric label="PDF/file pages processed" used={usage.pdf_pages_consumed} limit={usage.pdf_page_limit} remaining={usage.pdf_pages_remaining} postedCount={usage.pdf_posted_count} />
+                <Metric label="Email bills processed" used={usage.email_bills_consumed} limit={usage.email_bill_limit} remaining={usage.email_bills_remaining} postedCount={usage.email_posted_count} />
               </div>
             </>
           )}

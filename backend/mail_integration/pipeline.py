@@ -19,6 +19,7 @@ from audit.models import AuditAction, AuditModule, AuditStatus
 from audit.services import audit_service
 from mail_integration.models import EmailIntegration, EmailMessage
 from mail_integration.mailbox import readable_email_body
+from mail_integration.processing_lock import CompanyEmailProcessingLock
 from mail_integration.sync import dedupe_syncs_to_retain
 from netsuite.repositories import NetSuiteConnectionRepository
 from netsuite.diagnostics_service import net_suite_diagnostics_service
@@ -28,8 +29,9 @@ from ocr.ai_extraction_service import ai_extractor
 from ocr.services.extraction_persistence import persist_extraction
 from ocr.usage import (
     capacity_available,
-    record_email_bill,
+    record_email_message,
     validate_processing_configuration,
+    pause_email_integrations_for_limit,
     ProcessingLimitExceeded,
 )
 from audit.notifications import automated_activity, notify
@@ -68,6 +70,7 @@ class EmailBillPipeline:
         }
         for candidate in candidates:
             if not capacity_available(candidate.integration.company_id, "email"):
+                pause_email_integrations_for_limit(candidate.integration.company)
                 logger.warning(
                     "Email AI processing skipped because company allocation is exhausted — company=%s",
                     candidate.integration.company_id,
@@ -129,7 +132,7 @@ class EmailBillPipeline:
             ])
             return message
 
-    def _defer(self, message_id, error: Exception):
+    def _defer(self, message_id, error: Exception, *, notify_user=True):
         EmailMessage.objects.filter(pk=message_id).update(
             lease_owner="",
             lease_expires_at=None,
@@ -154,7 +157,7 @@ class EmailBillPipeline:
                     "error": str(error)[:2000],
                 },
             )
-        if message and message.attempt_count == 1:
+        if notify_user and message and message.attempt_count == 1:
             from audit.notifications import notify
             notify(message.integration.created_by_id, message.integration.company_id, f'Email processing failed for {message.sender_email or "unknown sender"}; it will be retried.', '/app/integrations/email')
 
@@ -183,19 +186,22 @@ class EmailBillPipeline:
         if user is None or template is None:
             self._defer(message.id, ValueError("Mailbox requires an owner and OCR template before processing."))
             return "deferred"
-        try:
-            validate_processing_configuration(integration.company, "email")
-        except ProcessingLimitExceeded as exc:
-            self._defer(message.id, exc)
-            return "deferred"
         if not capacity_available(integration.company_id, "email"):
+            paused_for_limit = pause_email_integrations_for_limit(integration.company)
             self._defer(
                 message.id,
                 ProcessingLimitExceeded(
                     "Email bill processing is unavailable because this company "
                     "has no remaining email-bill allocation. Please contact your SuperAdmin."
                 ),
+                notify_user=not paused_for_limit,
             )
+            return "deferred"
+        email_processing_lock = None
+        try:
+            validate_processing_configuration(integration.company, "email")
+        except ProcessingLimitExceeded as exc:
+            self._defer(message.id, exc)
             return "deferred"
         try:
             ai_extraction_duration_ms = 0
@@ -278,6 +284,30 @@ class EmailBillPipeline:
                 data.update(sender_vendor_data)
                 self._notify_vendor_bill_detected(message)
             else:
+                email_processing_lock = CompanyEmailProcessingLock(integration.company_id)
+                if not email_processing_lock.acquire():
+                    self._defer(
+                        message.id,
+                        ProcessingLimitExceeded(
+                            "Company email extraction is busy or its shared lock is unavailable; "
+                            "the message will be retried without sending another AI request."
+                        ),
+                        notify_user=False,
+                    )
+                    return "deferred"
+                # Recheck under the company lock so parallel workers cannot
+                # all consume AI requests against the same remaining unit.
+                if not capacity_available(integration.company_id, "email"):
+                    paused_for_limit = pause_email_integrations_for_limit(integration.company)
+                    self._defer(
+                        message.id,
+                        ProcessingLimitExceeded(
+                            "Email bill processing is unavailable because this company "
+                            "has no remaining email-bill allocation. Please contact your SuperAdmin."
+                        ),
+                        notify_user=not paused_for_limit,
+                    )
+                    return "deferred"
                 logger.info(
                     "AI EXTRACTION DEBUG | source=email | message=%s | "
                     "AI STARTING | sender=%s | subject=%s | template=%s",
@@ -325,16 +355,19 @@ class EmailBillPipeline:
                 if not isinstance(data, dict):
                     raise ValueError("Vendor-bill email classification did not include extraction data.")
                 data.update(sender_vendor_data)
-                classified = EmailMessage.objects.filter(
-                    pk=message.id,
-                    lease_owner=message.lease_owner,
-                    vendor_bill_notification_sent=False,
-                ).update(
+                if email_processing_lock.lost:
+                    raise ProcessingLimitExceeded(
+                        "Company email extraction lock ownership was lost before usage could be counted."
+                    )
+                classified = record_email_message(
+                    message,
+                    data,
                     is_vendor_bill=True,
-                    ai_extracted_data_json=data,
-                    ai_extraction_duration_ms=ai_extraction_duration_ms,
-                    vendor_bill_notification_sent=True,
                 )
+                if classified:
+                    EmailMessage.objects.filter(pk=message.id).update(
+                        ai_extraction_duration_ms=ai_extraction_duration_ms,
+                    )
                 if classified:
                     audit_service.log(
                         module=AuditModule.AI,
@@ -358,9 +391,13 @@ class EmailBillPipeline:
                         "/app/integrations/email",
                         activity_type="automated",
                     )
+                email_processing_lock.release()
+                email_processing_lock = None
 
             if not isinstance(data, dict):
                 raise ValueError("Vendor-bill email extraction did not return JSON data.")
+            if message.vendor_bill_notification_sent is not True:
+                record_email_message(message, data)
 
             # Resolve missing vendor defaults before taking the message lock.
             # This can make a NetSuite request, and holding a row lock while
@@ -446,11 +483,6 @@ class EmailBillPipeline:
                     extraction_template=template,
                     status=OCRBatch.Status.PROCESSING,
                 )
-                # Reserve the one email-bill unit while holding the promotion
-                # transaction. If the limit is exhausted, no OCR document is
-                # created and the message remains eligible after allocation is
-                # increased.
-                record_email_bill(batch)
                 document = OCRDocument.objects.create(
                     batch=batch,
                     user=user,
@@ -482,6 +514,9 @@ class EmailBillPipeline:
                     "dedupe_syncs_remaining", "lease_owner", "lease_expires_at",
                     "next_attempt_at", "updated_at",
                 ])
+            # Pause only after this message has a durable OCR history record.
+            # The final bill that consumes the last unit must still finish.
+            pause_email_integrations_for_limit(integration.company)
             audit_service.log(
                 module=AuditModule.OCR,
                 action=AuditAction.CREATE,
@@ -538,8 +573,14 @@ class EmailBillPipeline:
             )
             return "promoted"
         except Exception as exc:
-            self._defer(message.id, exc)
+            paused_for_limit = False
+            if not capacity_available(integration.company_id, "email"):
+                paused_for_limit = pause_email_integrations_for_limit(integration.company)
+            self._defer(message.id, exc, notify_user=not paused_for_limit)
             return "deferred"
+        finally:
+            if email_processing_lock is not None:
+                email_processing_lock.release()
 
     @staticmethod
     def _mark_terminal(*, message_id, lease_owner: str, integration, is_vendor_bill: bool, extracted_data) -> None:

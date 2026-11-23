@@ -5,28 +5,23 @@ import Button from '../../components/ui/Button.jsx'
 import Badge from '../../components/ui/Badge.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
 import SubscriptionCard from '../../components/subscriptions/SubscriptionCard.jsx'
-import UsageCard from '../../components/subscriptions/UsageCard.jsx'
-import LimitProgress from '../../components/subscriptions/LimitProgress.jsx'
 import { subscriptionApi } from '../../services/subscriptions.js'
 import { formatDate } from '../../utils/formatDate.js'
 
 export default function ClientSubscriptionPage() {
   const { toasts, addToast, removeToast } = useToast()
   const [subscription, setSubscription] = useState(null)
-  const [usage, setUsage] = useState([])
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [subData, usageData, txData] = await Promise.all([
+      const [subData, txData] = await Promise.all([
         subscriptionApi.getMySubscription(),
-        subscriptionApi.getMyUsage().catch(() => []),
         subscriptionApi.getMyTransactions().catch(() => []),
       ])
       setSubscription(subData)
-      setUsage(usageData || [])
       setTransactions(txData?.results || txData || [])
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Failed to load subscription', 'error')
@@ -76,19 +71,6 @@ export default function ClientSubscriptionPage() {
           billingCycle={subscription?.billing_cycle}
           onRenew={subscription?.status === 'EXPIRED' || subscription?.status === 'CANCELLED' ? loadData : undefined}
         />
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {usage.map((item) => (
-            <LimitProgress
-              key={item.module_code}
-              label={item.module_name}
-              used={item.usage_count}
-              limit={item.usage_limit}
-            />
-          ))}
-        </div>
-
-        <UsageCard modules={usage} />
 
         {transactions.length > 0 && (
           <Card className="p-5">

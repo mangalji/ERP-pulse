@@ -24,9 +24,15 @@ const FILTERS = [
   { value: 'VALIDATED', label: 'Validated' },
   { value: 'POSTED', label: 'Posted' },
 ]
+const TYPE_FILTERS = [
+  { value: 'ALL', label: 'All Types' },
+  { value: 'MANUAL', label: 'Manual' },
+  { value: 'AUTOMATED', label: 'Automated' },
+]
 
 const PAGE_SIZE_OPTIONS = [10, 50, 100]
 const HISTORY_PAGE_SIZE_STORAGE_KEY = 'data_extraction_history_page_size'
+const HISTORY_FILTERS_STORAGE_KEY = 'data_extraction_history_filters'
 const DATE_RANGE_OPTIONS = [
   { value: 'custom', label: 'Custom' },
   { value: 'today', label: 'Today' },
@@ -42,6 +48,21 @@ function getSavedPageSize() {
   return Number.isInteger(savedValue) && savedValue >= 1 && savedValue <= 100
     ? savedValue
     : 10
+}
+
+function getSavedFilters() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(HISTORY_FILTERS_STORAGE_KEY) || '{}')
+    return {
+      status: FILTERS.some((item) => item.value === saved.status) ? saved.status : 'ALL',
+      type: TYPE_FILTERS.some((item) => item.value === saved.type) ? saved.type : 'ALL',
+      dateFrom: typeof saved.dateFrom === 'string' ? saved.dateFrom : '',
+      dateTo: typeof saved.dateTo === 'string' ? saved.dateTo : '',
+      templateId: typeof saved.templateId === 'string' ? saved.templateId : '',
+    }
+  } catch {
+    return { status: 'ALL', type: 'ALL', dateFrom: '', dateTo: '', templateId: '' }
+  }
 }
 
 function unwrapHistory(response) {
@@ -172,15 +193,16 @@ export default function DataExtractionHistoryPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const canDeleteHistory = isCompanyAdminUser(user)
-  const [filter, setFilter] = useState('ALL')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [filter, setFilter] = useState(() => getSavedFilters().status)
+  const [recordType, setRecordType] = useState(() => getSavedFilters().type)
+  const [dateFrom, setDateFrom] = useState(() => getSavedFilters().dateFrom)
+  const [dateTo, setDateTo] = useState(() => getSavedFilters().dateTo)
   const [dateRangeOpen, setDateRangeOpen] = useState(false)
   const [dateRangePreset, setDateRangePreset] = useState('custom')
   const [draftDateFrom, setDraftDateFrom] = useState('')
   const [draftDateTo, setDraftDateTo] = useState('')
   const [dateRangeError, setDateRangeError] = useState('')
-  const [templateId, setTemplateId] = useState('')
+  const [templateId, setTemplateId] = useState(() => getSavedFilters().templateId)
   const [templates, setTemplates] = useState([])
   const [records, setRecords] = useState([])
   const [pagination, setPagination] = useState({ count: 0, offset: 0, limit: 10, nextOffset: null, previousOffset: null })
@@ -216,6 +238,7 @@ export default function DataExtractionHistoryPage() {
       if (filter !== 'ALL') {
         params.set('status', filter)
       }
+      if (recordType !== 'ALL') params.set('type', recordType)
       if (dateFrom) params.set('date_from', dateFrom)
       if (dateTo) params.set('date_to', dateTo)
       if (templateId) params.set('template_id', templateId)
@@ -239,11 +262,21 @@ export default function DataExtractionHistoryPage() {
     } finally {
       setLoading(false)
     }
-  }, [dateFrom, dateTo, filter, pageSize, templateId])
+  }, [dateFrom, dateTo, filter, pageSize, recordType, templateId])
 
   useEffect(() => {
     loadHistory()
   }, [loadHistory])
+
+  useEffect(() => {
+    sessionStorage.setItem(HISTORY_FILTERS_STORAGE_KEY, JSON.stringify({
+      status: filter,
+      type: recordType,
+      dateFrom,
+      dateTo,
+      templateId,
+    }))
+  }, [dateFrom, dateTo, filter, recordType, templateId])
 
   useEffect(() => {
     let cancelled = false
@@ -260,6 +293,7 @@ export default function DataExtractionHistoryPage() {
 
   const clearFilters = () => {
     setFilter('ALL')
+    setRecordType('ALL')
     setDateFrom('')
     setDateTo('')
     setDraftDateFrom('')
@@ -717,6 +751,17 @@ export default function DataExtractionHistoryPage() {
                   </option>
                 ))}
               </select>
+              <select
+                aria-label="Filter history by type"
+                value={recordType}
+                onChange={(event) => setRecordType(event.target.value)}
+                disabled={working}
+                className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]"
+              >
+                {TYPE_FILTERS.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
 
                <div className="relative" ref={dateRangeRef}>
                  <button
@@ -782,7 +827,7 @@ export default function DataExtractionHistoryPage() {
                    <option key={template.id} value={template.id}>{template.name}</option>
                  ))}
                </select>
-               {(dateFrom || dateTo || templateId || filter !== 'ALL') && (
+               {(dateFrom || dateTo || templateId || filter !== 'ALL' || recordType !== 'ALL') && (
                  <Button type="button" intent="secondary" onClick={clearFilters} disabled={working}>
                    Clear Filters
                  </Button>

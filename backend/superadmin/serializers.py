@@ -3,6 +3,8 @@ from common.contact_validation import normalize_phone
 from common.email_verification import ensure_email_deliverable
 from rest_framework import serializers
 from ocr.models import BillProcessingCount
+from ocr.models import OCRBatch
+from netsuite.models import NetSuiteOCRPosting
 from ocr.usage import allocation_period_state, validate_allocation_dates
 from django.db import transaction
 from .models import (
@@ -459,6 +461,10 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
 
     def get_bill_processing_count(self, obj):
         usage, _ = BillProcessingCount.objects.get_or_create(company=obj)
+        posted = NetSuiteOCRPosting.objects.filter(
+            document__company=obj,
+            status="posted",
+        )
         return {
             'id': str(usage.id),
             'pdf_page_limit': usage.pdf_page_limit,
@@ -467,6 +473,12 @@ class CompanyDetailSerializer(serializers.ModelSerializer):
             'email_bills_consumed': usage.email_bills_consumed,
             'pdf_pages_remaining': max(0, usage.pdf_page_limit - usage.pdf_pages_consumed),
             'email_bills_remaining': max(0, usage.email_bill_limit - usage.email_bills_consumed),
+            'pdf_posted_count': posted.filter(
+                document__batch__source_type__in=[OCRBatch.SourceType.DIRECT, OCRBatch.SourceType.ZIP],
+            ).count(),
+            'email_posted_count': posted.filter(
+                document__batch__source_type=OCRBatch.SourceType.EMAIL,
+            ).count(),
             'pdf_allocation_start_date': usage.pdf_allocation_start_date,
             'pdf_allocation_end_date': usage.pdf_allocation_end_date,
             'email_allocation_start_date': usage.email_allocation_start_date,

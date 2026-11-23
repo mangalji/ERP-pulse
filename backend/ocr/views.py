@@ -43,7 +43,7 @@ from ocr.pdf_processor import get_fitz
 from ocr.exceptions import OCRException
 from ocr.services import ocr_service
 from ocr.services.extraction_persistence import persist_extraction
-from ocr.ai_extraction_service import get_standard_field_catalog, resolve_field_config
+from ocr.ai_extraction_service import get_standard_field_catalog
 from ocr.exceptions import OCRTimeBudgetExceeded
 from ocr.execution import dispatch_upload, recover_batch
 from ocr.tasks import process_single_ocr_upload
@@ -100,8 +100,6 @@ def _build_requested_fields(request) -> dict | None:
         raise ValueError(
             "The selected OCR extraction template has no saved field configuration. Open and save the template before uploading."
         )
-
-    resolve_field_config(requested_fields)
 
     return requested_fields
 
@@ -565,6 +563,7 @@ class OCRHistoryListView(APIView):
             return Response({"detail": "offset and limit must be valid integers."}, status=status.HTTP_400_BAD_REQUEST)
 
         status_filter = str(request.query_params.get("status", "")).strip().upper()
+        type_filter = str(request.query_params.get("type", "")).strip().upper()
         date_from = str(request.query_params.get("date_from", "")).strip()
         date_to = str(request.query_params.get("date_to", "")).strip()
         template_id = str(request.query_params.get("template_id", "")).strip()
@@ -579,6 +578,23 @@ class OCRHistoryListView(APIView):
             return Response({"detail": "date_from cannot be later than date_to."}, status=status.HTTP_400_BAD_REQUEST)
 
         batch_queryset = _visible_batch_queryset(request.user).order_by("-created_at")
+        # History entries are batches, not the individual files/documents
+        # inside them. Exclude batches that have no persisted OCR document so
+        # the database count, page size, and serialized rows use the same unit.
+        documents = OCRDocument.objects.filter(
+            Q(batch_id=OuterRef("pk")) | Q(upload__batch_id=OuterRef("pk"))
+        )
+        batch_queryset = batch_queryset.annotate(
+            history_has_documents=Exists(documents),
+        ).filter(history_has_documents=True)
+        if type_filter == "MANUAL":
+            batch_queryset = batch_queryset.filter(
+                source_type__in=[OCRBatch.SourceType.DIRECT, OCRBatch.SourceType.ZIP]
+            )
+        elif type_filter == "AUTOMATED":
+            batch_queryset = batch_queryset.filter(
+                source_type=OCRBatch.SourceType.EMAIL
+            )
         if date_from:
             batch_queryset = batch_queryset.filter(created_at__date__gte=date_from)
         if date_to:
@@ -593,7 +609,6 @@ class OCRHistoryListView(APIView):
         # will expose those records as NOT_VALIDATED so the saved extraction
         # remains recoverable and can be retried after a connection issue.
         if status_filter in {"NOT_VALIDATED", "VALIDATED", "POSTED"}:
-            documents = OCRDocument.objects.filter(Q(batch_id=OuterRef("pk")) | Q(upload__batch_id=OuterRef("pk")))
             latest_validation = OCRValidationResult.objects.filter(
                 document_id=OuterRef("pk"),
                 version__version_number=OuterRef("current_version"),
@@ -605,10 +620,9 @@ class OCRHistoryListView(APIView):
                 status="posted",
             )
             batch_queryset = batch_queryset.annotate(
-                history_has_documents=Exists(documents),
                 history_has_unvalidated_document=Exists(documents.filter(~Exists(latest_validation))),
                 history_has_posted_document=Exists(documents.filter(Exists(posted_document))),
-            ).filter(history_has_documents=True)
+            )
             if status_filter == "POSTED":
                 batch_queryset = batch_queryset.filter(history_has_posted_document=True)
             elif status_filter == "VALIDATED":
@@ -2143,6 +2157,10 @@ class BillProcessingCountView(APIView):
         if company is None:
             return Response({'detail': 'Company context is required.'}, status=status.HTTP_403_FORBIDDEN)
         usage, _ = BillProcessingCount.objects.get_or_create(company=company)
+        posted = NetSuiteOCRPosting.objects.filter(
+            document__company=company,
+            status="posted",
+        )
         return success_response(
             message='Bill processing usage fetched successfully.',
             data={
@@ -2152,6 +2170,12 @@ class BillProcessingCountView(APIView):
                 'email_bills_consumed': usage.email_bills_consumed,
                 'pdf_pages_remaining': max(0, usage.pdf_page_limit - usage.pdf_pages_consumed),
                 'email_bills_remaining': max(0, usage.email_bill_limit - usage.email_bills_consumed),
+                'pdf_posted_count': posted.filter(
+                    document__batch__source_type__in=[OCRBatch.SourceType.DIRECT, OCRBatch.SourceType.ZIP],
+                ).count(),
+                'email_posted_count': posted.filter(
+                    document__batch__source_type=OCRBatch.SourceType.EMAIL,
+                ).count(),
                 'pdf_allocation_start_date': usage.pdf_allocation_start_date,
                 'pdf_allocation_end_date': usage.pdf_allocation_end_date,
                 'email_allocation_start_date': usage.email_allocation_start_date,
