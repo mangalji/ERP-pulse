@@ -2,7 +2,8 @@
 PDF processing infrastructure for the OCR application.
 
 ``PDFProcessor`` wraps PyMuPDF (``fitz``) to convert PDF documents into
-PNG images — one per page — at 300 DPI in RGB. The images are written
+PNG images — one per page — at up to 200 DPI by default in RGB, with
+each dimension capped at 4000 pixels. The images are written
 to a temporary directory under ``MEDIA_ROOT/ocr/tmp/<upload_id>/`` and
 returned as a list of ``pathlib.Path`` objects.
 
@@ -21,6 +22,7 @@ Usage::
 """
 
 from __future__ import annotations
+import math
 import shutil, time
 from pathlib import Path
 from django.conf import settings
@@ -36,11 +38,12 @@ from ocr.utils import logger
 MAX_PAGES: int = settings.OCR_MAX_PAGES
 
 #: DPI (dots per inch) for PDF-to-image conversion.
-#: Read from Django settings (default: 300).
-#: 300 is the industry standard for OCR — lower values lose detail,
-#: higher values increase memory and processing time without
-#: meaningful accuracy gains for invoice text.
+#: Read from Django settings (default: 200).
 DPI: int = settings.OCR_PDF_DPI
+
+#: Hard output bound, even when DPI is overridden. A square RGB pixmap
+#: uses at most 48 MB for its pixel buffer (not total renderer memory).
+MAX_RENDER_DIMENSION: int = 4000
 
 #: Root directory for temporary PDF conversion output.
 # TMP_ROOT: Path = Path(settings.MEDIA_ROOT) / 'ocr' / 'tmp'
@@ -129,6 +132,8 @@ class PDFProcessor:
             PDFTooLargeException: If the PDF exceeds ``MAX_PAGES``.
         """
         start = time.perf_counter()
+        if not math.isfinite(DPI) or DPI <= 0:
+            raise PDFProcessingException('PDF rendering DPI must be positive and finite.')
         output_dir = self._get_output_dir(upload_id)
         output_dir.mkdir(parents=True, exist_ok=True)
         fitz = get_fitz()
@@ -150,15 +155,21 @@ class PDFProcessor:
             )
 
         images: list[Path] = []
-        zoom = DPI / 72.0
-        matrix = fitz.Matrix(zoom, zoom)
-
         try:
             for page_num in range(page_count):
                 page = doc.load_page(page_num)
-                pix = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB)
+                width, height = page.rect.width, page.rect.height
+                if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+                    raise PDFProcessingException('PDF page dimensions must be positive and finite.')
+                zoom = min(DPI / 72.0, MAX_RENDER_DIMENSION / max(width, height))
+                matrix = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False)
                 image_path = output_dir / f'page_{page_num + 1:03d}.png'
-                pix.save(str(image_path))
+                try:
+                    pix.save(str(image_path))
+                finally:
+                    # Release this buffer before allocating the next page's pixmap.
+                    del pix
                 images.append(image_path)
         except Exception as exc:
             raise PDFProcessingException(

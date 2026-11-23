@@ -16,7 +16,7 @@ from decouple import config
 OCR_MAX_PAGES: int = config('OCR_MAX_PAGES', default=5, cast=int)
 
 #: DPI (dots per inch) for PDF-to-image conversion.
-OCR_PDF_DPI: int = config('OCR_PDF_DPI', default=300, cast=int)
+OCR_PDF_DPI: int = config('OCR_PDF_DPI', default=200, cast=int)
 
 # ------------------------------------------------------------------
 # PDF extraction mode
