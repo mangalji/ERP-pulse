@@ -49,90 +49,6 @@ MEDIA_TYPES = {
     ".webp": "image/webp",
 }
 
-# FIELD_DESCRIPTIONS = {
-#     "invoice_number":( # field_id = tranid
-#         "Invoice number or ID printed on the supplier invoice. "
-#         "Do not use a purchase order number or vendor ID."
-#         ),
-#     "invoice_date": ( # field_id = trandate
-#         "Invoice issue date, normalized format YYYY-MM-DD when unambiguous."
-#         ),
-#     "due_date": ( # field_id = duedate
-#         "Payment due date, normalized to YYYY-MM-DD when stated. "
-#         "Do not calculate or guess a missing due date, except for the "
-#         "single-date fallback explicitly stated in the extraction rules."
-#         ),
-#     "vendor_name": ( # field_id = entity
-#         "Name of the vendor or supplier issuing the invoice."
-#         ),
-#     "subsidiary": ( # field_id = subsidiary
-#         "Company subsidiary or business unit, only when explicitly "
-#         "identified. Do not guess."
-#         ),
-#     "location": (
-#         "NetSuite Location, branch, site, or warehouse for this Vendor Bill. "
-#         "Use the exact name only when explicitly stated on the invoice. "
-#         "Do not infer a Location from an address or guess a default; return "
-#         "null when the invoice does not identify one."
-#     ),
-#     "currency": ( # field_id = currency
-#         "Three-letter currency code, such as USD, INR, or EUR. "
-#         "Return null if the currency cannot be identified reliably."
-#         ),
-#     "total_tax_amount":( # field_id = taxtotal
-#         "Total tax amount for the entire invoice. Use the invoice-level "
-#         "tax total when shown; otherwise sum line-item taxes only when "
-#         "all relevant line tax amounts are available. "
-#         "Return a number without a currency symbol."
-#         ),
-#     "amount": ( # field_id = usertotal
-#         "Grand total of the entire invoice after discounts and including "
-#         "applicable taxes and charges, as shown on the invoice. "
-#         "Return a number without a currency symbol. Do not substitute "
-#         "an individual line amount."
-#         ),
-# }
-
-# LINE_ITEM_FIELDS = {
-#     "item": ( # field_id = item
-#         "Product, service, or charge name/description for this specific "
-#         "invoice line. Do not combine separate line items."
-#         ),
-#     "quantity": ( # field_id = quantity
-#         "Quantity for this line item. Return a number; do not guess "
-#         "if the quantity is not shown."
-#         ),
-#     "unit_price": ( # field_id = rate
-#         "Price per unit for this line item as printed on the invoice. "
-#         "Return a number without a currency symbol; do not calculate "
-#         "a missing unit price."
-#         ),
-#     "subtotal": ( # field_id = amount
-#         "This line item's amount before tax, after any stated line-level "
-#         "discounts. This is not the invoice-level subtotal. "
-#         "Return a number without a currency symbol."
-#         ),
-#     "tax_amount": ( # field_id = tax1amt
-#         "Tax amount attributable to this specific line item, not the "
-#         "tax total for the entire invoice. Return a number without "
-#         "a currency symbol."
-#         ),
-#     "tax_rate": ( # field_id = taxrate1
-#         "Tax rate for this line item, expressed as a percentage when "
-#         "explicitly stated, for example 18 for 18%. Do not guess "
-#         "a missing rate."
-#         ),
-#     "total_amount":( # field_id = grossamt
-#         "Final amount for this specific line item, including its "
-#         "applicable taxes and line-level charges after discounts. "
-#         "This is not the invoice grand total. Return a number "
-#         "without a currency symbol."
-#         )
-# }
-
-# File-upload extraction field contract. The original field prompts above are
-# intentionally retained for email extraction and backward compatibility.
-# These shorter, stricter descriptions are used only by the file-upload flow.
 FIELD_DESCRIPTIONS = {
     "invoice_number": "Invoice number or ID. Exclude PO number or vendor ID.",
     "invoice_date": "Invoice issue date in YYYY-MM-DD format.",
@@ -141,15 +57,12 @@ FIELD_DESCRIPTIONS = {
     "subsidiary": "Explicitly identified company subsidiary or business unit only.",
     "location": "Explicitly stated NetSuite Location, branch, site, or warehouse. Do not infer from address.",
     "currency": "Three-letter currency code, such as USD, EUR, or INR.",
-    # Temporarily disabled: header-level total tax is NetSuite-computed.
-    # "total_tax_amount": "Total tax amount for the entire invoice.",
     "amount": "Grand total including taxes and charges.",
 }
 
 LINE_ITEM_FIELDS = {
     "item": "Product, service, or charge name/description.",
     "quantity": "Line quantity.",
-    "unit_price": "Price per unit.",
     "subtotal": "Line amount before tax, after line discounts.",
     "tax_amount": "Tax amount for this specific line.",
     "tax_rate": "Tax rate percentage, such as 18 for 18%.",
@@ -164,15 +77,12 @@ FIELD_LABELS = {
     "subsidiary": "Subsidiary",
     "currency": "Currency",
     "location":'Location',
-    # Temporarily disabled with the header-level total tax field.
-    # "total_tax_amount":"Total Tax",
     "amount": "Amount",
 }
 
 LINE_ITEM_LABELS = {
     "item": "Item",
     "quantity": "Quantity",
-    "unit_price": "Unit Price",
     "subtotal": "Subtotal",
     "tax_amount": "Tax Amount",
     "tax_rate": "Tax Rate (%)",
@@ -333,15 +243,12 @@ FIELD_DATA_TYPES = {
     "subsidiary": "text",
     "currency": "text",
     "location":"text",
-    # Temporarily disabled with the header-level total tax field.
-    # "total_tax_amount":"currency",
     "amount": "currency",
 }
 
 LINE_ITEM_DATA_TYPES = {
     "item": "text",
     "quantity": "number",
-    "unit_price": "currency",
     "subtotal": "currency",
     "tax_amount": "currency",
     "tax_rate": "number",

@@ -6,15 +6,12 @@ export const TOP_LEVEL_FIELDS = [
   { key: 'subsidiary', label: 'Subsidiary', type: 'text' },
   { key: 'currency', label: 'Currency', type: 'text' },
   { key: 'location', label: 'Location', type: 'text' },
-  // Temporarily disabled: header-level total tax is NetSuite-computed.
-  // { key: 'total_tax_amount', label: 'Total Tax', type: 'currency' },
   { key: 'amount', label: 'Amount', type: 'currency' },
 ]
 
 export const LINE_ITEM_FIELDS = [
   { key: 'item', label: 'Item / account/ description', type: 'text' },
   { key: 'quantity', label: 'Qty', type: 'number' },
-  { key: 'unit_price', label: 'Unit Price', type: 'currency' },
   { key: 'subtotal', label: 'Subtotal', type: 'currency' },
   { key: 'tax_amount', label: 'Tax Amount', type: 'currency' },
   { key: 'tax_rate', label: 'Tax Rate (%)', type: 'number' },
@@ -114,19 +111,24 @@ export function resolveConfiguredFields(config, fallbackData = {}) {
         if (!key || key === 'line_items' || key === 'customer_name') return null
         const base = DEFAULT_FIELD_DEFINITIONS.find((field) => field.key === key)
         const override = overrides[key] && typeof overrides[key] === 'object' ? overrides[key] : {}
-        if (!base || override.enabled === false) return null
-        const dataType = override.data_type || base.dataType || base.type || 'text'
-        const scope = override.scope === 'line' || override.scope === 'header' ? override.scope : base.scope
+        if (override.enabled === false) return null
+        // A field removed from the standard catalogue can still exist in a
+        // saved template. Keep it as a template-defined/custom field so old
+        // templates and their saved results remain usable.
+        const dataType = override.data_type || base?.dataType || base?.type || 'text'
+        const scope = override.scope === 'line' || override.scope === 'header'
+          ? override.scope
+          : base?.scope || 'header'
         return {
           ...base,
           key,
-          label: String(override.label || base.label || key),
-          description: String(override.questionaire || override.description || base.description || ''),
+          label: String(override.label || base?.label || key),
+          description: String(override.questionaire || override.description || base?.description || ''),
           dataType,
           type: toInputType(dataType),
           scope,
           defaultValue: override.default_value ?? null,
-          standard: true,
+          standard: Boolean(base),
         }
       })
       .filter(Boolean)

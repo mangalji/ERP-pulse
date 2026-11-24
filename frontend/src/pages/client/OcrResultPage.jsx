@@ -51,22 +51,22 @@ function resolveConfiguredFields(config, fallbackData = {}) {
         const override = overrides[key] && typeof overrides[key] === 'object'
           ? overrides[key]
           : {}
-        if (!base || override.enabled === false) return null
+        if (override.enabled === false) return null
 
-        const dataType = override.data_type || base.dataType || base.type || 'text'
+        const dataType = override.data_type || base?.dataType || base?.type || 'text'
         const scope = override.scope === 'line' || override.scope === 'header'
           ? override.scope
-          : base.scope
+          : base?.scope || 'header'
         return {
           ...base,
           key,
-          label: String(override.label || base.label || key),
-          description: String(override.questionaire || override.description || base.description || ''),
+          label: String(override.label || base?.label || key),
+          description: String(override.questionaire || override.description || base?.description || ''),
           dataType,
           type: toInputType(dataType),
           scope,
           defaultValue: override.default_value ?? null,
-          standard: true,
+          standard: Boolean(base),
         }
       })
       .filter(Boolean)

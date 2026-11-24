@@ -464,7 +464,6 @@ class OCRStandardFieldCatalogueTests(SimpleTestCase):
             {
                 "item",
                 "quantity",
-                "unit_price",
                 "subtotal",
                 "tax_amount",
                 "tax_rate",
@@ -494,14 +493,28 @@ class OCRStandardFieldCatalogueTests(SimpleTestCase):
             LINE_ITEM_DATA_TYPES["tax_rate"], "number"
         )
 
-    def test_removed_old_standard_keys_are_rejected(self):
-        for old_key in ("description", "payment_terms"):
-            with self.subTest(key=old_key):
-                with self.assertRaisesRegex(
-                    ValueError,
-                    f"Unknown standard field '{old_key}'",
-                ):
-                    resolve_field_config({
-                        "standard_fields": [old_key],
-                        "custom_fields": [],
-                    })
+    def test_removed_standard_keys_are_preserved_as_template_defined_fields(self):
+        header_fields, line_fields, include_line_items, header_types, line_types = (
+            resolve_field_config({
+                "standard_fields": ["payment_terms", "unit_price"],
+                "standard_field_overrides": {
+                    "payment_terms": {
+                        "label": "Payment Terms",
+                        "questionaire": "Payment terms shown on the bill.",
+                    },
+                    "unit_price": {
+                        "label": "Unit Price",
+                        "questionaire": "Price per item when shown.",
+                        "data_type": "currency",
+                        "scope": "line",
+                    },
+                },
+                "custom_fields": [],
+            })
+        )
+
+        self.assertEqual(header_fields, {"payment_terms": "Payment terms shown on the bill."})
+        self.assertEqual(line_fields, {"unit_price": "Price per item when shown."})
+        self.assertTrue(include_line_items)
+        self.assertEqual(header_types, {"payment_terms": "text"})
+        self.assertEqual(line_types, {"unit_price": "currency"})

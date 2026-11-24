@@ -72,11 +72,6 @@ const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
     id: 'amount',
     scope: 'line',
   },
-  // Temporarily disabled: NetSuite computes the header-level tax total.
-  // total_tax_amount: {
-  //   id: 'taxtotal',
-  //   scope: 'body',
-  // },
   tax_amount:{
     id:'tax1Amt',
     scope:'line'
@@ -97,11 +92,6 @@ const DEFAULT_NETSUITE_FIELD_MAPPINGS = {
   },
   quantity: {
     id: 'quantity',
-    scope: 'line',
-    preferredSublistId: 'item',
-  },
-  unit_price: {
-    id: 'rate',
     scope: 'line',
     preferredSublistId: 'item',
   },
@@ -220,6 +210,22 @@ function normalizeSavedStandardField(key, override = {}, disabled = false) {
     // must not be greyed out merely because it is absent from the catalogue.
     enabled: !disabled && override?.enabled !== false,
   }
+}
+
+function normalizeLegacyStandardFieldAsCustom(key, override = {}, disabled = false) {
+  return normalizeCustomField({
+    id: `custom-legacy-${key}`,
+    key,
+    label: override?.label || key,
+    description: override?.description || override?.questionaire || key,
+    data_type: override?.data_type || 'text',
+    scope: override?.scope === 'line' ? 'line' : 'header',
+    netsuite_field_id: override?.netsuite_field_id || '',
+    netsuite_field_scope: override?.netsuite_field_scope || '',
+    netsuite_field_sublist_id: override?.netsuite_field_sublist_id || '',
+    default_value: override?.default_value ?? '',
+    enabled: !disabled && override?.enabled !== false,
+  })
 }
 
 function normalizeDescriptionText(value) {
@@ -1102,14 +1108,13 @@ const handleRefreshNetSuiteFields = async () => {
     // Saved templates are reconstructed exclusively from the persisted DB
     // configuration. The current catalogue and new-template defaults must not
     // add metadata, mappings, or fields to a saved template.
+    const currentStandardKeys = new Set(catalogFields.map((field) => field.key))
     const standardFields = [...selectedStandardKeys].map((key) => {
-        const override = config.standard_field_overrides?.[key]
-        return normalizeSavedStandardField(
-          key,
-          override,
-          disabledStandardKeys.has(key),
-        )
-      })
+      const override = config.standard_field_overrides?.[key]
+      return currentStandardKeys.has(key)
+        ? normalizeSavedStandardField(key, override, disabledStandardKeys.has(key))
+        : normalizeLegacyStandardFieldAsCustom(key, override, disabledStandardKeys.has(key))
+    })
 
     const customFields = [
       ...config.custom_fields.map((field, index) =>
@@ -1272,12 +1277,6 @@ const handleRefreshNetSuiteFields = async () => {
     }
 
     const activeFields = fields.filter((field) => field.enabled !== false)
-    const unsupportedCustomLineField = activeFields.find(
-      (field) => !field.standard && field.scope === 'line',
-    )
-    if (unsupportedCustomLineField) {
-      return `Custom line field "${unsupportedCustomLineField.label || unsupportedCustomLineField.key || 'Unnamed field'}" is not supported for NetSuite posting yet. Use Header scope.`
-    }
     if (!activeFields.length) {
       return 'Use at least one field in the template before saving.'
     }
