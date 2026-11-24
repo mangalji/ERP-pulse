@@ -80,6 +80,15 @@ def oauth_config_for(integration: EmailIntegration) -> ProviderOAuthConfig:
             ),
         )
 
+    if provider == EmailIntegration.Provider.OUTLOOK:
+        return ProviderOAuthConfig(
+            authorize_url="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+            token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            client_id=integration.oauth_client_id or settings.OUTLOOK_MAIL_CLIENT_ID,
+            client_secret=integration.oauth_client_secret or settings.OUTLOOK_MAIL_CLIENT_SECRET,
+            scopes=("openid", "profile", "email", "offline_access", "User.Read", "Mail.Read"),
+        )
+
     raise EmailIntegrationConfigurationError("Unsupported email provider.")
 
 
@@ -116,13 +125,14 @@ def build_authorization_url(*, integration: EmailIntegration, user_id: str) -> s
         "response_type": "code",
         "client_id": config.client_id,
         "redirect_uri": settings.EMAIL_OAUTH_REDIRECT_URI,
-        "scope": " ".join(config.scopes)
-        if integration.provider == EmailIntegration.Provider.GOOGLE
-        else ",".join(config.scopes),
+        "scope": ",".join(config.scopes)
+        if integration.provider == EmailIntegration.Provider.ZOHO
+        else " ".join(config.scopes),
         "state": state,
-        "access_type": "offline",
     }
-    if integration.provider == EmailIntegration.Provider.GOOGLE or (
+    if integration.provider != EmailIntegration.Provider.OUTLOOK:
+        query["access_type"] = "offline"
+    if integration.provider == EmailIntegration.Provider.GOOGLE or integration.provider == EmailIntegration.Provider.OUTLOOK or (
         integration.provider == EmailIntegration.Provider.ZOHO
         and (not integration.refresh_token or integration.status == EmailIntegration.Status.ERROR)
     ):

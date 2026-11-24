@@ -72,7 +72,10 @@ class EmailSyncService:
             initial_sync_from_at__isnull=False,
         ).filter(Q(next_sync_at__isnull=True) | Q(next_sync_at__lte=now))
         outcomes = {"checked": 0, "staged": 0, "failed": 0, "by_integration": {}}
-        for integration_id in due.values_list("id", flat=True):
+        for integration in due:
+            if integration.is_fetching_stopped:
+                continue
+            integration_id = integration.id
             outcomes["checked"] += 1
             try:
                 staged = self.sync_integration(integration_id=integration_id)
@@ -97,7 +100,7 @@ class EmailSyncService:
     @timed_stage("email.fetch_mailbox")
     def sync_integration(self, *, integration_id) -> int:
         integration = EmailIntegration.objects.select_related("company").get(id=integration_id)
-        if integration.status != EmailIntegration.Status.CONNECTED or not integration.is_active or integration.is_paused:
+        if integration.status != EmailIntegration.Status.CONNECTED or not integration.is_active or integration.is_fetching_stopped:
             return 0
         if not company_lifecycle_service.is_operational(company=integration.company):
             return 0
@@ -209,6 +212,10 @@ class EmailSyncService:
             min(received_times).isoformat() if received_times else None,
             max(received_times).isoformat() if received_times else None,
         )
+        self._remember_latest_fetched_email_received_at(
+            integration=integration,
+            received_times=received_times,
+        )
 
         if sync_has_more_pages:
             # Do not move the final watermark: this is only a completed slice
@@ -218,7 +225,8 @@ class EmailSyncService:
             integration.last_error = ""
             integration.consecutive_failures = 0
             integration.save(update_fields=[
-                "next_sync_at", "last_error", "consecutive_failures", "updated_at",
+                "latest_fetched_email_received_at", "next_sync_at", "last_error",
+                "consecutive_failures", "updated_at",
             ])
             audit_service.log(
                 module=AuditModule.EMAIL,
@@ -267,8 +275,9 @@ class EmailSyncService:
         # stays intact and the next due task continues from that page.
         integration.provider_cursor = ""
         integration.save(update_fields=[
-            "last_successful_sync_at", "next_sync_at", "last_error",
-            "consecutive_failures", "provider_cursor", "updated_at",
+            "last_successful_sync_at", "latest_fetched_email_received_at",
+            "next_sync_at", "last_error", "consecutive_failures",
+            "provider_cursor", "updated_at",
         ])
         audit_service.log(
             module=AuditModule.EMAIL,
@@ -384,6 +393,18 @@ class EmailSyncService:
         retained.filter(dedupe_syncs_remaining__gt=1).update(
             dedupe_syncs_remaining=F("dedupe_syncs_remaining") - 1,
         )
+
+    @staticmethod
+    def _remember_latest_fetched_email_received_at(*, integration: EmailIntegration, received_times: list[datetime]) -> None:
+        """Keep the newest actual mailbox received timestamp on the integration."""
+        if not received_times:
+            return
+        newest_received_at = max(received_times)
+        if (
+            integration.latest_fetched_email_received_at is None
+            or newest_received_at > integration.latest_fetched_email_received_at
+        ):
+            integration.latest_fetched_email_received_at = newest_received_at
 
     def _refresh_access_token_if_needed(self, integration: EmailIntegration) -> None:
         expires_at = integration.access_token_expires_at

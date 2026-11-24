@@ -126,6 +126,15 @@ export default function CompanyDetailPage() {
     }
   }
 
+  const copyToClipboard = async (value, label) => {
+    try {
+      await navigator.clipboard.writeText(value || '')
+      addToast(`${label} copied to clipboard`, 'success')
+    } catch {
+      addToast(`Unable to copy ${label.toLowerCase()}.`, 'error')
+    }
+  }
+
   const runAction = async (action, reason = '', notify = null) => {
     setConfirm(null)
     setSuspensionDescription('')
@@ -568,7 +577,17 @@ export default function CompanyDetailPage() {
                 onChange={({ start, end }) => setUsageForm((current) => ({ ...current, pdf_allocation_start_date: start, pdf_allocation_end_date: end }))}
               />
               <div className="md:col-span-2">
-                <label className="text-xs text-[var(--color-muted)]">PDF/file AI extraction prompt</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-xs text-[var(--color-muted)]">PDF/file AI extraction prompt</label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    intent="secondary"
+                    onClick={() => copyToClipboard(usageForm.pdf_extraction_prompt, 'PDF/file extraction prompt')}
+                  >
+                    Copy
+                  </Button>
+                </div>
                 {usageEditing ? (
                   <textarea
                     rows={6}
@@ -591,7 +610,17 @@ export default function CompanyDetailPage() {
                 onChange={({ start, end }) => setUsageForm((current) => ({ ...current, email_allocation_start_date: start, email_allocation_end_date: end }))}
               />
               <div className="md:col-span-2">
-                <label className="text-xs text-[var(--color-muted)]">Email AI extraction prompt</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-xs text-[var(--color-muted)]">Email AI extraction prompt</label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    intent="secondary"
+                    onClick={() => copyToClipboard(usageForm.email_extraction_prompt, 'Email extraction prompt')}
+                  >
+                    Copy
+                  </Button>
+                </div>
                 {usageEditing ? (
                   <textarea
                     rows={6}

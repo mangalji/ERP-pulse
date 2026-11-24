@@ -9,16 +9,17 @@ from django.utils import timezone
 
 from mail_integration.client import EmailOAuthClient
 from mail_integration.exceptions import EmailIntegrationConfigurationError, EmailIntegrationOAuthError, EmailRefreshTokenMissingError
-from mail_integration.mailbox import GmailMailboxClient, normalize_email_body
+from mail_integration.mailbox import GmailMailboxClient, OutlookMailboxClient, normalize_email_body
 from mail_integration.models import EmailIntegration
 from mail_integration.oauth import build_authorization_url, resolve_state, oauth_config_for
-from mail_integration.serializers import EmailIntegrationCreateSerializer, EmailIntegrationSerializer
+from mail_integration.serializers import EmailIntegrationConfigureSerializer, EmailIntegrationCreateSerializer, EmailIntegrationSerializer
 from mail_integration.sync import EmailSyncService, dedupe_syncs_to_retain, sync_lookback_for
 from mail_integration.health import ensure_email_processing_available
 from mail_integration.exceptions import EmailIntegrationStateError
 from mail_integration.services import EmailIntegrationService
 from mail_integration.pipeline import EmailBillPipeline
 from netsuite.services import NetSuiteValidationService
+from tenancy.models import Company
 
 
 class EmailValidationFlowTests(SimpleTestCase):
@@ -224,9 +225,8 @@ class EmailSchedulerHealthTests(SimpleTestCase):
 
 
 class EmailPauseTests(SimpleTestCase):
-    @patch("mail_integration.health.ensure_email_processing_available")
     @patch("mail_integration.services.is_company_admin", return_value=True)
-    def test_pause_and_resume_preserve_sync_position(self, is_admin, health):
+    def test_resume_requires_a_new_schedule(self, is_admin):
         service = EmailIntegrationService()
         integration = EmailIntegration(status="CONNECTED", is_active=True, initial_sync_from_at=timezone.now(), last_successful_sync_at=timezone.now())
         integration.save = Mock()
@@ -235,16 +235,164 @@ class EmailPauseTests(SimpleTestCase):
         with patch.object(service, "_ensure_operational"), patch.object(service, "_get_for_user", return_value=integration):
             service.set_paused(user=user, integration_id=integration.id, paused=True)
             self.assertTrue(integration.is_paused)
-            health.assert_not_called()
-            service.set_paused(user=user, integration_id=integration.id, paused=False)
-        self.assertFalse(integration.is_paused)
+            with self.assertRaisesRegex(EmailIntegrationStateError, "Choose a new email fetching schedule"):
+                service.set_paused(user=user, integration_id=integration.id, paused=False)
+        self.assertTrue(integration.is_paused)
         self.assertEqual(integration.last_successful_sync_at, before)
-        health.assert_called_once()
 
     @patch("mail_integration.health._broker_redis", side_effect=ConnectionError("offline"))
     def test_unavailable_broker_is_reported(self, broker_factory):
         with self.assertRaisesRegex(EmailIntegrationStateError, "Redis broker"):
             ensure_email_processing_available()
+
+
+class EmailScheduleRestartTests(SimpleTestCase):
+    def test_completed_single_schedule_requires_a_new_schedule(self):
+        integration = EmailIntegration(
+            schedule_config={"type": "SINGLE"},
+            last_successful_sync_at=timezone.now(),
+            next_sync_at=None,
+            provider_cursor="",
+        )
+
+        self.assertTrue(integration.is_fetching_stopped)
+
+    def test_completed_recurring_schedule_requires_a_new_schedule(self):
+        integration = EmailIntegration(
+            schedule_config={"type": "DAILY"},
+            last_successful_sync_at=timezone.now(),
+            next_sync_at=None,
+            provider_cursor="",
+        )
+
+        self.assertTrue(integration.is_fetching_stopped)
+
+    @patch("mail_integration.sync.EmailIntegration.objects")
+    def test_scheduler_skips_a_completed_schedule(self, integrations):
+        integration = EmailIntegration(
+            schedule_config={"type": "SINGLE"},
+            last_successful_sync_at=timezone.now(),
+            next_sync_at=None,
+            provider_cursor="",
+        )
+        integrations.select_related.return_value.filter.return_value.filter.return_value = [integration]
+        service = EmailSyncService()
+
+        with patch.object(service, "sync_integration") as sync:
+            outcome = service.sync_due_integrations()
+
+        self.assertEqual(outcome["checked"], 0)
+        sync.assert_not_called()
+
+    def test_restarted_schedule_resets_the_old_watermark(self):
+        service = EmailIntegrationService()
+        integration = EmailIntegration(
+            company=Company(name="Test Company", code="test-company"),
+            status="CONNECTED",
+            is_active=True,
+            is_paused=True,
+            last_successful_sync_at=timezone.now(),
+            latest_fetched_email_received_at=timezone.now() - timedelta(days=2),
+            provider_cursor="old-cursor",
+        )
+        integration.save = Mock()
+        schedule = {
+            "type": "DAILY", "start_date": "2026-12-01", "start_time": "09:00",
+            "timezone": "Asia/Calcutta", "repeat_minutes": None,
+            "repeat_every": 1, "daily_mode": "INTERVAL", "no_end_date": True,
+        }
+
+        with patch.object(service, "check_initial_sync_ready", return_value=integration), \
+             patch.object(service, "_ensure_email_capacity"), \
+             patch("mail_integration.services.next_run_at", return_value=timezone.now()), \
+             patch("mail_integration.tasks.enqueue_next_mailbox_run") as enqueue, \
+             patch("audit.integration_alerts.mark_integration_healthy"):
+            service.configure_initial_sync(
+                user=Mock(),
+                integration_id=integration.id,
+                schedule=schedule,
+                fetch_from_at=timezone.now() - timedelta(days=1),
+            )
+
+        self.assertFalse(integration.is_paused)
+        self.assertIsNone(integration.last_successful_sync_at)
+        self.assertEqual(integration.provider_cursor, "")
+        self.assertEqual(integration.schedule_config, schedule)
+        enqueue.assert_called_once_with(integration.id)
+
+
+class EmailFetchBoundaryTests(SimpleTestCase):
+    def test_fetch_from_validator_returns_an_aware_timestamp(self):
+        serializer = EmailIntegrationConfigureSerializer()
+
+        value = serializer.validate_fetch_from({
+            "date": "2026-11-20",
+            "time": "09:30",
+            "timezone": "Asia/Calcutta",
+        })
+
+        self.assertTrue(timezone.is_aware(value))
+        self.assertEqual(value.hour, 9)
+        self.assertEqual(value.minute, 30)
+
+    def test_fetch_from_at_or_before_prior_received_email_is_rejected(self):
+        service = EmailIntegrationService()
+        integration = EmailIntegration(
+            company=Company(name="Test Company", code="boundary-company"),
+            provider="GOOGLE",
+            mailbox_email="bills@example.com",
+            status="CONNECTED",
+            is_active=True,
+        )
+        latest_received_at = timezone.now() - timedelta(hours=1)
+        integration.latest_fetched_email_received_at = latest_received_at
+        schedule = {
+            "type": "SINGLE", "start_date": "2026-12-01", "start_time": "09:00",
+            "timezone": "Asia/Calcutta", "repeat_minutes": None,
+            "repeat_every": 1, "daily_mode": "INTERVAL", "no_end_date": True,
+        }
+
+        with patch.object(service, "check_initial_sync_ready", return_value=integration), \
+             patch.object(service, "_ensure_email_capacity"), \
+             self.assertRaisesRegex(EmailIntegrationStateError, "already fetched emails through"):
+            service.configure_initial_sync(
+                user=Mock(),
+                integration_id=integration.id,
+                schedule=schedule,
+                fetch_from_at=latest_received_at,
+            )
+
+    @patch("mail_integration.services.EmailMessage.objects.filter")
+    def test_existing_message_received_time_backfills_integration_boundary(self, messages):
+        service = EmailIntegrationService()
+        integration = EmailIntegration(provider="GOOGLE", mailbox_email="bills@example.com")
+        integration.save = Mock()
+        latest_received_at = timezone.now() - timedelta(hours=1)
+        messages.return_value.aggregate.return_value = {"latest": latest_received_at}
+
+        boundary = service._latest_fetched_email_received_at(integration)
+
+        self.assertEqual(boundary, latest_received_at)
+        self.assertEqual(integration.latest_fetched_email_received_at, latest_received_at)
+        integration.save.assert_called_once_with(
+            update_fields=["latest_fetched_email_received_at", "updated_at"]
+        )
+
+    def test_newest_received_email_time_is_kept_on_the_integration(self):
+        integration = EmailIntegration(
+            provider="GOOGLE",
+            mailbox_email="bills@example.com",
+            latest_fetched_email_received_at=timezone.now() - timedelta(days=3),
+        )
+        older = timezone.now() - timedelta(days=2)
+        newest = timezone.now() - timedelta(days=1)
+
+        EmailSyncService._remember_latest_fetched_email_received_at(
+            integration=integration,
+            received_times=[older, newest],
+        )
+
+        self.assertEqual(integration.latest_fetched_email_received_at, newest)
 
 
 class EmailActivationTests(TestCase):
@@ -376,6 +524,8 @@ class EmailRefreshFailureTests(SimpleTestCase):
     GOOGLE_MAIL_CLIENT_SECRET="google-client-secret",
     ZOHO_MAIL_CLIENT_ID="zoho-client-id",
     ZOHO_MAIL_CLIENT_SECRET="zoho-client-secret",
+    OUTLOOK_MAIL_CLIENT_ID="outlook-client-id",
+    OUTLOOK_MAIL_CLIENT_SECRET="outlook-client-secret",
 )
 class EmailOAuthUrlTests(SimpleTestCase):
     def test_mailbox_credentials_override_environment_and_secret_is_not_serialized(self):
@@ -436,6 +586,36 @@ class EmailOAuthUrlTests(SimpleTestCase):
         integration = EmailIntegration(provider="ZOHO", status="ERROR", refresh_token="saved")
         query = parse_qs(urlparse(build_authorization_url(integration=integration, user_id="user")).query)
         self.assertEqual(query["prompt"], ["consent"])
+
+    def test_outlook_authorization_url_requests_graph_mail_and_refresh_access(self):
+        integration = EmailIntegration(provider=EmailIntegration.Provider.OUTLOOK)
+
+        authorization_url = build_authorization_url(integration=integration, user_id="user-789")
+
+        parsed = urlparse(authorization_url)
+        query = parse_qs(parsed.query)
+        self.assertEqual(parsed.netloc, "login.microsoftonline.com")
+        self.assertIn("Mail.Read", query["scope"][0])
+        self.assertIn("User.Read", query["scope"][0])
+        self.assertIn("offline_access", query["scope"][0])
+        self.assertNotIn("access_type", query)
+
+    @patch("mail_integration.client.requests.get")
+    def test_outlook_identity_is_verified_through_microsoft_graph(self, get):
+        get.return_value.status_code = 200
+        get.return_value.json.return_value = {"mail": "bills@example.com"}
+        client = EmailOAuthClient(
+            integration=EmailIntegration(
+                provider=EmailIntegration.Provider.OUTLOOK,
+                mailbox_email="bills@example.com",
+            )
+        )
+
+        email, metadata = client.authorized_mailbox_identity(access_token="token")
+
+        self.assertEqual(email, "bills@example.com")
+        self.assertEqual(metadata, {})
+        self.assertIn("graph.microsoft.com", get.call_args.args[0])
 
 
 class EmailOAuthCompletionTests(SimpleTestCase):
@@ -503,6 +683,33 @@ class MailboxParsingTests(SimpleTestCase):
         self.assertEqual(parsed.sender_email, "vendor@example.com")
         self.assertEqual(parsed.recipient_emails, ["bills@example.com"])
         self.assertEqual(parsed.normalized_body, "Invoice 42")
+
+    def test_outlook_message_is_normalized_with_provider_received_time(self):
+        client = OutlookMailboxClient(
+            integration=EmailIntegration(
+                provider=EmailIntegration.Provider.OUTLOOK,
+                access_token="token",
+            )
+        )
+
+        parsed = client.parse_message(
+            {
+                "id": "outlook-123",
+                "conversationId": "conversation-123",
+                "internetMessageId": "<message-123@example.com>",
+                "from": {"emailAddress": {"address": "vendor@example.com"}},
+                "toRecipients": [{"emailAddress": {"address": "bills@example.com"}}],
+                "subject": "Invoice 43",
+                "sentDateTime": "2026-11-24T07:00:00Z",
+                "receivedDateTime": "2026-11-24T07:05:00Z",
+                "body": {"contentType": "text", "content": "Invoice 43"},
+            }
+        )
+
+        self.assertEqual(parsed.provider_message_id, "outlook-123")
+        self.assertEqual(parsed.sender_email, "vendor@example.com")
+        self.assertEqual(parsed.recipient_emails, ["bills@example.com"])
+        self.assertEqual(parsed.received_at.isoformat(), "2026-11-24T07:05:00+00:00")
 
     def test_html_normalization_discards_script_content(self):
         self.assertEqual(

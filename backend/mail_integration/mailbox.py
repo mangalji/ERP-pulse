@@ -1,4 +1,4 @@
-"""Read-only Gmail and Zoho clients normalized for email staging."""
+"""Read-only Gmail, Zoho, and Outlook clients normalized for email staging."""
 
 from __future__ import annotations
 
@@ -80,8 +80,30 @@ def _header_datetime(value: str) -> datetime | None:
         return None
 
 
+def _graph_datetime(value) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        return (
+            timezone.make_aware(parsed, datetime_timezone.utc)
+            if timezone.is_naive(parsed)
+            else parsed.astimezone(datetime_timezone.utc)
+        )
+    except (TypeError, ValueError):
+        return None
+
+
 def _addresses(value: str) -> list[str]:
     return [address.lower() for _, address in getaddresses([value or ""]) if address]
+
+
+def _graph_addresses(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        str((recipient.get("emailAddress") or {}).get("address") or "").casefold()
+        for recipient in value
+        if isinstance(recipient, dict) and (recipient.get("emailAddress") or {}).get("address")
+    ]
 
 
 class BaseMailboxClient:
@@ -338,9 +360,82 @@ class ZohoMailboxClient(BaseMailboxClient):
         return data if isinstance(data, str) else str(data.get("content") or data.get("messageContent") or "")
 
 
+class OutlookMailboxClient(BaseMailboxClient):
+    """Delegated Microsoft Graph Inbox reader with opaque next-link paging."""
+
+    api_base_url = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.integration.access_token}",
+            "Prefer": 'outlook.body-content-type="text"',
+        }
+
+    @staticmethod
+    def _graph_time(value: datetime) -> str:
+        return value.astimezone(datetime_timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def iter_messages_since(
+        self,
+        since: datetime,
+        *,
+        until: datetime | None = None,
+        cursor: str = "",
+        on_page_completed: Callable[[str], bool | None] | None = None,
+    ) -> Iterator[IncomingMailboxMessage]:
+        request_url = cursor or self.api_base_url
+        request_params = None if cursor else {
+            "$select": "id,conversationId,internetMessageId,from,toRecipients,ccRecipients,bccRecipients,subject,sentDateTime,receivedDateTime,body",
+            "$filter": "receivedDateTime ge " + self._graph_time(since) + (
+                " and receivedDateTime le " + self._graph_time(until) if until else ""
+            ),
+            "$orderby": "receivedDateTime asc",
+            "$top": 100,
+        }
+        while True:
+            listing = self.get(request_url, headers=self.headers, params=request_params)
+            messages = listing.get("value") or []
+            if not isinstance(messages, list):
+                raise EmailMailboxFetchError("Microsoft Graph returned an invalid message list.")
+            for message in messages:
+                if isinstance(message, dict):
+                    yield self.parse_message(message)
+            next_link = str(listing.get("@odata.nextLink") or "")
+            if on_page_completed and next_link and on_page_completed(next_link) is False:
+                return
+            if not next_link:
+                return
+            request_url = next_link
+            request_params = None
+
+    @staticmethod
+    def parse_message(message: dict) -> IncomingMailboxMessage:
+        sender = _graph_addresses([message.get("from") or {}])
+        recipients = []
+        for key in ("toRecipients", "ccRecipients", "bccRecipients"):
+            recipients.extend(_graph_addresses(message.get(key)))
+        body = message.get("body") or {}
+        raw_body = str(body.get("content") or "") if isinstance(body, dict) else ""
+        return IncomingMailboxMessage(
+            provider_message_id=str(message.get("id") or ""),
+            provider_thread_id=str(message.get("conversationId") or ""),
+            internet_message_id=str(message.get("internetMessageId") or ""),
+            sender_email=sender[0] if sender else "",
+            recipient_emails=list(dict.fromkeys(recipients)),
+            subject=str(message.get("subject") or "").strip(),
+            sent_at=_graph_datetime(message.get("sentDateTime")),
+            received_at=_graph_datetime(message.get("receivedDateTime")),
+            raw_body=raw_body,
+            normalized_body=normalize_email_body(raw_body),
+        )
+
+
 def mailbox_client_for(integration: EmailIntegration) -> BaseMailboxClient:
     if integration.provider == EmailIntegration.Provider.GOOGLE:
         return GmailMailboxClient(integration=integration)
     if integration.provider == EmailIntegration.Provider.ZOHO:
         return ZohoMailboxClient(integration=integration)
+    if integration.provider == EmailIntegration.Provider.OUTLOOK:
+        return OutlookMailboxClient(integration=integration)
     raise EmailMailboxFetchError("Unsupported email provider.")

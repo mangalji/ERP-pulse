@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 from django.utils import timezone
 
 from accounts.models import User
@@ -13,7 +14,7 @@ from mail_integration.exceptions import (
     EmailIntegrationNotFoundError,
     EmailIntegrationStateError,
 )
-from mail_integration.models import EmailIntegration
+from mail_integration.models import EmailIntegration, EmailMessage
 from mail_integration.scheduling import next_run_at
 from mail_integration.oauth import (
     build_authorization_url,
@@ -319,13 +320,33 @@ class EmailIntegrationService:
             raise EmailIntegrationStateError(
                 "Make this mailbox active before starting automatic email processing."
             )
-        if integration.initial_sync_from_at is not None:
-            raise EmailIntegrationStateError("Initial email sync is already configured.")
-
         self._ensure_email_capacity(integration.company)
         from mail_integration.health import ensure_email_processing_available
         ensure_email_processing_available()
         return integration
+
+    def fetch_history_boundary(self, *, user: User, integration_id):
+        """Return the actual received-time watermark fetched for this mailbox."""
+        self._ensure_operational(user=user)
+        if not is_company_admin(user):
+            raise PermissionError("Only Company Admin can manage email integrations.")
+        integration = self._get_for_user(user=user, integration_id=integration_id)
+        return self._latest_fetched_email_received_at(integration)
+
+    @staticmethod
+    def _latest_fetched_email_received_at(integration: EmailIntegration):
+        """Use staged messages once for legacy rows, then retain the boundary on the integration."""
+        if integration.latest_fetched_email_received_at is not None:
+            return integration.latest_fetched_email_received_at
+        latest_received_at = EmailMessage.objects.filter(
+            integration_id=integration.id,
+        ).aggregate(latest=Max("received_at"))["latest"]
+        if latest_received_at is not None:
+            integration.latest_fetched_email_received_at = latest_received_at
+            integration.save(
+                update_fields=["latest_fetched_email_received_at", "updated_at"]
+            )
+        return latest_received_at
 
     def set_paused(self, *, user: User, integration_id, paused: bool):
         self._ensure_operational(user=user)
@@ -335,17 +356,11 @@ class EmailIntegrationService:
         if integration.status != EmailIntegration.Status.CONNECTED:
             raise EmailIntegrationStateError("Connect the mailbox before changing automatic processing.")
         if not paused:
-            if not integration.is_active or integration.initial_sync_from_at is None:
-                raise EmailIntegrationStateError("Make this mailbox active and configure its initial sync first.")
-            self._ensure_email_capacity(integration.company)
-            from mail_integration.health import ensure_email_processing_available
-            ensure_email_processing_available()
-            integration.next_sync_at = timezone.now()
+            raise EmailIntegrationStateError(
+                "Choose a new email fetching schedule before starting this mailbox."
+            )
         integration.is_paused = paused
-        integration.save(update_fields=["is_paused", "next_sync_at", "updated_at"])
-        if not paused:
-            from mail_integration.tasks import enqueue_next_mailbox_run
-            enqueue_next_mailbox_run(integration.id)
+        integration.save(update_fields=["is_paused", "updated_at"])
         return integration
 
     def disconnect(self, *, user: User, integration_id):
@@ -399,17 +414,26 @@ class EmailIntegrationService:
             )
             integration.delete()
 
-    def configure_initial_sync(self, *, user: User, integration_id, schedule):
+    def configure_initial_sync(self, *, user: User, integration_id, schedule, fetch_from_at):
+        """Save a first or restarted mailbox-fetch schedule.
+
+        A restarted schedule deliberately clears the old sync checkpoint. The
+        user-selected fetch-from timestamp remains the first mailbox read
+        boundary, subject to durable duplicate protection.
+        """
         integration = self.check_initial_sync_ready(user=user, integration_id=integration_id)
         self._ensure_email_capacity(integration.company)
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        initial_sync_from_at = datetime.fromisoformat(
-            f"{schedule['start_date']}T{schedule['start_time']}"
-        ).replace(tzinfo=ZoneInfo(schedule["timezone"]))
-        integration.initial_sync_from_at = initial_sync_from_at
+        latest_received_at = self._latest_fetched_email_received_at(integration)
+        if latest_received_at is not None and fetch_from_at <= latest_received_at:
+            formatted_boundary = timezone.localtime(latest_received_at).strftime("%d %b %Y, %I:%M %p")
+            raise EmailIntegrationStateError(
+                f"You already fetched emails through {formatted_boundary}. Choose a later date and time."
+            )
+        integration.initial_sync_from_at = fetch_from_at
         integration.schedule_config = schedule
         integration.is_paused = False
+        integration.last_successful_sync_at = None
+        integration.provider_cursor = ""
         integration.sync_interval_minutes = schedule.get("repeat_minutes") or EmailIntegration.DEFAULT_SYNC_INTERVAL_MINUTES
         integration.next_sync_at = next_run_at(schedule) or timezone.now()
         integration.save(
@@ -417,6 +441,8 @@ class EmailIntegrationService:
                 "initial_sync_from_at",
                 "schedule_config",
                 "is_paused",
+                "last_successful_sync_at",
+                "provider_cursor",
                 "sync_interval_minutes",
                 "next_sync_at",
                 "updated_at",

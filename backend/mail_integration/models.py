@@ -18,6 +18,7 @@ class EmailIntegration(models.Model):
     class Provider(models.TextChoices):
         GOOGLE = "GOOGLE", "Google Gmail"
         ZOHO = "ZOHO", "Zoho Mail"
+        OUTLOOK = "OUTLOOK", "Microsoft Outlook"
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -63,6 +64,9 @@ class EmailIntegration(models.Model):
     schedule_config = models.JSONField(default=dict, blank=True)
     initial_sync_from_at = models.DateTimeField(null=True, blank=True)
     last_successful_sync_at = models.DateTimeField(null=True, blank=True)
+    # Kept on the integration so disconnect/reconnect preserves the mailbox
+    # boundary, while deleting the integration intentionally resets it.
+    latest_fetched_email_received_at = models.DateTimeField(null=True, blank=True)
     provider_cursor = models.TextField(blank=True, default="")
     next_sync_at = models.DateTimeField(null=True, blank=True, db_index=True)
     last_error = models.TextField(blank=True, default="")
@@ -88,6 +92,24 @@ class EmailIntegration(models.Model):
 
     def __str__(self) -> str:
         return f"{self.mailbox_email} ({self.provider})"
+
+    @property
+    def is_fetching_stopped(self) -> bool:
+        """Whether mailbox fetching needs a new schedule before it can run.
+
+        ``is_paused`` is an explicit stop that also holds staged email
+        processing. A completed schedule (a one-time run or an ended
+        recurrence) must stop only new mailbox fetching, so already-staged
+        emails can still finish processing.
+        """
+        if self.is_paused:
+            return True
+        return bool(
+            self.schedule_config
+            and self.last_successful_sync_at is not None
+            and self.next_sync_at is None
+            and not self.provider_cursor
+        )
 
 
 class EmailMessage(models.Model):

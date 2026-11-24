@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -46,6 +49,7 @@ class EmailIntegrationCreateSerializer(serializers.Serializer):
 
 class EmailIntegrationConfigureSerializer(serializers.Serializer):
     schedule = serializers.JSONField()
+    fetch_from = serializers.JSONField()
 
     def validate_schedule(self, value):
         try:
@@ -53,10 +57,23 @@ class EmailIntegrationConfigureSerializer(serializers.Serializer):
         except ValueError as exc:
             raise serializers.ValidationError(str(exc)) from exc
 
-    def validate_initial_sync_from_at(self, value):
-        if value > timezone.now():
-            raise serializers.ValidationError("Initial sync time cannot be in the future.")
-        return value
+    def validate_fetch_from(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Fetch-from details are required.")
+        date_value = value.get("date")
+        time_value = value.get("time")
+        timezone_name = value.get("timezone")
+        if not all(isinstance(item, str) and item for item in (date_value, time_value, timezone_name)):
+            raise serializers.ValidationError("Provide a fetch-from date, time, and time zone.")
+        try:
+            fetch_from_at = datetime.fromisoformat(f"{date_value}T{time_value}").replace(
+                tzinfo=ZoneInfo(timezone_name)
+            )
+        except (TypeError, ValueError, ZoneInfoNotFoundError) as exc:
+            raise serializers.ValidationError("Provide a valid fetch-from date, time, and time zone.") from exc
+        if fetch_from_at > timezone.now():
+            raise serializers.ValidationError("Fetch-from time cannot be in the future.")
+        return fetch_from_at
 
 
 class EmailOAuthCallbackSerializer(serializers.Serializer):
@@ -67,6 +84,7 @@ class EmailOAuthCallbackSerializer(serializers.Serializer):
 
 
 class EmailIntegrationSerializer(serializers.ModelSerializer):
+    is_fetching_stopped = serializers.BooleanField(read_only=True)
     initial_sync_configured = serializers.SerializerMethodField()
     token_expires_in_seconds = serializers.SerializerMethodField()
 
@@ -81,6 +99,7 @@ class EmailIntegrationSerializer(serializers.ModelSerializer):
             "status",
             "is_active",
             "is_paused",
+            "is_fetching_stopped",
             "sync_interval_minutes",
             "schedule_config",
             "initial_sync_from_at",

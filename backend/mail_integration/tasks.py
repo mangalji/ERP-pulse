@@ -22,7 +22,7 @@ def enqueue_next_mailbox_run(integration_id):
 def run_scheduled_mailbox(integration_id):
     """Run one mailbox at its configured next-run time."""
     integration = EmailIntegration.objects.filter(pk=integration_id).first()
-    if not integration or not integration.is_active or integration.is_paused:
+    if not integration or not integration.is_active or integration.is_fetching_stopped:
         return {"skipped": True}
     if integration.next_sync_at and integration.next_sync_at > timezone.now():
         return {"skipped": True, "next_sync_at": integration.next_sync_at.isoformat()}

@@ -1,4 +1,4 @@
-"""HTTP client for Gmail and Zoho OAuth token endpoints."""
+"""HTTP client for Gmail, Zoho, and Outlook OAuth token endpoints."""
 
 from __future__ import annotations
 
@@ -108,6 +108,18 @@ class EmailOAuthClient:
                     "The authorized Zoho account does not match the mailbox email entered."
                 )
             return expected, {"zoho_account_id": account_id}
+
+        if self.integration.provider == EmailIntegration.Provider.OUTLOOK:
+            data = self._get_json(
+                "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            email = str(data.get("mail") or data.get("userPrincipalName") or "").strip().lower()
+            if not email:
+                raise EmailIntegrationOAuthError(
+                    "Microsoft did not return an Outlook mailbox email address."
+                )
+            return email, {}
 
         raise EmailIntegrationOAuthError("Unsupported email provider.")
 

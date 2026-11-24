@@ -7,6 +7,7 @@ export const emailIntegrationApi = {
   connect: (payload) => apiClient.post(root, payload).then(unwrap),
   activate: (id) => apiClient.post(`${root}${id}/activate/`).then(unwrap),
   configureInitialSync: (id, payload) => apiClient.patch(`${root}${id}/initial-sync/`, payload).then(unwrap),
+  fetchBoundary: (id) => apiClient.get(`${root}${id}/fetch-boundary/`).then(unwrap),
   checkSyncReadiness: (id) => apiClient.post(`${root}${id}/sync-readiness/`).then(unwrap),
   pause: (id) => apiClient.post(`${root}${id}/pause/`).then(unwrap),
   resume: (id) => apiClient.post(`${root}${id}/resume/`).then(unwrap),

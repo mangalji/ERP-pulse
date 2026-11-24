@@ -1247,6 +1247,15 @@ useEffect(() => {
     [data, configuredFields],
   )
 
+  const copyJsonToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(jsonDisplayData, null, 2))
+      addToast('OCR JSON copied to clipboard', 'success')
+    } catch {
+      addToast('Unable to copy OCR JSON.', 'error')
+    }
+  }
+
   const setField = useCallback((key, value) => {
     setValidationResult(null)
     setAiDiagnostics([])
@@ -3092,7 +3101,12 @@ const goNext = () => {
                     </div>
                   ) : (
                     <>
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-2">
+                    {viewMode === 'json' && (
+                      <Button type="button" size="sm" intent="secondary" onClick={copyJsonToClipboard}>
+                        Copy
+                      </Button>
+                    )}
                     <div className="inline-flex overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-1"
                   role="group"
                   aria-label="OCR output view">

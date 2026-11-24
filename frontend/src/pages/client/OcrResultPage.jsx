@@ -384,6 +384,15 @@ export default function OcrResultPage() {
     [data, configuredFields],
   )
 
+  const copyJsonToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(jsonDisplayData, null, 2))
+      addToast('OCR JSON copied to clipboard', 'success')
+    } catch {
+      addToast('Unable to copy OCR JSON.', 'error')
+    }
+  }
+
   useEffect(() => {
   const cancelActiveRequests = () => {
     validationAbortControllerRef.current?.abort()
@@ -1217,7 +1226,12 @@ const setField = useCallback((key, value) => {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-auto bg-[var(--color-surface)] p-4">
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-2">
+                    {viewMode === 'json' && (
+                      <Button type="button" size="sm" intent="secondary" onClick={copyJsonToClipboard}>
+                        Copy
+                      </Button>
+                    )}
                     <div
                       className="inline-flex overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-1"
                       role="group"

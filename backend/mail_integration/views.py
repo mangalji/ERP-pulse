@@ -72,7 +72,7 @@ class EmailOAuthCallbackView(APIView):
             from mail_integration.exceptions import EmailIntegrationStateError
             raise EmailIntegrationStateError("The email provider did not return an authorization code.")
         try:
-            service.complete_oauth(code=data["code"], state=data["state"])
+            integration = service.complete_oauth(code=data["code"], state=data["state"])
         except Exception:
             # complete_oauth persists the failed state/audit entry after its
             # transaction rolls back. OAuth callbacks must return the user to
@@ -81,7 +81,7 @@ class EmailOAuthCallbackView(APIView):
                 f"{settings.FRONTEND_URL.rstrip('/')}/#/app/integrations/email?email=failed"
             )
         return redirect(
-            f"{settings.FRONTEND_URL.rstrip('/')}/#/app/integrations/email?email=connected"
+            f"{settings.FRONTEND_URL.rstrip('/')}/#/app/integrations/email?email=connected&integration={integration.id}"
         )
 
 
@@ -107,6 +107,22 @@ class EmailIntegrationSyncReadinessView(APIView):
         return success_response(message="Email sync is ready to configure.", data={})
 
 
+class EmailIntegrationFetchBoundaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, integration_id):
+        boundary = EmailIntegrationService().fetch_history_boundary(
+            user=request.user,
+            integration_id=integration_id,
+        )
+        return success_response(
+            message="Mailbox fetch boundary fetched successfully.",
+            data={
+                "latest_fetched_email_received_at": boundary.isoformat() if boundary else None,
+            },
+        )
+
+
 class EmailIntegrationPauseView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -119,8 +135,13 @@ class EmailIntegrationResumeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, integration_id):
-        integration = EmailIntegrationService().set_paused(user=request.user, integration_id=integration_id, paused=False)
-        return success_response(message="Automatic email processing resumed.", data=EmailIntegrationSerializer(integration).data)
+        # Kept as a compatibility endpoint. A restart requires a schedule, so
+        # callers must use the initial-sync endpoint with schedule details.
+        EmailIntegrationService().set_paused(
+            user=request.user,
+            integration_id=integration_id,
+            paused=False,
+        )
 
 
 class EmailIntegrationDisconnectView(APIView):
@@ -152,9 +173,10 @@ class EmailIntegrationInitialSyncView(APIView):
             user=request.user,
             integration_id=integration_id,
             schedule=serializer.validated_data["schedule"],
+            fetch_from_at=serializer.validated_data["fetch_from"],
         )
         return success_response(
-            message="Initial email sync is configured.",
+            message="Email fetching schedule is configured.",
             data=EmailIntegrationSerializer(integration).data,
         )
 
