@@ -116,7 +116,6 @@ class AuthenticationService:
         first_name: str | None = None,
         last_name: str | None = None,
         mobile_number: str | None = None,
-        profile_pic=None
     ) -> User:
         """
         Update authenticated user's profile fields.
@@ -143,10 +142,6 @@ class AuthenticationService:
             user.mobile_number = mobile_number
             update_fields.append('mobile_number')
     
-        if profile_pic is not None:
-            user.profile_pic = profile_pic
-            update_fields.append('profile_pic')
-    
         if update_fields:
             user.save(update_fields=update_fields)
     
@@ -166,7 +161,6 @@ class AuthenticationService:
         first_name: str | None = None,
         last_name: str | None = None,
         mobile_number: str | None = None,
-        profile_pic=None
     ) -> User:
         """
         LEGACY — OTP-based profile update flow retained for compatibility.
@@ -183,7 +177,6 @@ class AuthenticationService:
             first_name=first_name,
             last_name=last_name,
             mobile_number=mobile_number,
-            profile_pic=profile_pic,
         )
 
 

@@ -404,7 +404,7 @@ Additional deployment notes are available in [DEPLOY.md](DEPLOY.md) and [DEPLOY_
 | API returns `DisallowedHost` | Backend hostname in `ALLOWED_HOSTS` |
 | Browser reports CORS/CSRF errors | Frontend origin, trusted origins, cookie settings, and HTTP/HTTPS consistency |
 | Frontend calls the wrong API | `VITE_API_BASE_URL` at build time; rebuild after changing it |
-| Email passes its displayed due time | Next one-minute scheduler check, worker queue, connection state, and provider response |
+| Email passes its displayed due time | Scheduled task queue, worker queue, connection state, and provider response |
 | Sync reports `checked: 0` | No mailbox met the active, connected, unpaused, initialized, and due filters |
 | Mailbox requires authorization | Reconnect through provider OAuth to restore valid credentials |
 | Forgot Password says the account is unregistered or inactive | Use the invitation flow for a pending employee; reactivate the company/account through an administrator before requesting a reset OTP |

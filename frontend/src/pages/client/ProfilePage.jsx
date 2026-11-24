@@ -4,7 +4,6 @@ import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
 import Toast, { useToast } from '../../components/ui/Toast.jsx'
-import ProfilePhotoPicker from '../../components/ui/ProfilePhotoPicker.jsx'
 import { useAuth } from '../../contexts/AuthContext.jsx'
 
 export default function ProfilePage() {
@@ -14,7 +13,6 @@ export default function ProfilePage() {
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [mobileNumber, setMobileNumber] = useState('')
-  const [profilePic, setProfilePic] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [localError, setLocalError] = useState('')
 
@@ -23,7 +21,6 @@ export default function ProfilePage() {
       setFirstName(user.first_name || '')
       setLastName(user.last_name || '')
       setMobileNumber(user.mobile_number || '')
-      setProfilePic(null)
     }
   }, [user])
 
@@ -37,7 +34,6 @@ export default function ProfilePage() {
         firstName,
         lastName,
         mobileNumber,
-        profilePic,
       })
 
       addToast('Profile updated successfully', 'success')
@@ -87,11 +83,6 @@ export default function ProfilePage() {
               label="Mobile number"
               value={mobileNumber}
               onChange={(e) => setMobileNumber(e.target.value)}
-            />
-            <ProfilePhotoPicker
-              profilePicture={user?.profile_pic}
-              initials={`${firstName?.[0] || ''}${lastName?.[0] || ''}`.toUpperCase() || 'U'}
-              onChange={setProfilePic}
             />
             {localError && <p className="text-sm text-[var(--color-negative)]">{localError}</p>}
             <Button type="submit" isLoading={isSubmitting} className="w-fit">

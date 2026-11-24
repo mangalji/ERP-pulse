@@ -33,28 +33,19 @@ export const authApi = {
   profileSendOtp: () =>
   apiClient.post(AUTH_ENDPOINTS.profileSendOtp).then(unwrap),
 
-profileUpdate: ({ firstName, lastName, mobileNumber, profilePic } = {}) => {
-  const hasFile = profilePic instanceof File
-  const body = hasFile ? new FormData() : {}
+profileUpdate: ({ firstName, lastName, mobileNumber } = {}) => {
+  const body = {}
 
   if (firstName !== undefined) {
-    if (hasFile) body.append('first_name', firstName)
-    else body.first_name = firstName
+    body.first_name = firstName
   }
 
   if (lastName !== undefined) {
-    if (hasFile) body.append('last_name', lastName)
-    else body.last_name = lastName
+    body.last_name = lastName
   }
 
   if (mobileNumber !== undefined) {
-    if (hasFile) body.append('mobile_number', mobileNumber)
-    else body.mobile_number = mobileNumber
-  }
-
-  if (profilePic !== undefined && profilePic !== null) {
-    if (hasFile) body.append('profile_pic', profilePic)
-    else body.profile_pic = profilePic
+    body.mobile_number = mobileNumber
   }
 
   return apiClient.post(AUTH_ENDPOINTS.profileUpdate, body).then(unwrap)

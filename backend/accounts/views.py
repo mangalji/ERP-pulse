@@ -49,7 +49,6 @@ from common.authentication import (
     CheckedTokenRefreshSerializer,
 )
 from django.middleware.csrf import get_token
-from django.http import FileResponse, Http404
 
 
 class CSRFTokenView(APIView):
@@ -285,31 +284,6 @@ class MeView(APIView):
             message='User fetched successfully.',
             data=UserSerializer(request.user).data,
         )
-
-
-class ProfilePictureView(APIView):
-    """Serve only the authenticated user's uploaded profile picture."""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, user_id):
-        # A profile image is personal data.  Do not let a known/leaked user
-        # UUID become a public image URL or an account-enumeration oracle.
-        if request.user.id != user_id:
-            raise Http404
-
-        try:
-            user = User.objects.get(id=user_id, is_active=True)
-        except User.DoesNotExist as exc:
-            raise Http404 from exc
-
-        if not user.profile_pic:
-            raise Http404
-
-        try:
-            return FileResponse(user.profile_pic.open('rb'), content_type='image/*')
-        except (FileNotFoundError, OSError) as exc:
-            raise Http404 from exc
 
 
 class LoginHistoryView(APIView):

@@ -34,7 +34,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
     mobile_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
-    profile_pic = models.ImageField(upload_to='profile_pics/', null=True, blank=True)
 
     # Company relationship — one Company has many Users, a User belongs
     # to one Company. Company can be NULL for platform-level users.

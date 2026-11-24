@@ -18,6 +18,7 @@ from mail_integration.health import ensure_email_processing_available
 from mail_integration.exceptions import EmailIntegrationStateError
 from mail_integration.services import EmailIntegrationService
 from mail_integration.pipeline import EmailBillPipeline
+from mail_integration.tasks import _record_mailbox_sync_summary, run_scheduled_mailbox
 from netsuite.services import NetSuiteValidationService
 from tenancy.models import Company
 
@@ -266,23 +267,6 @@ class EmailScheduleRestartTests(SimpleTestCase):
         )
 
         self.assertTrue(integration.is_fetching_stopped)
-
-    @patch("mail_integration.sync.EmailIntegration.objects")
-    def test_scheduler_skips_a_completed_schedule(self, integrations):
-        integration = EmailIntegration(
-            schedule_config={"type": "SINGLE"},
-            last_successful_sync_at=timezone.now(),
-            next_sync_at=None,
-            provider_cursor="",
-        )
-        integrations.select_related.return_value.filter.return_value.filter.return_value = [integration]
-        service = EmailSyncService()
-
-        with patch.object(service, "sync_integration") as sync:
-            outcome = service.sync_due_integrations()
-
-        self.assertEqual(outcome["checked"], 0)
-        sync.assert_not_called()
 
     def test_restarted_schedule_resets_the_old_watermark(self):
         service = EmailIntegrationService()
@@ -716,3 +700,137 @@ class MailboxParsingTests(SimpleTestCase):
             normalize_email_body("<p>Total: 500</p><script>do-not-send()</script>"),
             "Total: 500",
         )
+
+class MailboxSyncSummaryTests(SimpleTestCase):
+    """``last_sync_summary`` must stay live on the per-mailbox scheduling path.
+
+    ``process_due_messages`` drains due messages system-wide, so these tests
+    pin down that only the target mailbox's own counts are read back out of
+    its ``by_integration`` breakdown — another mailbox's activity in the same
+    run must never leak into this one's "Latest processing result".
+    """
+
+    @patch("mail_integration.tasks.EmailIntegration.objects.filter")
+    def test_summary_uses_only_this_integrations_counts_from_a_system_wide_pipeline_run(self, integrations):
+        update = Mock()
+        integrations.return_value.update = update
+        pipeline = {
+            "processed": 9,
+            "promoted": 4,
+            "by_integration": {
+                "this-integration": {"processed": 3, "promoted": 1, "discarded": 2, "deferred": 0},
+                "other-integration": {"processed": 6, "promoted": 3, "discarded": 0, "deferred": 0},
+            },
+        }
+
+        _record_mailbox_sync_summary(integration_id="this-integration", emails_fetched=5, pipeline=pipeline)
+
+        integrations.assert_called_once_with(pk="this-integration")
+        summary = update.call_args.kwargs["last_sync_summary"]
+        self.assertEqual(summary["emails_fetched"], 5)
+        self.assertEqual(summary["emails_processed"], 3)
+        self.assertEqual(summary["vendor_bill_records_created"], 1)
+        self.assertEqual(summary["emails_ignored"], 2)
+        self.assertEqual(summary["emails_deferred"], 0)
+
+    @patch("mail_integration.tasks.EmailIntegration.objects.filter")
+    def test_summary_defaults_to_zero_counts_when_integration_is_missing_from_the_breakdown(self, integrations):
+        update = Mock()
+        integrations.return_value.update = update
+
+        _record_mailbox_sync_summary(
+            integration_id="idle-integration",
+            emails_fetched=0,
+            pipeline={"processed": 0, "by_integration": {}},
+        )
+
+        summary = update.call_args.kwargs["last_sync_summary"]
+        self.assertEqual(
+            {summary["emails_processed"], summary["vendor_bill_records_created"], summary["emails_ignored"], summary["emails_deferred"]},
+            {0},
+        )
+
+    @patch("mail_integration.tasks.EmailIntegration.objects.filter")
+    def test_summary_write_failure_is_swallowed_and_logged(self, integrations):
+        integrations.return_value.update.side_effect = Exception("db unavailable")
+
+        try:
+            _record_mailbox_sync_summary(integration_id="any-integration", emails_fetched=1, pipeline={})
+        except Exception:  # pragma: no cover - failing this test means the swallow broke
+            self.fail("_record_mailbox_sync_summary must not raise; it is a best-effort status write")
+
+    @patch("mail_integration.tasks.EmailIntegration.objects.filter")
+    def test_missing_pipeline_breakdown_does_not_raise(self, integrations):
+        update = Mock()
+        integrations.return_value.update = update
+
+        _record_mailbox_sync_summary(integration_id="any-integration", emails_fetched=2, pipeline=None)
+
+        summary = update.call_args.kwargs["last_sync_summary"]
+        self.assertEqual(summary["emails_fetched"], 2)
+        self.assertEqual(summary["emails_processed"], 0)
+
+
+class RunScheduledMailboxTests(SimpleTestCase):
+    """End-to-end safety checks for the active per-mailbox Celery task."""
+
+    def _due_integration(self):
+        return EmailIntegration(
+            id="integration-1",
+            status="CONNECTED",
+            is_active=True,
+            is_paused=False,
+            next_sync_at=timezone.now() - timedelta(minutes=1),
+        )
+
+    @patch("mail_integration.tasks.enqueue_next_mailbox_run")
+    @patch("mail_integration.tasks._record_mailbox_sync_summary")
+    @patch("mail_integration.tasks.EmailBillPipeline")
+    @patch("mail_integration.tasks.EmailSyncService")
+    @patch("mail_integration.tasks.EmailIntegration.objects.filter")
+    def test_successful_run_records_summary_and_reenqueues(
+        self, integrations, sync_service, pipeline_cls, record_summary, enqueue,
+    ):
+        integrations.return_value.first.return_value = self._due_integration()
+        sync_service.return_value.sync_integration.return_value = 7
+        pipeline_cls.return_value.process_due_messages.return_value = {"by_integration": {}}
+
+        result = run_scheduled_mailbox("integration-1")
+
+        self.assertEqual(result["emails_fetched"], 7)
+        record_summary.assert_called_once_with(
+            integration_id="integration-1", emails_fetched=7, pipeline={"by_integration": {}},
+        )
+        enqueue.assert_called_once_with("integration-1")
+
+    @patch("mail_integration.tasks.enqueue_next_mailbox_run")
+    @patch("mail_integration.tasks._record_mailbox_sync_summary", side_effect=Exception("unexpected"))
+    @patch("mail_integration.tasks.EmailBillPipeline")
+    @patch("mail_integration.tasks.EmailSyncService")
+    @patch("mail_integration.tasks.EmailIntegration.objects.filter")
+    def test_reenqueues_even_if_summary_recording_unexpectedly_raises(
+        self, integrations, sync_service, pipeline_cls, record_summary, enqueue,
+    ):
+        """Belt-and-braces: the ``finally`` must fire even past the swallow above."""
+        integrations.return_value.first.return_value = self._due_integration()
+        sync_service.return_value.sync_integration.return_value = 1
+        pipeline_cls.return_value.process_due_messages.return_value = {"by_integration": {}}
+
+        with self.assertRaises(Exception):
+            run_scheduled_mailbox("integration-1")
+
+        enqueue.assert_called_once_with("integration-1")
+
+    @patch("mail_integration.tasks.enqueue_next_mailbox_run")
+    @patch("mail_integration.tasks._record_mailbox_sync_summary")
+    @patch("mail_integration.tasks.EmailIntegration.objects.filter")
+    def test_skipped_mailbox_never_writes_a_summary(self, integrations, record_summary, enqueue):
+        integrations.return_value.first.return_value = EmailIntegration(
+            id="integration-2", status="CONNECTED", is_active=False,
+        )
+
+        result = run_scheduled_mailbox("integration-2")
+
+        self.assertEqual(result, {"skipped": True})
+        record_summary.assert_not_called()
+        enqueue.assert_not_called()

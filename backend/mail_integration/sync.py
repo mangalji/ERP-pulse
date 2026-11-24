@@ -62,41 +62,6 @@ def dedupe_syncs_to_retain(integration: EmailIntegration) -> int:
 class EmailSyncService:
     """Idempotent mailbox-to-staging synchronisation; no AI work belongs here."""
 
-    @timed_stage("email.sync_due_mailboxes")
-    def sync_due_integrations(self) -> dict:
-        now = timezone.now()
-        due = EmailIntegration.objects.filter(
-            status=EmailIntegration.Status.CONNECTED,
-            is_active=True,
-            is_paused=False,
-            initial_sync_from_at__isnull=False,
-        ).filter(Q(next_sync_at__isnull=True) | Q(next_sync_at__lte=now))
-        outcomes = {"checked": 0, "staged": 0, "failed": 0, "by_integration": {}}
-        for integration in due:
-            if integration.is_fetching_stopped:
-                continue
-            integration_id = integration.id
-            outcomes["checked"] += 1
-            try:
-                staged = self.sync_integration(integration_id=integration_id)
-                outcomes["staged"] += staged
-                outcomes["by_integration"][str(integration_id)] = {
-                    "checked_at": timezone.now().isoformat(),
-                    "fetched": staged,
-                }
-            except (EmailIntegrationOAuthError, EmailMailboxFetchError) as exc:
-                outcomes["failed"] += 1
-                logger.warning(
-                    "Email mailbox sync failed — integration=%s category=%s error=%s",
-                    integration_id,
-                    "authorization" if getattr(exc, "authorization_required", False) else "provider_or_network",
-                    str(exc),
-                )
-            except Exception:  # Individual mailbox failures must not block others.
-                outcomes["failed"] += 1
-                logger.exception("Email mailbox sync crashed unexpectedly — integration=%s", integration_id)
-        return outcomes
-
     @timed_stage("email.fetch_mailbox")
     def sync_integration(self, *, integration_id) -> int:
         integration = EmailIntegration.objects.select_related("company").get(id=integration_id)

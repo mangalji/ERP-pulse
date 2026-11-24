@@ -5535,7 +5535,7 @@ class NetSuiteValidationService:
                     isinactive
                 FROM item
                 WHERE {" OR ".join(conditions)}
-                ORDER BY id
+                ORDER BY createddate DESC, id DESC
             """
 
             response = self._execute_live_suiteql(
@@ -5961,14 +5961,15 @@ class NetSuiteValidationService:
                 id,
                 itemid,
                 displayname,
-                isinactive
+                isinactive,
+                createddate
             FROM item
             WHERE
                 (
                     LOWER(itemid) = LOWER({query_literal})
                     OR LOWER(displayname) = LOWER({query_literal})
                 )
-            ORDER BY id
+            ORDER BY createddate DESC, id DESC
         """
 
         try:

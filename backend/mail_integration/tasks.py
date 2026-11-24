@@ -1,5 +1,7 @@
 """Celery entry points for mailbox sync and automatic bill processing."""
 
+import logging
+
 from celery import shared_task
 from django.utils import timezone
 
@@ -7,6 +9,8 @@ from mail_integration.pipeline import EmailBillPipeline
 from mail_integration.sync import EmailSyncService
 from mail_integration.health import record_scheduler_heartbeat
 from mail_integration.models import EmailIntegration
+
+logger = logging.getLogger(__name__)
 
 
 def enqueue_next_mailbox_run(integration_id):
@@ -29,9 +33,44 @@ def run_scheduled_mailbox(integration_id):
     try:
         staged = EmailSyncService().sync_integration(integration_id=integration_id)
         pipeline = EmailBillPipeline().process_due_messages()
+        _record_mailbox_sync_summary(integration_id=integration_id, emails_fetched=staged, pipeline=pipeline)
         return {"integration_id": str(integration_id), "emails_fetched": staged, "pipeline": pipeline}
     finally:
         enqueue_next_mailbox_run(integration_id)
+
+
+def _record_mailbox_sync_summary(*, integration_id, emails_fetched, pipeline):
+    """Keep ``last_sync_summary`` current for the per-mailbox scheduling path.
+
+    This is the UI's "Latest processing result" line. ``process_due_messages``
+    is not scoped to one mailbox — it drains whatever is due system-wide — so
+    this mailbox's own counts are read back out of its ``by_integration``
+    breakdown rather than the run's totals, which can include other mailboxes.
+
+    Failures here must never break mailbox fetching itself: this is a
+    best-effort status write, logged and swallowed on error so the calling
+    task still returns its real result and still re-enqueues its next run.
+    """
+    try:
+        own_counts = (pipeline or {}).get("by_integration", {}).get(str(integration_id), {})
+        now = timezone.now()
+        summary = {
+            "completed_at": now.isoformat(),
+            "checked_at": now.isoformat(),
+            "emails_fetched": emails_fetched,
+            "emails_processed": own_counts.get("processed", 0),
+            "vendor_bill_records_created": own_counts.get("promoted", 0),
+            "emails_ignored": own_counts.get("discarded", 0),
+            "emails_deferred": own_counts.get("deferred", 0),
+        }
+        EmailIntegration.objects.filter(pk=integration_id).update(
+            last_sync_summary=summary,
+            updated_at=now,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to record mailbox sync summary — integration=%s", integration_id,
+        )
 
 
 @shared_task
@@ -42,36 +81,3 @@ def email_scheduler_heartbeat():
     # scheduler was down; no request needs to be made for the alert to resume.
     from audit.integration_alerts import check_integration_failure_alerts
     check_integration_failure_alerts()
-
-
-@shared_task
-def sync_due_mailboxes():
-    """Stage new messages, then promote due email bills FIFO."""
-    from audit.integration_alerts import check_integration_failure_alerts
-    check_integration_failure_alerts()
-    sync = EmailSyncService().sync_due_integrations()
-    pipeline = EmailBillPipeline().process_due_messages()
-    sync_details = sync.pop("by_integration", {})
-    pipeline_details = pipeline.pop("by_integration", {})
-    for integration_id in set(sync_details) | set(pipeline_details):
-        fetch_result = sync_details.get(integration_id, {})
-        processing_result = pipeline_details.get(integration_id, {})
-        summary = {
-            "completed_at": timezone.now().isoformat(),
-            "checked_at": fetch_result.get("checked_at"),
-            "emails_fetched": fetch_result.get("fetched", 0),
-            "emails_processed": processing_result.get("processed", 0),
-            "vendor_bill_records_created": processing_result.get("promoted", 0),
-            "emails_ignored": processing_result.get("discarded", 0),
-            "emails_deferred": processing_result.get("deferred", 0),
-        }
-        EmailIntegration.objects.filter(pk=integration_id).update(
-            last_sync_summary=summary,
-            updated_at=timezone.now(),
-        )
-    return {"sync": sync, "pipeline": pipeline}
-
-
-@shared_task
-def process_due_email_messages():
-    return EmailBillPipeline().process_due_messages()

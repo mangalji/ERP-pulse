@@ -1,6 +1,5 @@
 from django.contrib.auth.password_validation import validate_password
 from django.core.validators import RegexValidator
-from django.urls import reverse
 from rest_framework import serializers
 
 from common.common_utils import (
@@ -95,8 +94,6 @@ class UserSerializer(serializers.ModelSerializer):
         source='is_superuser',
         read_only=True,
     )
-    profile_pic = serializers.SerializerMethodField()
- 
     class Meta:
         model = User
         fields = [
@@ -108,7 +105,6 @@ class UserSerializer(serializers.ModelSerializer):
             "country",
             "phone_country_code",
             "gender",
-            'profile_pic',
             'is_active',
             'is_email_verified',
             'created_at',
@@ -123,11 +119,6 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.netsuite_connections.filter(
         is_active=True,
         ).exists()
-
-    def get_profile_pic(self, obj):
-        if not obj.profile_pic:
-            return None
-        return reverse('profile-picture', kwargs={'user_id': obj.id})
 
     def get_roles(self, obj):
         if not obj.role_id:
@@ -185,11 +176,6 @@ class ProfileUpdateSerializer(serializers.Serializer):
         choices=Gender.choices,
         required=False,
         allow_blank=True,
-        allow_null=True,
-    )
-
-    profile_pic = serializers.ImageField(
-        required=False,
         allow_null=True,
     )
 
