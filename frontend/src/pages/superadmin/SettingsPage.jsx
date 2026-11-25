@@ -12,6 +12,14 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const assignedRole = user?.roles?.[0]
+  const roleLabel = assignedRole
+    ? assignedRole.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
+    : user?.is_staff
+      ? 'Admin'
+      : user?.is_superadmin
+        ? 'Super Admin'
+        : 'User'
 
   useEffect(() => {
     setForm({
@@ -89,7 +97,7 @@ export default function SettingsPage() {
               <Input
                 id="profile-role"
                 label="Role"
-                value="Super Admin"
+                value={roleLabel}
                 disabled
               />
             </div>

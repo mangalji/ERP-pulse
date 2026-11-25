@@ -85,6 +85,34 @@ class SharedCompanyInvitationFlowTests(TestCase):
         self.assertTrue(result['invitation_email_sent'])
         send_email.assert_called_once_with(invitation)
 
+    @patch.object(invitation_service, '_send_invitation_email', return_value=True)
+    def test_creates_pending_agsuite_internal_admin_invitation(self, send_email):
+        result = invitation_service.create_internal_user_and_invite(
+            acting_user=self.actor,
+            email='internal.admin@example.com',
+            first_name='Internal',
+            last_name='Admin',
+            country='IN',
+            mobile_number='+919999999997',
+        )
+
+        user = result['user']
+        invitation = result['invitation']
+        user.refresh_from_db()
+
+        self.assertIsNone(user.company_id)
+        self.assertIsNone(user.role_id)
+        self.assertTrue(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertFalse(user.is_active)
+        self.assertFalse(user.is_email_verified)
+        self.assertFalse(user.has_usable_password())
+        self.assertIsNone(invitation.company_id)
+        self.assertIsNone(invitation.role_id)
+        self.assertEqual(invitation.status, InvitationStatus.PENDING)
+        self.assertTrue(result['invitation_email_sent'])
+        send_email.assert_called_once_with(invitation)
+
     def test_rejects_the_platform_super_admin_role_for_company_user(self):
         super_admin_role = Role.objects.create(name='Super Admin')
 

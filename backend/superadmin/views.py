@@ -784,9 +784,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
         # Super Admin can make an initial Employee or Company Admin invite,
         # but cannot use this endpoint to alter an existing user's role.
-        if role not in {"employee", "company_admin"}:
+        if role not in {"employee", "company_admin", "admin"}:
             raise ValidationError(
-                "Select either the Employee or Company Admin role."
+                "Select Employee, Company Admin, or AGSuite Admin."
             )
 
         if not email:

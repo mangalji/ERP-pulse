@@ -197,7 +197,20 @@ class SuperAdminService:
         }
 
     def create_employee(self, *, email, first_name, last_name, company_id, role, acting_user, request=None, mobile_number=None, country=None, designation='', department=''):
-        """Create a client-company user through the shared invitation flow."""
+        """Create an AGSuite internal Admin or a client-company user."""
+        if company_id == 'agsuite_internal':
+            if role != 'admin':
+                raise ValueError('AGSuite internal users must use the Admin role.')
+            return invitation_service.create_internal_user_and_invite(
+                acting_user=acting_user,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                mobile_number=mobile_number,
+                country=country,
+                request=request,
+            )
+
         role_names = {
             'employee': 'Employee',
             'company_admin': 'Company Admin',

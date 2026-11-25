@@ -15,10 +15,7 @@ mobile_number_validator = RegexValidator(
 
 
 class InvitationSerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(
-        source="company.name",
-        read_only=True,
-    )
+    company_name = serializers.SerializerMethodField()
     role_name = serializers.CharField(
         source="role.name",
         read_only=True,
@@ -52,6 +49,9 @@ class InvitationSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+    def get_company_name(self, obj):
+        return obj.company.name if obj.company_id else 'AGSuite'
 
 
 class RequestInvitationOTPSerializer(serializers.Serializer):

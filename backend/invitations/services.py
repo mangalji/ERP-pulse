@@ -47,6 +47,11 @@ class InvitationService:
         return None
 
     @staticmethod
+    def _ensure_company_operational(company) -> None:
+        if company is not None:
+            company_lifecycle_service.ensure_operational(company=company)
+
+    @staticmethod
     def _is_configured_department(*, company, department: str) -> bool:
         """Validate against the company's editable department catalogue.
 
@@ -224,6 +229,112 @@ class InvitationService:
             'invitation_email_sent': invitation_email_sent,
         }
 
+    def create_internal_user_and_invite(
+        self,
+        *,
+        acting_user,
+        email,
+        first_name,
+        last_name,
+        country,
+        mobile_number=None,
+        request=None,
+    ):
+        """Create a delegated AGSuite Admin with no tenant company."""
+        normalized_email = (email or '').lower().strip()
+        if not normalized_email:
+            raise ValueError('Email is required.')
+        if len(normalized_email) > 40:
+            raise ValueError('Email must not exceed 40 characters.')
+        ensure_email_deliverable(normalized_email)
+        if User.objects.filter(email__iexact=normalized_email).exists():
+            raise ValueError('A user with this email already exists.')
+
+        first_name = (first_name or '').strip()
+        last_name = (last_name or '').strip()
+        if not first_name:
+            raise ValueError('First name is required.')
+        if len(first_name) < 2:
+            raise ValueError('First name must contain at least 2 characters.')
+        if len(first_name) > 40:
+            raise ValueError('First name must not exceed 40 characters.')
+        if last_name and len(last_name) < 2:
+            raise ValueError('Last name must contain at least 2 characters.')
+        if len(last_name) > 40:
+            raise ValueError('Last name must not exceed 40 characters.')
+
+        name_pattern = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ']+$")
+        if not name_pattern.fullmatch(first_name):
+            raise ValueError('First name may contain letters and apostrophes only.')
+        if last_name and not name_pattern.fullmatch(last_name):
+            raise ValueError('Last name may contain letters and apostrophes only.')
+
+        if not mobile_number:
+            raise ValueError('Mobile number is required.')
+        try:
+            normalized = normalize_phone(
+                phone=mobile_number,
+                country=(country or '').strip().upper(),
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        if User.objects.filter(mobile_number=normalized.number).exists():
+            raise ValueError('A user with this mobile number already exists.')
+
+        with transaction.atomic():
+            user = User(
+                email=normalized_email,
+                first_name=first_name,
+                last_name=last_name,
+                mobile_number=normalized.number,
+                country=normalized.country_code,
+                phone_country_code=normalized.dial_code,
+                company=None,
+                role=None,
+                is_staff=True,
+                is_superuser=False,
+                is_active=False,
+                is_email_verified=False,
+            )
+            user.set_unusable_password()
+            user.save()
+
+            invitation = self.create_invitation(
+                email=user.email,
+                company_id=None,
+                role_id=None,
+                created_by=acting_user,
+                request=request,
+                send_email=False,
+            )
+
+            audit_service.log(
+                module=AuditModule.EMPLOYEE,
+                action=AuditAction.CREATE,
+                entity='User',
+                entity_id=str(user.id),
+                company=None,
+                user=acting_user,
+                new_value={
+                    'event': 'created',
+                    'employee_name': user.get_full_name(),
+                    'email': user.email,
+                    'role': 'Admin',
+                    'scope': 'AGSuite',
+                },
+            )
+
+        _, invitation_email_sent = self.send_invitation(
+            invitation_id=invitation.id,
+            request=request,
+            return_delivery_status=True,
+        )
+        return {
+            'user': user,
+            'invitation': invitation,
+            'invitation_email_sent': invitation_email_sent,
+        }
+
     def create_invitation(self, *, email, company_id, role_id=None, created_by=None, request=None, send_email=True):
         """
         Create a new invitation
@@ -231,10 +342,12 @@ class InvitationService:
         The caller can send the email separately after its database
         transaction has successfully completed.
         """
-        company = Company.objects.get(pk=company_id)
-        company_lifecycle_service.ensure_operational(
-            company=company
-        )
+        company = None
+        if company_id is not None:
+            company = Company.objects.filter(pk=company_id).first()
+            if company is None:
+                raise ValueError('Company not found.')
+        self._ensure_company_operational(company)
         role = Role.objects.filter(pk=role_id).first() if role_id else None
 
         # Check for existing pending invitation
@@ -267,7 +380,7 @@ class InvitationService:
                 old_value=None,
                 new_value={
                     'email': invitation.email,
-                    'company': company.name,
+                    'company': company.name if company else 'AGSuite',
                     'role': role.name if role else None,
                     'expires_at': invitation.expires_at.isoformat(),
                 },
@@ -290,10 +403,7 @@ class InvitationService:
         pending, expired, and legacy invitation records behave identically.
         """
         company = getattr(user, 'company', None)
-        if company is None:
-            raise ValueError('Only company users can receive invitations.')
-
-        company_lifecycle_service.ensure_operational(company=company)
+        self._ensure_company_operational(company)
 
         # A pending account cannot be active before it has a password. Repair
         # records created by older flows before deciding whether to resend.
@@ -321,7 +431,7 @@ class InvitationService:
         # who was later deactivated by an administrator.
         if user.is_active or user.has_usable_password():
             raise ValueError('This employee already completed account setup.')
-        if not user.role_id:
+        if not user.role_id and not (company is None and user.is_staff):
             raise ValueError('This employee has no role configured for an invitation.')
 
         invitation = self.create_invitation(
@@ -338,7 +448,7 @@ class InvitationService:
         Resend an existing invitation email.
         """
         invitation = self._get_invitation_or_error(invitation_id)
-        company_lifecycle_service.ensure_operational(company=invitation.company)
+        self._ensure_company_operational(invitation.company)
 
         if invitation.status != InvitationStatus.PENDING:
             raise ValueError('Only pending invitations can be sent.')
@@ -375,7 +485,7 @@ class InvitationService:
         """
 
         invitation = self._get_invitation_or_error(invitation_id)
-        company_lifecycle_service.ensure_operational(company=invitation.company)
+        self._ensure_company_operational(invitation.company)
 
         if invitation.status not in {
             InvitationStatus.PENDING, InvitationStatus.EXPIRED
@@ -432,7 +542,7 @@ class InvitationService:
             invitation.save(update_fields=['status'])
             raise ValueError('This invitation has expired.')
 
-        company_lifecycle_service.ensure_operational(company=invitation.company)
+        self._ensure_company_operational(invitation.company)
 
         return invitation
 
@@ -470,9 +580,7 @@ class InvitationService:
         the pre-created user account.
         """
         invitation = self.validate_token(token)
-        company_lifecycle_service.ensure_operational(
-            company=invitation.company
-        )
+        self._ensure_company_operational(invitation.company)
         try:
             user = User.objects.get(
                 email__iexact=invitation.email,
@@ -531,9 +639,7 @@ class InvitationService:
         The shared OTPService enforces the resend cooldown.
         """
         invitation = self.validate_token(token)
-        company_lifecycle_service.ensure_operational(
-            company=invitation.company
-        )
+        self._ensure_company_operational(invitation.company)
     
         try:
             user = User.objects.get(
@@ -577,9 +683,7 @@ class InvitationService:
         number before activation.
         """
         invitation = self.validate_token(token)
-        company_lifecycle_service.ensure_operational(
-            company=invitation.company
-        )
+        self._ensure_company_operational(invitation.company)
         try:
             user = User.objects.get(
                 email__iexact=invitation.email
@@ -688,6 +792,7 @@ class InvitationService:
         """
         frontend_url = settings.FRONTEND_URL.rstrip('/')
         invitation_link = f"{frontend_url}/#/invitation/{invitation.token}"
+        company_name = invitation.company.name if invitation.company_id else 'AGSuite'
         frontend_host = (urlsplit(frontend_url).hostname or '').lower()
         is_local_frontend = frontend_host in {
             'localhost',
@@ -697,13 +802,13 @@ class InvitationService:
         if settings.DEBUG and is_local_frontend:
             logger.info(
                 "Invitation Link: %s, email: %s, company:%s, expires at: %s",
-                invitation_link,invitation.email,invitation.company.name,invitation.expires_at,
+                invitation_link, invitation.email, company_name, invitation.expires_at,
             )
 
-        subject = f"You've been invited to join {invitation.company.name}"
+        subject = f"You've been invited to join {company_name}"
         message = (
             f"Hello,\n\n"
-            f"You have been invited to join {invitation.company.name} on AGSuite.\n\n"
+            f"You have been invited to join {company_name} on AGSuite.\n\n"
             f"Click the link below to accept your invitation and set up your account:\n"
             f"{invitation_link}\n\n"
             f"This invitation will expire on {invitation.expires_at.strftime('%d %B %Y at %I:%M %p')}.\n\n"

@@ -16,6 +16,7 @@ import { invitationApi } from '../../services/invitations.js'
 import {COUNTRY_OPTIONS, NAME_MAX_LENGTH, EMAIL_MAX_LENGTH, getCountryRule, validateEmail, validateName, validatePhone} from '../../utils/formValidation.js'
 
 const PAGE_SIZE = 10
+const AGSUITE_INTERNAL_COMPANY_ID = 'agsuite_internal'
 
 const EMPTY_EMPLOYEE = {
   first_name: '',
@@ -60,6 +61,7 @@ export default function EmployeesPage() {
   const isCreatePage = location.pathname.endsWith('/new')
   const [searchParams] = useSearchParams()
   const companyId = searchParams.get('company_id')
+  const isAGSuiteInternal = form.company_id === AGSUITE_INTERNAL_COMPANY_ID
 
   const load = useCallback(async () => {
     const isDefaultQuery = search === '' && offset === 0 && !companyId
@@ -90,7 +92,7 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     let cancelled = false
-    if (!createOpen || !form.company_id) {
+    if (!createOpen || !form.company_id || isAGSuiteInternal) {
       setDepartments([])
       return () => { cancelled = true }
     }
@@ -102,7 +104,7 @@ export default function EmployeesPage() {
         if (!cancelled) setDepartments([])
       })
     return () => { cancelled = true }
-  }, [createOpen, form.company_id])
+  }, [createOpen, form.company_id, isAGSuiteInternal])
 
   const loadCompanies = async () => {
     try {
@@ -114,7 +116,7 @@ export default function EmployeesPage() {
   }
 
   const refreshDepartments = async () => {
-    if (!form.company_id) return
+    if (!form.company_id || isAGSuiteInternal) return
     try {
       const data = await superadminApi.listCompanyDepartments(form.company_id)
       setDepartments(data.results || data || [])
@@ -238,11 +240,11 @@ const isFormValid = () => {
     mobile_number: validatePhone(form.mobile_number, form.country),
     country: form.country ? '' : 'Please select a country.',
     company_id: form.company_id ? '' : 'Please select a company.',
-    role: ['employee', 'company_admin'].includes(form.role)
+    role: (isAGSuiteInternal ? form.role === 'admin' : ['employee', 'company_admin'].includes(form.role))
       ? ''
       : 'Please select a role.',
-    designation: form.designation.trim() ? '' : 'Designation is required.',
-    department: form.department.trim() ? '' : 'Department is required.',
+    designation: isAGSuiteInternal || form.designation.trim() ? '' : 'Designation is required.',
+    department: isAGSuiteInternal || form.department.trim() ? '' : 'Department is required.',
   }
 
   setTouched({
@@ -619,11 +621,19 @@ if (isCompanySuspended) {
                   value={form.company_id}
                   onChange={(e) => {
                     setEditingDepartments(false)
-                    setForm((prev) => ({ ...prev, company_id: e.target.value, department: '' }))
+                    const selectedCompanyId = e.target.value
+                    setForm((prev) => ({
+                      ...prev,
+                      company_id: selectedCompanyId,
+                      role: selectedCompanyId === AGSUITE_INTERNAL_COMPANY_ID ? 'admin' : 'employee',
+                      designation: selectedCompanyId === AGSUITE_INTERNAL_COMPANY_ID ? '' : prev.designation,
+                      department: '',
+                    }))
                   }}
                   className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                   >
                     <option value="">Select company</option>
+                    <option value={AGSUITE_INTERNAL_COMPANY_ID}>AGSuite Internal</option>
                     {companies.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
@@ -637,12 +647,19 @@ if (isCompanySuspended) {
                   onChange={(e) => updateField('role', e.target.value)}
                   className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
                 >
-                  <option value="employee">Employee</option>
-                  <option value="company_admin">Company Admin</option>
+                  {isAGSuiteInternal ? (
+                    <option value="admin">Admin</option>
+                  ) : (
+                    <>
+                      <option value="employee">Employee</option>
+                      <option value="company_admin">Company Admin</option>
+                    </>
+                  )}
                 </select>
               </label>
-              <Input label={<><span className="text-red-600">*</span> Designation</>} required maxLength={150} value={form.designation} onChange={(e) => updateField('designation', e.target.value)} />
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+              {!isAGSuiteInternal && <>
+                <Input label={<><span className="text-red-600">*</span> Designation</>} required maxLength={150} value={form.designation} onChange={(e) => updateField('designation', e.target.value)} />
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
                 <label className="flex min-w-0 flex-1 flex-col gap-1.5">
                   <span className="flex items-center justify-between text-sm font-medium text-[var(--color-ink-soft)]"><span><span className="text-red-600">*</span> Department</span><button type="button" disabled={!form.company_id} onClick={() => setEditingDepartments((value) => !value)} className="text-[var(--color-primary)] underline disabled:cursor-not-allowed disabled:opacity-50">Edit</button></span>
                   <select required value={form.department} onChange={(e) => updateField('department', e.target.value)} className="rounded-lg border border-[var(--color-border)] px-3.5 py-2.5 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)]">
@@ -657,7 +674,8 @@ if (isCompanySuspended) {
                     <div className="max-h-44 space-y-1 overflow-y-auto">{departments.map((department) => <div key={department.id || department.name} className="flex items-center justify-between rounded bg-[var(--color-surface)] px-2 py-1 text-sm"><span>{department.name}</span><button type="button" disabled={departmentsSaving} onClick={() => removeDepartment(department)} className="text-red-600 disabled:opacity-50">Remove</button></div>)}</div>
                   </div>
                 )}
-              </div>
+                </div>
+              </>}
               {formError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
                   {formError}
