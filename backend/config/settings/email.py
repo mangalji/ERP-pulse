@@ -15,7 +15,6 @@ actual branching logic):
 """
 
 from decouple import config
-import os
 
 # ------------------------------------------------------------
 # Select Email Backend
@@ -56,6 +55,20 @@ if config("EMAIL_HOST", default=""):
         cast=bool,
     )
 
+    # Port 465 uses implicit SSL (for example, Zoho's SMTP endpoint), while
+    # port 587 normally uses STARTTLS. Django does not permit both at once.
+    EMAIL_USE_SSL = config(
+        "EMAIL_USE_SSL",
+        default=False,
+        cast=bool,
+    )
+    if EMAIL_USE_TLS and EMAIL_USE_SSL:
+        raise ValueError(
+            "EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled. "
+            "Use EMAIL_USE_SSL=True for SMTP port 465 or "
+            "EMAIL_USE_TLS=True for SMTP port 587."
+        )
+
 else:
 
     EMAIL_BACKEND = (
@@ -76,4 +89,3 @@ DEFAULT_FROM_NAME = config(
     "DEFAULT_FROM_NAME",
     default="AGSuite ERP",
 )
- 

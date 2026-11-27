@@ -227,6 +227,26 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 Replace the example SMTP/Brevo credentials with working development credentials. To use console email delivery locally, leave `EMAIL_HOST` and `BREVO_API_KEY` empty. Register the exact OAuth callback URLs with the relevant providers; use an approved HTTPS development callback where required by provider configuration.
 
+### Outbound email with Zoho SMTP
+
+OTP, invitation, and operational-alert emails use Django SMTP when `EMAIL_HOST` is set and `BREVO_API_KEY` is empty. Zoho's SMTP server details depend on the Zoho data center and account type; use the exact values displayed in Zoho Mail under **Settings → Mail Accounts → Primary Account → SMTP**.
+
+For a Zoho organization mailbox in the India data center using port 465, configure implicit SSL:
+
+```env
+EMAIL_HOST=smtppro.zoho.in
+EMAIL_PORT=465
+EMAIL_HOST_USER=noreply@example.com
+EMAIL_HOST_PASSWORD=<Zoho app-specific password>
+EMAIL_USE_TLS=False
+EMAIL_USE_SSL=True
+DEFAULT_FROM_EMAIL=noreply@example.com
+DEFAULT_FROM_NAME=AGSuite ERP
+BREVO_API_KEY=
+```
+
+For a server configured for port 587, use STARTTLS instead: set `EMAIL_USE_TLS=True` and `EMAIL_USE_SSL=False`. The two options are mutually exclusive. When Zoho two-factor authentication is enabled, generate an app-specific password and use it as `EMAIL_HOST_PASSWORD`; never commit it to source control. Restart the backend after changing environment variables.
+
 ```powershell
 cd backend
 python manage.py migrate
@@ -288,7 +308,7 @@ Open `http://localhost:5173`. Configure the company, AI provider, NetSuite conne
 | `ALLOWED_HOSTS` | Allowed backend hostnames |
 | `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL` | Browser origins and frontend URL |
 | `NETSUITE_REDIRECT_URI`, `EMAIL_OAUTH_REDIRECT_URI` | Provider-registered OAuth callbacks |
-| `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `BREVO_API_KEY` | Outbound delivery for OTPs and invitations; separate from mailbox OAuth |
+| `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `EMAIL_USE_SSL`, `DEFAULT_FROM_EMAIL`, `BREVO_API_KEY` | Outbound SMTP delivery for OTPs, invitations, and operational alerts; separate from mailbox OAuth. TLS (usually port 587) and SSL (usually port 465) are mutually exclusive. |
 | `ABSTRACT_EMAIL_VALIDATION_API_KEY`, `HUNTER_API_KEY` | Server-side email deliverability verification. Abstract is attempted first; Hunter is used when Abstract fails or its quota is unavailable. |
 | `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker and result service |
 | `OCR_EXECUTION_MODE` | Job execution strategy: `auto`, `celery`, `thread`, `inline`, or `external` |
