@@ -1,6 +1,7 @@
 from django.test import SimpleTestCase
 from contextlib import nullcontext
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from ocr.ai_extraction_service import (
@@ -16,6 +17,73 @@ from ocr.ai_extraction_service import (
 )
 from ocr.failure_classification import FailureCode, classify_failure, is_configuration_failure
 from ocr.usage import ProcessingConfigurationIncomplete, validate_processing_configuration
+
+
+class ProviderUsageLoggingTests(SimpleTestCase):
+    @patch("ocr.ai.providers.logger")
+    def test_logs_response_token_usage_and_finish_reason(self, logger):
+        response = SimpleNamespace(
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=123,
+                candidates_token_count=456,
+                thoughts_token_count=7,
+                total_token_count=586,
+            ),
+            candidates=[SimpleNamespace(finish_reason=SimpleNamespace(value="MAX_TOKENS"))],
+        )
+
+        from ocr.ai.providers import GoogleProvider
+        GoogleProvider._log_response_usage(
+            response,
+            model="gemini-test",
+            file_name="invoice.pdf",
+        )
+
+        self.assertIn("MAX_TOKENS", logger.info.call_args.args[-1])
+        self.assertEqual(logger.info.call_args.args[1:4], ("google", "gemini-test", "invoice.pdf"))
+        self.assertEqual(logger.info.call_args.args[4:8], (123, 456, 7, 586))
+
+    @patch("ocr.ai.providers.logger")
+    def test_logs_openai_response_token_usage_and_finish_reason(self, logger):
+        from ocr.ai.providers import OpenAIProvider
+
+        OpenAIProvider._log_response_usage(
+            {
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 80,
+                    "total_tokens": 200,
+                },
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+            },
+            model="gpt-test",
+            source="invoice.pdf",
+        )
+
+        self.assertEqual(logger.info.call_args.args[1:4], ("openai", "gpt-test", "invoice.pdf"))
+        self.assertEqual(logger.info.call_args.args[4:8], (120, 80, None, 200))
+        self.assertEqual(logger.info.call_args.args[-1], ["max_output_tokens"])
+
+    @patch("ocr.ai.providers.logger")
+    def test_logs_anthropic_response_token_usage_and_stop_reason(self, logger):
+        from ocr.ai.providers import AnthropicProvider
+
+        AnthropicProvider._log_response_usage(
+            {
+                "usage": {
+                    "input_tokens": 90,
+                    "output_tokens": 60,
+                },
+                "stop_reason": "max_tokens",
+            },
+            model="claude-test",
+            source="invoice.pdf",
+        )
+
+        self.assertEqual(logger.info.call_args.args[1:4], ("anthropic", "claude-test", "invoice.pdf"))
+        self.assertEqual(logger.info.call_args.args[4:8], (90, 60, None, 150))
+        self.assertEqual(logger.info.call_args.args[-1], ["max_tokens"])
 
 
 class OCRConfigurationFailureTests(SimpleTestCase):

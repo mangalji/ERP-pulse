@@ -50,6 +50,36 @@ class ExtractedItemKeywordMatchingTests(SimpleTestCase):
         self.assertEqual(result["match_type"], "unique_all_keywords")
         self.assertEqual(result["selected_item_name"], "Woodland Boots")
 
+    def test_exact_item_name_is_selected_before_other_complete_keyword_matches(self):
+        self.service._find_item_candidates_for_tokens_live.return_value = [
+            {
+                "id": "1",
+                "itemid": "Consulting Service",
+                "displayname": "Consulting Service",
+            },
+            {
+                "id": "2",
+                "itemid": "Consulting Services",
+                "displayname": "Consulting Services",
+            },
+            {
+                "id": "3",
+                "itemid": "Professional Consulting Service_PK",
+                "displayname": "Professional Consulting Service_PK",
+            },
+        ]
+
+        result = self.service._match_one_extracted_item(
+            connection=Mock(),
+            extracted_name="Consulting Service",
+            cached_items=[],
+        )
+
+        self.assertTrue(result["matched"])
+        self.assertFalse(result["needs_selection"])
+        self.assertEqual(result["match_type"], "exact_name")
+        self.assertEqual(result["selected_item_name"], "Consulting Service")
+
     def test_multiple_complete_row_matches_require_a_dropdown_choice(self):
         self.service._find_item_candidates_for_tokens_live.return_value.append({
             "id": "4",

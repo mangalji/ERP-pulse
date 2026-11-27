@@ -108,6 +108,33 @@ class AIProvider(ABC):
         self.last_raw_response = ""
 
     @staticmethod
+    def _log_token_usage(
+        *,
+        provider: str,
+        model: str,
+        source: str,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        thought_tokens: int | None = None,
+        total_tokens: int | None = None,
+        finish_reasons: list[str] | None = None,
+    ) -> None:
+        """Log provider usage metadata without persisting OCR content."""
+        logger.info(
+            "AI token usage — provider=%s model=%s source=%s input_tokens=%s "
+            "output_tokens=%s thought_tokens=%s total_tokens=%s "
+            "finish_reasons=%s",
+            provider,
+            model,
+            source,
+            input_tokens,
+            output_tokens,
+            thought_tokens,
+            total_tokens,
+            finish_reasons or [],
+        )
+
+    @staticmethod
     def _raise_status_error(
         *,
         message: str,
@@ -306,6 +333,27 @@ class GoogleProvider(AIProvider):
     """Google Gemini provider adapter."""
 
     @staticmethod
+    def _log_response_usage(response, *, model: str, file_name: str) -> None:
+        """Log Gemini completion metadata without persisting document data."""
+        usage = getattr(response, "usage_metadata", None)
+        candidates = getattr(response, "candidates", None) or []
+        finish_reasons = [
+            getattr(getattr(candidate, "finish_reason", None), "value", None)
+            or str(getattr(candidate, "finish_reason", None) or "unknown")
+            for candidate in candidates
+        ]
+        AIProvider._log_token_usage(
+            provider="google",
+            model=model,
+            source=file_name,
+            input_tokens=getattr(usage, "prompt_token_count", None),
+            output_tokens=getattr(usage, "candidates_token_count", None),
+            thought_tokens=getattr(usage, "thoughts_token_count", None),
+            total_tokens=getattr(usage, "total_token_count", None),
+            finish_reasons=finish_reasons,
+        )
+
+    @staticmethod
     def _load_sdk():
         try:
             from google import genai
@@ -462,6 +510,11 @@ class GoogleProvider(AIProvider):
                 Path(file_path).name,
                 elapsed_seconds,
             )
+            self._log_response_usage(
+                response,
+                model=self.model,
+                file_name=Path(file_path).name,
+            )
             self.last_raw_response = getattr(response, "text", "") or ""
             return _parse_json_text(self.last_raw_response)
 
@@ -521,6 +574,12 @@ class GoogleProvider(AIProvider):
                 ),
             )
 
+            self._log_response_usage(
+                response,
+                model=self.model,
+                file_name="structured-response",
+            )
+
             self.last_raw_response = getattr(response, "text", "") or ""
             return _parse_json_text(self.last_raw_response)
 
@@ -556,6 +615,29 @@ class OpenAIProvider(AIProvider):
 
     API_URL = "https://api.openai.com/v1/responses"
     MODELS_URL = "https://api.openai.com/v1/models"
+
+    @staticmethod
+    def _log_response_usage(body: dict[str, Any], *, model: str, source: str) -> None:
+        """Log OpenAI Responses usage and completion state safely."""
+        usage = body.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+
+        finish_reasons: list[str] = []
+        incomplete_details = body.get("incomplete_details")
+        if isinstance(incomplete_details, dict) and incomplete_details.get("reason"):
+            finish_reasons.append(str(incomplete_details["reason"]))
+        elif body.get("status"):
+            finish_reasons.append(str(body["status"]))
+
+        AIProvider._log_token_usage(
+            provider="openai",
+            model=model,
+            source=source,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            total_tokens=usage.get("total_tokens"),
+            finish_reasons=finish_reasons,
+        )
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -681,6 +763,11 @@ class OpenAIProvider(AIProvider):
             error_message="OpenAI returned an unexpected response.",
         )
 
+        self._log_response_usage(
+            body,
+            model=self.model,
+            source=Path(file_path).name,
+        )
         self.last_raw_response = body.get("output_text", "") or ""
         return _parse_json_text(self.last_raw_response)
 
@@ -730,6 +817,11 @@ class OpenAIProvider(AIProvider):
             error_message="OpenAI returned an unexpected response.",
         )
 
+        self._log_response_usage(
+            body,
+            model=self.model,
+            source="structured-response",
+        )
         self.last_raw_response = body.get("output_text", "") or ""
         return _parse_json_text(self.last_raw_response)
 
@@ -739,6 +831,30 @@ class AnthropicProvider(AIProvider):
 
     API_URL = "https://api.anthropic.com/v1/messages"
     MODELS_URL = "https://api.anthropic.com/v1/models"
+
+    @staticmethod
+    def _log_response_usage(body: dict[str, Any], *, model: str, source: str) -> None:
+        """Log Anthropic Messages usage and stop reason safely."""
+        usage = body.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        input_tokens = usage.get("input_tokens")
+        output_tokens = usage.get("output_tokens")
+        total_tokens = (
+            input_tokens + output_tokens
+            if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+            else None
+        )
+        stop_reason = body.get("stop_reason")
+
+        AIProvider._log_token_usage(
+            provider="anthropic",
+            model=model,
+            source=source,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            finish_reasons=[str(stop_reason)] if stop_reason else [],
+        )
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -920,6 +1036,11 @@ class AnthropicProvider(AIProvider):
             error_message="Anthropic returned an unexpected response.",
         )
 
+        self._log_response_usage(
+            body,
+            model=self.model,
+            source=Path(file_path).name,
+        )
         text_parts = [
             item.get("text", "")
             for item in body.get("content", [])
@@ -977,6 +1098,11 @@ class AnthropicProvider(AIProvider):
             error_message="Anthropic returned an unexpected response.",
         )
 
+        self._log_response_usage(
+            body,
+            model=self.model,
+            source="structured-response",
+        )
         text_parts = [
             item.get("text", "")
             for item in body.get("content", [])

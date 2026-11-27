@@ -4258,6 +4258,18 @@ class NetSuiteValidationService:
             or ""
         ).strip()
 
+    @classmethod
+    def _is_exact_item_name_match(cls, row, extracted_name) -> bool:
+        """Match a source item to NetSuite's primary item-name fields only."""
+        normalized_name = cls._normalize_match_name(extracted_name)
+        if not normalized_name:
+            return False
+        return any(
+            cls._normalize_match_name(row.get(field)) == normalized_name
+            for field in ("itemid", "itemId", "displayname", "displayName", "name")
+            if row.get(field)
+        )
+
     def _find_item_candidates_for_tokens_live(self, *, connection, tokens):
         """Fetch active rows containing at least one token in standard fields.
 
@@ -4306,7 +4318,7 @@ class NetSuiteValidationService:
         ]
 
     def _match_one_extracted_item(self, *, connection, extracted_name, cached_items):
-        """Return the requested all-keyword/at-least-two-keyword outcome."""
+        """Prefer a unique normalized exact name, then use keyword matching."""
         tokens = self._item_match_tokens(extracted_name)
         base = {
             "extracted_name": extracted_name,
@@ -4360,9 +4372,30 @@ class NetSuiteValidationService:
                 "name": name,
                 "matched_tokens": matched_tokens,
                 "match_count": len(matched_tokens),
+                "exact_name_match": self._is_exact_item_name_match(row, extracted_name),
             })
 
         scored.sort(key=lambda item: (-item["match_count"], item["name"].casefold(), item["netsuite_id"]))
+        exact_name_matches = [item for item in scored if item["exact_name_match"]]
+        if len(exact_name_matches) == 1:
+            selected = exact_name_matches[0]
+            return {
+                **base,
+                "matched": True,
+                "match_type": "exact_name",
+                "selected_item_name": selected["name"],
+                "netsuite_id": selected["netsuite_id"],
+                "candidates": [selected],
+            }
+
+        if len(exact_name_matches) > 1:
+            return {
+                **base,
+                "needs_selection": True,
+                "match_type": "multiple_exact_names",
+                "candidates": exact_name_matches,
+            }
+
         all_keyword_matches = [item for item in scored if item["match_count"] == len(tokens)]
 
         if len(all_keyword_matches) == 1:

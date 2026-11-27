@@ -2259,6 +2259,29 @@ useEffect(() => {
     }
   }, [addToast, loadNetSuiteConnection])
 
+  // Results restored from browser session state can bypass the extraction/poll
+  // path above. Confirm their items before allowing review edits as well, so a
+  // verified NetSuite item is never presented as ordinary editable OCR text.
+  useEffect(() => {
+    if (!ocrStateReady) return undefined
+
+    const needsItemMatching = results.some((file) => (
+      String(file?.status || '').toUpperCase() === 'COMPLETED'
+      && Array.isArray(file?.data?.line_items)
+      && !Array.isArray(file?.item_match_results)
+    ))
+    if (!needsItemMatching) return undefined
+
+    let cancelled = false
+    matchCompletedFilesBeforeReview(results).then((matchedFiles) => {
+      if (!cancelled) setResults(matchedFiles)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [ocrStateReady, results, matchCompletedFilesBeforeReview])
+
   const selectedFilesRef = useRef([])
 
   useEffect(() => {
@@ -3393,6 +3416,11 @@ const goNext = () => {
                                       const showItemCandidates = Boolean(
                                         itemMatch?.needs_selection && itemMatch?.candidates?.length,
                                       )
+                                      const isConfirmedNetSuiteItem = Boolean(
+                                        field.key === 'item'
+                                        && itemMatch?.matched
+                                        && itemMatch?.netsuite_id,
+                                      )
 
                                       return (
                                         <td key={field.key} className="min-w-[150px] px-4 py-3 align-top">
@@ -3414,7 +3442,7 @@ const goNext = () => {
                                                 </option>
                                               ))}
                                             </select>
-                                          ) : editing ? (
+                                          ) : editing && !isConfirmedNetSuiteItem ? (
                                             <input
                                               type={field.type}
                                               value={toInputValue(item?.[field.key])}
@@ -3425,9 +3453,18 @@ const goNext = () => {
                                               className={`w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)] ${field.type === 'number' ? 'ocr-number-input' : ''}`}
                                             />
                                           ) : (
-                                            <span className="break-words text-[var(--color-ink)]">
-                                              {toInputValue(item?.[field.key]) || '--'}
-                                            </span>
+                                            <div className="space-y-1">
+                                              <span className="break-words text-[var(--color-ink)]">
+                                                {toInputValue(item?.[field.key]) || '--'}
+                                              </span>
+                                              {isConfirmedNetSuiteItem && (
+                                                <span className="block text-xs font-medium text-emerald-700">
+                                                  {itemMatch?.match_type === 'exact_name'
+                                                    ? 'Exact NetSuite match'
+                                                    : 'Matched NetSuite item'}
+                                                </span>
+                                              )}
+                                            </div>
                                           )}
                                         </td>
                                       )
