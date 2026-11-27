@@ -4,7 +4,7 @@ import Button from '../ui/Button.jsx'
 import Badge from '../ui/Badge.jsx'
 import { formatDateTime } from '../../utils/formatDate.js'
 
-export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onReconnect, canReconnect = true, onAssign, onDisconnect, onRemoveEmployee, employees = [] }) {
+export default function ConnectionCard({ connection, isCurrent = false, onUse, onTest, onRefreshItems, refreshingItems = false, onReconnect, canReconnect = true, onAssign, onDisconnect, onRemoveEmployee, employees = [] }) {
   const assignedCount = employees.length
   const daysUntilReauth = connection.reauth_required_by
     ? Math.ceil(
@@ -158,6 +158,15 @@ return (
             onClick={() => onTest?.(connection.id)}
           >
             Test
+          </Button>
+
+          <Button
+            intent="secondary"
+            size="sm"
+            disabled={refreshingItems || connection.status !== 'connected'}
+            onClick={() => onRefreshItems?.(connection.id)}
+          >
+            {refreshingItems ? 'Refreshing…' : 'Refresh Items'}
           </Button>
 
           <Button

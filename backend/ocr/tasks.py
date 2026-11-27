@@ -1292,6 +1292,60 @@ def _begin_processing(upload, owner: str = ""):
     return started_at
 
 
+def _attach_netsuite_item_matches(upload, result: dict) -> dict:
+    """Attach server-side item matches to a review result without changing AI data."""
+    line_items = result.get("line_items") if isinstance(result, dict) else None
+    if not isinstance(line_items, list):
+        return result
+
+    try:
+        from netsuite.repositories import NetSuiteConnectionRepository
+        from netsuite.services import NetSuiteValidationService
+
+        connection = NetSuiteConnectionRepository().get_for_user(upload.user)
+        if connection is None:
+            return result
+        matches = NetSuiteValidationService().match_extracted_items(
+            connection_id=connection.id,
+            items=[
+                {
+                    "line_index": index,
+                    "item": line.get("item") if isinstance(line, dict) else None,
+                }
+                for index, line in enumerate(line_items, start=1)
+            ],
+            user=upload.user,
+        ).get("items", [])
+        matches_by_line = {
+            match.get("line_index"): match
+            for match in matches
+            if isinstance(match, dict)
+        }
+        review_result = dict(result)
+        review_result["line_items"] = [
+            {
+                **line,
+                **(
+                    {"item": matches_by_line[index]["selected_item_name"]}
+                    if (
+                        isinstance(line, dict)
+                        and matches_by_line.get(index, {}).get("matched")
+                        and matches_by_line[index].get("selected_item_name")
+                    )
+                    else {}
+                ),
+            }
+            if isinstance(line, dict) else line
+            for index, line in enumerate(line_items, start=1)
+        ]
+        review_result["_netsuite_item_match_results"] = matches
+        return review_result
+    except Exception:
+        # A lookup problem must never discard an otherwise valid AI extraction.
+        logger.exception("OCR item matching skipped — upload=%s", upload.id)
+        return result
+
+
 @timed_stage("ocr.enrich_and_persist")
 def _persist_success(
     upload,
@@ -1374,6 +1428,11 @@ def _persist_success(
             result,
             scope=scope,
         )
+
+    # Item matching is owned by the OCR backend. The AI cache intentionally
+    # stays provider/template scoped; connection-specific match metadata is
+    # only attached to the persisted review result after that cache write.
+    result = _attach_netsuite_item_matches(upload, result)
 
     _write_live_result(str(upload.id), result)
 

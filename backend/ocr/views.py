@@ -2051,6 +2051,12 @@ class OCRBatchStatusView(APIView):
                 if live_data is not None
                 else (version.normalized_json if version else None)
             ) if batch_status == OCRBatch.Status.COMPLETED else None
+            item_match_results = []
+            if isinstance(result_data, dict):
+                result_data = dict(result_data)
+                saved_matches = result_data.pop("_netsuite_item_match_results", [])
+                if isinstance(saved_matches, list):
+                    item_match_results = saved_matches
             results.append(
                 {
                     "status": upload.status,
@@ -2072,6 +2078,7 @@ class OCRBatchStatusView(APIView):
                     ),
 
                     "data": result_data,
+                    "item_match_results": item_match_results,
 
                     "error": (
                         upload.failure_reason

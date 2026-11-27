@@ -24,6 +24,7 @@ export default function NetSuiteIntegrationsPage() {
   const [currentConnectionId, setCurrentConnectionId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [refreshingItemsId, setRefreshingItemsId] = useState(null)
   const [assigningId, setAssigningId] = useState(null)
   const [companyEmployees, setCompanyEmployees] = useState([])
   const loadData = useCallback(async () => {
@@ -111,6 +112,24 @@ export default function NetSuiteIntegrationsPage() {
       addToast(result.message, result.success ? 'success' : 'error')
     } catch (err) {
       addToast(err.payload?.message || err.message || 'Test failed', 'error')
+    }
+  }
+
+  const handleRefreshItems = async (id) => {
+    setRefreshingItemsId(id)
+    try {
+      const result = await netsuiteApi.refreshItems(id)
+      addToast(
+        result?.item_count !== undefined
+          ? `NetSuite items refreshed successfully — ${result.item_count} items updated.`
+          : 'NetSuite items refreshed successfully.',
+        'success',
+      )
+      await loadData()
+    } catch (err) {
+      addToast(err.payload?.detail || err.payload?.message || err.message || 'NetSuite item refresh failed. Please try again.', 'error')
+    } finally {
+      setRefreshingItemsId(null)
     }
   }
 
@@ -234,6 +253,8 @@ export default function NetSuiteIntegrationsPage() {
                 isCurrent={conn.id === currentConnectionId}
                 onUse={handleUse}
                 onTest={handleTest}
+                onRefreshItems={handleRefreshItems}
+                refreshingItems={refreshingItemsId === conn.id}
                 onReconnect={handleReconnect}
                 canReconnect={canReconnect}
                 onAssign={handleAssign}

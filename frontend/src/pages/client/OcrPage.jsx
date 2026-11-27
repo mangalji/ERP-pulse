@@ -2167,6 +2167,7 @@ useEffect(() => {
     const completedFiles = (Array.isArray(files) ? files : []).filter((file) => (
       String(file?.status || '').toUpperCase() === 'COMPLETED'
       && Array.isArray(file?.data?.line_items)
+      && !Array.isArray(file?.item_match_results)
     ))
 
     if (!completedFiles.length) return files

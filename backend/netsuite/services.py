@@ -1318,10 +1318,170 @@ class NetSuiteReferenceSyncService:
     """Synchronize NetSuite master/reference IDs into AGSuite ERP."""
 
     PAGE_SIZE = 1000
+    ITEM_CATALOGUE_RECORD_TYPE = "itemCatalogue"
+    SYNC_STALE_AFTER_SECONDS = 30 * 60
 
     def __init__(self, repository=None):
         self.repository = repository or NetSuiteConnectionRepository()
         self.data_service = NetSuiteDataService(repository=self.repository)
+        self.token_manager = NetSuiteTokenManager(repository=self.repository)
+
+    @classmethod
+    def _item_catalogue_query(cls) -> str:
+        return """
+            SELECT id, itemid, displayname, description, isinactive
+            FROM item
+            ORDER BY id ASC
+        """
+
+    def _sync_full_item_catalogue(self, *, connection) -> int:
+        """Mirror every item visible to the connection using paginated SuiteQL."""
+        offset = 0
+        seen_ids: set[str] = set()
+
+        while True:
+            access_token = self.token_manager.get_valid_access_token(connection)
+            client = NetSuiteAuthClient(
+                account_id=connection.netsuite_account_id,
+                client_id=connection.client_id,
+                client_secret=connection.client_secret,
+                access_token=access_token,
+            )
+            response = client.execute_suiteql(
+                query=self._item_catalogue_query(),
+                limit=self.PAGE_SIZE,
+                offset=offset,
+            )
+            rows = response.get("items", []) if isinstance(response, dict) else []
+            if not rows:
+                break
+
+            records = []
+            for row in rows:
+                record_id = row.get("id")
+                if record_id is None:
+                    continue
+                record_id = str(record_id)
+                seen_ids.add(record_id)
+                name = row.get("displayname") or row.get("itemid") or ""
+                records.append({
+                    "connection_id": connection.id,
+                    "record_type": self.ITEM_CATALOGUE_RECORD_TYPE,
+                    "internal_id": record_id,
+                    "external_id": row.get("itemid"),
+                    "name": name,
+                    "search_name": str(name).strip().lower(),
+                    "item_type": "NetSuite Item",
+                    "is_inactive": str(row.get("isinactive", "F")).upper() == "T",
+                    "data": row,
+                })
+            self.repository.upsert_reference_records(records)
+
+            if not response.get("hasMore") or len(rows) < self.PAGE_SIZE:
+                break
+            offset += len(rows)
+
+        # Missing rows are only marked inactive after all SuiteQL pages succeed.
+        stale = NetSuiteReferenceRecord.objects.filter(
+            connection=connection,
+            record_type=self.ITEM_CATALOGUE_RECORD_TYPE,
+        )
+        if seen_ids:
+            stale = stale.exclude(internal_id__in=seen_ids)
+        stale.update(is_inactive=True)
+        return len(seen_ids)
+
+    def sync_item_catalogue(
+        self,
+        *,
+        connection_id,
+        notification_recipient_id=None,
+    ) -> dict:
+        """Synchronize one connection's item catalogue with safe DB leasing."""
+        from audit.notifications import notify
+
+        now = timezone.now()
+        with transaction.atomic():
+            connection = NetSuiteConnection.objects.select_for_update().get(pk=connection_id)
+            if connection.status != "connected" or not connection.is_active:
+                raise ValueError("NetSuite connection is not active.")
+            if (
+                connection.item_catalogue_sync_status == "running"
+                and connection.item_catalogue_sync_started_at
+                and (now - connection.item_catalogue_sync_started_at).total_seconds()
+                < self.SYNC_STALE_AFTER_SECONDS
+            ):
+                raise ValueError("NetSuite item refresh is already in progress.")
+            connection.item_catalogue_sync_status = "running"
+            connection.item_catalogue_sync_started_at = now
+            connection.item_catalogue_sync_error = None
+            connection.save(update_fields=[
+                "item_catalogue_sync_status",
+                "item_catalogue_sync_started_at",
+                "item_catalogue_sync_error",
+                "updated_at",
+            ])
+
+        try:
+            item_count = self._sync_full_item_catalogue(connection=connection)
+        except Exception as exc:
+            logger.exception("NetSuite item catalogue sync failed — connection=%s", connection_id)
+            connection.item_catalogue_sync_status = "failed"
+            connection.item_catalogue_sync_error = str(exc)[:5000]
+            connection.save(update_fields=[
+                "item_catalogue_sync_status",
+                "item_catalogue_sync_error",
+                "updated_at",
+            ])
+            if notification_recipient_id:
+                notify(
+                    notification_recipient_id,
+                    connection.company_id,
+                    "NetSuite item refresh failed. Please try again.",
+                    "/app/integrations/netsuite",
+                    activity_type="manual",
+                    actor_id=notification_recipient_id,
+                )
+            raise
+
+        connection.item_catalogue_last_synced_at = timezone.now()
+        connection.item_catalogue_sync_status = "completed"
+        connection.item_catalogue_sync_error = None
+        connection.item_catalogue_item_count = item_count
+        connection.save(update_fields=[
+            "item_catalogue_last_synced_at",
+            "item_catalogue_sync_status",
+            "item_catalogue_sync_error",
+            "item_catalogue_item_count",
+            "updated_at",
+        ])
+        if notification_recipient_id:
+            notify(
+                notification_recipient_id,
+                connection.company_id,
+                f"NetSuite items refreshed successfully — {item_count} items updated.",
+                "/app/integrations/netsuite",
+                activity_type="manual",
+                actor_id=notification_recipient_id,
+            )
+        return {"connection_id": str(connection.id), "item_count": item_count}
+
+    def sync_due_item_catalogues(self) -> dict:
+        """Run once per local date; called by the existing lazy scheduler."""
+        today = timezone.localdate()
+        outcome = {"synced": 0, "failed": 0, "skipped": 0}
+        connections = NetSuiteConnection.objects.filter(status="connected", is_active=True)
+        for connection in connections.iterator():
+            last_sync = connection.item_catalogue_last_synced_at
+            if last_sync and timezone.localtime(last_sync).date() >= today:
+                outcome["skipped"] += 1
+                continue
+            try:
+                self.sync_item_catalogue(connection_id=connection.id)
+                outcome["synced"] += 1
+            except Exception:
+                outcome["failed"] += 1
+        return outcome
 
     def _sync_id_collection(self, *, connection, user, record_type: str) -> int:
         offset = 0
@@ -3477,6 +3637,7 @@ class NetSuiteValidationService:
     MAX_SIMILAR_CANDIDATES = 5
 
     ITEM_RECORD_TYPES = (
+        NetSuiteReferenceSyncService.ITEM_CATALOGUE_RECORD_TYPE,
         NetSuiteRecordType.INVENTORY_ITEM,
         NetSuiteRecordType.NON_INVENTORY_SALE_ITEM,
         NetSuiteRecordType.NON_INVENTORY_RESALE_ITEM,
@@ -4317,7 +4478,14 @@ class NetSuiteValidationService:
             and str(row.get("isinactive", "F")).upper() != "T"
         ]
 
-    def _match_one_extracted_item(self, *, connection, extracted_name, cached_items):
+    def _match_one_extracted_item(
+        self,
+        *,
+        connection,
+        extracted_name,
+        cached_items,
+        cache_live_matches: bool = False,
+    ):
         """Prefer a unique normalized exact name, then use keyword matching."""
         tokens = self._item_match_tokens(extracted_name)
         base = {
@@ -4333,16 +4501,10 @@ class NetSuiteValidationService:
         if not tokens:
             return base
 
-        candidates_by_id = {}
-        for row in self._find_item_candidates_for_tokens_live(
-            connection=connection,
-            tokens=tokens,
-        ):
-            candidates_by_id[str(row["id"])] = dict(row)
-
         # A reference sync retains the full REST payload, including custom
         # columns such as colour and size.  Merge it with live results so the
         # search checks the complete row whenever that data is available.
+        candidates_by_id = {}
         for record in cached_items:
             row = {
                 "id": str(record.internal_id),
@@ -4358,6 +4520,79 @@ class NetSuiteValidationService:
                     existing["displayname"] = row["displayname"]
             else:
                 candidates_by_id[str(record.internal_id)] = row
+
+        cached_exact_rows = [
+            row for row in candidates_by_id.values()
+            if self._is_exact_item_name_match(row, extracted_name)
+        ]
+        if len(cached_exact_rows) == 1:
+            row = cached_exact_rows[0]
+            name = self._item_candidate_name(row)
+            matched_tokens, _ = self._score_complete_item_row(row, tokens)
+            selected = {
+                "netsuite_id": str(row["id"]),
+                "name": name,
+                "matched_tokens": matched_tokens,
+                "match_count": len(matched_tokens),
+                "exact_name_match": True,
+            }
+            return {
+                **base,
+                "matched": True,
+                "match_type": "exact_name",
+                "selected_item_name": name,
+                "netsuite_id": selected["netsuite_id"],
+                "candidates": [selected],
+            }
+
+        if len(cached_exact_rows) > 1:
+            return {
+                **base,
+                "needs_selection": True,
+                "match_type": "multiple_exact_names",
+                "candidates": [
+                    {
+                        "netsuite_id": str(row["id"]),
+                        "name": self._item_candidate_name(row),
+                        "matched_tokens": self._score_complete_item_row(row, tokens)[0],
+                        "match_count": len(self._score_complete_item_row(row, tokens)[0]),
+                        "exact_name_match": True,
+                    }
+                    for row in cached_exact_rows
+                    if self._item_candidate_name(row)
+                ],
+            }
+
+        # A cache miss is resolved live, then merged with the catalogue for
+        # keyword/candidate handling. This picks up items added after today's
+        # catalogue refresh without penalising exact local matches.
+        live_rows = self._find_item_candidates_for_tokens_live(
+            connection=connection,
+            tokens=tokens,
+        )
+        for row in live_rows:
+            existing = candidates_by_id.get(str(row["id"]))
+            if existing:
+                existing.update(row)
+            else:
+                candidates_by_id[str(row["id"])] = dict(row)
+        if live_rows and cache_live_matches:
+            self.repository.upsert_reference_records([
+                {
+                    "connection_id": connection.id,
+                    "record_type": NetSuiteReferenceSyncService.ITEM_CATALOGUE_RECORD_TYPE,
+                    "internal_id": str(row["id"]),
+                    "external_id": row.get("itemid"),
+                    "name": row.get("displayname") or row.get("itemid") or "",
+                    "search_name": self._normalize_match_name(
+                        row.get("displayname") or row.get("itemid") or ""
+                    ),
+                    "item_type": "NetSuite Item",
+                    "is_inactive": False,
+                    "data": row,
+                }
+                for row in live_rows
+            ])
 
         scored = []
         for row in candidates_by_id.values():
@@ -4479,6 +4714,7 @@ class NetSuiteValidationService:
                     connection=connection,
                     extracted_name=extracted_name,
                     cached_items=cached_items,
+                    cache_live_matches=True,
                 )
             results.append({
                 **by_extracted_name[cache_key],

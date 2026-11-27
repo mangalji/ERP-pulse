@@ -12,6 +12,8 @@ export const netsuiteApi = {
     apiClient.patch(`${NETSUITE_ENDPOINTS.connections}${id}/`, { client_name: clientName }).then(unwrap),
 
   disconnectConnection: (id) => apiClient.post(`${NETSUITE_ENDPOINTS.connections}${id}/disconnect/`).then(unwrap),
+
+  refreshItems: (id) => apiClient.post(`/netsuite/connections/${id}/items/refresh/`).then(unwrap),
   
   getCompanyConnections: () => apiClient.get(NETSUITE_ENDPOINTS.companyConnections).then(unwrap),
 

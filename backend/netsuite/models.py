@@ -54,6 +54,11 @@ class NetSuiteConnection(models.Model):
     )
     is_active = models.BooleanField(default=False)
     last_synced_at = models.DateTimeField(null=True, blank=True)
+    item_catalogue_last_synced_at = models.DateTimeField(null=True, blank=True)
+    item_catalogue_sync_started_at = models.DateTimeField(null=True, blank=True)
+    item_catalogue_sync_status = models.CharField(max_length=20, default="idle")
+    item_catalogue_sync_error = models.TextField(null=True, blank=True)
+    item_catalogue_item_count = models.PositiveIntegerField(default=0)
     last_used_at = models.DateTimeField(
         null=True, blank=True,
         help_text='Last time any live NetSuite API call succeeded through this '

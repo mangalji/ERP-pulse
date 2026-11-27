@@ -16,12 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 def scheduled_tasks():
+    from netsuite.services import NetSuiteReferenceSyncService
     from superadmin.tasks import sync_company_subscription_statuses
     from tenancy.tasks import purge_expired_deleted_companies
 
     return [
         ("purge companies deleted for 15+ days", purge_expired_deleted_companies),
         ("sync company subscription statuses", sync_company_subscription_statuses),
+        ("sync due NetSuite item catalogues", NetSuiteReferenceSyncService().sync_due_item_catalogues),
     ]
 
 

@@ -15,6 +15,7 @@ import logging
 from netsuite.repositories import NetSuiteConnectionRepository
 from common.pagination import paginated_response
 from common.common_utils import success_response
+from audit.notifications import notify
 from common.throttles import NetSuiteSyncThrottle
 from netsuite.exceptions import (
     NetSuiteAuthorizationDeniedException, 
@@ -38,6 +39,7 @@ from netsuite.serializers import (
 )
 from netsuite.services import (
     NetSuiteConnectionService,
+    NetSuiteReferenceSyncService,
     NetSuiteVendorBillPostingService,
     NetSuiteValidationService,
     NetSuiteFieldMappingService,
@@ -327,6 +329,50 @@ class NetSuiteTestConnectionView(APIView):
         result = NetSuiteConnectionService().test_connection(connection_id=connection_id)
         status_code = status.HTTP_200_OK if result['success'] else status.HTTP_400_BAD_REQUEST
         return Response(result, status=status_code)
+
+
+class NetSuiteRefreshItemsView(APIView):
+    """Refresh one connection's persistent NetSuite item catalogue."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id):
+        if not _is_company_admin(request.user):
+            raise PermissionDenied("Only Company Admin can refresh NetSuite items.")
+        company = getattr(request.user, "company", None)
+        if not company:
+            return Response({"detail": "No company associated with user."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            connection = NetSuiteConnection.objects.get(pk=connection_id, company=company)
+        except NetSuiteConnection.DoesNotExist:
+            return Response({"detail": "Connection not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            result = NetSuiteReferenceSyncService().sync_item_catalogue(
+                connection_id=connection.id,
+                notification_recipient_id=request.user.id,
+            )
+            return success_response(
+                message=f"NetSuite items refreshed successfully — {result['item_count']} items updated.",
+                data=result,
+            )
+        except ValueError as exc:
+            # The service emits a persistent notification after a started sync fails.
+            # These validation failures occur before it can start, so notify here too.
+            notify(
+                request.user.id,
+                company.id,
+                "NetSuite item refresh could not start. Please try again.",
+                "/app/integrations/netsuite",
+                activity_type="manual",
+                actor_id=request.user.id,
+            )
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response(
+                {"detail": "NetSuite item refresh failed. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
 
 class NetSuiteMyConnectionView(APIView):
