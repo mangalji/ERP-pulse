@@ -710,6 +710,7 @@ export default function OcrPage() {
   const [selectedFiles, setSelectedFiles] = useState([])
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [matchingItems, setMatchingItems] = useState(false)
   const [results, setResults] = useState([])
   const [currentBatchId, setCurrentBatchId] = useState(null)
   const [retryingUploadId, setRetryingUploadId] = useState(null)
@@ -745,6 +746,7 @@ export default function OcrPage() {
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagnosticError, setDiagnosticError] = useState('')
   const [batchProgress, setBatchProgress] = useState('')
+  const itemMatchCacheRef = useRef(new Map())
 
   const [ocrStateReady, setOcrStateReady] = useState(false)
   const restoredSessionStateRef = useRef(false)
@@ -1237,6 +1239,22 @@ useEffect(() => {
     () => (Array.isArray(data.line_items) ? data.line_items : []),
     [data.line_items],
   )
+  const itemMatchesByLine = useMemo(
+    () => new Map(
+      (Array.isArray(activeResult?.item_match_results)
+        ? activeResult.item_match_results
+        : [])
+        .filter((match) => Number.isInteger(match?.line_index))
+        .map((match) => [match.line_index, match]),
+    ),
+    [activeResult?.item_match_results],
+  )
+  const unresolvedItemMatches = useMemo(
+    () => Array.from(itemMatchesByLine.values()).filter(
+      (match) => match?.needs_selection && Array.isArray(match?.candidates) && match.candidates.length,
+    ),
+    [itemMatchesByLine],
+  )
   const validationErrorGroups = useMemo(
     () => groupValidationErrors(validationResult?.errors, lineItems),
     [lineItems, validationResult?.errors],
@@ -1286,6 +1304,43 @@ useEffect(() => {
       })
     })
   },[])
+
+  const chooseNetSuiteItemCandidate = useCallback((lineIndex, candidate) => {
+    if (!candidate?.name) return
+
+    const updateItemValue = (current) => {
+      const nextItems = Array.isArray(current.line_items) ? [...current.line_items] : []
+      nextItems[lineIndex] = {
+        ...(nextItems[lineIndex] || {}),
+        item: candidate.name,
+      }
+      return recalculateInvoiceTotals({ ...current, line_items: nextItems })
+    }
+
+    setData(updateItemValue)
+    setResults((current) => current.map((result, index) => {
+      if (index !== activeIndex || !result?.data) return result
+      return {
+        ...result,
+        data: updateItemValue(result.data),
+        item_match_pending_save: true,
+        item_match_results: (result.item_match_results || []).map((match) => (
+          match?.line_index === lineIndex + 1
+            ? {
+                ...match,
+                matched: true,
+                needs_selection: false,
+                match_type: 'user_selected',
+                selected_item_name: candidate.name,
+                netsuite_id: candidate.netsuite_id,
+              }
+            : match
+        )),
+      }
+    }))
+    setEditing(true)
+    addToast(`NetSuite item selected: ${candidate.name}. Save the OCR data to keep this choice.`, 'success')
+  }, [activeIndex, addToast])
 
   const addLineItem = useCallback(() => {
     setValidationResult(null)
@@ -1346,6 +1401,7 @@ useEffect(() => {
 
         status: responseData?.status || 'APPROVED',
         data: responseData?.data || payload.data,
+        item_match_pending_save: false,
       }
       setResults((current) =>
         current.map((item, index) =>
@@ -1410,6 +1466,7 @@ useEffect(() => {
     const alreadySaved = Boolean(
       activeResult?.document_id &&
       !activeResult?.draft_data &&
+      !activeResult?.item_match_pending_save &&
       !editing,
     )
     const savedResult = alreadySaved ? activeResult : await handleSave()
@@ -1762,6 +1819,7 @@ useEffect(() => {
             status: responseData?.status || 'APPROVED',
             data: responseData?.data || payload.data,
             draft_data: undefined,
+            item_match_pending_save: false,
           })
           savedCount += 1
         } catch (err) {
@@ -1814,7 +1872,7 @@ useEffect(() => {
       // 1) Save every file that is new or edited.
       for (let position = 0; position < pending.length; position += 1) {
         const { item, index } = pending[position]
-        const needsSave = !item.document_id || Boolean(item.draft_data)
+        const needsSave = !item.document_id || Boolean(item.draft_data) || Boolean(item.item_match_pending_save)
 
         if (!needsSave) {
           documentIds.push(String(item.document_id))
@@ -1850,6 +1908,7 @@ useEffect(() => {
             status: responseData?.status || 'APPROVED',
             data: responseData?.data || payload.data,
             draft_data: undefined,
+            item_match_pending_save: false,
           })
 
           if (documentId) documentIds.push(String(documentId))
@@ -2100,6 +2159,105 @@ useEffect(() => {
 useEffect(() => {
   loadNetSuiteConnection()
 }, [loadNetSuiteConnection])
+
+  // This runs after AI extraction but before a completed file's values are
+  // placed in review.  It deliberately does not replace save/validate/post:
+  // a lookup failure leaves the existing OCR review flow available.
+  const matchCompletedFilesBeforeReview = useCallback(async (files) => {
+    const completedFiles = (Array.isArray(files) ? files : []).filter((file) => (
+      String(file?.status || '').toUpperCase() === 'COMPLETED'
+      && Array.isArray(file?.data?.line_items)
+    ))
+
+    if (!completedFiles.length) return files
+
+    const connectionData = await loadNetSuiteConnection()
+    if (!connectionData?.id) return files
+
+    const applyMatches = (file, matches) => {
+      const matchesByLine = new Map(
+        (Array.isArray(matches) ? matches : []).map((match) => [match.line_index, match]),
+      )
+      let itemMatchPendingSave = Boolean(file.item_match_pending_save)
+      const lineItems = file.data.line_items.map((line, index) => {
+        const match = matchesByLine.get(index + 1)
+        if (!match?.matched || !match?.selected_item_name) return line
+        if (line?.item !== match.selected_item_name) itemMatchPendingSave = true
+        return { ...line, item: match.selected_item_name }
+      })
+      return {
+        ...file,
+        data: { ...file.data, line_items: lineItems },
+        item_match_results: matches,
+        item_match_pending_save: itemMatchPendingSave,
+      }
+    }
+
+    const pendingFiles = completedFiles.filter((file) => {
+      const fileKey = String(file.upload_id || file.document_id || file.filename || '')
+      const signature = fileDataSignature(file.data?.line_items)
+      const cached = itemMatchCacheRef.current.get(fileKey)
+      return !cached || cached.signature !== signature
+    })
+
+    if (!pendingFiles.length) {
+      return files.map((file) => {
+        const cached = itemMatchCacheRef.current.get(
+          String(file?.upload_id || file?.document_id || file?.filename || ''),
+        )
+        return cached?.matches ? applyMatches(file, cached.matches) : file
+      })
+    }
+
+    setMatchingItems(true)
+    try {
+      await Promise.all(pendingFiles.map(async (file) => {
+        const items = file.data.line_items.map((line, index) => ({
+          line_index: index + 1,
+          item: typeof line?.item === 'string' ? line.item : null,
+        }))
+        const response = await netsuiteApi.matchExtractedItems(connectionData.id, items)
+        const matches = Array.isArray(response?.items)
+          ? response.items
+          : Array.isArray(response?.data?.items)
+            ? response.data.items
+            : []
+        itemMatchCacheRef.current.set(
+          String(file.upload_id || file.document_id || file.filename || ''),
+          { signature: fileDataSignature(file.data?.line_items), matches },
+        )
+      }))
+
+      const matchedFiles = files.map((file) => {
+        const cached = itemMatchCacheRef.current.get(
+          String(file?.upload_id || file?.document_id || file?.filename || ''),
+        )
+        return cached?.matches ? applyMatches(file, cached.matches) : file
+      })
+      const selectionCount = matchedFiles.reduce(
+        (count, file) => count + (file.item_match_results || []).filter(
+          (match) => match?.needs_selection && match?.candidates?.length,
+        ).length,
+        0,
+      )
+      if (selectionCount) {
+        addToast(
+          `Please choose the correct NetSuite item for ${selectionCount} ${selectionCount === 1 ? 'line' : 'lines'}.`,
+          'error',
+        )
+      }
+      return matchedFiles
+    } catch (err) {
+      console.error('Could not match extracted items against NetSuite:', err)
+      addToast(
+        'NetSuite item matching is temporarily unavailable. The extracted data is still available for review.',
+        'error',
+      )
+      return files
+    } finally {
+      setMatchingItems(false)
+    }
+  }, [addToast, loadNetSuiteConnection])
 
   const selectedFilesRef = useRef([])
 
@@ -2459,22 +2617,26 @@ useEffect(() => {
           }))
         : []
 
-      setResults(initialFiles)
+      const singleIsFinished = ocrMode === 'single' && ['COMPLETED', 'FAILED'].includes(
+        initialFiles[0]?.status,
+      )
+      const initialFilesForReview = singleIsFinished
+        ? await matchCompletedFilesBeforeReview(initialFiles)
+        : initialFiles
+
+      setResults(initialFilesForReview)
 
       if (ocrMode === 'single') {
-        const singleIsFinished = ['COMPLETED', 'FAILED'].includes(
-          initialFiles[0]?.status,
-        )
         if (singleIsFinished || initialFiles.length === 0) {
           sessionStorage.setItem(
             'ocr_test_result',
             JSON.stringify({
               status:
                 payload?.status ??
-                initialFiles[0]?.status ??
+                initialFilesForReview[0]?.status ??
                 'COMPLETED',
               batch_id: batchId,
-              files: initialFiles,
+              files: initialFilesForReview,
               template_id: selectedTemplateId || null,
               requested_fields: usedTemplateConfig,
             }),
@@ -2505,15 +2667,18 @@ useEffect(() => {
           requested_fields: item.requested_fields || polledConfig,
         }))
 
-        setResults(files)
-        setActiveIndex((current) => {
-          if (!files.length) return 0
-          return Math.min(current, files.length - 1)
-        })
-
         const completedOrFailed = files.some((item) =>
           ['COMPLETED', 'FAILED'].includes(item.status),
         )
+        const filesForReview = completedOrFailed
+          ? await matchCompletedFilesBeforeReview(files)
+          : files
+
+        setResults(filesForReview)
+        setActiveIndex((current) => {
+          if (!filesForReview.length) return 0
+          return Math.min(current, filesForReview.length - 1)
+        })
 
         if (completedOrFailed) {
           sessionStorage.setItem(
@@ -2521,7 +2686,7 @@ useEffect(() => {
             JSON.stringify({
               status: batch?.status ?? 'PROCESSING',
               batch_id: batchId,
-              files,
+              files: filesForReview,
               template_id: selectedTemplateId || null,
               requested_fields: polledConfig,
             }),
@@ -2587,15 +2752,25 @@ useEffect(() => {
         const response = await apiClient.get(`/ocr/extract/batches/${currentBatchId}/`)
         const batch = response?.data ?? {}
         const files = Array.isArray(batch.files) ? batch.files : []
-        setResults(files)
-        setActiveIndex((current) => Math.min(current, Math.max(files.length - 1, 0)))
 
         const allTerminal = files.length > 0 && files.every((item) =>
           ['COMPLETED', 'FAILED'].includes(String(item.status || '').toUpperCase()),
         )
+        const filesForReview = allTerminal
+          ? await matchCompletedFilesBeforeReview(files)
+          : files
+        setResults(filesForReview)
+        setActiveIndex((current) => Math.min(current, Math.max(filesForReview.length - 1, 0)))
+
         if (allTerminal) {
-          const retriedFile = files.find((item) => item.upload_id === uploadId)
+          const retriedFile = filesForReview.find((item) => item.upload_id === uploadId)
+          const retriedConfigurationFailure =
+            retriedFile?.failure_code === 'CONFIGURATION_INCOMPLETE' ||
+            String(retriedFile?.error || '').toLowerCase().includes(
+              'ai extraction is not configured for this company',
+            )
           const retryLimitReached = retriedFile?.status === 'FAILED' &&
+            !retriedConfigurationFailure &&
             Number(retriedFile?.retry_count || 0) >= Number(retriedFile?.retry_limit)
           if (retryLimitReached) {
             window.alert(
@@ -2665,6 +2840,12 @@ useEffect(() => {
     (activeResult?.upload_id
       ? `/ocr/extract/uploads/${activeResult.upload_id}/preview/`
       : null)
+
+  const activeConfigurationFailure =
+    activeResult?.failure_code === 'CONFIGURATION_INCOMPLETE' ||
+    String(activeResult?.error || '').toLowerCase().includes(
+      'ai extraction is not configured for this company',
+    )
 
   useEffect(() => {
     let cancelled = false
@@ -3067,17 +3248,18 @@ const goNext = () => {
                       type="button"
                       onClick={retryExistingExtraction}
                       disabled={Boolean(retryingUploadId) || processing || (
+                        !activeConfigurationFailure &&
                         Number.isFinite(Number(activeResult?.retry_limit)) &&
                         Number(activeResult?.retry_count || 0) >= Number(activeResult.retry_limit)
                       )}
-                      title={Number(activeResult?.retry_count || 0) >= Number(activeResult?.retry_limit)
+                      title={!activeConfigurationFailure && Number(activeResult?.retry_count || 0) >= Number(activeResult?.retry_limit)
                         ? 'Retry limit reached for this upload'
                         : undefined}
                       className="rounded-lg border border-[var(--color-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {retryingUploadId === activeResult?.upload_id
                         ? 'Retrying…'
-                        : Number(activeResult?.retry_count || 0) >= Number(activeResult?.retry_limit)
+                        : !activeConfigurationFailure && Number(activeResult?.retry_count || 0) >= Number(activeResult?.retry_limit)
                           ? 'Retry limit reached'
                           : 'Retry extraction'}
                     </button>
@@ -3173,6 +3355,22 @@ const goNext = () => {
                               </Button>
                             )}
                         </div> 
+
+                          {unresolvedItemMatches.length > 0 && (
+                            <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                              <p className="font-semibold">
+                                {unresolvedItemMatches.some((match) => match.match_type === 'multiple_all_keywords')
+                                  ? `Multiple NetSuite items match all extracted keywords for ${unresolvedItemMatches.length} ${unresolvedItemMatches.length === 1 ? 'line' : 'lines'}.`
+                                  : `Exact item match was not found in NetSuite for ${unresolvedItemMatches.length} ${unresolvedItemMatches.length === 1 ? 'line' : 'lines'}.`}
+                              </p>
+                              <p className="mt-1 text-xs text-amber-800">
+                                {unresolvedItemMatches.some((match) => match.match_type === 'multiple_all_keywords')
+                                  ? 'More than one item matches every extracted keyword. Please choose the correct NetSuite item from the dropdown.'
+                                  // Legacy wording: 'Choose the correct NetSuite item from the suggestions with two or more matching keywords.'
+                                  : 'Choose the correct NetSuite item from the suggestions with the highest number of matching keywords.'}
+                              </p>
+                            </div>
+                          )}
                           
                           <div className="overflow-x-auto">
                             <table className="min-w-[760px] w-full text-left text-sm">
@@ -3188,25 +3386,52 @@ const goNext = () => {
                               <tbody className="divide-y divide-[var(--color-border)]">
                                 {lineItems.length ? lineItems.map((item, index) => (
                                   <tr key={`${activeResult.upload_id || activeResult.document_id}-${index}`}>
-                                    {lineFieldDefinitions.map((field) => (
-                                      <td key={field.key} className="min-w-[150px] px-4 py-3 align-top">
-                                        {editing ? (
-                                          <input
-                                            type={field.type}
-                                            value={toInputValue(item?.[field.key])}
-                                            step={field.type === 'number' ? 'any' : undefined}
-                                            onKeyDown={field.type === 'number' ? preventOcrNumberStep : undefined}
-                                            onWheel={field.type === 'number' ? blurOcrNumberOnWheel : undefined}
-                                            onChange={(event) => setLineItemField(index, field.key, event.target.value)}
-                                            className={`w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)] ${field.type === 'number' ? 'ocr-number-input' : ''}`}
-                                          />
-                                        ) : (
-                                          <span className="break-words text-[var(--color-ink)]">
-                                            {toInputValue(item?.[field.key]) || '--'}
-                                          </span>
-                                        )}
-                                      </td>
-                                    ))}
+                                    {lineFieldDefinitions.map((field) => {
+                                      const itemMatch = field.key === 'item'
+                                        ? itemMatchesByLine.get(index + 1)
+                                        : null
+                                      const showItemCandidates = Boolean(
+                                        itemMatch?.needs_selection && itemMatch?.candidates?.length,
+                                      )
+
+                                      return (
+                                        <td key={field.key} className="min-w-[150px] px-4 py-3 align-top">
+                                          {showItemCandidates ? (
+                                            <select
+                                              value=""
+                                              onChange={(event) => {
+                                                const candidate = itemMatch.candidates.find(
+                                                  (option) => String(option.netsuite_id) === event.target.value,
+                                                )
+                                                chooseNetSuiteItemCandidate(index, candidate)
+                                              }}
+                                              className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)]"
+                                            >
+                                              <option value="">Select the correct NetSuite item</option>
+                                              {itemMatch.candidates.map((candidate) => (
+                                                <option key={candidate.netsuite_id} value={candidate.netsuite_id}>
+                                                  {candidate.name} ({candidate.match_count}/{itemMatch.tokens?.length || 0} keywords)
+                                                </option>
+                                              ))}
+                                            </select>
+                                          ) : editing ? (
+                                            <input
+                                              type={field.type}
+                                              value={toInputValue(item?.[field.key])}
+                                              step={field.type === 'number' ? 'any' : undefined}
+                                              onKeyDown={field.type === 'number' ? preventOcrNumberStep : undefined}
+                                              onWheel={field.type === 'number' ? blurOcrNumberOnWheel : undefined}
+                                              onChange={(event) => setLineItemField(index, field.key, event.target.value)}
+                                              className={`w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-soft)] ${field.type === 'number' ? 'ocr-number-input' : ''}`}
+                                            />
+                                          ) : (
+                                            <span className="break-words text-[var(--color-ink)]">
+                                              {toInputValue(item?.[field.key]) || '--'}
+                                            </span>
+                                          )}
+                                        </td>
+                                      )
+                                    })}
                                     {editing && (
                                       <td className="px-4 py-3 align-top">
                                         <Button type="button" intent="ghost" size="sm" onClick={() => removeLineItem(index)} disabled={saving} className="text-red-600">
@@ -3235,8 +3460,14 @@ const goNext = () => {
                 ) : (
                   <div className="flex min-h-[400px] items-center justify-center text-center">
                     <div>
-                      <p className="text-sm font-medium text-[var(--color-ink)]">Upload files and click Extract Data</p>
-                      <p className="mt-1 text-sm text-[var(--color-muted)]">The result for the active file will appear here.</p>
+                      <p className="text-sm font-medium text-[var(--color-ink)]">
+                        {matchingItems ? 'Matching extracted items with NetSuite…' : 'Upload files and click Extract Data'}
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--color-muted)]">
+                        {matchingItems
+                          ? 'The extracted values will appear after the item lookup finishes.'
+                          : 'The result for the active file will appear here.'}
+                      </p>
                     </div>
                   </div>
                 )}

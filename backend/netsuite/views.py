@@ -34,6 +34,7 @@ from netsuite.serializers import (
     EmployeeConnectionSerializer,
     AssignEmployeeSerializer,
     ValidateDocumentRequestSerializer,
+    MatchExtractedItemsRequestSerializer,
 )
 from netsuite.services import (
     NetSuiteConnectionService,
@@ -720,6 +721,55 @@ class NetSuiteValidateDocumentView(APIView):
             current = current.__cause__ or current.__context__
 
         return None
+
+
+class NetSuiteMatchExtractedItemsView(APIView):
+    """Resolve OCR item text before the review UI is made visible."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [NetSuiteSyncThrottle]
+
+    def post(self, request):
+        serializer = MatchExtractedItemsRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            result = NetSuiteValidationService().match_extracted_items(
+                connection_id=serializer.validated_data["connection_id"],
+                items=serializer.validated_data["items"],
+                user=request.user,
+            )
+            return success_response(
+                message="NetSuite item matches prepared.",
+                data=result,
+            )
+        except NetSuiteTokenExchangeException:
+            return _reauth_required_response()
+        except NetSuiteRecordFetchException as exc:
+            logger.exception(
+                "NetSuite item matching failed — connection=%s user=%s",
+                serializer.validated_data["connection_id"],
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {
+                    "detail": "We could not search NetSuite items right now. Please try again.",
+                    "code": "NETSUITE_ITEM_MATCH_UNAVAILABLE",
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception(
+                "Extracted item matching failed — connection=%s user=%s",
+                serializer.validated_data["connection_id"],
+                getattr(request.user, "id", None),
+            )
+            return Response(
+                {"detail": "NetSuite item matching failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class NetSuiteValidationDiagnosticsView(APIView):

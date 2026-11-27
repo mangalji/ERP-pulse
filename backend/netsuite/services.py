@@ -4212,6 +4212,249 @@ class NetSuiteValidationService:
         return " ".join(normalized.split())
 
     @classmethod
+    def _item_match_tokens(cls, value):
+        """Return the distinct search strings a person would use with Ctrl+F.
+
+        The AI value is deliberately split into words.  Each word is looked up
+        against the *same complete item row*, instead of treating the item name
+        as the only searchable field.
+        """
+        return list(dict.fromkeys(cls._normalize_match_name(value).split()))
+
+    @classmethod
+    def _flatten_item_row_values(cls, value):
+        """Flatten a NetSuite item payload so custom fields participate too."""
+        if isinstance(value, dict):
+            values = []
+            for nested_value in value.values():
+                values.extend(cls._flatten_item_row_values(nested_value))
+            return values
+        if isinstance(value, (list, tuple)):
+            values = []
+            for nested_value in value:
+                values.extend(cls._flatten_item_row_values(nested_value))
+            return values
+        if value is None or isinstance(value, bool):
+            return []
+        return [str(value)]
+
+    @classmethod
+    def _score_complete_item_row(cls, row, tokens):
+        """Score tokens against values from one item row, never across rows."""
+        row_text = cls._normalize_match_name(
+            " ".join(cls._flatten_item_row_values(row))
+        )
+        matched_tokens = [token for token in tokens if token in row_text]
+        return matched_tokens, row_text
+
+    @staticmethod
+    def _item_candidate_name(row):
+        return str(
+            row.get("displayname")
+            or row.get("displayName")
+            or row.get("itemid")
+            or row.get("itemId")
+            or row.get("name")
+            or ""
+        ).strip()
+
+    def _find_item_candidates_for_tokens_live(self, *, connection, tokens):
+        """Fetch active rows containing at least one token in standard fields.
+
+        Cached item data below supplies all custom fields.  The live SuiteQL
+        search keeps the matching decision fresh for the connected account and
+        lets ordinary name, description and ID fields work even before a cache
+        has been built.
+        """
+        if not tokens:
+            return []
+
+        conditions = []
+        for token in tokens:
+            literal = self._suiteql_literal(f"%{token}%")
+            conditions.append(
+                "(LOWER(itemid) LIKE LOWER({literal}) "
+                "OR LOWER(displayname) LIKE LOWER({literal}) "
+                "OR LOWER(description) LIKE LOWER({literal}))".format(
+                    literal=literal,
+                )
+            )
+
+        query = f"""
+            SELECT
+                id,
+                itemid,
+                displayname,
+                description,
+                isinactive
+            FROM item
+            WHERE isinactive = 'F'
+              AND ({' OR '.join(conditions)})
+            ORDER BY itemid ASC, id ASC
+        """
+        response = self._execute_live_suiteql(
+            connection=connection,
+            query=query,
+            limit=1000,
+        )
+        rows = response.get("items", []) if isinstance(response, dict) else []
+        return [
+            row for row in rows
+            if isinstance(row, dict)
+            and row.get("id") is not None
+            and str(row.get("isinactive", "F")).upper() != "T"
+        ]
+
+    def _match_one_extracted_item(self, *, connection, extracted_name, cached_items):
+        """Return the requested all-keyword/at-least-two-keyword outcome."""
+        tokens = self._item_match_tokens(extracted_name)
+        base = {
+            "extracted_name": extracted_name,
+            "tokens": tokens,
+            "matched": False,
+            "needs_selection": False,
+            "match_type": "no_keywords",
+            "selected_item_name": None,
+            "netsuite_id": None,
+            "candidates": [],
+        }
+        if not tokens:
+            return base
+
+        candidates_by_id = {}
+        for row in self._find_item_candidates_for_tokens_live(
+            connection=connection,
+            tokens=tokens,
+        ):
+            candidates_by_id[str(row["id"])] = dict(row)
+
+        # A reference sync retains the full REST payload, including custom
+        # columns such as colour and size.  Merge it with live results so the
+        # search checks the complete row whenever that data is available.
+        for record in cached_items:
+            row = {
+                "id": str(record.internal_id),
+                "itemid": record.external_id,
+                "displayname": record.name,
+                "item_type": record.item_type,
+                "cached_data": record.data if isinstance(record.data, dict) else {},
+            }
+            existing = candidates_by_id.get(str(record.internal_id))
+            if existing:
+                existing["cached_data"] = row["cached_data"]
+                if not existing.get("displayname"):
+                    existing["displayname"] = row["displayname"]
+            else:
+                candidates_by_id[str(record.internal_id)] = row
+
+        scored = []
+        for row in candidates_by_id.values():
+            matched_tokens, _ = self._score_complete_item_row(row, tokens)
+            if not matched_tokens:
+                continue
+            name = self._item_candidate_name(row)
+            if not name:
+                continue
+            scored.append({
+                "netsuite_id": str(row["id"]),
+                "name": name,
+                "matched_tokens": matched_tokens,
+                "match_count": len(matched_tokens),
+            })
+
+        scored.sort(key=lambda item: (-item["match_count"], item["name"].casefold(), item["netsuite_id"]))
+        all_keyword_matches = [item for item in scored if item["match_count"] == len(tokens)]
+
+        if len(all_keyword_matches) == 1:
+            selected = all_keyword_matches[0]
+            return {
+                **base,
+                "matched": True,
+                "match_type": "unique_all_keywords",
+                "selected_item_name": selected["name"],
+                "netsuite_id": selected["netsuite_id"],
+                "candidates": [selected],
+            }
+
+        if len(all_keyword_matches) > 1:
+            return {
+                **base,
+                "needs_selection": True,
+                "match_type": "multiple_all_keywords",
+                "candidates": all_keyword_matches,
+            }
+
+        # Legacy fixed threshold, kept as a record of the previous rule:
+        # suggestions = [item for item in scored if item["match_count"] >= 2]
+        # Fall back from every keyword to one keyword, but only return the
+        # highest available score.  A lower-scoring row must never appear
+        # beside a stronger match.
+        best_available_score = max(
+            (item["match_count"] for item in scored),
+            default=0,
+        )
+        suggestions = [
+            item for item in scored
+            if item["match_count"] == best_available_score
+        ]
+        return {
+            **base,
+            "needs_selection": bool(suggestions),
+            "match_type": "partial_keywords" if suggestions else "no_match",
+            "candidates": suggestions,
+        }
+
+    @timed_stage("netsuite.item_match_before_review")
+    def match_extracted_items(self, *, connection_id, items, user):
+        """Match AI item text before OCR review without changing validation/posting.
+
+        Existing save, validate and posting paths remain untouched.  This is a
+        review-time convenience layer which replaces only a uniquely matched
+        value and returns user-selectable candidates for every ambiguous row.
+        """
+        company = getattr(user, "company", None)
+        if company is None:
+            raise ValueError("Your account is not associated with a company.")
+
+        company_lifecycle_service.ensure_operational(company=company)
+        connection = self.repository.get_authorized_for_user(
+            user=user,
+            connection_id=connection_id,
+            include_error=True,
+        )
+        if connection is None:
+            raise ValueError("No NetSuite connection available.")
+        raise_if_reauth_required(connection)
+        if connection.status != "connected" or not connection.is_active:
+            raise ValueError("NetSuite connection is not active.")
+
+        cached_items = list(
+            NetSuiteReferenceRecord.objects.filter(
+                connection=connection,
+                record_type__in=self.ITEM_RECORD_TYPES,
+                is_inactive=False,
+            ).only("internal_id", "external_id", "name", "item_type", "data")
+        )
+
+        results = []
+        by_extracted_name = {}
+        for item in items:
+            extracted_name = item.get("item")
+            cache_key = self._normalize_match_name(extracted_name)
+            if cache_key not in by_extracted_name:
+                by_extracted_name[cache_key] = self._match_one_extracted_item(
+                    connection=connection,
+                    extracted_name=extracted_name,
+                    cached_items=cached_items,
+                )
+            results.append({
+                **by_extracted_name[cache_key],
+                "line_index": item["line_index"],
+            })
+
+        return {"items": results}
+
+    @classmethod
     def _similarity_score(cls, left, right):
         left_normalized = cls._normalize_match_name(left)
         right_normalized = cls._normalize_match_name(right)

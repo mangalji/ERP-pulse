@@ -46,8 +46,16 @@ from ocr.services.extraction_persistence import persist_extraction
 from ocr.ai_extraction_service import get_standard_field_catalog
 from ocr.exceptions import OCRTimeBudgetExceeded
 from ocr.execution import dispatch_upload, recover_batch
+from ocr.failure_classification import is_configuration_failure
 from ocr.tasks import process_single_ocr_upload
-from ocr.usage import remaining_units, allocation_period_state
+from ocr.usage import (
+    ProcessingConfigurationIncomplete,
+    ProcessingLimitExceeded,
+    allocation_period_state,
+    remaining_units,
+    validate_extraction_prompt,
+    validate_processing_limits,
+)
 from ocr.utils import logger
 from audit.models import AuditAction, AuditModule
 from audit.services import audit_service
@@ -1557,6 +1565,11 @@ class OCRExtractView(APIView):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
+
+            # Reject before reading the document, creating an OCR upload, or
+            # dispatching an AI job. A Super Admin can add the prompt and the
+            # user can then submit/retry the same source safely.
+            usage = validate_extraction_prompt(company, "pdf")
             contains_zip = any(
                 self._is_zip(uploaded_file)
                 for uploaded_file in uploaded_files
@@ -1582,6 +1595,9 @@ class OCRExtractView(APIView):
                 pdf_doc.close()
                 actual_file.seek(0)
 
+            # Prompt validation intentionally comes first; allocation checks
+            # then run before extraction starts and before any quota is used.
+            validate_processing_limits(company, "pdf", usage=usage)
             remaining_pages = remaining_units(company.id, "pdf")
             if uploaded_page_count > remaining_pages:
                 return Response(
@@ -1829,6 +1845,12 @@ class OCRExtractView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        except (ProcessingConfigurationIncomplete, ProcessingLimitExceeded) as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         except Exception as exc:
             logger.exception(
                 "OCR batch submission failed — batch_id=%s error=%s",
@@ -2056,6 +2078,7 @@ class OCRBatchStatusView(APIView):
                         if upload.status == OCRUpload.Status.FAILED
                         else None
                     ),
+                    "failure_code": upload.failure_code or None,
                 }
             )
 
@@ -2112,7 +2135,11 @@ class OCRUploadRetryView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
             retry_limit = int(getattr(settings, "OCR_MANUAL_RETRY_LIMIT", 4))
-            if upload.retry_count >= retry_limit:
+            configuration_failure = is_configuration_failure(
+                code=upload.failure_code,
+                reason=upload.failure_reason,
+            )
+            if upload.retry_count >= retry_limit and not configuration_failure:
                 return Response(
                     {
                         "detail": (
@@ -2131,7 +2158,11 @@ class OCRUploadRetryView(APIView):
             upload.next_attempt_at = None
             upload.queued_at = None
             upload.queued_via = ""
-            upload.retry_count += 1
+            # A missing prompt/allocation is an administrator-fixable setup
+            # problem, not a user extraction attempt. Once it is fixed the
+            # original upload can be resumed without being locked out.
+            if not configuration_failure:
+                upload.retry_count += 1
             upload.save(update_fields=[
                 "status", "failure_reason", "failure_code", "next_attempt_at",
                 "queued_at", "queued_via", "retry_count", "updated_at",

@@ -58,6 +58,9 @@ export const netsuiteApi = {
   validateDocument: (documentId, connectionId, config={}) => 
     apiClient.post('/netsuite/ocr/validate/',{document_id:documentId,connection_id: connectionId},config).then(unwrap),
 
+  matchExtractedItems: (connectionId, items, config={}) =>
+    apiClient.post('/netsuite/ocr/match-extracted-items/', { connection_id: connectionId, items }, config).then(unwrap),
+
   validateBatchDocuments: (documentIds, connectionId) =>
     apiClient.post('/netsuite/ocr/batch/validate/',{document_ids: documentIds, connection_id: connectionId,}).then(unwrap),
 

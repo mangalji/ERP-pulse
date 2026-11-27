@@ -66,34 +66,48 @@ def get_superadmin_contact_email() -> str:
     )
 
 
-def validate_processing_configuration(company, source: str):
-    """Validate prompt, limit, and date range as one source configuration."""
+def _configuration_error(source: str, missing: list[str]) -> ProcessingConfigurationIncomplete:
+    contact = get_superadmin_contact_email()
+    reason = ", ".join(missing)
+    return ProcessingConfigurationIncomplete(
+        f"AI extraction is not configured for this company. Missing configuration: {reason}. "
+        f"Please contact your Super Administrator: {contact}."
+    )
+
+
+def validate_extraction_prompt(company, source: str):
+    """Require a source prompt before accepting any OCR work."""
     prefix = "pdf" if source == "pdf" else "email"
     usage = BillProcessingCount.objects.filter(company=company).first()
-    missing = []
-    if not usage:
-        missing = [
-            f"{prefix.upper()} extraction prompt",
-            f"{prefix.upper()}/file page limit" if prefix == "pdf" else "email bill limit",
-            f"{prefix.upper()}/file allocation date range" if prefix == "pdf" else "email allocation date range",
-        ]
-    else:
-        if not getattr(usage, f"{prefix}_extraction_prompt", "").strip():
-            missing.append(f"{prefix.upper()} extraction prompt")
-        limit_field = "pdf_page_limit" if prefix == "pdf" else "email_bill_limit"
-        if int(getattr(usage, limit_field, 0) or 0) <= 0:
-            missing.append("PDF/file page limit" if prefix == "pdf" else "email bill limit")
-        if not getattr(usage, f"{prefix}_allocation_start_date", None) or not getattr(usage, f"{prefix}_allocation_end_date", None):
-            missing.append("PDF/file allocation date range" if prefix == "pdf" else "email allocation date range")
+    if not usage or not getattr(usage, f"{prefix}_extraction_prompt", "").strip():
+        raise _configuration_error(source, [f"{prefix.upper()} extraction prompt"])
+    return usage
 
+
+def validate_processing_limits(company, source: str, *, usage=None):
+    """Require an active, configured allocation after prompt validation."""
+    prefix, limit_field, _ = _source_fields(source)
+    usage = usage or BillProcessingCount.objects.filter(company=company).first()
+    missing = []
+    if not usage or int(getattr(usage, limit_field, 0) or 0) <= 0:
+        missing.append("PDF/file page limit" if prefix == "pdf" else "email bill limit")
+    if not usage or not getattr(usage, f"{prefix}_allocation_start_date", None) or not getattr(usage, f"{prefix}_allocation_end_date", None):
+        missing.append("PDF/file allocation date range" if prefix == "pdf" else "email allocation date range")
     if missing:
-        contact = get_superadmin_contact_email()
-        reason = ", ".join(missing)
-        raise ProcessingConfigurationIncomplete(
-            f"AI extraction is not configured for this company. Missing configuration: {reason}. "
-            f"Please contact your Super Administrator: {contact}."
+        raise _configuration_error(source, missing)
+    period_state = allocation_period_state(usage, prefix)
+    if period_state != "active":
+        raise ProcessingLimitExceeded(
+            f"{prefix.upper()} processing allocation is not active because its validity period is "
+            f"{period_state.replace('_', ' ')}. Please contact your SuperAdmin."
         )
     return usage
+
+
+def validate_processing_configuration(company, source: str):
+    """Validate prompt first, then the source allocation configuration."""
+    usage = validate_extraction_prompt(company, source)
+    return validate_processing_limits(company, source, usage=usage)
 
 
 def allocation_period_state(usage, source='pdf'):
@@ -230,6 +244,11 @@ def reserve_upload_pages(upload: OCRUpload, page_count: int) -> None:
         usage, _ = BillProcessingCount.objects.select_for_update().get_or_create(
             company_id=company_id
         )
+        # Keep the same preflight order at the reservation boundary. This is
+        # a defensive re-check for configuration changes while a job waits in
+        # the queue; it must never spend quota or report a quota error before
+        # reporting a missing prompt.
+        validate_processing_configuration(locked.batch.company, "pdf")
         if usage.pdf_page_limit <= 0 or usage.pdf_pages_consumed + pages > usage.pdf_page_limit:
             company_name = getattr(locked.batch.company, "name", None) or "Unknown company"
             logger.error(
@@ -247,7 +266,6 @@ def reserve_upload_pages(upload: OCRUpload, page_count: int) -> None:
                 f"used {usage.pdf_pages_consumed} of {usage.pdf_page_limit} "
                 f"allocated pages. Please contact your SuperAdmin."
             )
-        validate_processing_configuration(locked.batch.company, "pdf")
         period_state = allocation_period_state(usage, 'pdf')
         if period_state != 'active':
             raise ProcessingLimitExceeded(

@@ -24,7 +24,7 @@ import mimetypes
 from django.utils import timezone
 from django.conf import settings
 
-from ocr.error_taxonomy import (
+from ocr.failure_classification import (
     FailureInfo,
     classify_failure,
     is_daily_quota_error,
@@ -48,6 +48,7 @@ from ocr.usage import (
     reserve_upload_pages,
     release_upload_pages,
     ProcessingLimitExceeded,
+    validate_processing_configuration,
 )
 
 logger = logging.getLogger(__name__)
@@ -1586,6 +1587,13 @@ def process_single_ocr_upload(
         ):
             return upload.live_result_json
 
+        # The HTTP endpoint performs the first preflight, but retries and
+        # worker recovery can reach this path independently. Re-check before
+        # cache access or any AI/provider work so a missing prompt can never
+        # produce a new extraction.
+        if upload.batch_id and upload.batch.company_id:
+            validate_processing_configuration(upload.batch.company, "pdf")
+
         started_at = _begin_processing(upload)
 
         deadline_monotonic = time.monotonic() + float(time_budget_seconds)
@@ -1724,6 +1732,12 @@ def execute_upload_job(
                 upload_id,
             )
             return JobOutcome("skipped")
+
+        # See the equivalent guard in ``process_single_ocr_upload``. Jobs
+        # can be invoked by manual retry and worker recovery, bypassing the
+        # initial POST request entirely.
+        if upload.batch_id and upload.batch.company_id:
+            validate_processing_configuration(upload.batch.company, "pdf")
 
         started_at = _begin_processing(upload, owner)
         heartbeat = LeaseHeartbeat(upload.id, owner)

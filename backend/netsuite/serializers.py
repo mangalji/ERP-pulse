@@ -169,3 +169,40 @@ class AssignEmployeeSerializer(serializers.Serializer):
 class ValidateDocumentRequestSerializer(serializers.Serializer):
     document_id = serializers.UUIDField()
     connection_id = serializers.UUIDField()
+
+
+class MatchExtractedItemsRequestSerializer(serializers.Serializer):
+    """Validate the small, transient payload used before OCR review is shown."""
+
+    connection_id = serializers.UUIDField()
+    items = serializers.ListField(
+        child=serializers.DictField(),
+        allow_empty=True,
+        max_length=100,
+    )
+
+    def validate_items(self, value):
+        normalized = []
+        for entry in value:
+            line_index = entry.get("line_index")
+            item = entry.get("item")
+
+            if not isinstance(line_index, int) or line_index < 1:
+                raise serializers.ValidationError(
+                    "Every item must include a positive line_index."
+                )
+            if item is not None and not isinstance(item, str):
+                raise serializers.ValidationError(
+                    "Every item value must be text or null."
+                )
+            if item is not None and len(item) > 500:
+                raise serializers.ValidationError(
+                    "Item values may not exceed 500 characters."
+                )
+
+            normalized.append({
+                "line_index": line_index,
+                "item": item.strip() if isinstance(item, str) else None,
+            })
+
+        return normalized

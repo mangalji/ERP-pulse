@@ -298,7 +298,7 @@ class OCRUpload(models.Model):
     processing_duration_ms = models.PositiveIntegerField(null=True, blank=True)
     ai_extraction_duration_ms = models.PositiveIntegerField(null=True, blank=True)
     failure_reason = models.TextField(null=True, blank=True)
-    # Stable machine-readable failure category (see ocr.error_taxonomy).
+    # Stable machine-readable failure category (see ocr.failure_classification).
     failure_code = models.CharField(max_length=32, blank=True, default="")
 
     # --- background execution bookkeeping (see ocr.leases / ocr.execution) ---

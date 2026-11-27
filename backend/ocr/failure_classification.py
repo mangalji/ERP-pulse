@@ -31,10 +31,11 @@ from ocr.exceptions import (
     PDFTooLargeException,
     UnsupportedFormatException,
 )
-from ocr.usage import ProcessingLimitExceeded
+from ocr.usage import ProcessingConfigurationIncomplete, ProcessingLimitExceeded
 
 
 class FailureCode:
+    CONFIGURATION_INCOMPLETE = "CONFIGURATION_INCOMPLETE"
     INVALID_FILE = "INVALID_FILE"
     QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
     RATE_LIMITED = "RATE_LIMITED"
@@ -94,6 +95,15 @@ def _is_infra_error(exc: BaseException) -> bool:
 
 def classify_failure(exc: BaseException) -> FailureInfo:
     """Map any exception to a ``FailureInfo``."""
+    # A Super Admin can resolve this without changing the uploaded file.
+    # Keep it distinct from a quota failure so a later manual retry does not
+    # consume the user's finite retry allowance.
+    if isinstance(exc, ProcessingConfigurationIncomplete):
+        return FailureInfo(
+            FailureCode.CONFIGURATION_INCOMPLETE,
+            False,
+            str(exc) or "AI extraction is not configured for this company.",
+        )
     if isinstance(exc, ProcessingLimitExceeded):
         return FailureInfo(
             FailureCode.QUOTA_EXHAUSTED,
@@ -154,3 +164,10 @@ def classify_failure(exc: BaseException) -> FailureInfo:
         "OCR processing failed unexpectedly. Please try again or contact support.",
         expected=False,
     )
+
+
+def is_configuration_failure(*, code: str | None, reason: str | None) -> bool:
+    """Identify configuration failures, including records created pre-code."""
+    if code == FailureCode.CONFIGURATION_INCOMPLETE:
+        return True
+    return "ai extraction is not configured for this company" in (reason or "").lower()

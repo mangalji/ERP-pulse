@@ -14,6 +14,44 @@ from ocr.ai_extraction_service import (
     _apply_template_default_values,
     build_email_prompt,
 )
+from ocr.failure_classification import FailureCode, classify_failure, is_configuration_failure
+from ocr.usage import ProcessingConfigurationIncomplete, validate_processing_configuration
+
+
+class OCRConfigurationFailureTests(SimpleTestCase):
+    def test_missing_configuration_has_its_own_failure_code(self):
+        info = classify_failure(ProcessingConfigurationIncomplete("PDF extraction prompt is missing."))
+
+        self.assertEqual(info.code, FailureCode.CONFIGURATION_INCOMPLETE)
+        self.assertFalse(info.retryable)
+
+    def test_legacy_configuration_message_is_retryable_after_setup(self):
+        self.assertTrue(is_configuration_failure(
+            code="QUOTA_EXHAUSTED",
+            reason="AI extraction is not configured for this company. Missing configuration: PDF extraction prompt.",
+        ))
+
+    @patch("ocr.usage.validate_processing_limits")
+    @patch("ocr.usage.validate_extraction_prompt")
+    def test_prompt_is_validated_before_allocation_limits(self, prompt_check, limit_check):
+        company = Mock()
+        usage = Mock()
+        prompt_check.return_value = usage
+
+        validate_processing_configuration(company, "pdf")
+
+        prompt_check.assert_called_once_with(company, "pdf")
+        limit_check.assert_called_once_with(company, "pdf", usage=usage)
+
+    @patch("ocr.usage.validate_processing_limits")
+    @patch("ocr.usage.validate_extraction_prompt")
+    def test_missing_prompt_stops_before_allocation_limits(self, prompt_check, limit_check):
+        prompt_check.side_effect = ProcessingConfigurationIncomplete("PDF extraction prompt is missing.")
+
+        with self.assertRaises(ProcessingConfigurationIncomplete):
+            validate_processing_configuration(Mock(), "pdf")
+
+        limit_check.assert_not_called()
 
 
 class OCRExtractionDefaultsTests(SimpleTestCase):

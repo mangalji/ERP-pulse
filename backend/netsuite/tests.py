@@ -14,6 +14,118 @@ from netsuite.services import (
 from netsuite.validation_error_groups import build_validation_error_groups
 
 
+class ExtractedItemKeywordMatchingTests(SimpleTestCase):
+    def setUp(self):
+        self.service = NetSuiteValidationService()
+        self.service._find_item_candidates_for_tokens_live = Mock(return_value=[
+            {
+                "id": "1",
+                "itemid": "Nike Air Max",
+                "displayname": "Nike Air Max",
+                "description": "Black Shoes XL",
+            },
+            {
+                "id": "2",
+                "itemid": "Adidas Runner",
+                "displayname": "Adidas Runner",
+                "description": "Black Shoes XL",
+            },
+            {
+                "id": "3",
+                "itemid": "Woodland Boots",
+                "displayname": "Woodland Boots",
+                "description": "Black Boots XL",
+            },
+        ])
+
+    def test_a_single_complete_row_match_is_selected_automatically(self):
+        result = self.service._match_one_extracted_item(
+            connection=Mock(),
+            extracted_name="Black Boots XL",
+            cached_items=[],
+        )
+
+        self.assertTrue(result["matched"])
+        self.assertFalse(result["needs_selection"])
+        self.assertEqual(result["match_type"], "unique_all_keywords")
+        self.assertEqual(result["selected_item_name"], "Woodland Boots")
+
+    def test_multiple_complete_row_matches_require_a_dropdown_choice(self):
+        self.service._find_item_candidates_for_tokens_live.return_value.append({
+            "id": "4",
+            "itemid": "Timberland Boots",
+            "displayname": "Timberland Boots",
+            "description": "Black Boots XL",
+        })
+
+        result = self.service._match_one_extracted_item(
+            connection=Mock(),
+            extracted_name="Black Boots XL",
+            cached_items=[],
+        )
+
+        self.assertFalse(result["matched"])
+        self.assertTrue(result["needs_selection"])
+        self.assertEqual(result["match_type"], "multiple_all_keywords")
+        self.assertEqual(
+            [candidate["name"] for candidate in result["candidates"]],
+            ["Timberland Boots", "Woodland Boots"],
+        )
+
+    def test_partial_suggestions_require_at_least_two_keywords(self):
+        self.service._find_item_candidates_for_tokens_live.return_value = [
+            {
+                "id": "1",
+                "itemid": "Nike Air Max",
+                "displayname": "Nike Air Max",
+                "description": "Black Shoes XL",
+            },
+            {
+                "id": "5",
+                "itemid": "Puma Sports",
+                "displayname": "Puma Sports",
+                "description": "Red Shoes XL",
+            },
+        ]
+
+        result = self.service._match_one_extracted_item(
+            connection=Mock(),
+            extracted_name="Black Boots XL",
+            cached_items=[],
+        )
+
+        self.assertTrue(result["needs_selection"])
+        self.assertEqual(result["match_type"], "partial_keywords")
+        self.assertEqual([candidate["name"] for candidate in result["candidates"]], ["Nike Air Max"])
+
+    def test_falls_back_to_all_one_keyword_matches_when_no_higher_score_exists(self):
+        self.service._find_item_candidates_for_tokens_live.return_value = [
+            {
+                "id": "5",
+                "itemid": "Puma Sports",
+                "displayname": "Puma Sports",
+                "description": "Red Shoes XL",
+            },
+            {
+                "id": "6",
+                "itemid": "Campus Shoes",
+                "displayname": "Campus Shoes",
+                "description": "Black Shoes XL",
+            },
+        ]
+
+        result = self.service._match_one_extracted_item(
+            connection=Mock(),
+            extracted_name="Black Boots Red",
+            cached_items=[],
+        )
+
+        self.assertTrue(result["needs_selection"])
+        self.assertEqual(result["match_type"], "partial_keywords")
+        self.assertEqual([candidate["name"] for candidate in result["candidates"]], ["Campus Shoes", "Puma Sports"])
+        self.assertTrue(all(candidate["match_count"] == 1 for candidate in result["candidates"]))
+
+
 class ValidationErrorGroupingTests(SimpleTestCase):
     def test_groups_identical_line_errors_without_merging_source_rows(self):
         line_items = [
