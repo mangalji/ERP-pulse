@@ -137,6 +137,12 @@ flowchart LR
 | Document storage | Local filesystem, PostgreSQL-backed storage, or S3-compatible storage |
 | Deployment | Gunicorn for the API; Nginx for the Docker frontend and reverse proxy |
 
+### Background execution model
+
+The application uses an **event-triggered, traditional background-worker architecture**, not a serverless event-driven runtime. API actions such as uploads and mailbox work create or enqueue work; long-running Celery workers consume Redis-backed tasks, and PostgreSQL retains durable job state, leases, and retry information. Celery Beat dispatches scheduled work, including each mailbox's saved fetch schedule.
+
+OCR and NetSuite jobs can alternatively run in in-process worker threads, inline in the API process, or through the dedicated PostgreSQL-backed `run_ocr_worker` process, according to `OCR_EXECUTION_MODE`. These are execution-mode fallbacks, not serverless functions. The lightweight lazy-housekeeping fallback can start a background thread from the API process, but it is likewise not a serverless invocation.
+
 Automated email processing requires Redis, a Celery worker, and Celery Beat. OCR and NetSuite batch processing also support an in-process execution mode and a dedicated PostgreSQL-backed worker through `run_ocr_worker`. These alternatives do not replace the email scheduler.
 
 Company-scoped services and access controls separate tenant data. Integration credentials and AI API keys use field-level encryption. Keep the encryption key available to every process that reads those records.

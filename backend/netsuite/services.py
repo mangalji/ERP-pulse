@@ -4701,7 +4701,9 @@ class NetSuiteValidationService:
                 connection=connection,
                 record_type__in=self.ITEM_RECORD_TYPES,
                 is_inactive=False,
-            ).only("internal_id", "external_id", "name", "item_type", "data")
+            )
+            .order_by("name", "internal_id")
+            .only("internal_id", "external_id", "name", "item_type", "data")
         )
 
         results = []

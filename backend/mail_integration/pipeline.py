@@ -45,6 +45,89 @@ RETRY_DELAY_MINUTES = 15
 class EmailBillPipeline:
     """One-email-at-a-time processor; the OCR document becomes the audit record."""
 
+    @staticmethod
+    def _attach_netsuite_item_matches(*, data, user, connection, message_id):
+        """Match email line items with the review matcher and choose safely.
+
+        Email processing has no reviewer available to resolve an ambiguous
+        item.  Preserve the complete, ordered candidate list that the manual
+        PDF-review flow would show, then use its first candidate for this
+        temporary automated workflow.  A no-match remains untouched so the
+        normal validation/review path can surface it.
+        """
+        line_items = data.get("line_items") if isinstance(data, dict) else None
+        if not isinstance(line_items, list) or connection is None:
+            return data
+
+        try:
+            match_results = NetSuiteValidationService().match_extracted_items(
+                connection_id=connection.id,
+                items=[
+                    {
+                        "line_index": index,
+                        "item": line.get("item") if isinstance(line, dict) else None,
+                    }
+                    for index, line in enumerate(line_items, start=1)
+                ],
+                user=user,
+            ).get("items", [])
+            if not isinstance(match_results, list):
+                return data
+
+            resolved_matches = []
+            matches_by_line = {}
+            for match in match_results:
+                if not isinstance(match, dict):
+                    continue
+                resolved = dict(match)
+                candidates = resolved.get("candidates")
+                if (
+                    resolved.get("needs_selection")
+                    and isinstance(candidates, list)
+                    and candidates
+                    and isinstance(candidates[0], dict)
+                    and candidates[0].get("netsuite_id") not in (None, "")
+                    and candidates[0].get("name")
+                ):
+                    selected = candidates[0]
+                    resolved.update(
+                        {
+                            "matched": True,
+                            "needs_selection": False,
+                            "selected_item_name": selected["name"],
+                            "netsuite_id": str(selected["netsuite_id"]),
+                            "automatic_selection": "first_candidate",
+                            "selection_required": True,
+                        }
+                    )
+                resolved_matches.append(resolved)
+                matches_by_line[resolved.get("line_index")] = resolved
+
+            enriched_data = dict(data)
+            enriched_data["line_items"] = [
+                {
+                    **line,
+                    **(
+                        {"item": matches_by_line[index]["selected_item_name"]}
+                        if (
+                            isinstance(line, dict)
+                            and matches_by_line.get(index, {}).get("matched")
+                            and matches_by_line[index].get("selected_item_name")
+                        )
+                        else {}
+                    ),
+                }
+                if isinstance(line, dict) else line
+                for index, line in enumerate(line_items, start=1)
+            ]
+            enriched_data["_netsuite_item_match_results"] = resolved_matches
+            return enriched_data
+        except Exception:
+            # Item matching is review enrichment. It must not discard a valid
+            # email bill when the NetSuite catalogue is temporarily unavailable.
+            logger.exception("Email item matching skipped — message=%s", message_id)
+            return data
+
     def process_due_messages(self, *, limit: int = 100) -> dict[str, int]:
         now = timezone.now()
         candidates = list(
@@ -427,6 +510,16 @@ class EmailBillPipeline:
                     message.id,
                     enrichment.get("reason"),
                 )
+
+            # Use the same item-matching service as manual PDF uploads.  The
+            # candidate snapshot is persisted below; because this is an
+            # unattended email workflow, ambiguous rows select candidate #1.
+            data = self._attach_netsuite_item_matches(
+                data=data,
+                user=user,
+                connection=connection,
+                message_id=message.id,
+            )
 
             with transaction.atomic():
                 locked = EmailMessage.objects.select_for_update().select_related("integration").get(pk=message.id)

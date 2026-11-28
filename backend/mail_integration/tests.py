@@ -65,6 +65,71 @@ class EmailValidationFlowTests(SimpleTestCase):
         diagnostics.diagnose_and_persist.assert_not_called()
 
 
+class EmailItemMatchingTests(SimpleTestCase):
+    @patch("mail_integration.pipeline.NetSuiteValidationService")
+    def test_ambiguous_email_item_persists_candidates_and_uses_first(self, validation_service):
+        validation_service.return_value.match_extracted_items.return_value = {
+            "items": [
+                {
+                    "line_index": 1,
+                    "extracted_name": "Black Boots XL",
+                    "matched": False,
+                    "needs_selection": True,
+                    "match_type": "multiple_all_keywords",
+                    "selected_item_name": None,
+                    "netsuite_id": None,
+                    "candidates": [
+                        {"netsuite_id": "101", "name": "First Boots"},
+                        {"netsuite_id": "102", "name": "Second Boots"},
+                    ],
+                }
+            ]
+        }
+
+        result = EmailBillPipeline._attach_netsuite_item_matches(
+            data={"line_items": [{"item": "Black Boots XL", "quantity": 1}]},
+            user=Mock(),
+            connection=Mock(id="connection-1"),
+            message_id="message-1",
+        )
+
+        self.assertEqual(result["line_items"][0]["item"], "First Boots")
+        match = result["_netsuite_item_match_results"][0]
+        self.assertTrue(match["matched"])
+        self.assertFalse(match["needs_selection"])
+        self.assertEqual(match["netsuite_id"], "101")
+        self.assertEqual(match["automatic_selection"], "first_candidate")
+        self.assertEqual(
+            [candidate["name"] for candidate in match["candidates"]],
+            ["First Boots", "Second Boots"],
+        )
+
+    @patch("mail_integration.pipeline.NetSuiteValidationService")
+    def test_email_item_with_no_candidates_is_preserved_for_review(self, validation_service):
+        validation_service.return_value.match_extracted_items.return_value = {
+            "items": [
+                {
+                    "line_index": 1,
+                    "matched": False,
+                    "needs_selection": False,
+                    "selected_item_name": None,
+                    "netsuite_id": None,
+                    "candidates": [],
+                }
+            ]
+        }
+
+        result = EmailBillPipeline._attach_netsuite_item_matches(
+            data={"line_items": [{"item": "Unknown item"}]},
+            user=Mock(),
+            connection=Mock(id="connection-1"),
+            message_id="message-1",
+        )
+
+        self.assertEqual(result["line_items"][0]["item"], "Unknown item")
+        self.assertEqual(result["_netsuite_item_match_results"][0]["candidates"], [])
+
+
 class SenderEmailVendorResolutionTests(SimpleTestCase):
     @patch("mail_integration.pipeline.company_lifecycle_service.is_operational", return_value=True)
     @patch("mail_integration.pipeline.audit_service.log")
